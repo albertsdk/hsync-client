@@ -92,6 +92,7 @@ from hsync_client.compression import (
 )
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNCKEEP_FILENAME, MTIME_MAX_FUTURE_SKEW_SECONDS, ActionLabel
+from hsync_client.events import UiEventName, emit_event
 from hsync_client.multipart import (
     _MULTIPART_BOUNDARY_RE,
     _CappedBytesWriter,
@@ -1795,6 +1796,12 @@ class P2PEndpointMixin(_HTTPTransportBase):
                                 self.wfile.write(chunk)
                                 _throttle_upload(len(chunk))
                                 remaining -= len(chunk)
+                        # One completed serve = one outgoing content transfer:
+                        # report it so the serving side's Sent counter (files and
+                        # bytes) updates, as the upload path already does.
+                        emit_event(
+                            UiEventName.transfer, op="upload", file=display_path, size=file_size
+                        )
                         return
                     if not _same_open_file(opened, os.fstat(stream.fileno())):
                         self._send_error_response(HTTP_CONFLICT, "File changed while reading")
@@ -1819,6 +1826,10 @@ class P2PEndpointMixin(_HTTPTransportBase):
                     _throttle_upload(len(chunk))
                 if not _same_open_file(opened, os.fstat(stream.fileno())):
                     self.close_connection = True
+                else:
+                    # Completed identity serve: report the outgoing transfer so
+                    # the serving side's Sent counter (files and bytes) updates.
+                    emit_event(UiEventName.transfer, op="upload", file=display_path, size=file_size)
                 return
         except FileNotFoundError:
             self._send_error_response(HTTP_NOT_FOUND, "File not found")

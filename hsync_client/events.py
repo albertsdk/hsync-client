@@ -77,13 +77,19 @@ class EventEmitter:
 # Process-wide singleton. ``None`` means "no events channel configured".
 _emitter: EventEmitter | None = None
 
+# Last link status published through :func:`set_link_status` (``None`` before the
+# first report), so only transitions reach the consumer.
+_link_status: str | None = None
+
 
 def init_emitter(fd: int | None) -> EventEmitter:
     """Install the process-wide emitter bound to *fd* (replacing any prior one)."""
-    global _emitter
+    global _emitter, _link_status
     if _emitter is not None:
         _emitter.close()
     _emitter = EventEmitter(fd)
+    # A fresh channel starts from "nothing published yet".
+    _link_status = None
     return _emitter
 
 
@@ -97,3 +103,24 @@ def emit_event(event: UiEventName | str, **payload: Any) -> None:
     em = _emitter
     if em is not None:
         em.emit(event, **payload)
+
+
+def get_link_status() -> str | None:
+    """Return the last published link status (``None`` before the first one)."""
+    return _link_status
+
+
+def set_link_status(status: str) -> None:
+    """Publish a *transition* of the link status (``connected``/``waiting``…).
+
+    The status describes the link itself, not the sync activity, and several
+    paths can establish the same fact: the event-channel handshake, and a
+    successful REST round inside a sync cycle that runs before the event channel
+    is up. Consumers act on ``connected`` (the desktop starts a preview), so a
+    repeat of the current status is dropped instead of re-publishing it.
+    """
+    global _link_status
+    if status == _link_status:
+        return
+    _link_status = status
+    emit_event(UiEventName.status, status=status)

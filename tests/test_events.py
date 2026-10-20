@@ -19,7 +19,14 @@ from hsync_common.protocol.events import (
 )
 
 from hsync_client import events
-from hsync_client.events import EventEmitter, emit_event, get_emitter, init_emitter
+from hsync_client.events import (
+    EventEmitter,
+    emit_event,
+    get_emitter,
+    get_link_status,
+    init_emitter,
+    set_link_status,
+)
 
 
 def _read_lines(read_fd: int) -> list[str]:
@@ -145,3 +152,57 @@ class TestModuleSingleton:
         second = init_emitter(None)
         assert first is not second
         assert events.get_emitter() is second
+
+
+class TestLinkStatus:
+    """``set_link_status`` publishes transitions, not repeated states."""
+
+    def teardown_method(self):
+        init_emitter(None)
+
+    @staticmethod
+    def _capture() -> int:
+        read_fd, write_fd = os.pipe()
+        init_emitter(write_fd)
+        return read_fd
+
+    @staticmethod
+    def _statuses(read_fd: int) -> list[str]:
+        get_emitter().close()  # flush
+        lines = _read_lines(read_fd)
+        os.close(read_fd)
+        published = []
+        for line in lines:
+            parsed = parse_event_line(line)
+            if parsed is not None and parsed["event"] == "status":
+                published.append(parsed["status"])
+        return published
+
+    def test_publishes_every_transition(self):
+        read_fd = self._capture()
+
+        set_link_status("connected")
+        set_link_status("waiting")
+        set_link_status("connected")
+
+        assert self._statuses(read_fd) == ["connected", "waiting", "connected"]
+        assert get_link_status() == "connected"
+
+    def test_drops_a_repeated_status(self):
+        read_fd = self._capture()
+
+        set_link_status("connected")
+        set_link_status("connected")
+
+        assert self._statuses(read_fd) == ["connected"]
+
+    def test_a_new_channel_resets_the_published_status(self):
+        read_fd = self._capture()
+        set_link_status("connected")
+        assert self._statuses(read_fd) == ["connected"]
+
+        read_fd = self._capture()  # init_emitter installs a fresh channel
+        assert get_link_status() is None
+        set_link_status("connected")
+
+        assert self._statuses(read_fd) == ["connected"]

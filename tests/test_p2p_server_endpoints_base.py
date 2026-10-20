@@ -145,6 +145,29 @@ class TestLANRequestHandler:
             assert content == "download content"
             conn.close()
 
+    def test_download_reports_the_outgoing_transfer(self, server, tmp_path, monkeypatch):
+        """Serving a file counts as an outgoing transfer (Sent files and bytes)."""
+        srv, port = server
+        test_file = tmp_path / "served.txt"
+        test_file.write_text("served content")
+        events: list[tuple[str, dict]] = []
+        monkeypatch.setattr(
+            "hsync_client.p2p_server.emit_event",
+            lambda event, **payload: events.append((str(event), payload)),
+        )
+
+        with patch("hsync_client.p2p_server.CONFIG", unauth_write_config(str(tmp_path))):
+            conn = HTTPConnection("localhost", port, timeout=5)
+            conn.request("GET", "/api/v1/buckets/test/files/download?filename=served.txt")
+            response = conn.getresponse()
+            assert response.status == 200
+            response.read()
+            conn.close()
+
+        time.sleep(0.1)  # the handler emits right after the response body
+        uploads = [payload for event, payload in events if event == "transfer"]
+        assert uploads == [{"op": "upload", "file": str(test_file), "size": len("served content")}]
+
     def test_download_file_not_found(self, server, tmp_path):
         """Test download of non-existent file."""
         srv, port = server

@@ -47,7 +47,7 @@ from hsync_client.constants import (
 )
 from hsync_client.event_dispatch import EventDispatchContext, apply_inbound_event
 from hsync_client.event_queue import EventQueue
-from hsync_client.events import UiEventName, emit_event
+from hsync_client.events import UiEventName, emit_event, set_link_status
 from hsync_client.exceptions import WatcherStartError
 from hsync_client.file_event_handler import BaseFileEventHandler
 from hsync_client.pools import log_future_error
@@ -182,7 +182,7 @@ async def remote_events() -> None:
             return
 
         log.info(f"WebSocket connected to {uri}")
-        emit_event(UiEventName.status, status="connected")
+        set_link_status("connected")
 
         # Authenticate via first message (more secure than URL token). The frame
         # follows the shared handshake contract (hsync_common.protocol.handshake);
@@ -262,7 +262,7 @@ async def remote_events() -> None:
                 log.warning(f"Connection closed: {reason}")
             else:
                 log.warning("Connection closed.")
-            emit_event(UiEventName.status, status="waiting")
+            set_link_status("waiting")
         except Exception as e:
             # Unexpected error during event processing
             log.error(f"Exception: {e}")

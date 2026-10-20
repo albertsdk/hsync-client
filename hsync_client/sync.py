@@ -66,7 +66,7 @@ from hsync_client.constants import (
     WORKER_MEMORY_BUDGET_BYTES,
     ActionLabel,
 )
-from hsync_client.events import UiEventName, emit_event
+from hsync_client.events import UiEventName, emit_event, set_link_status
 from hsync_client.exceptions import (
     AuthenticationError,
     NetworkError,
@@ -452,6 +452,12 @@ async def sync(
         inventory_observer.replace_snapshot(local_files)
         remote_files = get_files_remote()
         emit_folder_size(local_files, remote_files)
+        if not CONFIG.get("P2P_MODE"):
+            # The REST round just proved the server link, so report it here
+            # instead of waiting for the event channel — which, in remote mode,
+            # only connects *after* the initial sync: the status used to read
+            # "waiting" while the cycle was transferring data.
+            set_link_status("connected")
 
         # Fetch deletion markers so files deleted while this peer was offline
         # are not resurrected during the full reconciliation below.

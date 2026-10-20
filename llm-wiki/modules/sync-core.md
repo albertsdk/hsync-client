@@ -104,9 +104,24 @@ literal size) and the upload stream (`transfer.py::_build_multipart_streaming` /
 progress and ETA. The delta *upload* posts its payload as a single in-memory body,
 so it emits no intermediate progress.
 
-Status (`UiEventName.status`): remote mode emits `connected`/`waiting`
-(`remote_websocket.py`); p2p mode emits `connecting` on connection teardown,
-`connected` once the slave link is ready
+Completed transfers emit `UiEventName.transfer` (`op="download"`/`"upload"` with
+`size`), which the desktop renders as the session Sent/Received files and bytes.
+The P2P serving side (`p2p_server.py`, `_handle_download`) emits `op="upload"`
+for a completed full-file serve (identity or zstd body), so the master's Sent
+counter reflects the files it sends to peers; range/resume responses are partial
+and are not counted.
+
+Status (`UiEventName.status`) reports the **link**, not the sync activity, and is
+published through `hsync_client/events.py::set_link_status`, which drops a repeat
+of the current state (consumers act on `connected` — the desktop starts a preview
+— so a per-cycle repetition would restart it on every cycle). Remote mode: a
+successful REST round publishes `connected` as soon as the cycle has fetched both
+listings (`sync.py::sync`), so the initial sync — whose event channel only
+connects *afterwards* (`remote_websocket.py::remote_connect`) — and the re-sync
+after a drop no longer read "waiting"/"connecting" while transferring; `waiting`
+is published when the event channel closes (`remote_websocket.py::remote_events`)
+and `connected` when it (re)connects. p2p mode keeps its peer-based state:
+`connecting` on connection teardown, `connected` once the slave link is ready
 (`p2p_websocket.py::p2p_websocket_client`) and, for a serving master, `connected`
 only when at least one slave is linked — a lone master is `waiting`
 (`p2p_handler.py::_p2p_status`, kept in sync by the WS client-count callback), so

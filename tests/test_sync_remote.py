@@ -499,3 +499,86 @@ class TestSyncActionsWithRealisticServerData:
         # advertised (it does not need to decompress the listing itself).
         assert len(result) == 1
         assert result[0]["sha256sum"] == "def456"
+
+
+def _read_pipe(read_fd: int) -> list[str]:
+    """Read everything currently buffered on *read_fd* and split into lines."""
+    import os
+
+    chunks: list[bytes] = []
+    while True:
+        data = os.read(read_fd, 4096)
+        if not data:
+            break
+        chunks.append(data)
+    return [line for line in b"".join(chunks).decode("utf-8").splitlines() if line]
+
+
+class TestRemoteRoundLinkStatus:
+    """A successful remote round publishes ``connected``.
+
+    The event channel connects only *after* the initial sync, so before this the
+    status stayed at "waiting"/"connecting" while the cycle was transferring.
+    """
+
+    class _Stop(Exception):
+        """Sentinel: stop the cycle right after the remote listing."""
+
+    @staticmethod
+    def _run_until_listing(tmp_path, *, p2p_mode: bool) -> None:
+        import asyncio
+
+        from hsync_client import sync as sync_mod
+
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "P2P_MODE": p2p_mode,
+            "REMOTE_BUCKET": "testbucket",
+            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+            "REQUEST_HEADERS": {},
+            "NO_VERIFY_SSL": True,
+        }
+        with (
+            patch.object(sync_mod, "CONFIG", config),
+            patch.object(sync_mod, "offset_store", MagicMock()),
+            patch.object(sync_mod, "_cleanup_partial_files", MagicMock()),
+            patch.object(sync_mod, "ensure_hsynckeep_files", MagicMock()),
+            patch.object(sync_mod, "get_files_local", return_value=[]),
+            patch.object(sync_mod, "get_files_remote", return_value=[]),
+            patch.object(
+                sync_mod, "get_tombstones_remote", side_effect=TestRemoteRoundLinkStatus._Stop()
+            ),
+            pytest.raises(TestRemoteRoundLinkStatus._Stop),
+        ):
+            asyncio.run(sync_mod.sync())
+
+    @staticmethod
+    def _statuses(tmp_path, *, p2p_mode: bool) -> list[str]:
+        import os
+
+        from hsync_common.protocol.events import parse_event_line
+
+        from hsync_client.events import get_emitter, init_emitter
+
+        read_fd, write_fd = os.pipe()
+        init_emitter(write_fd)
+        try:
+            TestRemoteRoundLinkStatus._run_until_listing(tmp_path, p2p_mode=p2p_mode)
+            get_emitter().close()  # flush
+            lines = _read_pipe(read_fd)
+        finally:
+            os.close(read_fd)
+            init_emitter(None)
+
+        published = []
+        for line in lines:
+            parsed = parse_event_line(line)
+            if parsed is not None and parsed["event"] == "status":
+                published.append(parsed["status"])
+        return published
+
+    def test_a_successful_remote_round_reports_connected(self, tmp_path):
+        assert self._statuses(tmp_path, p2p_mode=False) == ["connected"]
+
+    def test_a_p2p_round_keeps_the_peer_based_status(self, tmp_path):
+        assert self._statuses(tmp_path, p2p_mode=True) == []
