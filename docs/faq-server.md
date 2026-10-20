@@ -1,6 +1,8 @@
 # FAQ — Server Mode
 
 > For p2p FAQ, see [FAQ — p2p Mode](faq-p2p.md).
+> For common questions (including resetting a folder's sync state), see
+> [FAQ — Common](faq.md).
 
 ## General
 
