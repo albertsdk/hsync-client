@@ -341,6 +341,24 @@ def log_initial_sync_start() -> None:
 _last_folder_size: tuple[int, int] | None = None
 
 
+def _bucket_key(path: str, bucket_dir: str) -> str:
+    """Return the bucket-relative key used to compare the two listings.
+
+    The local listing carries **absolute** paths (``File.get`` keeps the path it
+    was given) while the server/master listing is bucket-relative. Comparing the
+    raw values made every local file look "local-only", so the sync-set total
+    added the whole local copy a second time (exactly 2x once both sides are in
+    sync). Normalise both to the bucket-relative form, with "/" separators.
+    """
+    if not path:
+        return ""
+    relative = relpath_in_bucket(path, bucket_dir)
+    if relative is None:
+        # Already relative (or outside the bucket): keep the entry as given.
+        relative = path.lstrip("/")
+    return relative.replace(os.sep, "/")
+
+
 def folder_size_totals(local_files: list[dict], remote_files: list[dict]) -> tuple[int, int]:
     """Return ``(local_bytes, total_bytes)`` for a fetched listing pair.
 
@@ -350,10 +368,11 @@ def folder_size_totals(local_files: list[dict], remote_files: list[dict]) -> tup
     Symlinks carry no payload and ``.hsynckeep`` sentinels are internal: both
     are skipped.
     """
+    bucket_dir = str(CONFIG.get("LOCAL_BUCKET") or "")
     remote_paths: set[str] = set()
     remote_total = 0
     for entry in remote_files:
-        path = str(entry.get("filepath", "") or "")
+        path = _bucket_key(str(entry.get("filepath", "") or ""), bucket_dir)
         if not path or entry.get("type") == "symlink" or basename(path) == HSYNCKEEP_FILENAME:
             continue
         remote_paths.add(path)
@@ -362,7 +381,7 @@ def folder_size_totals(local_files: list[dict], remote_files: list[dict]) -> tup
     local_total = 0
     local_only = 0
     for entry in local_files:
-        path = str(entry.get("filepath", "") or "")
+        path = _bucket_key(str(entry.get("filepath", "") or ""), bucket_dir)
         if not path or entry.get("type") == "symlink" or basename(path) == HSYNCKEEP_FILENAME:
             continue
         size = max(int(entry.get("size", 0) or 0), 0)

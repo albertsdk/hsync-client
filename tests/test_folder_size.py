@@ -45,6 +45,38 @@ class TestFolderSizeTotals:
     def test_empty_listings(self):
         assert folder_size_totals([], []) == (0, 0)
 
+    def test_local_absolute_paths_match_the_remote_listing(self, monkeypatch, tmp_path):
+        """The local listing is absolute, the remote one bucket-relative."""
+        monkeypatch.setitem(sync_mod.CONFIG, "LOCAL_BUCKET", str(tmp_path))
+        local = [
+            {"filepath": str(tmp_path / "a.bin"), "size": 10},
+            {"filepath": str(tmp_path / "sub" / "b.bin"), "size": 5},
+        ]
+        remote = [
+            {"filepath": "a.bin", "size": 10},
+            {"filepath": "sub/b.bin", "size": 5},
+        ]
+
+        # Identical copies: the union equals the set, so the total is not 2x.
+        assert folder_size_totals(local, remote) == (15, 15)
+
+    def test_a_remote_leading_slash_is_normalized(self, monkeypatch, tmp_path):
+        monkeypatch.setitem(sync_mod.CONFIG, "LOCAL_BUCKET", str(tmp_path))
+        local = [{"filepath": str(tmp_path / "a.bin"), "size": 10}]
+        remote = [{"filepath": "/a.bin", "size": 10}]
+
+        assert folder_size_totals(local, remote) == (10, 10)
+
+    def test_absolute_local_only_files_still_count_once(self, monkeypatch, tmp_path):
+        monkeypatch.setitem(sync_mod.CONFIG, "LOCAL_BUCKET", str(tmp_path))
+        local = [
+            {"filepath": str(tmp_path / "a.bin"), "size": 10},
+            {"filepath": str(tmp_path / "pending.bin"), "size": 7},
+        ]
+        remote = [{"filepath": "a.bin", "size": 10}]
+
+        assert folder_size_totals(local, remote) == (17, 17)
+
 
 class TestEmitFolderSize:
     def test_emits_the_pair(self, monkeypatch):
