@@ -31,6 +31,28 @@ engine file at the bucket root.
 | Tombstones | per-folder DB table `tombstones` | `tombstones.py` → `TombstoneStore` | per-peer deletion markers, gossiped across mastership changes |
 | Folder id | `.hsyncfolder` at bucket root | `state_backend.resolve_bucket_folder` | UUIDv4 that re-anchors state across rename/move |
 
+### state_reset.py (sync-state reset)
+
+`hsync state reset` (CLI: `cli.py::state_reset`) forgets **only** the merge bases
+and deletion markers of one folder. The module resolves the target DB read-only
+and holds the folder's `InstanceLock` for the whole operation, so a live sync
+makes it refuse instead of clearing state a running process keeps writing.
+
+| Symbol | Location | Role |
+| ------ | -------- | ---- |
+| `ResetReport` | `state_reset.py::ResetReport` | outcome (`folder`, `folder_id`, `db_path`, `found`, `versions_deleted`, `tombstones_deleted`, `quarantined`); serialized by `--json` — the field names are the desktop's contract (`engine/cli.py::reset_sync_state` parses them) |
+| `resolve_state_db` | `state_reset.py::resolve_state_db` | `(folder_id, db_path)` or `None`. Mirrors the read-only decisions of `state_backend.resolve_bucket_folder` (marker → `index.db` re-anchor → duplicate-marker copy gets no state) but **never** creates a `.hsyncfolder`, an index row or an empty DB. Honours `HSYNC_STATE_DB` |
+| `reset_folder_state` | `state_reset.py::reset_folder_state` | `InstanceLock.acquire(folder)` → `StateDb.reset_folder(folder_id)` (common, one transaction) → release. `quarantine=True` renames an unreadable DB to `<db>.corrupt-<ts>` (with its `-wal`/`-shm`) instead of raising |
+| `cli.py::state_reset` | `cli.py::state_reset` | thin shell: `--folder` required, exit `ExitCode.FATAL` on lock/invalid path/DB error, `setup_logging(quiet=True)` so the lock's DEBUG lines stay off stderr |
+
+Why it is safe for the data: with no merge base the cycle mints **no** tombstone
+(the mint loop iterates `sync_state.iter_merge_bases()`), and `delete_remote`
+requires a dominating tombstone clock — so a reset can never delete a file. The
+cost is a full scan/hash of the folder; identical files stay `in_sync` (hash
+first) and are re-recorded, while deletions performed before the reset can be
+undone because their markers were forgotten.
+
+
 ### sync_state.py (merge base)
 
 | Symbol | Location | Role |

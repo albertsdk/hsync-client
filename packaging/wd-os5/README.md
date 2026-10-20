@@ -222,6 +222,26 @@ In **server mode** the NAS is itself a client of a central `hsync-server`, so
 there is no direct "connect to the NAS" command; the section shows a note
 explaining how to point another device at the same server and bucket.
 
+## Maintenance
+
+The service only ever runs a sync mode (`hsync p2p` / `hsync server`); the
+maintenance namespaces (`hsync trust`, `hsync state`) are not exposed by the web
+UI. If a share keeps re-syncing or its local state looks inconsistent, stop the
+service and forget the share's sync state from the NAS shell, using the same
+`HSYNC_DEVICE_DIR` / `HSYNC_STATE_DIR` that `start.sh` exports (they are also in
+`hsync.env`, so source that file first):
+
+```bash
+. /mnt/HD/HD_a2/hsync/config/hsync.env
+"${APKG_PATH}/bin/${BINARY}/hsync" state reset --folder /mnt/HD/HD_a2/hsync/data
+```
+
+Only the folder's merge bases and deletion markers are dropped: synced files,
+the p2p key, the device identity and the trusted fingerprints stay untouched.
+The next cycle re-scans the share, so the first sync is slower and files deleted
+shortly before the reset can come back. The command refuses while the service
+still syncs the folder, which is why it must be stopped first.
+
 ## Locales
 
 The web UI ships with the same eleven locales as the desktop client:

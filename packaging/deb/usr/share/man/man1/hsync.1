@@ -1,7 +1,7 @@
 .\" Man page for HSYNC — file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-10-10" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-10-20" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -30,6 +30,13 @@ hsync \- file synchronization client (Server and P2P modes)
 .SY hsync
 .B trust
 .BI peer | bootnode | server
+.RI [ OPTIONS ]
+.YS
+.
+.SY hsync
+.B state
+.B reset
+.BI \\-\\-folder " " DIR
 .RI [ OPTIONS ]
 .YS
 .
@@ -498,6 +505,38 @@ emits objects with
 .IR cid ", " bucket " and " fingerprint
 for peers).
 .
+.\" --- Local sync state ---
+.SS Local sync state
+The client keeps each folder's merge bases (causal versions) and deletion
+markers (tombstones) in a per-folder SQLite database under the device
+directory. Forgetting that state makes the next cycle reconcile every file
+from scratch: with no merge base there is no causal proof, so the cycle never
+deletes anything. The cost is a full re-scan and re-hash of the folder, and the
+surviving differences are resolved by the normal causal rules (a conflict copy
+is preserved when both sides changed).
+.TP
+.BR "hsync state reset \-\-folder " DIR " [\-\-json] [\-\-quarantine]"
+Forget the folder's versions and tombstones. The synced files, the
+.B .hsyncfolder
+marker, the device identity and the trust stores are left untouched, and
+nothing is transferred by the command itself. It refuses while another hsync
+process is syncing the same directory (the per-directory instance lock).
+A deletion performed before the reset can be undone by the next cycle when its
+tombstone no longer dominates the rebuilt clock.
+.B \-\-quarantine
+moves an unreadable state database aside
+.RI ( <uuid>.db.corrupt\-<timestamp> )
+instead of failing.
+.B \-\-json
+emits
+.IR folder ", " folder_id ", " db ", " found ", " versions_deleted ", " tombstones_deleted " and " quarantined
+(empty when no state existed).
+The command exits 0 on success (including "nothing to reset"), 1 when the folder
+is invalid, another process holds the lock or the state database cannot be
+read, and 2 on a usage error such as a missing
+.BR \-\-folder .
+.
+
 .\" ---------------------------------------------------------------------
 .SH SYNCHRONISATION DIRECTIONS
 .TP
@@ -1086,6 +1125,16 @@ hsync trust server fingerprint server.example.com
 hsync trust server add server.example.com sha256:FINGERPRINT \-\-port 9753
 hsync server server.example.com \-b photos \-\-server\-trust strict
 hsync server server.example.com \-b photos \-\-server\-tofu
+.EE
+.
+.PP
+Forget a folder's sync state so the next cycle reconciles it from scratch
+(the synced files are never touched):
+.PP
+.EX
+hsync state reset \-\-folder ~/Photos
+hsync state reset \-\-folder ~/Photos \-\-json
+hsync state reset \-\-folder ~/Photos \-\-quarantine
 .EE
 .
 .TP

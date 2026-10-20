@@ -15,6 +15,7 @@ How flags/env become the running `CONFIG` and how `run_sync` drives a session.
 | `_validate_bucket` | `cli.py::_validate_bucket` | bucket flag validation |
 | `_build_server_url` | `cli.py` | `HOSTNAME[:PORT]` form → `https://host:port` (implied scheme, `SERVER_DEFAULT_PORT` when no port, IPv6 auto-bracketing via the shared `hsync_common.endpoint` parser; rejects URL-like input, refuses `--port` without a hostname, and a port in the host is mutually exclusive with `--port`); `None` hostname → the `server` subcommand resolves the `HSYNC_SERVER` fallback (shell env or `--env-file`) and raises `typer.BadParameter` if still unset |
 | `_validate_shared_options` | `cli.py::_validate_shared_options` | numeric-range / bandwidth / direction / concurrency / mass-delete / delta checks shared by both subcommands |
+| `state` namespace + `state_reset` | `cli.py::state_reset` | `hsync state reset --folder DIR [--json] [--quarantine]`: forgets one folder's versions + tombstones; the CLI is a thin shell and the logic lives in [state_reset.py](../data-models.md#state_resetpy-sync-state-reset) |
 
 Startup note: `build_capabilities` (`hsync_common.protocol.capabilities`) and
 `legend_lines` (`hsync_client.log_labels`) are imported **inside** their eager

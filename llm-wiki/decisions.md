@@ -25,6 +25,18 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
 `pinning.py` + `ssl_utils.py` ([p2p-mode.md](modules/p2p-mode.md)).
 
 ## Client-only operational rules
+- **Sync-state reset lives in the client, never in a front-end**: the per-folder
+  DB is client-owned and guarded by the per-directory `InstanceLock`
+  (`identity.py::InstanceLock`), so `hsync state reset`
+  (`state_reset.py::reset_folder_state`) acquires the lock and refuses while any
+  hsync process syncs the same folder. A GUI cannot see a concurrent CLI/service
+  sync (ADR 0004 forbids importing client internals) and would reset state a live
+  process keeps writing. The reset deletes **rows** (`StateDb.reset_folder` in
+  `hsync-common`, one transaction) rather than the file, keeps the
+  `folders`/`buckets` rows, and never writes a `.hsyncfolder` marker.
+  `--quarantine` renames a corrupt DB aside. Wire/capabilities: the `state`
+  subcommand appears automatically in `--capabilities-json` (introspected), so
+  the desktop gates its button on `supports_subcommand(doc, "state")`.
 - **Bootnode multi-port dial fallback**: `HSYNC_BOOTNODE_PORTS`
   (`config.py::get_bootnode_ports`) adds extra UDP ports for the **same** bootnode;
   `BootnodeClient._with_connection` (`boot_client.py`) dials the last working port

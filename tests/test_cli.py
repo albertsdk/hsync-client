@@ -760,7 +760,7 @@ class TestCapabilitiesJson:
         from hsync_client.cli import collect_subcommand_options
 
         options = collect_subcommand_options(typer_app)
-        assert set(options) == {"p2p", "server", "trust"}
+        assert set(options) == {"p2p", "server", "trust", "state"}
         for flags in options.values():
             assert flags == sorted(flags)
             assert all(f.startswith("--") for f in flags)

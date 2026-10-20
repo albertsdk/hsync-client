@@ -143,3 +143,57 @@ If the command fails, the hard limit is lower — raise the hard limit (or use
 `LimitNOFILE=` in the unit) instead. Alternatively, reduce concurrent
 connections/transfers (see the bandwidth and connection
 settings in [Configuration](configuration.md)).
+
+## A folder keeps re-syncing or reports phantom conflicts
+
+**Symptom.** The same files keep flipping between devices, deletions come back,
+or the client reports conflicts on files nobody edited. The log may show a
+SQLite error (`database disk image is malformed`, `file is not a database`) or a
+cycle that never converges.
+
+**Cause.** The per-folder state database (merge bases + deletion markers) is
+stale, inconsistent or unreadable. It lives under the device directory, never
+inside the synced folder:
+
+```text
+$XDG_STATE_HOME/hsync/device/syncstate/<uuid>.db
+```
+
+**Remedy.** Make the folder forget its sync history so the next cycle reconciles
+it from scratch:
+
+```bash
+hsync state reset --folder ~/Photos
+```
+
+The command deletes only the merge bases and the deletion markers of that
+folder. Synced files, `.hsyncignore`, the `.hsyncfolder` marker, the device
+identity and the trusted fingerprints are never touched, and nothing is
+transferred by the command itself. It refuses while another `hsync` process is
+syncing the same folder — stop that process first.
+
+What to expect on the next sync:
+
+- every file is scanned and hashed again, so the first cycle is slower;
+- files that are identical on both sides are not transferred;
+- differences are resolved with the normal causal rules, and a conflict copy is
+  preserved when both sides changed;
+- deletions performed shortly before the reset can be undone (a file may come
+  back) because the deletion markers were forgotten.
+
+Then check what the next sync would transfer, without moving anything:
+
+```bash
+hsync state reset --folder ~/Photos --json
+hsync server server.example.com -b photos -p ~/Photos --dry-run
+```
+
+If the state database is unreadable, move it aside instead of failing (the file
+is kept for inspection):
+
+```bash
+hsync state reset --folder ~/Photos --quarantine
+```
+
+`--json` prints `folder`, `folder_id`, `db`, `found`, `versions_deleted`,
+`tombstones_deleted` and `quarantined` for scripts and support tickets.

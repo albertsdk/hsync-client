@@ -5,9 +5,10 @@
 Command-line interface for HSYNC Client.
 
 This module provides the Typer-based CLI for the HSYNC command-line interface.
-It exposes two mutually exclusive subcommands — ``p2p`` (P2P peer-to-peer sync)
-and ``server`` (central-server sync) — under a parent callback that carries the
-global options (``--version``, ``--capabilities-json``, ``--help-symbols``).
+The parent callback carries the global options (``--version``,
+``--capabilities-json``, ``--help-symbols``); the mutually exclusive
+``p2p``/``server`` sync subcommands sit under it, alongside two maintenance
+namespaces: ``trust`` (certificate pins) and ``state`` (local sync state).
 """
 
 import json
@@ -1693,6 +1694,98 @@ def server(
         mass_delete_guard=mass_delete_guard,
         mass_delete_threshold=mass_delete_threshold,
         mass_delete_percent=mass_delete_percent,
+    )
+
+
+# =============================================================================
+# state management — ``hsync state reset``
+# =============================================================================
+
+# The per-folder state DB (merge bases + deletion history) is client-owned and
+# guarded by the per-directory ``InstanceLock``, so forgetting it belongs here
+# rather than in a front-end that cannot see a concurrent sync.
+_state_root = typer.Typer(
+    help="Inspect and reset the local sync-state database.",
+    no_args_is_help=True,
+)
+app.add_typer(_state_root, name="state")
+
+
+@_state_root.command("reset")
+def state_reset(
+    folder: Annotated[
+        str,
+        typer.Option(
+            "--folder",
+            help="Synced folder whose local state (merge bases and deletion history) is forgotten.",
+            metavar="DIR",
+        ),
+    ],
+    as_json: bool = typer.Option(False, "--json", help="Emit the summary as JSON."),
+    quarantine: bool = typer.Option(
+        False,
+        "--quarantine",
+        help="Move an unreadable state DB aside instead of failing.",
+    ),
+) -> None:
+    """Forget one folder's sync state so the next cycle reconciles from scratch.
+
+    Clears the merge bases (version store) and the deletion markers
+    (tombstones) of the folder. No synced file is touched and nothing is
+    transferred: the next sync re-scans every file and resolves the surviving
+    differences with the causal rules. Refuses while any hsync process is
+    syncing the same folder.
+    """
+    # Lazy imports keep the CLI fast paths free of the state/engine modules.
+    import sqlite3
+    from dataclasses import asdict
+    from pathlib import Path
+
+    from hsync_client.exitcodes import ExitCode
+    from hsync_client.identity import InstanceLockError
+    from hsync_client.logger import setup_logging
+    from hsync_client.state_reset import reset_folder_state
+
+    # A one-shot maintenance command reports on stdout only: the default loguru
+    # sink would echo the lock's DEBUG lines on stderr.
+    setup_logging(quiet=True)
+
+    target = Path(folder).expanduser()
+    if not target.is_dir():
+        typer.echo(f"Not a directory: {target}", err=True)
+        raise typer.Exit(code=int(ExitCode.FATAL))
+
+    try:
+        report = reset_folder_state(target, quarantine=quarantine)
+    except InstanceLockError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=int(ExitCode.FATAL)) from None
+    except sqlite3.DatabaseError as exc:
+        typer.echo(
+            f"Could not reset the state DB: {exc}. Re-run with --quarantine to move it aside.",
+            err=True,
+        )
+        raise typer.Exit(code=int(ExitCode.FATAL)) from None
+    except OSError as exc:
+        typer.echo(f"Could not reset the state DB: {exc}", err=True)
+        raise typer.Exit(code=int(ExitCode.FATAL)) from None
+
+    if as_json:
+        typer.echo(json.dumps(asdict(report), indent=2, sort_keys=True))
+        return
+    if not report.found:
+        typer.echo(f"No sync state found for {report.folder}; nothing to reset.")
+        return
+    if report.quarantined:
+        typer.echo(
+            f"The state DB for {report.folder} was unreadable; moved to "
+            f"{report.quarantined}. The next sync starts from scratch."
+        )
+        return
+    typer.echo(
+        f"Reset the sync state of {report.folder}: {report.versions_deleted} version entries "
+        f"and {report.tombstones_deleted} deletion markers removed. "
+        "The next sync will scan every file."
     )
 
 
