@@ -27,7 +27,7 @@ Consequences of the one-identity-per-installation model (same as Syncthing):
 * copying the device directory to another machine clones the device.
 
 The module also provides the per-directory **instance lock**: a cross-process
-``flock`` that refuses to start two hsync processes on the same synced
+advisory file lock that refuses to start two hsync processes on the same synced
 directory (they would race the same folder UUID in ``state DB`` and
 echo each other's watcher events).
 """
@@ -35,7 +35,6 @@ echo each other's watcher events).
 from __future__ import annotations
 
 import atexit
-import fcntl
 import hashlib
 import os
 from dataclasses import dataclass
@@ -45,6 +44,7 @@ from typing import ClassVar
 from hsync_common.models.event import is_valid_cid
 from loguru import logger as log
 
+from hsync_client._filelock import try_lock, unlock
 from hsync_client.ssl_utils import CertificateInfo, load_or_create_master_cert
 
 # Environment override for the device identity directory (tests and operators
@@ -90,7 +90,7 @@ def default_locks_dir(device_dir: Path | None = None) -> Path:
 
     Prefers ``$HSYNC_LOCKS_DIR``, then ``$XDG_RUNTIME_DIR/hsync/locks``
     (per-user tmpfs: stale lock *files* vanish at reboot, and the kernel
-    releases the flock itself at process death anyway). Without a runtime
+    releases the lock itself at process death anyway). Without a runtime
     dir (e.g. macOS), locks live under the device dir.
     """
     override = os.environ.get(LOCKS_DIR_ENV)
@@ -186,11 +186,12 @@ class InstanceLock:
 
     Two hsync processes writing the same local directory corrupt each
     other's folder state in ``state DB`` and
-    echo each other's watcher events. The lock is an ``flock`` on a file in
-    the locks dir keyed by the directory's canonical path — the kernel
+    echo each other's watcher events. The lock is an advisory OS file lock
+    (``flock`` on POSIX, a one-byte ``msvcrt.locking`` range on Windows) on a
+    file in the locks dir keyed by the directory's canonical path — the OS
     releases it when the holder dies (even on SIGKILL), so it can never go
     stale. The holder's PID is written into the file for diagnostics only;
-    liveness is established by the flock, never by the PID file content.
+    liveness is established by the lock, never by the PID file content.
 
     Acquiring the same path twice in one process is a no-op returning the
     existing lock (in-process runs, e.g. CliRunner tests).
@@ -225,9 +226,7 @@ class InstanceLock:
         lock = cls(path)
         lock._lock_path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(lock._lock_path, os.O_RDWR | os.O_CREAT, _LOCK_FILE_MODE)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
+        if not try_lock(fd):
             holder = ""
             try:
                 with os.fdopen(os.dup(fd), "r", encoding="utf-8", errors="replace") as f:
@@ -256,10 +255,7 @@ class InstanceLock:
         """Release the lock. Idempotent."""
         if self._fd is None:
             return
-        try:
-            fcntl.flock(self._fd, fcntl.LOCK_UN)
-        except OSError:
-            pass
+        unlock(self._fd)
         try:
             os.close(self._fd)
         except OSError:

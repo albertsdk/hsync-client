@@ -287,9 +287,10 @@ Consequences:
 Two hsync processes can never sync the **same local directory** at the same
 time (regardless of buckets): they would race the same folder UUID in
 the per-folder state DB. The client enforces this with a cross-process
-`flock` (per-directory: `$HSYNC_LOCKS_DIR`, else `$XDG_RUNTIME_DIR/hsync/locks`,
+advisory file lock (`flock` on POSIX, a `msvcrt` byte-range lock on Windows;
+per-directory: `$HSYNC_LOCKS_DIR`, else `$XDG_RUNTIME_DIR/hsync/locks`,
 else `<device-dir>/locks`) and refuses to start with an error naming the conflicting
-directory and PID. The lock is released by the kernel even if the process is
+directory and PID. The operating system releases the lock even if the process is
 killed, so it can never go stale.
 
 ## Group Filtering

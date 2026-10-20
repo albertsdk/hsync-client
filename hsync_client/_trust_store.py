@@ -25,6 +25,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from hsync_client._filelock import lock_blocking, unlock
+
 __all__ = ["TRUST_FILE_MODE", "JsonStore", "StoreError"]
 
 # Owner-only permissions: the file records which peers this host trusts and must
@@ -44,34 +46,6 @@ def _thread_lock_for(path: Path) -> threading.RLock:
     key = str(path.absolute())
     with _path_locks_guard:
         return _path_locks.setdefault(key, threading.RLock())
-
-
-def _lock_fd(fd: int) -> None:
-    if os.name == "nt":  # pragma: no cover - exercised by Windows packaging
-        import msvcrt
-
-        if os.fstat(fd).st_size == 0:
-            os.write(fd, b"\0")
-        os.lseek(fd, 0, os.SEEK_SET)
-        locking = vars(msvcrt)["locking"]
-        locking(fd, vars(msvcrt)["LK_LOCK"], 1)
-    else:
-        import fcntl
-
-        fcntl.flock(fd, fcntl.LOCK_EX)
-
-
-def _unlock_fd(fd: int) -> None:
-    if os.name == "nt":  # pragma: no cover - exercised by Windows packaging
-        import msvcrt
-
-        os.lseek(fd, 0, os.SEEK_SET)
-        locking = vars(msvcrt)["locking"]
-        locking(fd, vars(msvcrt)["LK_UNLCK"], 1)
-    else:
-        import fcntl
-
-        fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 class JsonStore:
@@ -144,11 +118,11 @@ class JsonStore:
                 fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, TRUST_FILE_MODE)
                 try:
                     os.chmod(lock_path, TRUST_FILE_MODE)
-                    _lock_fd(fd)
+                    lock_blocking(fd)
                     try:
                         yield
                     finally:
-                        _unlock_fd(fd)
+                        unlock(fd)
                 finally:
                     os.close(fd)
             except self.error_cls:

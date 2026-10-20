@@ -119,8 +119,9 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   device* and cannot discover each other — distinct devices need distinct
   `HSYNC_DEVICE_DIR`s.
 - **One process per synced directory**: `InstanceLock` (`identity.py`) refuses a
-  second process on the same local path (store races otherwise); the
-  flock lives outside the bucket and can never go stale.
+  second process on the same local path (store races otherwise); the advisory
+  lock (`_filelock.py`: `flock` on POSIX, `msvcrt` byte range on Windows) lives
+  outside the bucket and can never go stale.
 - **No protocol forking**: never redefine versions/constants/models locally;
   import from `hsync_common.*`. New wire fields land in common first.
 - **No wall-clock trust for direction**: reconciliation uses the causal
