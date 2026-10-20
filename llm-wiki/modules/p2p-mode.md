@@ -104,6 +104,13 @@ join/leave through `p2p_handler._emit_master_presence(count, peer_manager)`
 (called from the `set_clients_changed` callback): `total = 1 + max(alive peers,
 connected clients)`, `connected = min(1 + clients, total)`, so a two-node group
 reads `2/2` even before the mDNS peer entry catches up with the WS join.
+Symmetrically, the discovery loop is also blocked for the whole WebSocket run
+while a slave is connected (`p2p_handler._run_as_slave`), so the slave re-emits
+its own pair once the link is live through
+`p2p_handler._emit_slave_presence(peer_manager)`: `total = 1 + alive peers`,
+`connected = 1 + max(master advertised count, 1)` (a live WSS link proves the
+master is reachable). Without it a connected slave kept the `1/N` pair it
+emitted before connecting, since the master's TXT count lags the join.
 
 The wait is **event-driven**, not a fixed sleep: `PeerManager` keeps a
 generation counter + `threading.Condition` (`_change_generation` /

@@ -453,6 +453,7 @@ def _master_peer() -> MagicMock:
     master.cert_fingerprint = "a" * 40
     master.port = 9000
     master.address = "127.0.0.1"
+    master.connected = 0
     master.compression_enabled = False
     master.delta_enabled = False
     master.get_server_url.return_value = "https://127.0.0.1:9000"

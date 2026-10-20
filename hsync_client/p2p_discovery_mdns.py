@@ -45,7 +45,7 @@ from hsync_client.p2p_peers import (
     PeerManager,
     get_free_port,
 )
-from hsync_client.presence import record_presence
+from hsync_client.presence import record_presence, slave_connected_count
 
 HSYNC_SERVICE_TYPE = "_hsync._tcp.local."
 
@@ -811,13 +811,7 @@ class MdnsDiscovery(DiscoveryPlanState):
         elif self._peer_manager.get_master_cid() != self._cid:
             master_peer = self._peer_manager.get_master()
             if master_peer is not None:
-                published = master_peer.connected
-                # A live WebSocket to the master proves at least one slave (this
-                # node) is connected, even while the master's mDNS/TXT count is
-                # still converging right after a join.
-                if self._peer_manager.is_wss_connected(master_peer.cid):
-                    published = max(published, 1)
-                self._connected_clients = published
+                self._connected_clients = slave_connected_count(self._peer_manager, master_peer)
         connected = 1 + self._connected_clients
         # Guard the display invariant: a stale mDNS count can exceed the
         # currently-known total, so connected is clamped to total.

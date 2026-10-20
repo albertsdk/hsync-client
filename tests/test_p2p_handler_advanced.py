@@ -676,6 +676,7 @@ def _make_master(**overrides: Any) -> MagicMock:
     master.cert_fingerprint = "a" * 64
     master.port = 9000
     master.address = "192.168.1.1"
+    master.connected = 0
     master.compression_enabled = False
     master.delta_enabled = False
     master.peer_download_enabled = True
@@ -925,6 +926,33 @@ class TestRunAsSlave:
 
         assert result[0] is True
         mock_wsc.assert_called_once()
+
+    def test_continuous_connect_refreshes_presence(self, tmp_path, monkeypatch):
+        """A connecting slave re-emits its own presence: it must read 2/2."""
+        import hsync_client.p2p_handler as handler
+        from hsync_client.p2p_handler import _run_as_slave
+
+        config = _make_p2p_config(tmp_path, ONE_SHOT=False)
+        master = _make_master(connected=1)
+        peer_mgr = MagicMock()
+        peer_mgr.get_master.return_value = master
+        peer_mgr.get_alive_peers.return_value = [master]
+        peer_mgr.is_wss_connected.return_value = True
+
+        presence: list[tuple[int, int]] = []
+        monkeypatch.setattr(handler, "record_presence", lambda c, t: presence.append((c, t)))
+
+        with (
+            patch("hsync_client.p2p_handler.set_config"),
+            patch("hsync_client.p2p_handler._evaluate_master_pin", return_value=True),
+            patch("hsync_client.p2p_handler.sync", new=MagicMock()),
+            patch("hsync_client.p2p_handler.p2p_websocket_client", new=MagicMock()),
+            patch("hsync_client.p2p_handler._with_stdin_commands", new=MagicMock()),
+            patch("asyncio.run"),
+        ):
+            _run_as_slave(config, MagicMock(), False, peer_mgr)
+
+        assert presence == [(2, 2)]
 
     def test_continuous_websocket_error_is_swallowed(self, tmp_path):
         """A WebSocket failure is logged but still re-enters the discovery loop."""
@@ -1510,3 +1538,48 @@ class TestEmitMasterPresence:
         handler._emit_master_presence(1, self._manager([]))
 
         assert calls == [(2, 2)]
+
+
+class TestEmitSlavePresence:
+    """The slave re-emits the peers pair when its WebSocket link goes live."""
+
+    @staticmethod
+    def _manager(master, *, alive_peers: list, wss: bool) -> MagicMock:
+        manager = MagicMock()
+        manager.get_master.return_value = master
+        manager.get_alive_peers.return_value = alive_peers
+        manager.is_wss_connected.return_value = wss
+        return manager
+
+    def test_connect_reports_the_group_total(self, monkeypatch):
+        import hsync_client.p2p_handler as handler
+
+        calls: list[tuple[int, int]] = []
+        monkeypatch.setattr(handler, "record_presence", lambda c, t: calls.append((c, t)))
+
+        master = MagicMock(connected=1, cid="master")
+        handler._emit_slave_presence(self._manager(master, alive_peers=["master"], wss=True))
+
+        assert calls == [(2, 2)]
+
+    def test_live_link_beats_a_stale_master_count(self, monkeypatch):
+        """A live WSS link proves the master is reachable while its TXT says 0."""
+        import hsync_client.p2p_handler as handler
+
+        calls: list[tuple[int, int]] = []
+        monkeypatch.setattr(handler, "record_presence", lambda c, t: calls.append((c, t)))
+
+        master = MagicMock(connected=0, cid="master")
+        handler._emit_slave_presence(self._manager(master, alive_peers=["master"], wss=True))
+
+        assert calls == [(2, 2)]
+
+    def test_without_a_master_nothing_is_emitted(self, monkeypatch):
+        import hsync_client.p2p_handler as handler
+
+        calls: list[tuple[int, int]] = []
+        monkeypatch.setattr(handler, "record_presence", lambda c, t: calls.append((c, t)))
+
+        handler._emit_slave_presence(self._manager(None, alive_peers=[], wss=False))
+
+        assert calls == []

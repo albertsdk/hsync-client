@@ -21,10 +21,14 @@ A change is emitted once; re-emitting the current value (e.g. for the
 from __future__ import annotations
 
 import threading
+from typing import TYPE_CHECKING
 
 from hsync_client.events import UiEventName, emit_event
 
-__all__ = ["record_presence", "reemit_presence", "reset_presence"]
+if TYPE_CHECKING:
+    from hsync_client.p2p_peers import Peer, PeerManager
+
+__all__ = ["record_presence", "reemit_presence", "reset_presence", "slave_connected_count"]
 
 
 _current: tuple[int, int] | None = None
@@ -43,6 +47,21 @@ def record_presence(connected: int, total: int) -> bool:
         _current = (connected, total)
     emit_event(UiEventName.peers, connected=connected, total=total)
     return True
+
+
+def slave_connected_count(peer_manager: PeerManager, master: Peer) -> int:
+    """Client count a slave derives from its master link, floored at 1 when live.
+
+    A master advertises how many clients it serves (the mDNS TXT ``connected``
+    value); a live WebSocket link to it proves at least this node is connected
+    even before that advertised count converges. Shared by the discovery owner
+    (``MdnsDiscovery.emit_discovery_status``) and the slave's out-of-band refresh
+    (``p2p_handler._emit_slave_presence``) so the guard cannot drift.
+    """
+    published = master.connected
+    if peer_manager.is_wss_connected(master.cid):
+        published = max(published, 1)
+    return published
 
 
 def reemit_presence() -> bool:

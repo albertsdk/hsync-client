@@ -57,7 +57,7 @@ from hsync_client.p2p_server import P2PServer, P2PServerMode
 from hsync_client.p2p_sources import P2PSourceResolver, P2PSourceService
 from hsync_client.p2p_websocket import P2PWebSocketServer, SlaveCidRegistry, p2p_websocket_client
 from hsync_client.pinning import default_pin_store
-from hsync_client.presence import record_presence
+from hsync_client.presence import record_presence, slave_connected_count
 from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
 from hsync_client.ssl_utils import create_fingerprint_ssl_context, verify_peer_cert_fingerprint
 from hsync_client.sync import SyncCycleResult, log_initial_sync_start, sync
@@ -104,6 +104,24 @@ def _emit_master_presence(count: int, peer_manager: "PeerManager") -> None:
     """
     total = max(1 + len(peer_manager.get_alive_peers()), 1 + count)
     record_presence(min(1 + count, total), total)
+
+
+def _emit_slave_presence(peer_manager: "PeerManager") -> None:
+    """Re-emit the local ``peers`` pair when this slave links to the master.
+
+    The discovery loop that normally owns the ``peers`` event is blocked inside
+    the WebSocket run for the whole connection, so a slave joining a master must
+    refresh its own presence too; otherwise it keeps the ``1/N`` pair it emitted
+    before connecting (the master's mDNS TXT count lags the join). ``connected``
+    includes this node and a live WSS link proves the master is reachable, so a
+    two-node group reads ``2/2`` even before the master's TXT count converges.
+    """
+    master = peer_manager.get_master()
+    if master is None:
+        return
+    total = 1 + len(peer_manager.get_alive_peers())
+    connected = 1 + slave_connected_count(peer_manager, master)
+    record_presence(min(connected, total), total)
 
 
 # Upper bound on how long the bootnode plan may delay the master's [READY]
@@ -1074,6 +1092,10 @@ def _run_as_slave(
         # falsely demote it while the WebSocket link is healthy. Mark the master
         # live via the WebSocket channel for the whole connection lifetime.
         peer_manager.mark_peer_connected(master.cid)
+        # Refresh our own presence now the link is live: the discovery loop that
+        # owns the ``peers`` event is blocked for the whole WebSocket run, so
+        # without this a connected slave keeps the pre-connect ``1/N`` pair.
+        _emit_slave_presence(peer_manager)
         try:
             run(
                 _with_stdin_commands(
