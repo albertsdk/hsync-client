@@ -189,6 +189,26 @@ class TestInstanceLock:
         finally:
             lock_a.release()
 
+    def test_pid_write_failure_releases_the_lock(self, tmp_path, monkeypatch):
+        """A failed diagnostic write must not leave the lock held and orphaned."""
+        import hsync_client.identity as identity
+
+        target = tmp_path / "syncdir"
+        target.mkdir()
+
+        def _boom(_fd: int, _length: int) -> None:
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(identity.os, "ftruncate", _boom)
+        with pytest.raises(OSError):
+            InstanceLock.acquire(str(target))
+        assert InstanceLock._held == {}
+
+        # The OS lock really was released: restoring the write lets the same
+        # directory be acquired again (a leaked fd would still hold it).
+        monkeypatch.undo()
+        InstanceLock.acquire(str(target)).release()
+
     def test_release_all(self, tmp_path):
         target = tmp_path / "syncdir"
         target.mkdir()

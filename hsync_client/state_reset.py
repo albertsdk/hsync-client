@@ -62,12 +62,19 @@ def _canonical(path: str | Path) -> str:
 
 
 def _index_db() -> StateDb | None:
-    """Return the per-device folder index, or None when it does not exist.
+    """Return the folder-index DB the engine would consult, or None if absent.
 
-    Guarded by ``exists()`` because opening a missing DB would create it: a
-    maintenance command must never leave files behind.
+    With ``HSYNC_STATE_DB`` the engine resolves every folder from that single
+    file, so a marker-less re-anchor must search it too — looking at ``index.db``
+    would report "nothing to reset" for state that lives in the shared DB.
+    Guarded by ``exists()`` because opening a missing DB would create it.
     """
-    path = client_state_index_db_path(Path(default_device_dir()))
+    override = state_db_override()
+    path = (
+        Path(override)
+        if override is not None
+        else client_state_index_db_path(Path(default_device_dir()))
+    )
     return get_state_db(path) if path.exists() else None
 
 

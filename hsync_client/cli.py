@@ -1750,6 +1750,9 @@ def state_reset(
     # sink would echo the lock's DEBUG lines on stderr.
     setup_logging(quiet=True)
 
+    if not folder.strip():
+        typer.echo("--folder requires a directory path.", err=True)
+        raise typer.Exit(code=int(ExitCode.FATAL))
     target = Path(folder).expanduser()
     if not target.is_dir():
         typer.echo(f"Not a directory: {target}", err=True)

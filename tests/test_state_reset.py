@@ -168,6 +168,32 @@ class TestResetFolderState:
         assert db.count_versions(FOLDER_ID) == 0
         assert db.count_versions(OTHER_FOLDER_ID) == 1
 
+    def test_marker_less_folder_reanchors_through_the_shared_state_db(self, tmp_path, monkeypatch):
+        """With HSYNC_STATE_DB the engine resolves folders from that one file."""
+        shared = tmp_path / "shared.db"
+        monkeypatch.setenv("HSYNC_STATE_DB", str(shared))
+        folder = tmp_path / "bucket"
+        folder.mkdir()
+        db = StateDb(shared)
+        db.ensure_folder(FOLDER_ID, os.path.realpath(folder))
+        db.upsert_version(
+            FOLDER_ID,
+            "k",
+            base_hash="h",
+            version_id="v",
+            origin_cid=None,
+            ts=1.0,
+            vclock="{}",
+            corrected_mtime=0.0,
+        )
+
+        report = reset_folder_state(folder)
+
+        assert report.found is True
+        assert report.db_path == str(shared)
+        assert report.versions_deleted == 1
+        assert not (folder / ".hsyncfolder").exists()
+
     def test_is_idempotent(self, tmp_path):
         folder = tmp_path / "bucket"
         _write_marker(folder)
@@ -276,6 +302,12 @@ class TestStateResetCli:
         empty = self._run("--folder", str(folder))
         assert empty.exit_code == 0, empty.output
         assert "0 version entries and 0 deletion markers removed" in empty.output
+
+    def test_empty_folder_is_rejected(self):
+        result = self._run("--folder", "")
+
+        assert result.exit_code == 1
+        assert "requires a directory path" in result.output
 
     def test_missing_folder_exits_with_a_fatal_code(self, tmp_path):
         result = self._run("--folder", str(tmp_path / "nope"))

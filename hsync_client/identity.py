@@ -242,8 +242,15 @@ class InstanceLock:
             ) from None
 
         lock._fd = fd
-        os.ftruncate(fd, 0)
-        os.write(fd, f"{os.getpid()}\n".encode())
+        try:
+            os.ftruncate(fd, 0)
+            os.write(fd, f"{os.getpid()}\n".encode())
+        except OSError:
+            # Never leave a held lock without an owner to release it.
+            unlock(fd)
+            os.close(fd)
+            lock._fd = None
+            raise
         cls._held[key] = lock
         if not cls._atexit_registered:
             atexit.register(cls.release_all)
