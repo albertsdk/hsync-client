@@ -75,6 +75,7 @@ cross-network discovery on top of it.
 - [Developer Guide](internal/developer.md) — for contributors.
 - [Test Suite Guide](internal/testing.md) — test structure, fixtures, cross-project testing.
 - [Stress Test Plan](internal/stress-test-plan.md) — load/replication stress harness for p2p and server mode (design + resume checklist).
+- [Relay Discovery Plan](internal/relay-discovery-plan.md) — public third-party discovery services as a bootnode alternative: feasibility study, go/no-go gates and the measurement-harness spec (plan only, not implemented).
 
 ## Associated Ecosystem Components
 
