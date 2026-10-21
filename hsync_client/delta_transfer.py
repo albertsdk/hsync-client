@@ -420,7 +420,9 @@ def download_file_delta(file: File, ctx: DeltaDownloadContext) -> None:
             # peer-declared data_size), not the reconstructed file size: a delta
             # only transfers the changed blocks.
             reporter = ProgressReporter(
-                ctx.local_path, declared_size if isinstance(declared_size, int) else 0
+                ctx.local_path,
+                declared_size if isinstance(declared_size, int) else 0,
+                "download",
             )
             response.raw.decode_content = False
             try:

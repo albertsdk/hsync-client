@@ -24,7 +24,7 @@ class TestProgressReporter:
 
     def test_coalesces_updates_within_the_interval(self, captured):
         calls, clock = captured
-        rep = progress.ProgressReporter("/bucket/f.bin", 100)
+        rep = progress.ProgressReporter("/bucket/f.bin", 100, "download")
 
         clock[0] = 10.0
         rep.update(10)  # first update after the initial window → emitted
@@ -36,10 +36,11 @@ class TestProgressReporter:
         assert [kw["transferred"] for _name, kw in calls] == [10, 100]
         assert all(name == UiEventName.progress for name, _kw in calls)
         assert all(kw["total"] == 100 for _name, kw in calls)
+        assert all(kw["op"] == "download" for _name, kw in calls)
 
     def test_emits_again_after_the_interval(self, captured):
         calls, clock = captured
-        rep = progress.ProgressReporter("/bucket/f.bin", 1000)
+        rep = progress.ProgressReporter("/bucket/f.bin", 1000, "upload")
 
         clock[0] = 1.0
         rep.update(100)
@@ -47,10 +48,11 @@ class TestProgressReporter:
         rep.update(200)  # interval elapsed → emitted even though not finished
 
         assert [kw["transferred"] for _name, kw in calls] == [100, 200]
+        assert all(kw["op"] == "upload" for _name, kw in calls)
 
     def test_unknown_total_is_still_throttled(self, captured):
         calls, clock = captured
-        rep = progress.ProgressReporter("/bucket/f.bin", 0)
+        rep = progress.ProgressReporter("/bucket/f.bin", 0, "download")
 
         clock[0] = 5.0
         rep.update(10)

@@ -101,8 +101,10 @@ final update at completion) from the full-file download loops
 (`delta_transfer.py::download_file_delta`, measured against the peer-declared
 literal size) and the upload stream (`transfer.py::_build_multipart_streaming` /
 `transfer.py::_ThrottledFileReader`), so the desktop file panel can show transfer
-progress and ETA. The delta *upload* posts its payload as a single in-memory body,
-so it emits no intermediate progress.
+progress and ETA. Every event carries `op` (`download`/`upload`): a received file
+has no local row yet, so the desktop needs the direction to create one. The delta
+*upload* posts its payload as a single in-memory body, so it emits no intermediate
+progress.
 
 Completed transfers emit `UiEventName.transfer` (`op="download"`/`"upload"` with
 `size`), which the desktop renders as the session Sent/Received files and bytes.

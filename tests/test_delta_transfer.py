@@ -390,6 +390,7 @@ class TestDownloadDelta:
         assert progress_events[-1]["file"] == abs_path
         assert progress_events[-1]["total"] == len(literals)
         assert progress_events[-1]["transferred"] == len(literals)
+        assert progress_events[-1]["op"] == "download"
 
     def test_delta_false_is_recoverable(self, client_config, tmp_path, monkeypatch):
         base = _base_bytes()

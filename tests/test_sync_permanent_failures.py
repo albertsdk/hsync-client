@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from hsync_common.models.file import File
 
+from hsync_client.events import UiEventName
 from hsync_client.exceptions import PermanentDownloadError
 from hsync_client.sync import (
     _is_permanently_failed,
@@ -81,6 +82,40 @@ class TestUpdateFilePermanentFailure:
         # File.from_dict(data, bucket, strip_dir_prefix=True) -> relpath.
         f = File.from_dict(data, str(tmp_path))
         assert _is_permanently_failed(f)
+
+    def test_the_failure_event_carries_direction_and_message(self, tmp_path):
+        """The desktop builds its error row from op + message (reason is sync_paused only)."""
+        data = {
+            "filepath": "big.dat",
+            "name": "big.dat",
+            "path": "",
+            "mtime": 1000,
+            "ctime": 1000,
+            "size": 100,
+            "sha256sum": "deadbeef",
+            "permissions": "644",
+        }
+
+        def _boom(_file, **kwargs):
+            raise PermanentDownloadError("exceeds max download size")
+
+        with (
+            patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch("hsync_client.transfer.download_file", side_effect=_boom),
+            patch("hsync_client.sync.emit_event") as emit,
+        ):
+            update_file(data)
+
+        failures = [
+            call
+            for call in emit.call_args_list
+            if call.args and call.args[0] == UiEventName.transfer_failed
+        ]
+        assert failures
+        payload = failures[-1].kwargs
+        assert payload["op"] == "download"
+        assert payload["message"] == "exceeds max download size"
+        assert "reason" not in payload
 
     def test_already_failed_file_is_not_redownloaded(self, tmp_path):
         """A second update_file for the same path+hash does not call download."""

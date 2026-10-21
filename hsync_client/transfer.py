@@ -982,7 +982,7 @@ def _download_from_source_attempt(
         # exact zero-byte file. MAX_INBOUND_SIZE is enforced above as a policy
         # ceiling; it must never turn size=0 into an "unknown" multi-GB cap.
         write_cap = file.size
-        reporter = ProgressReporter(full_save_path, write_cap)
+        reporter = ProgressReporter(full_save_path, write_cap, "download")
         with _open_partial_no_follow(partial_file_path, write_mode) as output:
             if is_compressed:
                 response.raw.decode_content = False
@@ -2105,7 +2105,7 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
 
                 with open(compressed_tmp, "rb") as fh:
                     ul_bw_limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
-                    reporter = ProgressReporter(file.filepath, compressed_size)
+                    reporter = ProgressReporter(file.filepath, compressed_size, "upload")
                     reader = _ThrottledFileReader(fh, ul_bw_limit, on_progress=reporter.update)
                     files = {"file": (Path(file.filepath).name, reader)}
                     response = post(
@@ -2126,7 +2126,7 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
             ul_bw_limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
 
             boundary = uuid4().hex
-            reporter = ProgressReporter(file.filepath, file.size or 0)
+            reporter = ProgressReporter(file.filepath, file.size or 0, "upload")
             body, content_type = _build_multipart_streaming(
                 file.filepath,
                 dict(data),

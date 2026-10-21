@@ -223,7 +223,7 @@ def _record_permanent_download_failure(file: File, e: PermanentDownloadError) ->
     """Record a permanent download failure: skip-set entry + log + UI event."""
     _permanent_download_failures.add(_permanent_skip_key(file))
     log.warning(f'Permanent download failure for "{file.filepath}" (skipped for this cycle): {e}')
-    emit_event(UiEventName.transfer_failed, file=file.filepath, reason=str(e))
+    emit_event(UiEventName.transfer_failed, op="download", file=file.filepath, message=str(e))
 
 
 # =============================================================================
