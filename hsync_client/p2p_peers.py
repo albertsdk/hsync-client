@@ -246,6 +246,7 @@ class PeerManager:
         self._duplicate_identity_seen: set[str] = set()
         self._master_cid: str | None = None
         self._local_server_ready = False
+        self._master_candidacy = True
         self._on_master_change: Callable[[Peer | None], None] | None = None
         # Generation + Condition: waiters observe a monotonic counter so a
         # change that arrives between wait-return and the next wait is not
@@ -268,6 +269,27 @@ class PeerManager:
             self._local_server_ready = ready
             self._elect_master()
             self._signal_change()
+
+    def set_master_candidacy(self, eligible: bool) -> None:
+        """Include or exclude the local node from the master election.
+
+        A node parked in continuous dry-run (waiting for the desktop's
+        ``PREVIEW``/``SYNC`` commands) cannot serve, so it must not be elected:
+        a peer that elected it would wait forever for its ``server_ready``. The
+        handler drops candidacy while it waits and restores it when the dry run
+        ends.
+        """
+        with self._lock:
+            if self._master_candidacy == eligible:
+                return
+            self._master_candidacy = eligible
+            self._elect_master()
+            self._signal_change()
+
+    @property
+    def master_candidacy(self) -> bool:
+        """Whether the local node may be elected master."""
+        return self._master_candidacy
 
     @property
     def local_cid(self) -> str:
@@ -625,7 +647,7 @@ class PeerManager:
                 startup_time=self._startup_time,
                 sync_direction=self._sync_direction,
                 server_ready=self._local_server_ready,
-                never_master=self._never_master,
+                never_master=self._never_master or not self._master_candidacy,
             )
         ]
         candidates.extend(

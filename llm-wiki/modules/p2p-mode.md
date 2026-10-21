@@ -63,6 +63,14 @@ records advertise `protocol`, `cert_fp`, `sync_direction`, and `peer_download`.
 `peer_download` means the node implements the contract; whether its HTTPS seeder
 is reachable *now* is not a discovery fact at all — it is carried by the
 authenticated WSS session and its capacity advertisement (ADR-0030).
+
+The local node's candidacy can also be dropped at runtime
+(`p2p_peers.py::PeerManager.set_master_candidacy`): a client parked in
+continuous dry-run, waiting for the desktop's `PREVIEW`/`SYNC` commands, cannot
+serve, so it is excluded from the election — a peer that elected it would wait
+forever for its `server_ready`. `p2p_handler.py::_run_as_slave` drops candidacy
+around the `_run_stdin_wait` call and restores it when the dry run ends.
+
 Protocol-mismatched peers are ignored.
 
 **Combined mDNS + bootnode (`HybridDiscovery`).** With a bootnode configured

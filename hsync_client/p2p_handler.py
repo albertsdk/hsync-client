@@ -1033,15 +1033,23 @@ def _run_as_slave(
             _run_preview(log)
             if one_shot:
                 return False, exit_code
-            # In continuous mode with dry-run, wait for SYNC/PREVIEW commands
+            # In continuous mode with dry-run, wait for SYNC/PREVIEW commands.
+            # This node is parked here and cannot serve, so it must not be
+            # elected master: a peer that elected it would wait forever for its
+            # ``server_ready``. Candidacy comes back when the dry run ends (SYNC
+            # or stdin EOF) and the node returns to the discovery loop.
             log.info("Dry-run mode: waiting for commands (stdin) or Ctrl+C to exit...")
-            run(
-                _run_stdin_wait(
-                    log,
-                    inventory_observer=inventory_publisher,
-                    source_resolver=source_resolver,
+            peer_manager.set_master_candidacy(False)
+            try:
+                run(
+                    _run_stdin_wait(
+                        log,
+                        inventory_observer=inventory_publisher,
+                        source_resolver=source_resolver,
+                    )
                 )
-            )
+            finally:
+                peer_manager.set_master_candidacy(True)
         else:
             # Perform initial sync (the master is the transport coordinator)
             try:

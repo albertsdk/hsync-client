@@ -68,6 +68,33 @@ class TestPeerManager:
         pm.remove_peer("temp")
         assert pm.is_master() is True
 
+    def test_master_candidacy_can_be_dropped_and_restored(self):
+        """A dry-run node (parked waiting for commands) is not a candidate."""
+        pm = PeerManager(
+            local_cid="zzz999", bucket="photos", prefer_master=True, startup_time=100.0
+        )
+        pm.add_peer(
+            Peer(
+                cid="aaa111",
+                bucket="photos",
+                address="192.168.1.100",
+                port=9753,
+                startup_time=200.0,
+            )
+        )
+        assert pm.is_master() is True
+
+        pm.set_master_candidacy(False)
+
+        assert pm.master_candidacy is False
+        assert pm.is_master() is False
+        assert pm.get_master_cid() == "aaa111"
+
+        pm.set_master_candidacy(True)
+
+        assert pm.master_candidacy is True
+        assert pm.is_master() is True
+
     def test_wait_for_change_returns_immediately_when_signalled(self):
         """A peer added before the wait makes wait_for_change return at once."""
         pm = PeerManager(local_cid="local123", bucket="photos")
