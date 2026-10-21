@@ -95,7 +95,7 @@ the UI-event channel: an `AuthenticationError` is emitted as
 any other failure stays a generic `UiEventName.error`.
 
 In-flight transfers emit throttled `UiEventName.progress` events
-(`progress.py::ProgressReporter`, coalesced to at most one per 0.5 s plus a
+(`progress.py::ProgressReporter`, coalesced to at most one per 0.25 s plus a
 final update at completion) from the full-file download loops
 (`transfer.py::_download_from_source_attempt`), the delta download payload stream
 (`delta_transfer.py::download_file_delta`, measured against the peer-declared
@@ -105,6 +105,13 @@ progress and ETA. Every event carries `op` (`download`/`upload`): a received fil
 has no local row yet, so the desktop needs the direction to create one. The delta
 *upload* posts its payload as a single in-memory body, so it emits no intermediate
 progress.
+
+Bandwidth caps (`MAX_BANDWIDTH_UPLOAD`/`MAX_BANDWIDTH_DOWNLOAD`) are applied by
+`get_throttle_delay` (`utils/throttle.py::get_throttle_delay`) from
+`_ThrottledFileReader`/`_CountingReader` and `p2p_server._throttle_upload`. It
+paces every chunk on a per-direction timeline, so the sustained rate is the cap
+from the first byte (an idle period grants no burst) and the budget is shared by
+all transfers running in that direction instead of one limit each.
 
 Completed transfers emit `UiEventName.transfer` (`op="download"`/`"upload"` with
 `size`), which the desktop renders as the session Sent/Received files and bytes.

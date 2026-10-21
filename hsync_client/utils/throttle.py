@@ -1,13 +1,15 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""Bandwidth parsing and token-bucket throttling."""
+"""Bandwidth parsing and schedule-based rate limiting."""
 
 import time
 
-# Track bandwidth tokens for rate limiting
-_bandwidth_tokens: dict[str, float] = {}
-_bandwidth_last_check: dict[str, float] = {}
+# Per-direction time by which the bytes already handed out finish draining at
+# the configured rate. One entry per transfer direction ("upload"/"download"),
+# so concurrent transfers of the same direction share the budget instead of
+# each getting the full limit.
+_bandwidth_due: dict[str, float] = {}
 
 
 def parse_bandwidth(value: str | int | None) -> int | None:
@@ -74,11 +76,10 @@ def reset_bandwidth_throttle() -> None:
     """
     Reset bandwidth throttle state.
 
-    Should be called between sync sessions to avoid stale token
-    bucket state carrying over from previous operations.
+    Should be called between sync sessions so a stale schedule does not
+    delay the first chunks of the next one.
     """
-    _bandwidth_tokens.clear()
-    _bandwidth_last_check.clear()
+    _bandwidth_due.clear()
 
 
 def get_throttle_delay(
@@ -87,9 +88,14 @@ def get_throttle_delay(
     transfer_key: str,
 ) -> float:
     """
-    Calculate delay needed to throttle transfer to bandwidth limit.
+    Calculate how long the caller must wait so the stream keeps to the rate.
 
-    Uses token bucket algorithm for smooth rate limiting.
+    The limiter schedules each chunk on a per-direction timeline instead of
+    banking credit in a token bucket: chunk *n* is released ``n / limit``
+    seconds after chunk *n-1*, so the sustained rate is the configured one from
+    the very first byte. Idle time grants no credit (``max(now, due)``), which
+    is what removes the 2x burst the old bucket allowed after a pause or at the
+    start of a transfer.
 
     Args:
         bytes_transferred: Number of bytes just transferred.
@@ -97,32 +103,17 @@ def get_throttle_delay(
         transfer_key: Unique key for this transfer (e.g., "upload" or "download").
 
     Returns:
-        Delay in seconds to wait before next chunk (0 if no throttling needed).
+        Delay in seconds to wait before the next chunk (0 if no delay needed).
     """
-    if bandwidth_limit is None or bandwidth_limit <= 0:
+    if bandwidth_limit is None or bandwidth_limit <= 0 or bytes_transferred <= 0:
         return 0.0
 
-    current_time = time.monotonic()
-
-    # Initialize with full bucket so the first transfer is not penalised
-    if transfer_key not in _bandwidth_tokens:
-        _bandwidth_tokens[transfer_key] = float(bandwidth_limit)
-        _bandwidth_last_check[transfer_key] = current_time
-
-    elapsed = current_time - _bandwidth_last_check[transfer_key]
-    tokens_to_add = elapsed * bandwidth_limit
-    _bandwidth_tokens[transfer_key] += tokens_to_add
-    _bandwidth_last_check[transfer_key] = current_time
-
-    # Cap tokens at 2x bandwidth to allow burst
-    max_tokens = bandwidth_limit * 2
-    _bandwidth_tokens[transfer_key] = min(_bandwidth_tokens[transfer_key], max_tokens)
-
-    if _bandwidth_tokens[transfer_key] >= bytes_transferred:
-        _bandwidth_tokens[transfer_key] -= bytes_transferred
-        return 0.0
-    tokens_needed = bytes_transferred - _bandwidth_tokens[transfer_key]
-    delay = tokens_needed / bandwidth_limit
-    # The caller waits for `delay`, so the drained bucket refills meanwhile.
-    _bandwidth_tokens[transfer_key] = 0.0
-    return delay
+    now = time.monotonic()
+    # A transfer that starts (or resumes) after an idle period starts from now:
+    # the bytes already drained, so there is no backlog to pay off either.
+    start = max(now, _bandwidth_due.get(transfer_key, now))
+    budget = bytes_transferred / bandwidth_limit
+    _bandwidth_due[transfer_key] = start + budget
+    # Adding the two terms instead of subtracting the sums keeps the no-backlog
+    # case exact (``now + budget - now`` loses precision).
+    return (start - now) + budget

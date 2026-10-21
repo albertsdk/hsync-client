@@ -106,10 +106,11 @@ Bandwidth is set on the CLI only (no `HSYNC_UPLOAD_LIMIT` /
 | `--limit-upload` | Upload cap (e.g. `1MB`, `500KB`); `0` = unlimited | unlimited |
 | `--limit-download` | Download cap (e.g. `1MB`, `500KB`); `0` = unlimited | unlimited |
 
-The caps are sustained rates enforced with a token bucket: a transfer may burst
-up to roughly twice the cap for its first second, then settles on it. The cap
-is applied to the bytes on the wire (compressed uploads count their
-compressed size).
+The caps are enforced from the first byte: chunks are paced so the sustained
+rate equals the configured one, and an idle period grants no extra burst. The
+cap applies to the bytes on the wire (compressed uploads count their
+compressed size), and each direction has one budget shared by all transfers
+running in that direction. Sizes are binary: `1MB` is 1 MiB/s (1048576 B/s).
 
 ## Ignore Files & Patterns
 

@@ -79,8 +79,7 @@ from hsync_client.utils.resources import (
     warn_if_open_fds_high,
 )
 from hsync_client.utils.throttle import (
-    _bandwidth_last_check,
-    _bandwidth_tokens,
+    _bandwidth_due,
     get_throttle_delay,
     parse_bandwidth,
     reset_bandwidth_throttle,
@@ -146,8 +145,7 @@ __all__ = [
     "warn_if_inotify_watch_limit_low",
     "warn_if_open_fds_high",
     # throttle
-    "_bandwidth_last_check",
-    "_bandwidth_tokens",
+    "_bandwidth_due",
     "get_throttle_delay",
     "parse_bandwidth",
     "reset_bandwidth_throttle",

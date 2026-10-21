@@ -292,11 +292,11 @@ class TestUtilsCoverageGaps:
         reset_bandwidth_throttle()
         assert get_throttle_delay(100, 0, "test") == 0.0
 
-    def test_get_throttle_delay_enough_tokens(self):
+    def test_get_throttle_delay_first_chunk_pays_its_own_budget(self):
         reset_bandwidth_throttle()
-        # First call initializes with full bucket
+        # No free burst: 100 B at 1000 B/s is 0.1 s, from the first chunk on.
         delay = get_throttle_delay(100, 1000, "upload")
-        assert delay == 0.0
+        assert delay == 0.1
 
     def test_get_throttle_delay_needs_delay(self):
         reset_bandwidth_throttle()

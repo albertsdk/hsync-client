@@ -22,7 +22,9 @@ from time import monotonic
 
 from hsync_client.events import UiEventName, emit_event
 
-PROGRESS_MIN_INTERVAL = 0.5
+# 0.25 s: the desktop derives the transfer rate from consecutive samples, so a
+# coarser tick would smooth away the real curve of short transfers.
+PROGRESS_MIN_INTERVAL = 0.25
 
 
 class ProgressReporter:
