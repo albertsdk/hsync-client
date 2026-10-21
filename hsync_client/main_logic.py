@@ -20,7 +20,7 @@ from hsync_common.ignore import IgnoreMatcher, set_active_matcher
 from hsync_common.protocol.handshake import PROTOCOL_VERSION_REST
 from hsync_common.protocol.pairing import fingerprint_matches
 from hsync_common.protocol.tls_trust import TrustAction, TrustPolicy, evaluate_tls_trust
-from hsync_common.runtime import detect_container, is_tty_interactive, runtime_summary
+from hsync_common.runtime import ColorMode, detect_container, is_tty_interactive, runtime_summary
 
 from hsync_client.config import (
     CONFIG,
@@ -748,7 +748,7 @@ def run_sync(
     debug: bool,
     quiet: bool,
     logfile: str | None,
-    no_color: bool,
+    color: ColorMode,
     p2p_require_pairing: bool = False,
     api_key_fd: int | None = None,
     p2p_key_fd: int | None = None,
@@ -811,7 +811,7 @@ def run_sync(
         debug=debug,
         quiet=quiet,
         logfile=logfile if logfile and is_valid_logfile(logfile) else None,
-        no_color=no_color,
+        color=color,
     )
 
     # ── PyInstaller workaround: prevent corrupt netrc module crash ──────

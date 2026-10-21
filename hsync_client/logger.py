@@ -37,7 +37,7 @@ from hsync_common.logger import (
     build_record_formatter,
     get_rotation_config,
 )
-from hsync_common.runtime import color_output_enabled
+from hsync_common.runtime import ColorMode, color_output_enabled
 from hsync_common.text import escape_loguru_markup
 from loguru import logger
 
@@ -171,7 +171,7 @@ def setup_logging(
     debug: bool = False,
     quiet: bool = False,
     logfile: str | None = None,
-    no_color: bool = False,
+    color: ColorMode = ColorMode.AUTO,
 ) -> "Logger":
     """
     Configure and return the HSYNC client logger.
@@ -191,7 +191,8 @@ def setup_logging(
         debug: Enable DEBUG level logging.
         quiet: Suppress all output.
         logfile: Optional path to log file (enables rotation).
-        no_color: Disable colored output.
+        color: How to colorize stdout: auto (TTY only, honouring NO_COLOR),
+            always (forced, e.g. when the Desktop captures the pipe) or never.
 
     Returns:
         Configured loguru logger instance.
@@ -230,11 +231,8 @@ def setup_logging(
             enqueue=True,
         )
     else:
-        # Console handler - with colors (unless disabled)
-        # Colors are enabled only when:
-        # 1. --no-color flag is not set and NO_COLOR env is unset
-        # 2. Output is a TTY (terminal)
-        use_colors = color_output_enabled(no_color=no_color)
+        # Console handler - colors follow --color (auto = TTY + NO_COLOR rules).
+        use_colors = color_output_enabled(color)
         format_func = _format_record_colored if use_colors else _format_record_plain
 
         logger.add(

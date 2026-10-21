@@ -53,7 +53,7 @@ CLI-only (no environment variables).
 | `-o, --log-file` | Log file path (enables file logging) | — (stdout only) |
 | `-q, --quiet` | Suppress non-error output | `false` |
 | `-v, --verbose` | Verbose output | `false` |
-| `--no-color` | Disable colored output | `false` |
+| `--color` | Colorize log output: `auto` (terminal only, honoring `NO_COLOR`), `always`, `never` | `auto` |
 | `--help-symbols` | Show output symbols legend and exit | — |
 
 There is no `--log-level` flag. Verbosity is `-v` / `-q` only.

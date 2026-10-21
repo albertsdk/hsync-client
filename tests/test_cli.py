@@ -182,12 +182,16 @@ class TestTyperCli:
         assert call_kwargs["verify_ssl"] is False
 
     @patch("hsync_client.main_logic.run_sync")
-    def test_no_color_flag(self, mock_run_sync):
-        """CLI accepts --no-color flag."""
-        result = runner.invoke(app, ["server", "-b", "test", "test.example.com", "--no-color"])
+    def test_color_flag(self, mock_run_sync):
+        """CLI accepts --color=never (and the other color modes)."""
+        from hsync_common.runtime import ColorMode
+
+        result = runner.invoke(
+            app, ["server", "-b", "test", "test.example.com", "--color", "never"]
+        )
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["no_color"] is True
+        assert call_kwargs["color"] is ColorMode.NEVER
 
     @patch("hsync_client.main_logic.run_sync")
     def test_help_symbols_flag(self, mock_run_sync):

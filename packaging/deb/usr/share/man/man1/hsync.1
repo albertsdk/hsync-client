@@ -434,8 +434,10 @@ Write output to
 .I FILE
 instead of the terminal.
 .TP
-.B \-\-no\-color
-Disable colored output.
+.BR \-\-color =\fIMODE\fP
+Colorize log output. \fIMODE\fP is \fBauto\fP (default: only on a terminal,
+and not when \fBNO_COLOR\fP is set), \fBalways\fP (force colors, e.g. when
+the output is captured by the Desktop) or \fBnever\fP.
 .
 .\" --- General ---
 .SS General (both subcommands)

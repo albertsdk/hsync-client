@@ -237,10 +237,12 @@ class TestSetupLogging:
         finally:
             os.unlink(logfile)
 
-    def test_setup_no_color(self):
+    def test_setup_color_never(self):
         """Test logging setup with colors disabled."""
+        from hsync_common.runtime import ColorMode
+
         # Should not raise
-        setup_logging(no_color=True)
+        setup_logging(color=ColorMode.NEVER)
 
     def test_stdlib_root_level_follows_the_resolved_level(self):
         """The stdlib root level must match what the sinks actually display.

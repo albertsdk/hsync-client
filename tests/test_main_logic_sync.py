@@ -9,7 +9,7 @@ from typing import Unpack, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
-from hsync_common.runtime import ContainerInfo
+from hsync_common.runtime import ColorMode, ContainerInfo
 from typing_extensions import TypedDict
 
 from hsync_client.config import CONFIG, HsyncConfig, get_env_settings
@@ -433,7 +433,7 @@ class _RunSyncKwargs(TypedDict, total=False):
     debug: bool
     quiet: bool
     logfile: str | None
-    no_color: bool
+    color: ColorMode
     api_key_fd: int | None
     p2p_key_fd: int | None
     p2p_allow_unauthenticated: bool
@@ -472,7 +472,7 @@ def _default_run_sync_kwargs(
         "debug": False,
         "quiet": False,
         "logfile": None,
-        "no_color": True,
+        "color": ColorMode.NEVER,
     }
     defaults.update(overrides)
     return defaults

@@ -22,6 +22,7 @@ import typer.main
 from hsync_common.endpoint import HostPort, build_https_url, format_authority, parse_host_port
 from hsync_common.protocol.pairing import parse_fingerprint
 from hsync_common.protocol.tls_trust import TrustPolicy
+from hsync_common.runtime import ColorMode
 
 from hsync_client.bootnode_trust import BootnodeTrustStore
 from hsync_client.constants import (
@@ -647,11 +648,11 @@ LogFileOpt = Annotated[
         rich_help_panel="Output",
     ),
 ]
-NoColorOpt = Annotated[
-    bool,
+ColorOpt = Annotated[
+    ColorMode,
     typer.Option(
-        "--no-color",
-        help="Disable colored output.",
+        "--color",
+        help="Colorize log output: auto (only on a terminal), always, never.",
         rich_help_panel="Output",
     ),
 ]
@@ -1097,7 +1098,7 @@ def p2p(
     verbose: VerboseOpt = False,
     quiet: QuietOpt = False,
     logfile: LogFileOpt = None,
-    no_color: NoColorOpt = False,
+    color: ColorOpt = ColorMode.AUTO,
     allow_deletions: AllowDeletionsOpt = False,
     env_file: EnvFileOpt = None,
 ) -> None:
@@ -1248,7 +1249,7 @@ def p2p(
         debug=verbose,
         quiet=quiet,
         logfile=logfile,
-        no_color=no_color,
+        color=color,
         allow_deletions=allow_deletions,
         min_free_disk_space=min_free_disk_space,
         max_inbound_size=max_inbound_size,
@@ -1556,7 +1557,7 @@ def server(
     verbose: VerboseOpt = False,
     quiet: QuietOpt = False,
     logfile: LogFileOpt = None,
-    no_color: NoColorOpt = False,
+    color: ColorOpt = ColorMode.AUTO,
     allow_deletions: AllowDeletionsOpt = False,
     env_file: EnvFileOpt = None,
 ) -> None:
@@ -1684,7 +1685,7 @@ def server(
         debug=verbose,
         quiet=quiet,
         logfile=logfile,
-        no_color=no_color,
+        color=color,
         allow_deletions=allow_deletions,
         min_free_disk_space=min_free_disk_space,
         max_inbound_size=max_inbound_size,
