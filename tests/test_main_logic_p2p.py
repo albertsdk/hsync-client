@@ -265,11 +265,46 @@ class TestRunLanMode:
             patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
             patch("hsync_client.p2p_handler.set_config"),
             patch("hsync_client.p2p_handler._evaluate_master_pin", return_value=True),
+            patch("hsync_client.p2p_handler._master_endpoint_reachable", return_value=True),
             patch("hsync_client.p2p_handler._run_preview") as mock_preview,
         ):
             run_p2p_mode(config, mock_log)
 
         mock_preview.assert_called_once_with(mock_log)
+
+    def test_slave_dryrun_skips_the_preview_for_an_unreachable_master(self, tmp_path):
+        """A dead master's stale record must not produce a doomed preview."""
+        config = _make_p2p_config(tmp_path, DRYRUN=True)
+        mock_log = MagicMock()
+
+        master_peer = MagicMock()
+        master_peer.cid = "master-cid"
+        master_peer.server_ready = True
+        master_peer.use_https = True
+        master_peer.cert_fingerprint = "abcdef1234567890" * 4
+        master_peer.compression_enabled = False
+        master_peer.get_server_url.return_value = "https://192.168.1.1:9000"
+
+        mock_peer_mgr = MagicMock()
+        mock_peer_mgr.get_alive_peers.return_value = [master_peer]
+        mock_peer_mgr.is_master.return_value = False
+        mock_peer_mgr.get_master.return_value = master_peer
+
+        mock_p2p_sync = MagicMock()
+        mock_p2p_sync.start.return_value = mock_peer_mgr
+        mock_p2p_sync.port = 9000
+
+        with (
+            patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
+            patch("hsync_client.p2p_handler.set_config"),
+            patch("hsync_client.p2p_handler._evaluate_master_pin", return_value=True),
+            patch("hsync_client.p2p_handler._master_endpoint_reachable", return_value=False),
+            patch("hsync_client.p2p_handler._run_preview") as mock_preview,
+        ):
+            run_p2p_mode(config, mock_log)
+
+        mock_preview.assert_not_called()
+        mock_peer_mgr.remove_peer.assert_called_once_with("master-cid")
 
     def test_keyboard_interrupt_cleans_up(self, tmp_path):
         """KeyboardInterrupt stops all servers and p2p_sync."""

@@ -164,6 +164,16 @@ class TestLease:
         assert validate_boot_frame(frame) is not None
         assert plan._observed == ObservedAddress(host="203.0.113.9", port=51000)
 
+    def test_withdrawn_master_candidacy_is_advertised(self):
+        plan, _ = make_plan(prefer_master=True)
+
+        plan.set_master_eligibility(False)
+        plan._register(publish_endpoint=False)
+        _kind, frame = plan._client.calls[-1]
+
+        assert frame["prefer_master"] is False
+        assert frame["never_master"] is True
+
     def test_publish_endpoint_maps_upnp_and_sends_candidates(self):
         plan, fake_upnp = make_plan(upnp_enabled=True)
         plan.update_endpoint_ready(True)

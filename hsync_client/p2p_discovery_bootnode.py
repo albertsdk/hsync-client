@@ -316,6 +316,15 @@ class BootnodeDiscovery(DiscoveryPlanState):
         self._connected_clients = count
         self._wake.set()
 
+    def refresh_election_advertisement(self) -> None:
+        """Re-publish the election flags (``prefer_master``/``never_master``).
+
+        The lease loop rebuilds the register frame from the live flags, so a
+        generation bump is enough to re-announce them.
+        """
+        self._advert_generation += 1
+        self._wake.set()
+
     # -- Lease loop ------------------------------------------------------------
 
     def _lease_loop(self) -> None:

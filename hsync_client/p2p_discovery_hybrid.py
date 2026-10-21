@@ -115,6 +115,16 @@ class HybridDiscovery(DiscoveryPlanState):
         self._mdns.set_connected_clients(count)
         self._bootnode.set_connected_clients(count)
 
+    def set_master_eligibility(self, eligible: bool) -> None:
+        """Withdraw or restore this node's master candidacy on every source.
+
+        The combined plan advertises nothing itself: each source keeps its own
+        election flags and both share one PeerManager, so delegating keeps the
+        local election and the announcements in step.
+        """
+        self._mdns.set_master_eligibility(eligible)
+        self._bootnode.set_master_eligibility(eligible)
+
     def set_connected_clients_provider(self, provider: Callable[[], int] | None) -> None:
         """Install the connected-client provider on every source."""
         super().set_connected_clients_provider(provider)

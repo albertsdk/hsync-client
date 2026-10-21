@@ -189,6 +189,19 @@ class TestHybridFanOut:
         mdns.set_connected_clients_provider.assert_called_once_with(provider)
         bootnode.set_connected_clients_provider.assert_called_once_with(provider)
 
+    def test_master_eligibility_withdrawal_reaches_both_plans(self):
+        hybrid, mdns, bootnode, _ = _hybrid()
+
+        hybrid.set_master_eligibility(False)
+
+        mdns.set_master_eligibility.assert_called_once_with(False)
+        bootnode.set_master_eligibility.assert_called_once_with(False)
+
+        hybrid.set_master_eligibility(True)
+
+        mdns.set_master_eligibility.assert_called_with(True)
+        bootnode.set_master_eligibility.assert_called_with(True)
+
     def test_endpoint_published_requires_every_source(self):
         hybrid, mdns, bootnode, _ = _hybrid()
         mdns.endpoint_published.return_value = True

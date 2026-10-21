@@ -347,6 +347,26 @@ class TestRegisterService:
         finally:
             lan.stop()
 
+    def test_master_eligibility_withdrawn_and_restored(self):
+        """A withdrawn candidacy flips the advertised election flags."""
+        lan, zc = self._started_p2p(prefer_master=True)
+        try:
+            lan.register_service()
+            props = dict(zc.register_service.call_args.args[0].properties)
+            assert props[b"prefer_master"] == b"true"
+
+            lan.set_master_eligibility(False)
+            props = dict(zc.update_service.call_args.args[0].properties)
+            assert b"prefer_master" not in props
+            assert props[b"never_master"] == b"true"
+
+            lan.set_master_eligibility(True)
+            props = dict(zc.update_service.call_args.args[0].properties)
+            assert props[b"prefer_master"] == b"true"
+            assert b"never_master" not in props
+        finally:
+            lan.stop()
+
     def test_heartbeat_increments_and_reannounces(self):
         """The liveness counter increments and re-announces via update_service."""
         from hsync_client.p2p_discovery_mdns import MdnsDiscovery

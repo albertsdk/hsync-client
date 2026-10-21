@@ -507,6 +507,19 @@ class MdnsDiscovery(DiscoveryPlanState):
         self._refresh_service(server_ready=False, endpoint_ready=ready)
         log.info(f"Updated mDNS service: seeder endpoint={'ready' if ready else 'down'}")
 
+    def refresh_election_advertisement(self) -> None:
+        """Re-announce the election flags (``prefer_master``/``never_master``).
+
+        Called when the node withdraws or restores its master candidacy at
+        runtime (a node parked in continuous dry-run). The readiness state is
+        preserved so the update only changes the election flags.
+        """
+        self._refresh_service(server_ready=self._server_ready)
+        log.info(
+            "Updated mDNS service: election flags "
+            f"(prefer_master={self._prefer_master}, never_master={self._never_master})"
+        )
+
     def _refresh_service(self, server_ready: bool, endpoint_ready: bool | None = None) -> None:
         """Update the mDNS service's TXT record in place (no goodbye).
 

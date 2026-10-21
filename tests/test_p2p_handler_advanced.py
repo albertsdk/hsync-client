@@ -1081,6 +1081,7 @@ class TestRunAsSlave:
         with (
             patch("hsync_client.p2p_handler.set_config"),
             patch("hsync_client.p2p_handler._evaluate_master_pin", return_value=True),
+            patch("hsync_client.p2p_handler._master_endpoint_reachable", return_value=True),
             patch("hsync_client.p2p_handler._run_preview") as mock_preview,
             patch("hsync_client.p2p_handler._run_stdin_wait", new=MagicMock()),
             patch("hsync_client.p2p_handler.p2p_websocket_client", new=MagicMock()),

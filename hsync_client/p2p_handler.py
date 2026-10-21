@@ -142,6 +142,26 @@ _WS_CLOSE_GRACE_S = 5.0
 MASTER_CANDIDATE_PROBE_TIMEOUT_S = 3.0
 
 
+def _master_endpoint_reachable(host: str, port: int, timeout: float | None = None) -> bool:
+    """Return True when a TCP connection to the master's data endpoint succeeds.
+
+    A slave that just lost its WebSocket can still hold a "fresh" peer record
+    for a master that has exited (``reconcile_stale_peers`` deliberately keeps
+    a fresh record so a local link blip never triggers a needless takeover). The
+    automatic dry-run preview would then spend its whole retry budget against
+    the dead endpoint and surface a spurious error; one short connect answers
+    the question cheaply.
+    """
+    try:
+        with socket.create_connection(
+            (host, int(port)),
+            timeout=timeout or MASTER_CANDIDATE_PROBE_TIMEOUT_S,
+        ):
+            return True
+    except (OSError, TypeError, ValueError):
+        return False
+
+
 def _start_slave_seeder(
     config: "HsyncConfig",
     p2p_sync: DiscoveryPlan,
@@ -565,6 +585,7 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
                     wait_indefinitely_for_peer=wait_indefinitely_for_peer,
                     inventory_publisher=inventory_publisher,
                     notified=notified,
+                    plan=p2p_sync,
                 )
                 last_exit = exit_code
                 if not should_continue:
@@ -948,6 +969,7 @@ def _run_as_slave(
     wait_indefinitely_for_peer: bool = False,
     inventory_publisher: P2PInventoryPublisher | None = None,
     notified: dict[tuple[str, str], str] | None = None,
+    plan: DiscoveryPlan | None = None,
 ) -> tuple[bool, int]:
     """Run as client (connect to master).
 
@@ -1029,17 +1051,32 @@ def _run_as_slave(
 
         exit_code = int(ExitCode.OK)
         if config["DRYRUN"]:
+            # The master may have exited just before this iteration: its peer
+            # record can still look fresh, and the automatic preview would run
+            # against a dead endpoint, burning the full retry budget and
+            # surfacing a spurious error notification. Probe the data endpoint
+            # first; when it fails, demote the master and go back to discovery
+            # so the election can pick a reachable node.
+            if not _master_endpoint_reachable(master_host, master_port):
+                log.warning(
+                    f"Master {master.cid} at {master_host}:{master_port} is "
+                    "unreachable; skipping the preview and re-entering discovery."
+                )
+                peer_manager.remove_peer(master.cid)
+                return (not one_shot) or wait_indefinitely_for_peer, int(ExitCode.OK)
             # In dry-run mode, only show preview without syncing
             _run_preview(log)
             if one_shot:
                 return False, exit_code
             # In continuous mode with dry-run, wait for SYNC/PREVIEW commands.
             # This node is parked here and cannot serve, so it must not be
-            # elected master: a peer that elected it would wait forever for its
-            # ``server_ready``. Candidacy comes back when the dry run ends (SYNC
-            # or stdin EOF) and the node returns to the discovery loop.
+            # elected master: it withdraws its candidacy both locally and on the
+            # wire (a peer that elected it would wait forever for its
+            # ``server_ready``). It is restored when the dry run ends (SYNC or
+            # stdin EOF) and the node returns to the discovery loop.
             log.info("Dry-run mode: waiting for commands (stdin) or Ctrl+C to exit...")
-            peer_manager.set_master_candidacy(False)
+            if plan is not None:
+                plan.set_master_eligibility(False)
             try:
                 run(
                     _run_stdin_wait(
@@ -1049,7 +1086,8 @@ def _run_as_slave(
                     )
                 )
             finally:
-                peer_manager.set_master_candidacy(True)
+                if plan is not None:
+                    plan.set_master_eligibility(True)
         else:
             # Perform initial sync (the master is the transport coordinator)
             try:

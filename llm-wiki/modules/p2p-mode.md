@@ -68,8 +68,22 @@ The local node's candidacy can also be dropped at runtime
 (`p2p_peers.py::PeerManager.set_master_candidacy`): a client parked in
 continuous dry-run, waiting for the desktop's `PREVIEW`/`SYNC` commands, cannot
 serve, so it is excluded from the election — a peer that elected it would wait
-forever for its `server_ready`. `p2p_handler.py::_run_as_slave` drops candidacy
-around the `_run_stdin_wait` call and restores it when the dry run ends.
+forever for its `server_ready`. `p2p_handler.py::_run_as_slave` calls
+`p2p_discovery.py::DiscoveryPlanState.set_master_eligibility(False)` around the
+`_run_stdin_wait` call and restores it when the dry run ends. The withdrawal
+must reach the **wire**, not only the local election: the plan re-announces
+`never_master` and no `prefer_master`
+(`MdnsDiscovery.refresh_election_advertisement` re-registers the TXT,
+`BootnodeDiscovery` bumps its advert generation, `HybridDiscovery` delegates to
+both), because peers only rank the advertisement they receive.
+
+The automatic dry-run preview first probes the master's data endpoint
+(`p2p_handler.py::_master_endpoint_reachable`, a short TCP connect). A master
+that just exited can still look "fresh" to `reconcile_stale_peers`, and
+previewing against its dead endpoint would burn the whole retry budget and
+surface a spurious error. When the probe fails, the slave demotes that peer
+(`PeerManager.remove_peer`) and returns to the discovery loop, so the election
+picks a reachable node.
 
 Protocol-mismatched peers are ignored.
 

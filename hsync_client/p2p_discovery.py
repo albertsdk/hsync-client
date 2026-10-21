@@ -116,6 +116,19 @@ class DiscoveryPlan(Protocol):
         """Publish that the local master server is no longer ready."""
         ...
 
+    def set_master_eligibility(self, eligible: bool) -> None:
+        """Advertise or withdraw this node's master candidacy at runtime.
+
+        A node parked in continuous dry-run cannot serve, so it withdraws its
+        candidacy (``never_master`` on the wire, no ``prefer_master``) and peers
+        stop electing it. ``eligible=True`` restores the configured flags.
+        """
+        ...
+
+    def refresh_election_advertisement(self) -> None:
+        """Re-announce the election flags on every discovery source."""
+        ...
+
     def set_connected_clients(self, count: int) -> None:
         """Publish the number of currently connected peer clients."""
         ...
@@ -148,6 +161,10 @@ class DiscoveryPlanState:
     _group: str | None
     _prefer_master: bool
     _never_master: bool
+    # Configured election flags, kept so a runtime withdrawal (a node parked in
+    # continuous dry-run, see set_master_eligibility) can be undone.
+    _configured_prefer_master: bool
+    _configured_never_master: bool
     _startup_time: float
     _sync_direction: str
     _cert_fingerprint: str | None
@@ -179,6 +196,8 @@ class DiscoveryPlanState:
         self._group = group
         self._use_https = use_https
         self._cert_fingerprint = cert_fingerprint
+        self._configured_prefer_master = prefer_master
+        self._configured_never_master = never_master
         self._prefer_master = prefer_master
         self._never_master = never_master
         self._startup_time = startup_time if startup_time > 0 else time.time()
@@ -218,6 +237,26 @@ class DiscoveryPlanState:
             local_address=self._local_ip or get_local_ip(),
             peer_timeout=self._peer_timeout,
         )
+
+    def set_master_eligibility(self, eligible: bool) -> None:
+        """Advertise or withdraw this node's master candidacy at runtime.
+
+        A node parked in continuous dry-run (waiting for the desktop's
+        ``PREVIEW``/``SYNC`` commands) cannot serve, so while it waits it
+        advertises ``never_master`` and drops ``prefer_master``: peers must not
+        elect it and then wait forever for its ``server_ready``. The local
+        election drops the node too. ``eligible=True`` restores the configured
+        flags and candidacy.
+        """
+        self._prefer_master = self._configured_prefer_master if eligible else False
+        self._never_master = self._configured_never_master if eligible else True
+        if self._peer_manager is not None:
+            self._peer_manager.set_master_candidacy(eligible)
+        self.refresh_election_advertisement()
+
+    def refresh_election_advertisement(self) -> None:
+        """Re-announce the election flags on every discovery source."""
+        raise NotImplementedError
 
 
 def build_discovery_plan(
