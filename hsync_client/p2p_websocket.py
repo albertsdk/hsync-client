@@ -1154,6 +1154,35 @@ class P2PMasterFileEventHandler(BaseFileEventHandler):
         )
         self._ws_server.broadcast_sync(event_dict)
 
+    def _record_local_edit(self, file: File, src_path: str, label: str) -> None:
+        """Persist a local edit before broadcasting (anti-aliasing invariant)."""
+        try:
+            if peek_inbound_origin(src_path) is None and file.sha256sum:
+                from hsync_client.sync_state import flush, note_local_edit
+
+                note_local_edit(src_path, file.sha256sum)
+                flush()
+        except Exception as e:  # pragma: no cover - defensive
+            log.debug(f"Could not self-record {label} for {src_path}: {e}")
+
+    def _modified_event(self, file: File) -> Event:
+        """Build the transport's ``modified`` event from its CONFIG binding."""
+        return Event(
+            CONFIG["CID"],
+            CONFIG["LOCAL_BUCKET"],
+            CONFIG["REMOTE_BUCKET"],
+            EventName.modified,
+            file,
+        )
+
+    def _publish_modified(self, file: File, src_path: str, label: str = "local edit") -> None:
+        """Self-record a local edit and broadcast the corresponding event."""
+        self._record_local_edit(file, src_path, label)
+        self._broadcast_event(
+            self._modified_event(file),
+            src_abs_path=src_path,
+        )
+
     def _on_permissions_changed(self, file: File, src_path: str) -> None:
         """Broadcast a ``modified`` event so slaves converge the new mode.
 
@@ -1162,24 +1191,7 @@ class P2PMasterFileEventHandler(BaseFileEventHandler):
         permissions locally (see ``update_file``), without re-downloading
         bytes.
         """
-        try:
-            if peek_inbound_origin(src_path) is None and file.sha256sum:
-                from hsync_client.sync_state import flush, note_local_edit
-
-                note_local_edit(src_path, file.sha256sum)
-                flush()
-        except Exception as e:  # pragma: no cover - defensive
-            log.debug(f"Could not self-record local edit for {src_path}: {e}")
-        self._broadcast_event(
-            Event(
-                CONFIG["CID"],
-                CONFIG["LOCAL_BUCKET"],
-                CONFIG["REMOTE_BUCKET"],
-                EventName.modified,
-                file,
-            ),
-            src_abs_path=src_path,
-        )
+        self._publish_modified(file, src_path, "local edit")
 
     def _on_metadata_changed(self, file: File, src_path: str) -> None:
         """Broadcast a ``modified`` event so slaves converge the new mtime.
@@ -1188,24 +1200,7 @@ class P2PMasterFileEventHandler(BaseFileEventHandler):
         the advertised corrected mtime locally without re-downloading bytes
         (see ``update_file``).
         """
-        try:
-            if peek_inbound_origin(src_path) is None and file.sha256sum:
-                from hsync_client.sync_state import flush, note_local_edit
-
-                note_local_edit(src_path, file.sha256sum)
-                flush()
-        except Exception as e:  # pragma: no cover - defensive
-            log.debug(f"Could not self-record metadata edit for {src_path}: {e}")
-        self._broadcast_event(
-            Event(
-                CONFIG["CID"],
-                CONFIG["LOCAL_BUCKET"],
-                CONFIG["REMOTE_BUCKET"],
-                EventName.modified,
-                file,
-            ),
-            src_abs_path=src_path,
-        )
+        self._publish_modified(file, src_path, "metadata edit")
 
     def _on_file_ready(
         self,
@@ -1246,24 +1241,7 @@ class P2PMasterFileEventHandler(BaseFileEventHandler):
         # of a peer via the HTTP API) are skipped — their clock was already
         # registered with the merged history at upload acceptance (ADR-0022 §5), and a
         # tick here would mis-attribute the edit to the master.
-        try:
-            if peek_inbound_origin(src_path) is None and file.sha256sum:
-                from hsync_client.sync_state import flush, note_local_edit
-
-                note_local_edit(src_path, file.sha256sum)
-                flush()
-        except Exception as e:  # pragma: no cover - defensive
-            log.debug(f"Could not self-record local edit for {src_path}: {e}")
-        self._broadcast_event(
-            Event(
-                CONFIG["CID"],
-                CONFIG["LOCAL_BUCKET"],
-                CONFIG["REMOTE_BUCKET"],
-                EventName.modified,
-                file,
-            ),
-            src_abs_path=src_path,
-        )
+        self._publish_modified(file, src_path, "local edit")
 
     def _on_deleted(self, src_path: str, is_directory: bool) -> None:
         """Record a deletion marker so offline peers do not resurrect the path.

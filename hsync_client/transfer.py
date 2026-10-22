@@ -1923,6 +1923,17 @@ def _handle_upload_response(file: File, response, t0: float) -> None:
         )
 
 
+def _post_streaming_body(uri: str, headers: dict[str, str], body: Any) -> Any:
+    """POST a streamed multipart body with the transfer SSL/timeout policy."""
+    return post(
+        uri,
+        headers=headers,
+        data=body,
+        verify=get_ssl_verify(),
+        timeout=_upload_timeout(),
+    )
+
+
 def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
     """
     Perform a single upload attempt with resume support.
@@ -2099,13 +2110,7 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
                     on_progress=reporter.update,
                 )
                 headers["Content-Type"] = content_type
-                response = post(
-                    uri,
-                    headers=headers,
-                    data=body,
-                    verify=get_ssl_verify(),
-                    timeout=_upload_timeout(),
-                )
+                response = _post_streaming_body(uri, headers, body)
                 if response.status_code == 202:
                     # The peer stored only part of the compressed frame. A
                     # compressed upload is not resumable (the server refuses
@@ -2147,13 +2152,7 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
             # here as well would coexist with the chunked framing requests adds
             # for generators, yielding a request h11/uvicorn rejects.
             headers["Content-Type"] = content_type
-            response = post(
-                uri,
-                headers=headers,
-                data=body,
-                verify=get_ssl_verify(),
-                timeout=_upload_timeout(),
-            )
+            response = _post_streaming_body(uri, headers, body)
             if response.status_code == 202:
                 # Partial upload received - file still incomplete
                 result = response.json()

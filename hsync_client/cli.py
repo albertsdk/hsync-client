@@ -1294,6 +1294,52 @@ _trust_root.add_typer(_trust_peer_app, name="peer")
 _trust_root.add_typer(_trust_server_app, name="server")
 
 
+_TrustStore = BootnodeTrustStore | ServerTrustStore
+
+
+def _trust_list(store: _TrustStore, none_message: str, as_json: bool) -> None:
+    """Print a known-hosts store, as text or JSON."""
+    entries = store.entries()
+    if as_json:
+        typer.echo(json.dumps(entries, indent=2, sort_keys=True))
+        return
+    if not entries:
+        typer.echo(none_message)
+        return
+    for entry in entries:
+        typer.echo(
+            f"{format_authority(entry['host'], entry['port'])} {entry['fingerprint']} "
+            f"(source={entry['source']}, first_seen={entry['first_seen']})"
+        )
+
+
+def _trust_show(store: _TrustStore, host: str, port: int) -> None:
+    """Print one pinned fingerprint or exit non-zero when absent."""
+    fingerprint = store.get(host, port)
+    if fingerprint is None:
+        typer.echo(f"{format_authority(host, port)} is not in the known-hosts store.", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(f"{format_authority(host, port)} {fingerprint}")
+
+
+def _trust_add(store: _TrustStore, host: str, port: int, fingerprint: str) -> None:
+    """Validate and pin a fingerprint."""
+    normalized = parse_fingerprint(fingerprint)
+    if normalized is None:
+        typer.echo("Not a valid sha256 fingerprint (expected 64 hex digits).", err=True)
+        raise typer.Exit(code=1)
+    store.set(host, port, normalized, source="cli")
+    typer.echo(f"Pinned {format_authority(host, port)} {normalized} in {store.path}.")
+
+
+def _trust_remove(store: _TrustStore, host: str, port: int) -> None:
+    """Forget a pinned authority, reporting whether it was present."""
+    if store.remove(host, port):
+        typer.echo(f"Removed {format_authority(host, port)} from the known-hosts store.")
+    else:
+        typer.echo(f"{format_authority(host, port)} was not in the known-hosts store.")
+
+
 def _trust_host_port(hostname: str | None, port: int | None) -> tuple[str, int]:
     """Resolve ``hostname``/``--port`` for the trust subcommands (host required)."""
     if hostname is None:
@@ -1309,31 +1355,14 @@ def bootnode_trust_list(
     as_json: bool = typer.Option(False, "--json", help="Emit entries as JSON."),
 ) -> None:
     """List the pinned bootnode fingerprints (like ``known_hosts``)."""
-    entries = BootnodeTrustStore().entries()
-    if as_json:
-        typer.echo(json.dumps(entries, indent=2, sort_keys=True))
-        return
-    if not entries:
-        typer.echo("No bootnodes are trusted yet.")
-        return
-    for entry in entries:
-        typer.echo(
-            f"{format_authority(entry['host'], entry['port'])} {entry['fingerprint']} "
-            f"(source={entry['source']}, first_seen={entry['first_seen']})"
-        )
+    _trust_list(BootnodeTrustStore(), "No bootnodes are trusted yet.", as_json)
 
 
 @_trust_bootnode_app.command("show")
 def bootnode_trust_show(hostname: HostArg, port: BootnodePortOpt = None) -> None:
     """Show the pinned fingerprint for one bootnode."""
     host, resolved_port = _trust_host_port(hostname, port)
-    fingerprint = BootnodeTrustStore().get(host, resolved_port)
-    if fingerprint is None:
-        typer.echo(
-            f"{format_authority(host, resolved_port)} is not in the known-hosts store.", err=True
-        )
-        raise typer.Exit(code=1)
-    typer.echo(f"{format_authority(host, resolved_port)} {fingerprint}")
+    _trust_show(BootnodeTrustStore(), host, resolved_port)
 
 
 @_trust_bootnode_app.command("add")
@@ -1344,23 +1373,14 @@ def bootnode_trust_add(
 ) -> None:
     """Pin a bootnode fingerprint (verify it out of band first)."""
     host, resolved_port = _trust_host_port(hostname, port)
-    normalized = parse_fingerprint(fingerprint)
-    if normalized is None:
-        typer.echo("Not a valid sha256 fingerprint (expected 64 hex digits).", err=True)
-        raise typer.Exit(code=1)
-    store = BootnodeTrustStore()
-    store.set(host, resolved_port, normalized, source="cli")
-    typer.echo(f"Pinned {format_authority(host, resolved_port)} {normalized} in {store.path}.")
+    _trust_add(BootnodeTrustStore(), host, resolved_port, fingerprint)
 
 
 @_trust_bootnode_app.command("remove")
 def bootnode_trust_remove(hostname: HostArg, port: BootnodePortOpt = None) -> None:
     """Forget a pinned bootnode (like ``ssh-keygen -R``)."""
     host, resolved_port = _trust_host_port(hostname, port)
-    if BootnodeTrustStore().remove(host, resolved_port):
-        typer.echo(f"Removed {format_authority(host, resolved_port)} from the known-hosts store.")
-    else:
-        typer.echo(f"{format_authority(host, resolved_port)} was not in the known-hosts store.")
+    _trust_remove(BootnodeTrustStore(), host, resolved_port)
 
 
 @_trust_bootnode_app.command("fingerprint")
@@ -1449,31 +1469,14 @@ def server_trust_list(
     as_json: bool = typer.Option(False, "--json", help="Emit entries as JSON."),
 ) -> None:
     """List the pinned sync-server fingerprints (like ``known_hosts``)."""
-    entries = ServerTrustStore().entries()
-    if as_json:
-        typer.echo(json.dumps(entries, indent=2, sort_keys=True))
-        return
-    if not entries:
-        typer.echo("No servers are trusted yet.")
-        return
-    for entry in entries:
-        typer.echo(
-            f"{format_authority(entry['host'], entry['port'])} {entry['fingerprint']} "
-            f"(source={entry['source']}, first_seen={entry['first_seen']})"
-        )
+    _trust_list(ServerTrustStore(), "No servers are trusted yet.", as_json)
 
 
 @_trust_server_app.command("show")
 def server_trust_show(hostname: HostArg, port: ServerPortOpt = None) -> None:
     """Show the pinned fingerprint for one server."""
     host, resolved_port = _server_trust_host_port(hostname, port)
-    fingerprint = ServerTrustStore().get(host, resolved_port)
-    if fingerprint is None:
-        typer.echo(
-            f"{format_authority(host, resolved_port)} is not in the known-hosts store.", err=True
-        )
-        raise typer.Exit(code=1)
-    typer.echo(f"{format_authority(host, resolved_port)} {fingerprint}")
+    _trust_show(ServerTrustStore(), host, resolved_port)
 
 
 @_trust_server_app.command("add")
@@ -1484,23 +1487,14 @@ def server_trust_add(
 ) -> None:
     """Pin a sync-server fingerprint (verify it out of band first)."""
     host, resolved_port = _server_trust_host_port(hostname, port)
-    normalized = parse_fingerprint(fingerprint)
-    if normalized is None:
-        typer.echo("Not a valid sha256 fingerprint (expected 64 hex digits).", err=True)
-        raise typer.Exit(code=1)
-    store = ServerTrustStore()
-    store.set(host, resolved_port, normalized, source="cli")
-    typer.echo(f"Pinned {format_authority(host, resolved_port)} {normalized} in {store.path}.")
+    _trust_add(ServerTrustStore(), host, resolved_port, fingerprint)
 
 
 @_trust_server_app.command("remove")
 def server_trust_remove(hostname: HostArg, port: ServerPortOpt = None) -> None:
     """Forget a pinned sync server (like ``ssh-keygen -R``)."""
     host, resolved_port = _server_trust_host_port(hostname, port)
-    if ServerTrustStore().remove(host, resolved_port):
-        typer.echo(f"Removed {format_authority(host, resolved_port)} from the known-hosts store.")
-    else:
-        typer.echo(f"{format_authority(host, resolved_port)} was not in the known-hosts store.")
+    _trust_remove(ServerTrustStore(), host, resolved_port)
 
 
 @_trust_server_app.command("fingerprint")

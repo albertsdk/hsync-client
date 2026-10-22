@@ -1926,6 +1926,30 @@ class P2PEndpointMixin(_HTTPTransportBase):
             },
         )
 
+    def _parse_multipart_request(self) -> tuple[int, bytes] | None:
+        """Validate the streaming-multipart headers shared by upload endpoints.
+
+        Returns ``(content_length, boundary)`` or ``None`` after sending the
+        appropriate 400 response, so callers can simply return.
+        """
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type:
+            self._send_error_response(HTTP_BAD_REQUEST, "Expected multipart/form-data")
+            return None
+        boundary = _extract_multipart_boundary(content_type)
+        if boundary is None:
+            self._send_error_response(HTTP_BAD_REQUEST, "Missing multipart boundary")
+            return None
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            self._send_error_response(HTTP_BAD_REQUEST, "Invalid Content-Length")
+            return None
+        if content_length <= 0:
+            self._send_error_response(HTTP_BAD_REQUEST, "No content")
+            return None
+        return content_length, boundary
+
     def _handle_upload(self) -> None:
         """Handle file upload endpoint (streaming).
 
@@ -1939,25 +1963,10 @@ class P2PEndpointMixin(_HTTPTransportBase):
         must match the declared offset. Compressed uploads are not resumable.
         """
 
-        content_type = self.headers.get("Content-Type", "")
-
-        if "multipart/form-data" not in content_type:
-            self._send_error_response(HTTP_BAD_REQUEST, "Expected multipart/form-data")
+        parsed = self._parse_multipart_request()
+        if parsed is None:
             return
-
-        boundary = _extract_multipart_boundary(content_type)
-        if boundary is None:
-            self._send_error_response(HTTP_BAD_REQUEST, "Missing multipart boundary")
-            return
-
-        try:
-            content_length = int(self.headers.get("Content-Length", 0))
-        except ValueError:
-            self._send_error_response(HTTP_BAD_REQUEST, "Invalid Content-Length")
-            return
-        if content_length <= 0:
-            self._send_error_response(HTTP_BAD_REQUEST, "No content")
-            return
+        content_length, boundary = parsed
 
         from hsync_client.utils import set_permissions
 
@@ -2328,23 +2337,10 @@ class P2PEndpointMixin(_HTTPTransportBase):
         RAM); the JSON instructions travel in the ``metadata`` form field and
         are applied by :func:`hsync_client.p2p_delta.handle_delta_apply`.
         """
-        content_type = self.headers.get("Content-Type", "")
-        if "multipart/form-data" not in content_type:
-            self._send_error_response(HTTP_BAD_REQUEST, "Expected multipart/form-data")
+        parsed = self._parse_multipart_request()
+        if parsed is None:
             return
-        boundary = _extract_multipart_boundary(content_type)
-        if boundary is None:
-            self._send_error_response(HTTP_BAD_REQUEST, "Missing multipart boundary")
-            return
-
-        try:
-            content_length = int(self.headers.get("Content-Length", 0))
-        except ValueError:
-            self._send_error_response(HTTP_BAD_REQUEST, "Invalid Content-Length")
-            return
-        if content_length <= 0:
-            self._send_error_response(HTTP_BAD_REQUEST, "No content")
-            return
+        content_length, boundary = parsed
 
         from hsync_common.constants import DELTA_MAX_LITERAL_SIZE
 

@@ -221,6 +221,22 @@ def _unmark(ctx: EventDispatchContext, path: str) -> None:
         ctx.unmark_receiving(path)
 
 
+async def _update_file_with_echo(ctx: EventDispatchContext, src: dict, target: str | None) -> None:
+    """Run ``update_file`` with echo-suppression bracketing and thread offload."""
+    if target:
+        _mark(ctx, target)
+    try:
+        await asyncio.to_thread(
+            update_file,
+            src,
+            inventory_observer=ctx.inventory_observer,
+            source_resolver=ctx.source_resolver,
+        )
+    finally:
+        if target:
+            _unmark(ctx, target)
+
+
 def _spawn_file_download(
     ctx: EventDispatchContext,
     src: dict,
@@ -239,18 +255,7 @@ def _spawn_file_download(
     """
 
     async def _job() -> None:
-        if target:
-            _mark(ctx, target)
-        try:
-            await asyncio.to_thread(
-                update_file,
-                src,
-                inventory_observer=ctx.inventory_observer,
-                source_resolver=ctx.source_resolver,
-            )
-        finally:
-            if target:
-                _unmark(ctx, target)
+        await _update_file_with_echo(ctx, src, target)
 
     previous = ctx.file_download_paths.get(path_key)
     semaphore = ctx.file_download_semaphore
@@ -427,17 +432,7 @@ async def _apply_add_or_modify(
                 path_key=target or str(src.get("filepath") or ""),
             )
             return
-        _mark(ctx, target) if target else None
-        try:
-            await asyncio.to_thread(
-                update_file,
-                src,
-                inventory_observer=ctx.inventory_observer,
-                source_resolver=ctx.source_resolver,
-            )
-        finally:
-            if target:
-                _unmark(ctx, target)
+        await _update_file_with_echo(ctx, src, target)
 
 
 def _resolve_local_path(src: dict, key: str) -> str | None:
