@@ -619,7 +619,10 @@ class TestStdinCommandHandlers:
 
         assert cfg["DRYRUN"] is False
         mock_sync.assert_awaited_once_with(
-            p2p_mode=False, inventory_observer=None, source_resolver=None
+            p2p_mode=False,
+            inventory_observer=None,
+            source_resolver=None,
+            reconcile_dirs=True,
         )
         handler_inst.stop.assert_called_once()
 

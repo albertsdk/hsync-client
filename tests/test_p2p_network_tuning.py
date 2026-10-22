@@ -227,8 +227,12 @@ class TestSlaveTuningRefreshOrdering:
 
         monkeypatch.setenv("HSYNC_P2P_PIN_FILE", str(tmp_path / "pins.json"))
         config = _make_config(tmp_path, P2P_KEY="secret")
+        master = _make_master()
+        master.connected = 0  # presence arithmetic reads an int, not a mock
         peer_mgr = MagicMock()
-        peer_mgr.get_master.return_value = _make_master()
+        peer_mgr.get_master.return_value = master
+        peer_mgr.get_alive_peers.return_value = [master]
+        peer_mgr.is_wss_connected.return_value = True
 
         calls: list[str] = []
 

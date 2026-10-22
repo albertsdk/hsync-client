@@ -336,6 +336,11 @@ def log_initial_sync_start() -> None:
     "Initial sync complete" message.
     """
     log.info(f"{ActionLabel.INITIAL_SYNC} Initial sync started")
+    # The status bar must not keep saying "Connecting…" while the first full
+    # reconcile is already transferring data: the realtime channel only opens
+    # afterwards. "syncing" is replaced by "connected" when the WebSocket is up
+    # (or by the server link status in remote mode).
+    emit_event(UiEventName.status, status="syncing")
 
 
 _last_folder_size: tuple[int, int] | None = None
@@ -409,6 +414,7 @@ async def sync(
     p2p_mode: bool = False,
     inventory_observer: InventoryObserver | None = None,
     source_resolver: P2PSourceResolver | None = None,
+    reconcile_dirs: bool = False,
 ) -> SyncCycleResult:
     """
     Perform a full synchronization between local and remote files.
@@ -424,6 +430,10 @@ async def sync(
             Local-only files are uploaded to the master in bidirectional and
             upload-only modes; they are deleted only in download-only mode
             (slave mirrors the master).
+        reconcile_dirs: On the first cycle of a process, also create the
+            directories that exist on only one side (see
+            ``reconcile_directories``). Create-only; later changes travel as
+            live events.
 
     Returns:
         The cycle outcome. Fatal failures (authentication, network, server
@@ -755,7 +765,10 @@ async def sync(
         # including the modes of directories whose live event was dropped
         # while the WSS was down during a burst.
         if _dir_converge_enabled(p2p_mode):
-            converge_directory_permissions(get_dirs_remote())
+            remote_dirs = get_dirs_remote()
+            if reconcile_dirs and remote_dirs is not None:
+                reconcile_directories(remote_dirs, p2p_mode=p2p_mode)
+            converge_directory_permissions(remote_dirs or [])
 
         # Persist refreshed merge bases (in-sync refresh, retain, clear-on-delete,
         # and every _record_synced_base() from completed transfers) in a single
@@ -769,7 +782,11 @@ async def sync(
 
         incremental_vacuum_if_due()
 
-        log.info("Sync completed successfully")
+        failed = transfer_counters["failed"]
+        if failed:
+            log.warning(f"Sync completed with {failed} failed transfer(s)")
+        else:
+            log.info("Sync completed successfully")
         emit_event(UiEventName.sync_complete)
         from hsync_client.utils import _write_ready_file as _signal_ready
 
@@ -777,7 +794,7 @@ async def sync(
         return SyncCycleResult(
             completed=True,
             transfers=len(downloads) + len(uploads),
-            failed=transfer_counters["failed"],
+            failed=failed,
             conflicts=conflicts,
             guard_tripped=guard_tripped,
         )
@@ -1592,13 +1609,14 @@ def _dir_converge_enabled(p2p_mode: bool) -> bool:
     return p2p_mode or direction == "download-only"
 
 
-def get_dirs_remote() -> list[dict]:
+def get_dirs_remote() -> list[dict] | None:
     """Fetch the remote directory metadata (path + permissions) listing.
 
-    Best-effort by design: a peer that does not expose the endpoint (older
-    version) or any non-200 response yields an empty list, so the
-    directory-permission converge is simply skipped. Mirrors the tombstone
-    listing availability contract.
+    Returns ``None`` when the listing is unavailable (peer without the endpoint
+    or a non-200 response), and an empty list for a genuinely empty bucket. The
+    distinction matters to the directory reconcile: pushing the whole local
+    tree to a peer that cannot accept ``/dirs`` would be pointless noise.
+    Mirrors the tombstone listing availability contract.
     """
     uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/dirs"
     try:
@@ -1610,12 +1628,12 @@ def get_dirs_remote() -> list[dict]:
         )
     except RequestException as e:
         log.debug(f"Dirs listing unavailable: {e}")
-        return []
+        return None
     if response.status_code != 200:
         log.debug(f"Dirs listing unavailable (status {response.status_code})")
-        return []
+        return None
     data = response.json()
-    return data if isinstance(data, list) else []
+    return data if isinstance(data, list) else None
 
 
 def converge_directory_permissions(remote_dirs: list[dict]) -> None:
@@ -1658,6 +1676,90 @@ def converge_directory_permissions(remote_dirs: list[dict]) -> None:
             log.debug('Permission-only converge (remote): "{}" ({})', local_dir.path, sanitized)
         except OSError as e:
             log.warning(f'Could not set directory permissions for "{local_dir.path}": {e}')
+
+
+def reconcile_directories(remote_dirs: list[dict], *, p2p_mode: bool) -> None:
+    """Create the directory entries that exist on only one side (create-only).
+
+    Directories have no content hash and no tombstones, so a periodic
+    bidirectional creation could resurrect one that a peer deleted while the
+    other side still holds it. This runs only on the first cycle of a process
+    (``sync(reconcile_dirs=True)``): it closes the startup gap — directories
+    that existed before the realtime channel connected — while later changes
+    keep travelling as live events. Nothing is ever deleted here.
+
+    * remote → local: create every safe remote directory missing locally
+      (skipped in ``upload-only``, where this node takes nothing back).
+    * local → remote: POST every safe local directory missing remotely to the
+      peer's ``/dirs`` endpoint (P2P only; skipped in ``download-only``).
+    """
+    direction = CONFIG.get("SYNC_DIRECTION", "bidirectional")
+    local_bucket = CONFIG["LOCAL_BUCKET"]
+    local_root = Path(local_bucket)
+
+    remote_paths: set[str] = set()
+    for info in remote_dirs:
+        if not isinstance(info, dict):
+            continue
+        rel = info.get("path")
+        if not isinstance(rel, str):
+            continue
+        rel = rel.replace("\\", "/").strip("/")
+        if not rel:
+            continue
+        if validate_remote_relpath(rel) is None:
+            log.warning(f"{ActionLabel.SECURITY} Ignoring unsafe remote directory entry: {rel!r}")
+            continue
+        remote_paths.add(rel)
+        if direction == "upload-only":
+            continue
+        full = local_root / rel
+        if is_hidden_dir(str(full)):
+            continue
+        if full.is_dir():
+            continue
+        try:
+            full.mkdir(parents=True, exist_ok=True)
+            log.debug(f'Reconciled directory (remote): "{full}"')
+        except OSError as e:
+            log.warning(f'Could not create directory "{full}": {e}')
+
+    if not p2p_mode or direction == "download-only":
+        return
+
+    remote_set = {p.rstrip("/") for p in remote_paths}
+    uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/dirs"
+    cid = CONFIG.get("CID")
+    for root, dirs, _files in walk(local_bucket):
+        # Hidden check on the absolute path: the matcher compares path
+        # components, so a bare basename can miss (or falsely match) a rule.
+        dirs[:] = [d for d in dirs if not is_hidden_dir(os.path.join(root, d))]
+        rel = os.path.relpath(root, local_bucket).replace("\\", "/")
+        if rel == "." or rel in remote_set:
+            continue
+        if not rel or validate_remote_relpath(rel) is None:
+            continue
+        params: dict[str, str] = {"path": rel}
+        if cid:
+            params["cid"] = str(cid)
+        try:
+            params["permissions"] = f"{os.stat(root).st_mode & 0o777:04o}"
+        except OSError:
+            pass
+        try:
+            response = post(
+                uri,
+                params=params,
+                headers=cast(Mapping[str, str], CONFIG["REQUEST_HEADERS"]),
+                verify=get_ssl_verify(),
+                timeout=CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT),
+            )
+            if response.status_code not in (200, 201, 204):
+                log.warning(f'Create directory request failed for "{rel}": {response.status_code}')
+            else:
+                log.debug(f'Reconciled directory (local): "{root}"')
+        except RequestException as e:
+            log.warning(f'Could not create remote directory "{rel}": {e}')
 
 
 # ── Direction-filter exclusion sets (module-level, pre-computed once) ─────

@@ -181,6 +181,7 @@ class TestRunLanMode:
         master_peer.cert_fingerprint = "abcdef1234567890" * 4
         master_peer.compression_enabled = True
         master_peer.server_ready = True
+        master_peer.connected = 0  # presence arithmetic reads an int
         master_peer.get_server_url.return_value = "https://192.168.1.1:9000"
 
         mock_peer_mgr = MagicMock()
@@ -381,13 +382,19 @@ class TestRunLanMode:
         master_ready.use_https = True
         master_ready.cert_fingerprint = "abcdef1234567890" * 4
         master_ready.compression_enabled = False
+        master_ready.connected = 0  # presence arithmetic reads an int
         master_ready.get_server_url.return_value = "https://192.168.1.1:9000"
 
         mock_peer_mgr = MagicMock()
         mock_peer_mgr.get_alive_peers.return_value = [MagicMock()]
         mock_peer_mgr.is_master.return_value = False
-        # First call returns not-ready master, second returns ready master
-        mock_peer_mgr.get_master.side_effect = [master_not_ready, master_ready]
+        # First call returns not-ready master, then the ready master; the
+        # presence refresh during the initial sync asks for it again.
+        mock_peer_mgr.get_master.side_effect = [
+            master_not_ready,
+            master_ready,
+            master_ready,
+        ]
 
         mock_p2p_sync = MagicMock()
         mock_p2p_sync.start.return_value = mock_peer_mgr

@@ -721,7 +721,11 @@ class TestRunAsSlave:
             )
 
         assert result == (False, 0)
-        assert seen == {"p2p_mode": True, "source_resolver": resolver}
+        assert seen == {
+            "p2p_mode": True,
+            "source_resolver": resolver,
+            "reconcile_dirs": True,
+        }
         resolver_kwargs = resolver_cls.call_args.kwargs
         assert resolver_kwargs["enabled"] is True
         assert resolver_kwargs["master_capable"] is True
@@ -952,7 +956,10 @@ class TestRunAsSlave:
         ):
             _run_as_slave(config, MagicMock(), False, peer_mgr)
 
-        assert presence == [(2, 2)]
+        # Emitted once when the initial sync starts (the HTTPS data plane credits
+        # the master) and again when the WebSocket link comes up; both readings
+        # must be 2/2.
+        assert presence and all(pair == (2, 2) for pair in presence)
 
     def test_continuous_websocket_error_is_swallowed(self, tmp_path):
         """A WebSocket failure is logged but still re-enters the discovery loop."""
@@ -1171,21 +1178,30 @@ class TestStdinCommands:
 
         handler, registered = self._capture_handler()
         fake_config = {"P2P_MODE": False, "DRYRUN": True}
+        started = MagicMock()
 
         with (
             patch("hsync_client.preview.StdinCommandHandler", return_value=handler),
             patch("hsync_client.preview.CONFIG", fake_config),
             patch("hsync_client.preview.sync", new=AsyncMock()) as mock_sync,
+            patch("hsync_client.preview.log_initial_sync_start") as mock_phase,
             patch("hsync_client.preview._run_preview"),
         ):
-            asyncio.run(_run_stdin_wait(MagicMock()))
+            asyncio.run(_run_stdin_wait(MagicMock(), on_sync_start=started))
 
             assert set(registered) == {"PREVIEW", "PEERS", "SYNC", "SET_BANDWIDTH"}
             asyncio.run(registered["SYNC"]())
 
         assert fake_config["DRYRUN"] is False
+        # The preview-confirm transition is the real initial sync: it announces
+        # the "syncing" phase, credits the master and reconciles directories.
+        mock_phase.assert_called_once()
+        started.assert_called_once()
         mock_sync.assert_awaited_once_with(
-            p2p_mode=False, inventory_observer=None, source_resolver=None
+            p2p_mode=False,
+            inventory_observer=None,
+            source_resolver=None,
+            reconcile_dirs=True,
         )
         handler.stop.assert_called_once()
 

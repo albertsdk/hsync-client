@@ -1078,28 +1078,55 @@ def _run_as_slave(
             if plan is not None:
                 plan.set_master_eligibility(False)
             try:
+
+                def _credit_master() -> None:
+                    # The preview-confirm flow's first real sync uses the HTTPS
+                    # data plane: credit the master for presence now (the
+                    # WebSocket opens only after this sync), exactly like the
+                    # direct initial-sync branch below.
+                    peer_manager.mark_peer_connected(master.cid)
+                    _emit_slave_presence(peer_manager)
+
+                def _clear_master_credit() -> None:
+                    peer_manager.mark_peer_disconnected(master.cid)
+
                 run(
                     _run_stdin_wait(
                         log,
                         inventory_observer=inventory_publisher,
                         source_resolver=source_resolver,
+                        on_sync_start=_credit_master,
+                        on_sync_error=_clear_master_credit,
                     )
                 )
             finally:
                 if plan is not None:
                     plan.set_master_eligibility(True)
         else:
-            # Perform initial sync (the master is the transport coordinator)
+            # Perform initial sync (the master is the transport coordinator).
+            # The HTTPS data plane itself proves the master is reachable: credit
+            # it for presence now, otherwise the UI sits on "1/N" for the whole
+            # initial sync (the WebSocket — and the master's advertised client
+            # count — only come up afterwards). Cleared again if the sync fails.
+            peer_manager.mark_peer_connected(master.cid)
+            _emit_slave_presence(peer_manager)
             try:
                 log_initial_sync_start()
                 if inventory_publisher is None:
-                    result = run(sync(p2p_mode=True, source_resolver=source_resolver))
+                    result = run(
+                        sync(
+                            p2p_mode=True,
+                            source_resolver=source_resolver,
+                            reconcile_dirs=True,
+                        )
+                    )
                 else:
                     result = run(
                         sync(
                             p2p_mode=True,
                             inventory_observer=inventory_publisher,
                             source_resolver=source_resolver,
+                            reconcile_dirs=True,
                         )
                     )
             except (AuthenticationError, NetworkError, ServerError):
@@ -1108,6 +1135,7 @@ def _run_as_slave(
                 # exit; a continuous run must survive a transient failure (e.g.
                 # the master going offline mid-sync) and re-enter the discovery
                 # loop so the master is re-detected or a new one is elected.
+                peer_manager.mark_peer_disconnected(master.cid)
                 if (not one_shot) or wait_indefinitely_for_peer:
                     return True, int(ExitCode.OK)
                 return False, int(ExitCode.FATAL)
@@ -1115,6 +1143,7 @@ def _run_as_slave(
                 # An unexpected error (a genuine bug) must never be masked as a
                 # retryable condition, even in continuous mode: surface it as a
                 # fatal exit instead of looping forever.
+                peer_manager.mark_peer_disconnected(master.cid)
                 return False, int(ExitCode.FATAL)
             if isinstance(result, SyncCycleResult):
                 exit_code = exit_code_for_result(

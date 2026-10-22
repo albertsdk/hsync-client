@@ -9,6 +9,7 @@ import between the two modules and eliminate duplicated code.
 """
 
 import contextlib
+from collections.abc import Callable
 from typing import Literal
 
 from hsync_common.format import format_bytes
@@ -31,6 +32,7 @@ from hsync_client.sync import (
     get_files_remote,
     get_sync_actions,
     get_tombstones_remote,
+    log_initial_sync_start,
     sync,
 )
 from hsync_client.utils import reset_bandwidth_throttle
@@ -326,6 +328,8 @@ async def _run_stdin_wait(
     log,
     inventory_observer: InventoryObserver | None = None,
     source_resolver: P2PSourceResolver | None = None,
+    on_sync_start: Callable[[], None] | None = None,
+    on_sync_error: Callable[[], None] | None = None,
 ) -> None:
     """Block reading stdin commands until EOF or SYNC.
 
@@ -333,6 +337,10 @@ async def _run_stdin_wait(
     WebSocket connection yet.  When a ``SYNC`` command arrives the
     handler performs the full sync, then stops the reader so the caller
     can proceed to the next phase (e.g. WebSocket connection).
+
+    ``on_sync_start`` / ``on_sync_error`` let the P2P caller credit the master
+    for presence (and clear it on failure) on this preview-confirm transition,
+    which is the real initial sync of the desktop flow.
     """
     handler = StdinCommandHandler(log)
     handler.register("PREVIEW", lambda **_kw: _run_preview(log))
@@ -342,12 +350,23 @@ async def _run_stdin_wait(
         if not _p2p_write_allowed(CONFIG.get("SYNC_DIRECTION", "bidirectional"), log):
             return
         CONFIG["DRYRUN"] = False
+        # The preview-confirm flow's first real sync: mark the phase (status
+        # bar) and reconcile the directories like the direct initial sync.
+        log_initial_sync_start()
+        if on_sync_start is not None:
+            on_sync_start()
         lan = CONFIG.get("P2P_MODE", False)
-        await sync(
-            p2p_mode=lan,
-            inventory_observer=inventory_observer,
-            source_resolver=source_resolver,
-        )
+        try:
+            await sync(
+                p2p_mode=lan,
+                inventory_observer=inventory_observer,
+                source_resolver=source_resolver,
+                reconcile_dirs=True,
+            )
+        except Exception:
+            if on_sync_error is not None:
+                on_sync_error()
+            raise
         handler.stop()
 
     handler.register("SYNC", _handle_sync)
