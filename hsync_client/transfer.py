@@ -205,44 +205,6 @@ def _record_synced_base(
         log.debug(f'Could not record sync-state for "{file.filepath}": {e}')
 
 
-class _ThrottledFileReader:
-    """Wraps a file object and applies bandwidth throttling on read().
-
-    The ``requests`` library calls ``read()`` internally when streaming
-    a multipart upload, so wrapping the file handle lets us inject a
-    delay after each chunk without modifying the upload flow.
-    """
-
-    def __init__(
-        self,
-        fp,
-        bandwidth_limit: int | None,
-        transfer_key: str = "upload",
-        on_progress: Callable[[int], None] | None = None,
-    ):
-        self._fp = fp
-        self._bw_limit = bandwidth_limit
-        self._key = transfer_key
-        self._on_progress = on_progress
-        self._sent = 0
-
-    # Proxy every attribute to the inner file …
-    def __getattr__(self, name: str):
-        return getattr(self._fp, name)
-
-    def read(self, size: int = -1) -> bytes:
-        data = self._fp.read(size)
-        if data:
-            if self._bw_limit:
-                delay = get_throttle_delay(len(data), self._bw_limit, self._key)
-                if delay > 0:
-                    time_sleep(delay)
-            if self._on_progress is not None:
-                self._sent += len(data)
-                self._on_progress(self._sent)
-        return data
-
-
 # Upload streaming chunk size (multipart bodies, plain and compressed spool).
 # 256 KiB amortises the per-chunk syscall/Python overhead while keeping the
 # uploader's buffering modest; the download read tiers are chosen separately
@@ -2079,14 +2041,35 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
 
         headers = dict(cast(dict[str, str], CONFIG["REQUEST_HEADERS"]))
 
+        compressed_tmp: str | None = None
+        compressed_size = 0
+        compressed_partial = False
         if use_compression:
             # Compress STREAMING to a temporary file (memory stays bounded by
             # one chunk), then send it as a regular file part: a real file
             # object lets requests frame the multipart body with an exact
             # Content-Length while still streaming each chunk from disk.
             compressed_tmp = _compress_to_temp_file(file.filepath)
+            compressed_size = Path(compressed_tmp).stat().st_size
+            if file.size and compressed_size >= file.size:
+                # Compressing did not help (e.g. already-compressed or random
+                # data): sending the larger frame would waste bandwidth and
+                # route the body through the whole-file reader. Send the
+                # original instead. The compression CPU is already spent;
+                # should_compress skips known formats beforehand.
+                log.debug(
+                    f'Compression not beneficial for "{file.filepath}" '
+                    f"({format_bytes(compressed_size)} >= {format_bytes(file.size)}); "
+                    "sending the original"
+                )
+                with suppress(OSError):
+                    remove(compressed_tmp)
+                compressed_tmp = None
+                use_compression = False
+
+        if use_compression:
+            assert compressed_tmp is not None
             try:
-                compressed_size = Path(compressed_tmp).stat().st_size
                 if file.size:
                     compression_ratio = compressed_size / file.size * 100
                     log.debug(
@@ -2103,24 +2086,48 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
                 data["compressed"] = "true"
                 data["compressed_size"] = compressed_size
 
-                with open(compressed_tmp, "rb") as fh:
-                    ul_bw_limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
-                    reporter = ProgressReporter(file.filepath, compressed_size, "upload")
-                    reader = _ThrottledFileReader(fh, ul_bw_limit, on_progress=reporter.update)
-                    files = {"file": (Path(file.filepath).name, reader)}
-                    response = post(
-                        uri,
-                        headers=headers,
-                        data=data,
-                        files=files,
-                        verify=get_ssl_verify(),
-                        timeout=_upload_timeout(),
+                ul_bw_limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
+                reporter = ProgressReporter(file.filepath, compressed_size, "upload")
+                boundary = uuid4().hex
+                body, content_type = _build_multipart_streaming(
+                    compressed_tmp,
+                    dict(data),
+                    boundary=boundary,
+                    filename=Path(file.filepath).name,
+                    offset=0,
+                    bandwidth_limit=ul_bw_limit,
+                    on_progress=reporter.update,
+                )
+                headers["Content-Type"] = content_type
+                response = post(
+                    uri,
+                    headers=headers,
+                    data=body,
+                    verify=get_ssl_verify(),
+                    timeout=_upload_timeout(),
+                )
+                if response.status_code == 202:
+                    # The peer stored only part of the compressed frame. A
+                    # compressed upload is not resumable (the server refuses
+                    # an offset for it), so retrying it would fail the same
+                    # way; fall through to the standard, resumable upload.
+                    # The standard body is NOT compressed: drop the form
+                    # fields or the peer would try to zstd-decompress the
+                    # raw bytes ("Unknown frame descriptor").
+                    compressed_partial = True
+                    data.pop("compressed", None)
+                    data.pop("compressed_size", None)
+                    log.warning(
+                        f"Compressed upload was only partially received for "
+                        f'"{file.filepath}"; retrying uncompressed'
                     )
+                else:
                     _handle_upload_response(file, response, t0)
+                    return
             finally:
                 with suppress(OSError):
                     remove(compressed_tmp)
-        else:
+        if not use_compression or compressed_partial:
             # Standard upload: stream the multipart body directly from disk
             # so files of arbitrary size do not need to be loaded into RAM.
             ul_bw_limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
