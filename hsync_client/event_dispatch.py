@@ -105,6 +105,8 @@ class _DirDedup:
 #: Sentinel distinct from any real permissions value (including ``None``).
 _MISSING = object()
 
+_ADD_OR_MODIFY_EVENTS = frozenset((EventName.added.value, EventName.modified.value))
+
 
 @dataclass(frozen=True)
 class EventDispatchContext:
@@ -334,7 +336,7 @@ async def apply_inbound_event(event_data: dict, ctx: EventDispatchContext) -> No
             _reject_unsafe(event_name, rels[0] if rels else None)
             return
 
-    if event_name in {EventName.added.value, EventName.modified.value}:
+    if event_name in _ADD_OR_MODIFY_EVENTS:
         await _apply_add_or_modify(src, ctx, event_name, origin_cid)
     elif event_name == EventName.renamed.value:
         await _apply_rename(src, dst, ctx, origin_cid)

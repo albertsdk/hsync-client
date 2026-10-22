@@ -25,6 +25,7 @@ import asyncio
 import contextlib
 import hmac
 import json
+import os
 import sys
 import threading
 from collections.abc import Callable, Mapping
@@ -2220,7 +2221,7 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
                 # wait for on_closed / on_modified to avoid uploading a
                 # half-opened file.
                 try:
-                    size = Path(src_path).stat().st_size
+                    size = os.stat(src_path).st_size
                 except OSError:
                     size = 0
                 if size > 0:
@@ -2299,7 +2300,7 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
         re-broadcasts the change to the other slaves.
         """
         try:
-            mode = Path(src_path).stat().st_mode & 0o7777
+            mode = os.stat(src_path).st_mode & 0o7777
         except OSError:
             return
         prev = self._last_dir_mode.get(src_path)
@@ -2472,7 +2473,7 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
             # Bytes estimate lets ``wait_pending`` scale its timeout when
             # large files are still being uploaded at WS disconnect time.
             try:
-                size_hint = Path(src_path).stat().st_size
+                size_hint = os.stat(src_path).st_size
             except OSError:
                 size_hint = 0
             # Run upload in a separate thread to not block the watcher
@@ -2627,7 +2628,7 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
                     if CONFIG.get("SYNC_DIRECTION") == "download-only":
                         return
                     try:
-                        size_hint = Path(dest_path).stat().st_size
+                        size_hint = os.stat(dest_path).st_size
                     except OSError:
                         size_hint = 0
                     self._start_operation(

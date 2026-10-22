@@ -164,7 +164,7 @@ def normalize_bucket_relpath(raw_path: str, bucket_root: str) -> str | None:
     be UTF-8 encoded for the wire).
     """
     candidate = raw_path
-    if Path(candidate).is_absolute():
+    if os.path.isabs(candidate):
         candidate = relpath_in_bucket(candidate, bucket_root)
         if candidate is None:
             return None

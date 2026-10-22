@@ -719,7 +719,10 @@ class BaseFileEventHandler(FileSystemEventHandler):
             # directory itself is propagated by the directory event — broadcasting
             # the sentinel only produces a spurious `modified` event and a
             # broadcast round-trip.
-            if Path(src_path).name == HSYNCKEEP_FILENAME:
+            # One Path object for the metadata probes below: constructing it
+            # four times per event (name/is_symlink/exists/stat) cost ~4.6 us.
+            path = Path(src_path)
+            if path.name == HSYNCKEEP_FILENAME:
                 log.debug(f'Skip sentinel event: "{src_path}"')
                 return
 
@@ -727,11 +730,11 @@ class BaseFileEventHandler(FileSystemEventHandler):
             # event, never a file event. Handle immediately and return.
             # Covers dangling links too (is_symlink() is True even when the
             # target is missing — `exists()` would reject them).
-            if Path(src_path).is_symlink():
+            if path.is_symlink():
                 self._broadcast_symlink(src_path)
                 return
 
-            if not Path(src_path).exists():
+            if not path.exists():
                 log.warning(
                     f'File "{src_path}" not found. It might have been altered by an external tool.'
                 )
@@ -741,7 +744,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
             # Uses st_mtime_ns (nanosecond precision) so two writes within the
             # same second with the same size are NOT falsely skipped. The mode
             # is part of the key so a pure chmod is never a stat no-op.
-            file_stat = Path(src_path).stat()
+            file_stat = path.stat()
             current_stat = self._stat_key(file_stat)
             if current_stat == self._last_broadcast_stat.get(src_path):
                 log.debug(f'Skip unchanged (stat): "{src_path}"')

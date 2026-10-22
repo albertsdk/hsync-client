@@ -1853,16 +1853,18 @@ def get_sync_actions(
 
     sync_actions: list[SyncAction] = []
     remote_filepaths: set[str] = set()
+    bucket_root = CONFIG["LOCAL_BUCKET"]
 
     # Process remote files
     for remote_file_info in remote_files:
+        remote_path = str(remote_file_info.get("filepath", ""))
         # .hsynckeep is a per-peer local sentinel: never exchange it across peers.
-        if basename(str(remote_file_info.get("filepath", ""))) == HSYNCKEEP_FILENAME:
+        if basename(remote_path) == HSYNCKEEP_FILENAME:
             continue
         # The remote listing is untrusted input (hostile server or P2P
         # master): drop entries whose path is unsafe or names an internal
         # engine artifact instead of acting on them.
-        if validate_remote_relpath(str(remote_file_info.get("filepath", ""))) is None:
+        if validate_remote_relpath(remote_path) is None:
             log.warning(
                 f"{ActionLabel.SECURITY} Ignoring unsafe remote listing entry: "
                 f'"{remote_file_info.get("filepath")}"'
@@ -1872,7 +1874,7 @@ def get_sync_actions(
         # content). The same code path serves remote (server listing) and P2P
         # (master listing); the target containment is re-validated on receive.
         if remote_file_info.get("type") == "symlink":
-            link = Symlink.from_dict(remote_file_info, CONFIG["LOCAL_BUCKET"])
+            link = Symlink.from_dict(remote_file_info, bucket_root)
             if link.filepath:
                 remote_filepaths.add(str(link.filepath).lstrip("/"))
             sync_actions.append(SyncAction(link, SyncActionName.download_symlink))
@@ -1880,8 +1882,8 @@ def get_sync_actions(
         # One malformed entry (bogus types for size/mtime, unreadable local
         # stat) must not stall the whole reconciliation cycle.
         try:
-            remote_file = File.from_dict(remote_file_info, CONFIG["LOCAL_BUCKET"])
-            local_file = File.get(remote_file_info["filepath"], CONFIG["LOCAL_BUCKET"])
+            remote_file = File.from_dict(remote_file_info, bucket_root)
+            local_file = File.get(remote_file_info["filepath"], bucket_root)
         except (ValueError, TypeError, OverflowError, AttributeError, OSError) as e:
             log.warning(
                 f"{ActionLabel.SECURITY} Ignoring malformed remote listing entry "
@@ -2044,11 +2046,11 @@ def get_sync_actions(
         # of its target. Escaping targets were already skipped by
         # get_files_local; the upload path re-validates the target anyway.
         if local_file_dict.get("type") == "symlink":
-            link = Symlink.from_dict(local_file_dict, CONFIG["LOCAL_BUCKET"])
+            link = Symlink.from_dict(local_file_dict, bucket_root)
             if link.filepath and str(link.filepath).lstrip("/") not in remote_filepaths:
                 sync_actions.append(SyncAction(link, SyncActionName.upload_symlink))
             continue
-        local_file_info = File.from_dict(local_file_dict, CONFIG["LOCAL_BUCKET"])
+        local_file_info = File.from_dict(local_file_dict, bucket_root)
         if local_file_info.filepath and local_file_info.filepath not in remote_filepaths:
             file = File.get(local_file_dict["filepath"])
             if file:
