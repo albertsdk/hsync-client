@@ -973,6 +973,10 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 self._make_event(EventName.deleted, obj),
                 src_abs_path=src_path,
             )
+            # Mirror the remote-delete path: the desktop learns about a
+            # locally-originated deletion through the same UI event, otherwise
+            # the row stays stale until the filesystem scan.
+            emit_event(UiEventName.transfer, op="delete", file=src_path)
             self._on_deleted(src_path, is_directory)
 
     def on_deleted(self, event) -> None:

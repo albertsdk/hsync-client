@@ -180,6 +180,7 @@ class TestFileEventHandler:
             patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
             patch("hsync_client.file_event_handler.threading.Timer"),
             patch("hsync_client.remote_websocket.run_coroutine_threadsafe") as mock_run,
+            patch("hsync_client.file_event_handler.emit_event") as mock_emit,
         ):
             self.handler.on_deleted(event)
             # Deletes are coalesced: the broadcast happens on flush.
@@ -190,6 +191,11 @@ class TestFileEventHandler:
         mock_run.assert_called_once()
         queued_event = mock_run.call_args.args[0]
         assert queued_event is not None
+        # …and the desktop must learn about the local deletion through the same
+        # UI event used for remote deletes, or its row stays stale.
+        mock_emit.assert_called_once_with(
+            UiEventName.transfer, op="delete", file="/bucket/visible.txt"
+        )
 
     # -- polling backend propagation --
 
