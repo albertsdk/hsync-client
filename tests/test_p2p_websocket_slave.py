@@ -878,14 +878,37 @@ class TestSlaveFileEventHandler:
             handler.on_deleted(event)
         assert len(handler._pending_ops) == 0
 
-    def test_on_moved_no_dest_returns(self, handler, tmp_path):
-        """Test on_moved returns when dest_path is None."""
-        event = MagicMock()
-        event.src_path = str(tmp_path / "a.txt")
-        event.dest_path = None
-        event.is_directory = False
-        handler.on_moved(event)
-        assert len(handler._pending_ops) == 0
+    def test_on_moved_out_of_tree_routes_to_delete(self, handler, tmp_path):
+        """Move-to-trash leaves the tree: it must be propagated as a delete."""
+        src = str(tmp_path / "a.txt")
+        event = FileMovedEvent(src, "")
+        with patch.object(handler, "on_deleted") as on_deleted:
+            handler.on_moved(event)
+        on_deleted.assert_called_once()
+        deleted = on_deleted.call_args.args[0]
+        assert deleted.src_path == src
+        assert deleted.is_directory is False
+
+    def test_on_moved_directory_out_of_tree_routes_to_delete(self, handler, tmp_path):
+        """A directory moved out of the tree is a recursive deletion."""
+        src = str(tmp_path / "dir")
+        event = FileMovedEvent(src, "")
+        event.is_directory = True
+        with patch.object(handler, "on_deleted") as on_deleted:
+            handler.on_moved(event)
+        deleted = on_deleted.call_args.args[0]
+        assert deleted.src_path == src
+        assert deleted.is_directory is True
+
+    def test_on_moved_into_tree_routes_to_create(self, handler, tmp_path):
+        """A move-in from outside arrives complete and must be uploaded."""
+        dst = str(tmp_path / "incoming.txt")
+        event = FileMovedEvent("", dst)
+        with patch.object(handler, "on_created") as on_created:
+            handler.on_moved(event)
+        created = on_created.call_args.args[0]
+        assert created.src_path == dst
+        assert created.is_directory is False
 
     def test_on_moved_temp_src_ignored(self, handler, tmp_path):
         """Test on_moved ignores temp source files."""

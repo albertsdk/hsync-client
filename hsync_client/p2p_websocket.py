@@ -71,7 +71,13 @@ from hsync_common.protocol.rest import (
 )
 from hsync_common.text import escape_loguru_markup
 from loguru import logger as log
-from watchdog.events import FileSystemEventHandler
+from watchdog.events import (
+    DirCreatedEvent,
+    DirDeletedEvent,
+    FileCreatedEvent,
+    FileDeletedEvent,
+    FileSystemEventHandler,
+)
 
 from hsync_client.capabilities import adopt_remote_capabilities, local_capabilities
 from hsync_client.config import CONFIG
@@ -2584,6 +2590,24 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
         dest_path = ensure_str_path(getattr(event, "dest_path", None))
 
         if not dest_path:
+            # A move whose other end is outside the watched tree (the OS trash,
+            # another folder, another volume) vacates this path. The full-event
+            # inotify emitter reports it with an empty destination; propagate it
+            # as a deletion so the causal tombstone is recorded and the master
+            # removes its copy. The master and remote handlers already do this.
+            if src_path:
+                self.on_deleted(
+                    DirDeletedEvent(src_path) if event.is_directory else FileDeletedEvent(src_path)
+                )
+            return
+        if not src_path:
+            # A move into the tree from outside arrives complete (there is no
+            # close-write event): treat it as a creation, mirroring the base
+            # handler. Files get the deferred upload; directories get the
+            # sentinel and the /dirs notification.
+            self.on_created(
+                DirCreatedEvent(dest_path) if event.is_directory else FileCreatedEvent(dest_path)
+            )
             return
 
         # The file moved away from src_path: cancel any on_created-deferred
