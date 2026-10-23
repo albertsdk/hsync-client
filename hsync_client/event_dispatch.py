@@ -48,7 +48,7 @@ from hsync_client.constants import HSYNCKEEP_FILENAME
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.p2p_inventory import NOOP_INVENTORY_OBSERVER, InventoryObserver
 from hsync_client.p2p_sources import P2PSourceResolver
-from hsync_client.sync import update_dir, update_file
+from hsync_client.sync import _in_subdir_rel, update_dir, update_file
 from hsync_client.transfer import download_file
 from hsync_client.utils import cid_suffix, path_lock, path_present, safe_rmdir_if_empty
 
@@ -334,6 +334,30 @@ async def apply_inbound_event(event_data: dict, ctx: EventDispatchContext) -> No
         rels = wire_relpaths(payload)
         if not rels or any(validate_remote_relpath(rel) is None for rel in rels):
             _reject_unsafe(event_name, rels[0] if rels else None)
+            return
+
+    # --subdir scopes the live inbound stream too: the initial listing is
+    # filtered locally/remotely, but the server/master can still push events
+    # for paths outside the scope. Ignore them, and handle a rename crossing
+    # the boundary as a delete (left the subtree) or an add (entered it).
+    filter_path = CONFIG.get("FILTER_PATH")
+    if filter_path:
+        src_rels = wire_relpaths(src) if isinstance(src, dict) else []
+        dst_rels = wire_relpaths(dst) if isinstance(dst, dict) else []
+        src_in = any(_in_subdir_rel(rel, filter_path) for rel in src_rels)
+        dst_in = any(_in_subdir_rel(rel, filter_path) for rel in dst_rels)
+        if event_name == EventName.renamed.value:
+            if src_in and dst_in:
+                pass
+            elif src_in:
+                await _apply_delete(src, ctx, origin_cid)
+                return
+            elif dst_in and isinstance(dst, dict):
+                await _apply_add_or_modify(dst, ctx, EventName.added.value, origin_cid)
+                return
+            else:
+                return
+        elif not src_in:
             return
 
     if event_name in _ADD_OR_MODIFY_EVENTS:

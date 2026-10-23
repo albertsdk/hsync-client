@@ -94,6 +94,35 @@ class TestReconcileDirectories:
 
         mock_post.assert_not_called()
 
+    def test_filter_path_skips_out_of_scope_remote_directories(self, tmp_path):
+        config = _config(tmp_path)
+        config["FILTER_PATH"] = "sub_a"
+        with patch.object(sync_mod, "CONFIG", config):
+            reconcile_directories([{"path": "sub_a"}, {"path": "sub_b"}], p2p_mode=False)
+
+        assert (tmp_path / "sub_a").is_dir()
+        assert not (tmp_path / "sub_b").exists()
+
+    def test_filter_path_does_not_push_out_of_scope_local_directories(self, tmp_path):
+        (tmp_path / "sub_a").mkdir()
+        (tmp_path / "sub_b").mkdir()
+        config = _config(tmp_path)
+        config["FILTER_PATH"] = "sub_a"
+        posted: list[dict] = []
+
+        def fake_post(_uri, **kwargs):
+            posted.append(kwargs)
+            return MagicMock(status_code=201)
+
+        with (
+            patch.object(sync_mod, "CONFIG", config),
+            patch.object(sync_mod, "get_ssl_verify", return_value=False),
+            patch.object(sync_mod, "post", side_effect=fake_post),
+        ):
+            reconcile_directories([], p2p_mode=True)
+
+        assert [entry["params"]["path"] for entry in posted] == ["sub_a"]
+
 
 class TestGetDirsRemoteContract:
     @staticmethod

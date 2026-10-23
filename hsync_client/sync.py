@@ -1254,8 +1254,8 @@ def iter_bucket_entries(bucket: str) -> Iterator[tuple[str, Symlink | None]]:
                 yield file_path, None
 
 
-def _in_subdir(abs_path: str, filter_path: str) -> bool:
-    """Return whether ``abs_path`` sits inside the ``--subdir`` scope.
+def _in_subdir_rel(rel: str, filter_path: str) -> bool:
+    """Return whether a bucket-relative path sits inside the ``--subdir`` scope.
 
     ``filter_path`` is a bucket-relative prefix; a path matches when it is the
     subdirectory itself or a descendant (component-aware, so ``media`` never
@@ -1264,11 +1264,16 @@ def _in_subdir(abs_path: str, filter_path: str) -> bool:
     prefix = str(filter_path).replace(os.sep, "/").strip("/")
     if not prefix:
         return True
+    normalized = str(rel).replace(os.sep, "/").lstrip("/")
+    return normalized == prefix or normalized.startswith(prefix + "/")
+
+
+def _in_subdir(abs_path: str, filter_path: str) -> bool:
+    """Return whether the absolute ``abs_path`` sits inside the ``--subdir`` scope."""
     rel = relpath_in_bucket(abs_path, CONFIG["LOCAL_BUCKET"])
     if rel is None:
         return False
-    rel = rel.replace(os.sep, "/").lstrip("/")
-    return rel == prefix or rel.startswith(prefix + "/")
+    return _in_subdir_rel(rel, filter_path)
 
 
 def get_files_local() -> list[dict]:
@@ -1694,6 +1699,7 @@ def reconcile_directories(remote_dirs: list[dict], *, p2p_mode: bool) -> None:
       peer's ``/dirs`` endpoint (P2P only; skipped in ``download-only``).
     """
     direction = CONFIG.get("SYNC_DIRECTION", "bidirectional")
+    filter_path = CONFIG.get("FILTER_PATH")
     local_bucket = CONFIG["LOCAL_BUCKET"]
     local_root = Path(local_bucket)
 
@@ -1709,6 +1715,8 @@ def reconcile_directories(remote_dirs: list[dict], *, p2p_mode: bool) -> None:
             continue
         if validate_remote_relpath(rel) is None:
             log.warning(f"{ActionLabel.SECURITY} Ignoring unsafe remote directory entry: {rel!r}")
+            continue
+        if filter_path and not _in_subdir_rel(rel, filter_path):
             continue
         remote_paths.add(rel)
         if direction == "upload-only":
@@ -1736,6 +1744,8 @@ def reconcile_directories(remote_dirs: list[dict], *, p2p_mode: bool) -> None:
         dirs[:] = [d for d in dirs if not is_hidden_dir(os.path.join(root, d))]
         rel = os.path.relpath(root, local_bucket).replace("\\", "/")
         if rel == "." or rel in remote_set:
+            continue
+        if filter_path and not _in_subdir_rel(rel, filter_path):
             continue
         if not rel or validate_remote_relpath(rel) is None:
             continue

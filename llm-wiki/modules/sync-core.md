@@ -99,8 +99,8 @@ In-flight transfers emit throttled `UiEventName.progress` events
 final update at completion) from the full-file download loops
 (`transfer.py::_download_from_source_attempt`), the delta download payload stream
 (`delta_transfer.py::download_file_delta`, measured against the peer-declared
-literal size) and the upload stream (`transfer.py::_build_multipart_streaming` /
-`transfer.py::_ThrottledFileReader`), so the desktop file panel can show transfer
+literal size) and the upload stream (`transfer.py::_build_multipart_streaming`, throttled via
+`utils/throttle.py::get_throttle_delay`), so the desktop file panel can show transfer
 progress and ETA. Every event carries `op` (`download`/`upload`): a received file
 has no local row yet, so the desktop needs the direction to create one. The delta
 *upload* posts its payload as a single in-memory body, so it emits no intermediate
@@ -108,7 +108,8 @@ progress.
 
 Bandwidth caps (`MAX_BANDWIDTH_UPLOAD`/`MAX_BANDWIDTH_DOWNLOAD`) are applied by
 `get_throttle_delay` (`utils/throttle.py::get_throttle_delay`) from
-`_ThrottledFileReader`/`_CountingReader` and `p2p_server._throttle_upload`. It
+`_build_multipart_streaming`/`_CountingReader` through `get_throttle_delay`, plus
+`p2p_server._throttle_upload`. It
 paces every chunk on a per-direction timeline, so the sustained rate is the cap
 from the first byte (an idle period grants no burst) and the budget is shared by
 all transfers running in that direction instead of one limit each.
@@ -195,7 +196,7 @@ caller falls back to a full transfer.
 | `is_file_stable` / `_file_already_settled` / `_wait_for_stable_file` | `transfer.py` | size+mtime stability gate: `from_closed` → 0.3s re-check; conservative path skips the 5s poll when mtime is already older than `STABILITY_DELAY` (reconcile / atomic rename); otherwise poll until `MAX_WAIT_TIMEOUT` |
 | `_reschedule_upload` | `transfer.py::_reschedule_upload` | §15: defer torn-file uploads (bounded) |
 | `_build_multipart_streaming` / `_SizedStreamingBody` | `transfer.py::_build_multipart_streaming` / `transfer.py::_build_multipart_streaming` | streaming multipart |
-| `_ThrottledFileReader` | `transfer.py::_ThrottledFileReader` | bandwidth throttle on upload reads |
+| `_CountingReader` | `transfer.py::_CountingReader` | counts and throttles the compressed download stream; upload pacing lives in `_build_multipart_streaming` via `get_throttle_delay` |
 | `_record_synced_base` | `transfer.py::_record_synced_base` | persist merge base after success (sync_state); resolves relative action paths to absolute before recording (raw relative paths were silent no-ops that degraded every later cycle to the mtime heuristic); accepts the merged `vclock` to record (convergence invariant, ADR-0022 §5). **Durability**: for real-time transfers (watcher uploads / inbound event downloads, detected via `is_sync_cycle_active()` being False) the merge base is flushed to the state DB immediately, so a process kill cannot lose it and resurrect a file deleted while offline; during a full reconcile cycle the record stays in memory and is flushed once by the single end-of-cycle `sync_state.flush()` (batch, avoids per-file rewrites of the whole version map) |
 | `_handle_upload_conflict_response` | `transfer.py` | handle 409 upload responses: `superseded`/`conflict_lost` → download needed (next cycle); legacy "already present" → record base as in-sync |
 | `_upload_version_fields` / `_resolve_local_vclock` | `transfer.py` | resolve the effective local `vclock`/`version_id` for the upload form and merge-base recording (delegates to `sync_state.upload_version_fields`) |
