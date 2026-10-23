@@ -109,6 +109,7 @@ from hsync_client.p2p_inventory import (
 )
 from hsync_client.p2p_sources import P2PSourceResolver
 from hsync_client.pools import log_future_error
+from hsync_client.upload_scheduler import PerPathUploadScheduler
 from hsync_client.utils import (
     cid_suffix,
     ensure_str_path,
@@ -1773,6 +1774,17 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
         # still in flight (large uploads can legitimately take minutes).
         self._pending_ops: list[tuple[Future, int]] = []
         self._pending_ops_lock = threading.Lock()
+        # One upload attempt per path: watcher bursts are coalesced to the
+        # latest file state, so a slow delta scan cannot race a concurrent full
+        # upload for the same path (base_file_changed).
+        self._upload_scheduler = PerPathUploadScheduler(
+            lambda: _get_realtime_executor(),
+            # Resolve the bound method at call time so tests/subclasses can
+            # replace ``_upload_to_master``.
+            lambda file, *, permissions_only, from_closed: self._upload_to_master(
+                file, from_closed=from_closed, permissions_only=permissions_only
+            ),
+        )
         # Deferred ``on_created`` uploads: a short daemon ``Timer`` per path
         # that fires only if no ``on_closed`` arrives in time. ``on_closed``
         # is the reliable trigger (fd closed → content complete, fast
@@ -1916,11 +1928,25 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
             The Future for the scheduled operation.
         """
         future = _get_realtime_executor().submit(target, *args, **(kwargs or {}))
+        self._track_operation(future, bytes_estimate)
+        return future
+
+    def _track_operation(self, future: Future, bytes_estimate: int) -> None:
+        """Track a realtime future for graceful shutdown (``wait_pending``)."""
         future.add_done_callback(partial(log_future_error, label="Realtime operation failed"))
         with self._pending_ops_lock:
             self._pending_ops = [(f, b) for f, b in self._pending_ops if not f.done()]
             self._pending_ops.append((future, max(bytes_estimate, 0)))
-        return future
+
+    def _start_upload(self, file_obj: File, *, from_closed: bool = False) -> None:
+        """Schedule a coalesced upload to the master on the realtime pool."""
+        try:
+            size_hint = os.stat(file_obj.filepath).st_size if file_obj.filepath else 0
+        except OSError:
+            size_hint = 0
+        future = self._upload_scheduler.submit(file_obj, from_closed=from_closed)
+        if future is not None:
+            self._track_operation(future, size_hint)
 
     def wait_pending(self, timeout: float = 30.0) -> int:
         """Wait for all pending operations to complete.
@@ -1977,7 +2003,9 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
         # .part files are used during downloads
         return is_partial_file(filepath)
 
-    def _upload_to_master(self, file_obj: File, from_closed: bool = False) -> None:
+    def _upload_to_master(
+        self, file_obj: File, from_closed: bool = False, permissions_only: bool = False
+    ) -> None:
         """Upload a file to the master server.
 
         ``from_closed`` is True when the upload was triggered by an ``on_closed``
@@ -1991,6 +2019,7 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
                 file_obj,
                 check_size=True,
                 from_closed=from_closed,
+                permissions_only=permissions_only,
                 inventory_observer=self._inventory_observer,
             )
         except Exception as e:
@@ -2476,19 +2505,10 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
             if CONFIG.get("SYNC_DIRECTION") == "download-only":
                 self._inventory_observer.upsert(file_obj)
                 return
-            # Bytes estimate lets ``wait_pending`` scale its timeout when
-            # large files are still being uploaded at WS disconnect time.
-            try:
-                size_hint = os.stat(src_path).st_size
-            except OSError:
-                size_hint = 0
-            # Run upload in a separate thread to not block the watcher
-            self._start_operation(
-                target=self._upload_to_master,
-                args=(file_obj, from_closed),
-                name=f"upload-{src_path}",
-                bytes_estimate=size_hint,
-            )
+            # One upload per path (coalesced), off the watcher thread. The
+            # scheduler tracks the future so ``wait_pending`` can scale its
+            # timeout by the bytes still in flight.
+            self._start_upload(file_obj, from_closed=from_closed)
 
     def _ensure_sentinel(self, dir_path: str) -> None:
         """Create a .hsynckeep sentinel in *dir_path* if it is empty.
@@ -2651,16 +2671,7 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
                     self._inventory_observer.upsert(file_obj)
                     if CONFIG.get("SYNC_DIRECTION") == "download-only":
                         return
-                    try:
-                        size_hint = os.stat(dest_path).st_size
-                    except OSError:
-                        size_hint = 0
-                    self._start_operation(
-                        target=self._upload_to_master,
-                        args=(file_obj,),
-                        name=f"upload-{dest_path}",
-                        bytes_estimate=size_hint,
-                    )
+                    self._start_upload(file_obj)
             return
 
         # Visible to hidden - treat as deletion

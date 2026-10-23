@@ -3,6 +3,7 @@
 
 """Tests for RemoteFileEventHandler."""
 
+import time
 from asyncio import new_event_loop
 from unittest.mock import MagicMock, patch
 
@@ -1229,7 +1230,11 @@ class TestFileEventHandler:
 
             self.handler.on_closed(event)
 
-            mock_upload.assert_called_once_with(mock_file, from_closed=True)
+            # The per-path scheduler runs the upload on the realtime pool.
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and not mock_upload.called:
+                time.sleep(0.01)
+            mock_upload.assert_called_once_with(mock_file, permissions_only=False, from_closed=True)
 
     # -- on_created symlink --
 
@@ -1705,7 +1710,12 @@ class TestFileEventHandler:
             mock_file.sha256sum = "abc123"
             mock_get.return_value = mock_file
             self.handler.on_modified(event)
-            mock_upload.assert_called_once_with(mock_file, from_closed=False)
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and not mock_upload.called:
+                time.sleep(0.01)
+            mock_upload.assert_called_once_with(
+                mock_file, permissions_only=False, from_closed=False
+            )
 
     def test_on_modified_non_linux_unchanged_stat_skips(self):
         """on_modified skips upload on non-Linux when stat is unchanged.

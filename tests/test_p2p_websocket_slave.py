@@ -339,7 +339,11 @@ class TestSlaveFileEventHandler:
         with patch("hsync_client.transfer.upload_file") as mock_up:
             handler._upload_to_master(file_obj)
             mock_up.assert_called_once_with(
-                file_obj, check_size=True, from_closed=False, inventory_observer=ANY
+                file_obj,
+                check_size=True,
+                from_closed=False,
+                permissions_only=False,
+                inventory_observer=ANY,
             )
 
     def test_upload_to_master_emits_no_intent_line(self, handler):
@@ -369,7 +373,11 @@ class TestSlaveFileEventHandler:
         with patch("hsync_client.transfer.upload_file") as mock_up:
             handler._upload_to_master(file_obj, from_closed=True)
             mock_up.assert_called_once_with(
-                file_obj, check_size=True, from_closed=True, inventory_observer=ANY
+                file_obj,
+                check_size=True,
+                from_closed=True,
+                permissions_only=False,
+                inventory_observer=ANY,
             )
 
     def test_upload_to_master_exception(self, handler):

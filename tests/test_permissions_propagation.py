@@ -9,6 +9,7 @@ entirely. These tests pin the behaviour that a permission-only change
 propagates as a normal ``modified`` change (no special policy).
 """
 
+import time
 from unittest.mock import MagicMock, patch
 
 from hsync_common.models.sync_action import SyncActionName
@@ -222,4 +223,7 @@ def test_remote_handler_permissions_hook_uploads():
     file_obj = MagicMock()
     with patch("hsync_client.remote_websocket.upload_file") as mock_upload:
         handler._on_permissions_changed(file_obj, "/bucket/f.txt")
-    mock_upload.assert_called_once_with(file_obj, permissions_only=True)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not mock_upload.called:
+            time.sleep(0.01)
+    mock_upload.assert_called_once_with(file_obj, permissions_only=True, from_closed=False)

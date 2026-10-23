@@ -1963,7 +1963,29 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
         # through to the full-upload body below (same attempt, retry unchanged).
         # A permission-only upload carries no content change, so it skips the
         # delta path entirely (the same-SHA branch applies the mode server-side).
-        if not permissions_only and (delta_ctx := prepare_delta_upload(file, filename)):
+        delta_ctx = None
+        if not permissions_only:
+            delta_ctx = prepare_delta_upload(file, filename)
+
+        # Self-record the local content edit before advertising it (ADR-0022
+        # §3.4.7). Capture the delta context FIRST: it needs the OLD base hash
+        # for the signatures; the tick then advances the version the delta/full
+        # upload advertises, so the server's causal arbitration accepts it
+        # instead of rejecting it as superseded/conflict (409).
+        try:
+            from hsync_client.sync import is_sync_cycle_active
+            from hsync_client.sync_state import flush, note_local_edit
+
+            if file.sha256sum:
+                note_local_edit(file.filepath, file.sha256sum)
+                # Full sync cycles defer persistence to their single end flush;
+                # real-time watcher uploads persist immediately.
+                if not is_sync_cycle_active():
+                    flush()
+        except Exception as e:  # pragma: no cover - bookkeeping must never break upload
+            log.debug(f'Could not self-record content edit for "{file.filepath}": {e}')
+
+        if delta_ctx is not None:
             try:
                 upload_file_delta(file, delta_ctx)
                 log.info(

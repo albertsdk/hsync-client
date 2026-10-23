@@ -69,7 +69,7 @@ class TestRemoteRealtimePool:
 
         mock_upload.assert_called_once()
         assert mock_upload.call_args.args[0] is file
-        assert mock_upload.call_args.kwargs == {"from_closed": False}
+        assert mock_upload.call_args.kwargs == {"permissions_only": False, "from_closed": False}
 
     def test_on_permissions_changed_schedules_permission_only_upload(self):
         from concurrent.futures import ThreadPoolExecutor

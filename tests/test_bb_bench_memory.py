@@ -144,12 +144,11 @@ class TestDeltaUploadBenchmark:
                 f"growth={growth:.1f} MB delta_attempted={delta_attempted} delta_ok={delta_ok}"
             )
 
-            # The delta attempt is reported, not asserted: concurrent watcher
-            # uploads for the same path can make the server reject the delta with
-            # 409 (base changed) and fall back to a full transfer, or skip the
-            # delta gate entirely (stale base/File state). That is a continuous-
-            # mode upload-race behaviour, independent of the memory optimisation;
-            # the benchmark still validates the streaming memory bound.
+            # The per-path scheduler + the causal-clock self-record make the
+            # delta deterministic in this controlled flow: assert that the
+            # delta path ran AND applied (no 409 fallback), so the benchmark is
+            # also a regression guard for that behaviour.
+            assert delta_ok, f"delta was not applied; log tail:\n{log_tail[-2000:]}"
             # Coarse guard: a buffered payload (literals + compression + the
             # requests multipart body) would grow RSS by several times the file
             # size; streaming stays near the mmap window + chunk buffers.

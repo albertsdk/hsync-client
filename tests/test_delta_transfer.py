@@ -303,6 +303,42 @@ class TestUploadDelta:
         with pytest.raises(DeltaTransferError, match="apply rejected"):
             upload_file_delta(f, ctx)
 
+    def test_apply_409_with_matching_target_is_success(self, client_config, tmp_path, monkeypatch):
+        base = _base_bytes()
+        new = base + b"edit"
+        abs_path = _mk_file(tmp_path, "big.bin", new)
+        base_hash = sha256(base).hexdigest()
+        new_hash = sha256(new).hexdigest()
+        server_base = tmp_path / "server-base.bin"
+        server_base.write_bytes(base)
+        sigs = compute_signatures(str(server_base), BLOCK)
+        monkeypatch.setattr(
+            dt,
+            "get",
+            lambda *a, **k: _response(
+                200,
+                {
+                    "block_size": BLOCK,
+                    "file_size": len(base),
+                    "sha256": base_hash,
+                    "signatures": [s.to_dict() for s in sigs],
+                },
+            ),
+        )
+        monkeypatch.setattr(
+            dt,
+            "post",
+            lambda *a, **k: _response(
+                409,
+                {"detail": "base_file_changed", "actual_base_sha256": new_hash},
+            ),
+        )
+        f = File(filepath=abs_path, size=len(new), sha256sum=new_hash)
+        ctx = dt.DeltaUploadContext(relpath="big.bin", base_hash=base_hash)
+        # The server's current file already holds this delta's target content:
+        # the idempotent conflict is a success, not a fallback/error.
+        upload_file_delta(f, ctx)
+
     def test_apply_5xx_raises_server_error(self, client_config, tmp_path, monkeypatch):
         from hsync_client.exceptions import ServerError
 

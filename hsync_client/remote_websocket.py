@@ -54,6 +54,7 @@ from hsync_client.pools import log_future_error
 from hsync_client.presence import record_presence
 from hsync_client.sync import log_initial_sync_start, periodic_resync, sync
 from hsync_client.transfer import upload_file
+from hsync_client.upload_scheduler import PerPathUploadScheduler
 from hsync_client.watcher import WatcherManager
 
 # Global resync task reference for cancellation on reconnect
@@ -548,6 +549,17 @@ class RemoteFileEventHandler(BaseFileEventHandler):
         self.websocket = websocket
         self.loop = loop
         self.event_queue = event_queue
+        # One upload attempt per path: watcher bursts (modify + close + chmod)
+        # are coalesced to the latest file state, so a slow delta scan can never
+        # race a concurrent full upload for the same file (base_file_changed).
+        self._upload_scheduler = PerPathUploadScheduler(
+            lambda: _get_remote_upload_executor(),
+            # Resolve upload_file at call time (module global), so tests and
+            # future instrumentation can patch it.
+            lambda file, *, permissions_only, from_closed: upload_file(
+                file, permissions_only=permissions_only, from_closed=from_closed
+            ),
+        )
 
     def _broadcast_event(
         self,
@@ -583,8 +595,9 @@ class RemoteFileEventHandler(BaseFileEventHandler):
         synchronous upload (including the stability-wait sleep) would stall
         the processing of every subsequent filesystem event.
         """
-        future = _get_remote_upload_executor().submit(upload_file, file, from_closed=from_closed)
-        future.add_done_callback(partial(log_future_error, label="Realtime upload failed"))
+        future = self._upload_scheduler.submit(file, from_closed=from_closed)
+        if future is not None:
+            future.add_done_callback(partial(log_future_error, label="Realtime upload failed"))
 
     def _on_permissions_changed(self, file: File, src_path: str) -> None:
         """Propagate a permission-only change (chmod) to the central server.
@@ -595,8 +608,9 @@ class RemoteFileEventHandler(BaseFileEventHandler):
         bypasses the upload-status "complete" early-return so the mode change
         actually reaches the server.
         """
-        future = _get_remote_upload_executor().submit(upload_file, file, permissions_only=True)
-        future.add_done_callback(partial(log_future_error, label="Realtime upload failed"))
+        future = self._upload_scheduler.submit(file, permissions_only=True)
+        if future is not None:
+            future.add_done_callback(partial(log_future_error, label="Realtime upload failed"))
 
     def _on_metadata_changed(self, file: File, src_path: str) -> None:
         """Propagate a plain ``touch`` to the central server (metadata-only).
@@ -616,5 +630,6 @@ class RemoteFileEventHandler(BaseFileEventHandler):
                 flush()
         except Exception as e:  # pragma: no cover - defensive
             log.debug(f"Could not self-record metadata edit for {src_path}: {e}")
-        future = _get_remote_upload_executor().submit(upload_file, file, permissions_only=True)
-        future.add_done_callback(partial(log_future_error, label="Realtime upload failed"))
+        future = self._upload_scheduler.submit(file, permissions_only=True)
+        if future is not None:
+            future.add_done_callback(partial(log_future_error, label="Realtime upload failed"))

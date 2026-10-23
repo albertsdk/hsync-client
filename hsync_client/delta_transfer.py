@@ -322,6 +322,24 @@ def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:
             timeout=_upload_timeout(),
         )
 
+        if response.status_code == 409:
+            # Idempotent conflict: when the server's current file already holds
+            # exactly this delta's target content, a concurrent upload won the
+            # race — the desired state is reached, so there is nothing to do.
+            try:
+                detail = response.json()
+            except ValueError:
+                detail = {}
+            if detail.get("actual_base_sha256") == new_sha256:
+                log.info(f'[DELTA ↑] "{file.filepath}" already stored by a concurrent upload')
+                return
+            reason = (
+                detail.get("detail")
+                or detail.get("resolution")
+                or detail.get("message")
+                or "http 409"
+            )
+            raise DeltaTransferError(f"apply rejected (409): {reason}")
         if response.status_code >= 500:
             raise ServerError(f"Server error on delta apply: {response.status_code}")
         if response.status_code != 200:
