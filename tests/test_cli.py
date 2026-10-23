@@ -1090,3 +1090,56 @@ class TestServerTrustCommands:
         payload = json.loads(listed.output)
         assert payload[0]["host"] == "server.example.com"
         assert payload[0]["fingerprint"] == "a" * 64
+
+
+def test_common_run_sync_kwargs_maps_and_normalizes_shared_options():
+    """The shared CLI adapter keeps the two command keyword sets identical."""
+    from hsync_client import cli
+
+    values = {
+        "bucket": "bucket",
+        "env_file": None,
+        "insecure": False,
+        "ca_cert": None,
+        "http_timeout": 30,
+        "events_json_fd": None,
+        "local_path": "/tmp/local",
+        "once": False,
+        "resync": 0,
+        "reconnect_delay": 5,
+        "stability_delay": 5,
+        "max_wait_timeout": 120,
+        "filter_path": "",
+        "dryrun": False,
+        "ignore_delete": False,
+        "sync_direction": "bidirectional",
+        "no_compression": False,
+        "no_delta": True,
+        "delta_min_file_size": 1024,
+        "delta_min_file_size_p2p": 1024,
+        "parsed_bw_upload": None,
+        "parsed_bw_download": None,
+        "verbose": False,
+        "quiet": False,
+        "logfile": "",
+        "color": "auto",
+        "allow_deletions": True,
+        "min_free_disk_space": 0,
+        "max_inbound_size": 0,
+        "ignore_patterns": [" a ", ""],
+        "max_concurrent_transfers": 4,
+        "no_autotune": False,
+        "mass_delete_guard": True,
+        "mass_delete_threshold": None,
+        "mass_delete_percent": None,
+    }
+
+    kwargs = cli._common_run_sync_kwargs(values)
+
+    assert kwargs["bucket"] == "bucket"
+    assert kwargs["verify_ssl"] is True
+    assert kwargs["continuous"] is True
+    assert kwargs["compression_enabled"] is True
+    assert kwargs["delta_enabled"] is False
+    assert kwargs["ignore_patterns"] == ["a"]
+    assert kwargs["debug"] is False

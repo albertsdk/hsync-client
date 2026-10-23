@@ -829,7 +829,7 @@ def run_sync(
         from types import ModuleType
 
         _netrc_stub = ModuleType("netrc")
-        _netrc_stub.netrc = lambda *a, **kw: None  # type: ignore[attr-defined]
+        _netrc_stub.netrc = lambda *_a, **_kw: None  # type: ignore[attr-defined]
         _netrc_stub.NetrcParseError = Exception  # type: ignore[attr-defined]
         sys.modules["netrc"] = _netrc_stub
         log.debug("Registered netrc stub module (PyInstaller workaround)")

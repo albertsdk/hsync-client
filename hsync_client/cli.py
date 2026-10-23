@@ -14,8 +14,9 @@ namespaces: ``trust`` (certificate pins) and ``state`` (local sync state).
 import json
 import re
 import sys
+from collections.abc import Mapping
 from os import getcwd
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 import typer.main
@@ -113,7 +114,7 @@ def collect_subcommand_options(typer_app: typer.Typer) -> dict[str, list[str]]:
     return dict(sorted(options.items()))
 
 
-def capabilities_json_callback(ctx: typer.Context, value: bool) -> None:
+def capabilities_json_callback(_ctx: typer.Context, value: bool) -> None:
     """Print the binary's capabilities document as JSON and exit."""
     if not value:
         return
@@ -268,6 +269,51 @@ def _parse_and_validate_bandwidth(value: str | None, flag: str, label: str) -> i
             f"{label} bandwidth must be between {BANDWIDTH_MIN} and {BANDWIDTH_MAX} bytes/s."
         )
     return parsed
+
+
+def _common_run_sync_kwargs(values: Mapping[str, Any]) -> dict[str, Any]:
+    """Map the shared CLI options to ``run_sync`` keyword arguments.
+
+    The p2p and server commands expose the same sync/transfer options; keeping
+    the normalization here prevents the two command bodies from drifting.
+    """
+    return {
+        "bucket": values["bucket"],
+        "env_file": values["env_file"],
+        "verify_ssl": not values["insecure"],
+        "ca_cert": values["ca_cert"],
+        "http_timeout": values["http_timeout"],
+        "events_json_fd": values["events_json_fd"],
+        "local_path": values["local_path"],
+        "continuous": not values["once"],
+        "resync": values["resync"],
+        "reconnect_delay": values["reconnect_delay"],
+        "stability_delay": values["stability_delay"],
+        "max_wait_timeout": values["max_wait_timeout"],
+        "filter_path": values["filter_path"],
+        "dryrun": values["dryrun"],
+        "ignore_delete": values["ignore_delete"],
+        "sync_direction": values["sync_direction"],
+        "compression_enabled": not values["no_compression"],
+        "delta_enabled": not values["no_delta"],
+        "delta_min_file_size": values["delta_min_file_size"],
+        "delta_min_file_size_p2p": values["delta_min_file_size_p2p"],
+        "max_bandwidth_upload": values["parsed_bw_upload"],
+        "max_bandwidth_download": values["parsed_bw_download"],
+        "debug": values["verbose"],
+        "quiet": values["quiet"],
+        "logfile": values["logfile"],
+        "color": values["color"],
+        "allow_deletions": values["allow_deletions"],
+        "min_free_disk_space": values["min_free_disk_space"],
+        "max_inbound_size": values["max_inbound_size"],
+        "ignore_patterns": [p.strip() for p in (values["ignore_patterns"] or []) if p.strip()],
+        "max_concurrent_transfers": values["max_concurrent_transfers"],
+        "no_autotune": values["no_autotune"],
+        "mass_delete_guard": values["mass_delete_guard"],
+        "mass_delete_threshold": values["mass_delete_threshold"],
+        "mass_delete_percent": values["mass_delete_percent"],
+    }
 
 
 def _validate_shared_options(
@@ -1205,31 +1251,10 @@ def p2p(
     from hsync_client.main_logic import run_sync
 
     run_sync(
-        bucket=bucket,
-        env_file=env_file,
+        **_common_run_sync_kwargs(locals()),
         server_url=None,
-        verify_ssl=not insecure,
-        ca_cert=ca_cert,
-        http_timeout=http_timeout,
         api_key_fd=None,
         p2p_key_fd=p2p_key_fd,
-        events_json_fd=events_json_fd,
-        local_path=local_path,
-        continuous=not once,
-        resync=resync,
-        reconnect_delay=reconnect_delay,
-        stability_delay=stability_delay,
-        max_wait_timeout=max_wait_timeout,
-        filter_path=filter_path,
-        dryrun=dryrun,
-        ignore_delete=ignore_delete,
-        sync_direction=sync_direction,
-        compression_enabled=not no_compression,
-        delta_enabled=not no_delta,
-        delta_min_file_size=delta_min_file_size,
-        delta_min_file_size_p2p=delta_min_file_size_p2p,
-        max_bandwidth_upload=parsed_bw_upload,
-        max_bandwidth_download=parsed_bw_download,
         p2p_mode=True,
         p2p_listen_port=p2p_listen_port,
         p2p_bootnode=bootnode_host,
@@ -1246,19 +1271,6 @@ def p2p(
         p2p_peer_download_enabled=not no_peer_download,
         p2p_allow_unauthenticated_writes=allow_unauthenticated_writes,
         p2p_allow_unauthenticated=allow_unauthenticated_p2p,
-        debug=verbose,
-        quiet=quiet,
-        logfile=logfile,
-        color=color,
-        allow_deletions=allow_deletions,
-        min_free_disk_space=min_free_disk_space,
-        max_inbound_size=max_inbound_size,
-        ignore_patterns=[p.strip() for p in (ignore_patterns or []) if p.strip()],
-        max_concurrent_transfers=max_concurrent_transfers,
-        no_autotune=no_autotune,
-        mass_delete_guard=mass_delete_guard,
-        mass_delete_threshold=mass_delete_threshold,
-        mass_delete_percent=mass_delete_percent,
     )
 
 
@@ -1639,34 +1651,13 @@ def server(
     from hsync_client.main_logic import run_sync
 
     run_sync(
-        bucket=bucket,
-        env_file=env_file,
+        **_common_run_sync_kwargs(locals()),
         server_url=server_url,
-        verify_ssl=not insecure,
-        ca_cert=ca_cert,
+        api_key_fd=api_key_fd,
+        p2p_key_fd=None,
         server_fingerprints=server_fingerprints,
         server_tofu=bool(server_tofu),
         server_trust=server_trust,
-        http_timeout=http_timeout,
-        api_key_fd=api_key_fd,
-        p2p_key_fd=None,
-        events_json_fd=events_json_fd,
-        local_path=local_path,
-        continuous=not once,
-        resync=resync,
-        reconnect_delay=reconnect_delay,
-        stability_delay=stability_delay,
-        max_wait_timeout=max_wait_timeout,
-        filter_path=filter_path,
-        dryrun=dryrun,
-        ignore_delete=ignore_delete,
-        sync_direction=sync_direction,
-        compression_enabled=not no_compression,
-        delta_enabled=not no_delta,
-        delta_min_file_size=delta_min_file_size,
-        delta_min_file_size_p2p=delta_min_file_size_p2p,
-        max_bandwidth_upload=parsed_bw_upload,
-        max_bandwidth_download=parsed_bw_download,
         p2p_mode=False,
         p2p_listen_port=0,
         discovery_timeout=None,
@@ -1676,19 +1667,6 @@ def server(
         p2p_require_pairing=False,
         p2p_peer_download_enabled=False,
         p2p_allow_unauthenticated_writes=False,
-        debug=verbose,
-        quiet=quiet,
-        logfile=logfile,
-        color=color,
-        allow_deletions=allow_deletions,
-        min_free_disk_space=min_free_disk_space,
-        max_inbound_size=max_inbound_size,
-        ignore_patterns=[p.strip() for p in (ignore_patterns or []) if p.strip()],
-        max_concurrent_transfers=max_concurrent_transfers,
-        no_autotune=no_autotune,
-        mass_delete_guard=mass_delete_guard,
-        mass_delete_threshold=mass_delete_threshold,
-        mass_delete_percent=mass_delete_percent,
     )
 
 
