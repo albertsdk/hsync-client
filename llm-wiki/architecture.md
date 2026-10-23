@@ -70,6 +70,9 @@ WatcherManager (watcher.py::WatcherManager) ──> BaseFileEventHandler (file_e
         │ on_created/on_closed/on_modified/on_deleted/on_moved
         ▼
  stability check (transfer._wait_for_stable_file) ──> upload_file (transfer.py::upload_file)
+         │    via PerPathUploadScheduler (upload_scheduler.py::PerPathUploadScheduler):
+         │    one in-flight upload per path, watcher bursts coalesced to the newest
+         │    request; upload_file self-records the local edit before advertising
         │
  inbound WS event ──> event_dispatch.apply_inbound_event (event_dispatch.py::apply_inbound_event)
         │                         └─> download/delete/rename/symlink locally
@@ -81,7 +84,10 @@ WatcherManager (watcher.py::WatcherManager) ──> BaseFileEventHandler (file_e
 Mode-specific handlers: `RemoteFileEventHandler` (`remote_websocket.py::RemoteFileEventHandler`) and
 `P2PMasterFileEventHandler` (`p2p_websocket.py::P2PMasterFileEventHandler`) subclass `BaseFileEventHandler`;
 `P2PSlaveFileEventHandler` (`p2p_websocket.py::P2PSlaveFileEventHandler`) is a separate watchdog
-`FileSystemEventHandler` for the slave→master upload path.
+`FileSystemEventHandler` for the slave→master upload path. The realtime upload hooks
+submit through `PerPathUploadScheduler` (`upload_scheduler.py::PerPathUploadScheduler`):
+one in-flight attempt per path, with bursty watcher events coalesced to the newest
+request, so a slow delta scan never races a concurrent full upload for the same file.
 
 ## Layering
 
@@ -92,7 +98,7 @@ utils (http session + pinning, path_lock, perms, bandwidth) / retry / ssl_utils 
         │
 config (CONFIG SSOT) / events (UI event emitter)
         │
-sync / transfer / event_dispatch / event_queue / file_event_handler   (core)
+sync / transfer / event_dispatch / event_queue / file_event_handler / upload_scheduler   (core)
         │
 remote_websocket | p2p_peers.py / p2p_discovery_mdns.py + p2p_server + p2p_websocket + p2p_handler   (modes)
         │

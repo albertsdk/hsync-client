@@ -102,6 +102,15 @@ the WSS event stream pins the live connection via
   otherwise a file deleted while the process was dead would be resurrected on
   restart (no base to mint a tombstone from). Full-sync transfers defer to the
   single end-of-cycle flush.
+- **Per-path upload scheduling**: `RemoteFileEventHandler` submits uploads through
+  `upload_scheduler.py::PerPathUploadScheduler` — one in-flight attempt per path,
+  with watcher bursts coalesced to the newest request (Syncthing-style). A slow
+  delta scan therefore cannot race a concurrent full upload for the same path
+  (which would move the server base and force a 409 fallback). `transfer.py::upload_file`
+  self-records the local edit (`note_local_edit` + flush) **after** capturing the
+  delta context (which needs the old base for signatures) and before advertising,
+  so the advertised causal clock descends from the stored base and the server's
+  arbitration accepts the delta instead of returning `superseded`.
 
 ## Auth & versioning
 
