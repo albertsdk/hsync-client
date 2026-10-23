@@ -25,15 +25,7 @@ Files stay in their original format, directly browsable on disk, and there is no
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Linux_|_macOS_|_Windows_|_WD_My_Cloud_OS5-lightgrey.svg)](docs/installation.md)
 
-**Quick navigation:**
-
-* **[What you can do](#what-you-can-do-with-hsync-client)**
-* **[Two ways to run it](#two-ways-to-run-it)**
-* **[Getting started](#getting-started)**
-* **[Why HSYNC?](#why-hsync)**
-* **[Privacy, security & openness](#privacy-security--openness)**
-* **[Documentation](docs/README.md)** — Parameter reference and internal architecture.
-* **[Contributing](CONTRIBUTING.md)** — Engineering workflow and coding guidelines.
+---
 
 ## What you can do with HSYNC Client
 
@@ -41,10 +33,6 @@ Files stay in their original format, directly browsable on disk, and there is no
 * **Back up a folder** — push it one-way to your own server or NAS, optionally without propagating deletions, so the destination never loses data just because a source file was removed.
 * **Publish a read-only mirror** — other devices download the folder and never write back.
 * **Share files with a team** — a synced folder works as a drop box: drop a file in and it lands on the other machines.
-* **Sync without a server** — devices on the same network find each other and transfer directly, peer-to-peer.
-* **Sync across networks** — point p2p Mode at a bootnode to connect devices that are not on the same LAN.
-* **Automate** — one-shot runs from cron, systemd timers or CI, with a documented exit code; or keep the client running and react to changes instantly.
-* **Go advanced** — ignore patterns (`.hsyncignore`), block-level delta transfer, bandwidth limits, per-device sync directions, isolated groups with shared keys.
 
 ## Two ways to run it
 
@@ -132,7 +120,7 @@ flowchart TB
    files from the master or directly from a peer that holds the exact content;
    the master relays metadata to all connected peers
 
-Devices find each other automatically on the same network (mDNS) and sync directly, peer-to-peer: nothing passes through another machine. Across networks, an optional self-hosted [HSYNC Bootnode](https://github.com/albertsdk/hsync-bootnode) introduces peers — discovery only, never your files — and writes are authorized by a shared key (a keyless LAN is read-only).
+Devices find each other automatically on the same network (mDNS) and sync directly, peer-to-peer: nothing passes through another machine. Across networks, an optional self-hosted bootnode introduces peers — discovery only, never your files (details in **Internet P2P** below).
 
 **Choose it when:** a handful of devices share one network, or you prefer zero infrastructure. Concepts and setup: [p2p Mode](docs/p2p-mode.md) · [Across networks with a bootnode](docs/p2p-bootnode.md).
 
@@ -178,15 +166,6 @@ opaque internal formats.
 > **³** When utilizing the `crypt` backend, files are stored in an opaque encrypted format.<br>
 > **⁴** Rclone's HTTP backend is restricted to read-only operations. Core synchronization requires non-HTTP protocols.
 
-**When to choose HSYNC:**
-
-- 🏢 **Corporate networks** — only ports 80/443 are open through the firewall
-- ☁️ **Cloud environments** — services behind load balancers or reverse proxies that only expose HTTP endpoints
-- 🔒 **Restricted infrastructures** — SSH is disabled, VPNs are unavailable, or custom protocols are blocked
-- 🌐 **Web-friendly setups** — your infrastructure already routes HTTP traffic through CDNs, WAFs, or API gateways
-- ⚡ **Real-time reactivity** — Unlike traditional HTTP-based tools that rely on periodic polling, HSYNC reacts instantly to file changes using local watchdogs and event-driven WebSockets. After the system closes the file, the upload starts in a fraction of a second — not after a 5–10s quiet window (the default in tools like Syncthing). Already-idle files (full resync, atomic moves) skip the wait.
-- 🕸️ **Your own private sync network** — no vendor account and no third-party service in the data path: on a single network, devices sync directly peer-to-peer (`hsync p2p`), optionally isolated with `--group` and authenticated with `HSYNC_P2P_KEY`; across networks you host the HSYNC Server yourself.
-
 ## Privacy, security & openness
 
 - 🔐 **Private** — no vendor account and no third-party service in the data path: `hsync p2p` transfers directly between your devices, and Server Mode stores your data only on the hub you run yourself.
@@ -202,7 +181,7 @@ HSYNC Client focuses on reliable, fast transfers.
 **⚙️ Core sync**
 
 * **Two-way or one-way sync:** full bidirectional, or upload-only / download-only.
-* **Starts when you save:** a local filesystem watcher begins the transfer as soon as a file is closed, with no debounce delay.
+* **Starts when you save:** a local filesystem watcher begins the transfer as soon as a file is closed, with no debounce delay — the upload starts in a fraction of a second, not after the 5–10 s quiet window used by tools like Syncthing; already-idle files (full resync, atomic moves) skip the wait.
 * **Block-level delta transfer:** for large files, only the changed byte ranges are sent (rsync-style).
 * **SHA-256 verification:** integrity is checked after every transfer.
 * **Zstandard (zstd) compression:** applied automatically to outbound data.
@@ -224,16 +203,21 @@ HSYNC Client focuses on reliable, fast transfers.
 * **NAT traversal:** optional UPnP port mapping and the bootnode's STUN-style echo for cross-network reachability — no manual port forwarding in the common case.
 * **Stable device identity:** a persistent device ID and keypair keep pins across restarts; a rotated key shows up as a changed fingerprint.
 
-> **Internet P2P.** An optional, self-hostable discovery node ([HSYNC Bootnode](https://github.com/albertsdk/hsync-bootnode)) extends the peer-to-peer topology beyond a single LAN segment over `boot/1` (QUIC/UDP 443, no-log, RAM-only). Pass a bootnode hostname to `hsync p2p` (positional argument or `HSYNC_BOOTNODE`) to sync devices that are **not** on the same local network — same mode, same election, same data plane; only discovery differs. The bootnode is a **stable v1** (Python).
+> **Internet P2P.** An optional, self-hostable discovery node ([HSYNC Bootnode](https://github.com/albertsdk/hsync-bootnode)) extends the peer-to-peer topology beyond a single LAN segment over `boot/1` (QUIC/UDP 443, no-log, RAM-only). Pass a bootnode hostname to `hsync p2p` (positional argument or `HSYNC_BOOTNODE`) to sync devices that are **not** on the same local network — same mode, same election, same data plane; only discovery differs. Writes are authorized by a shared key, so a keyless LAN is read-only. The bootnode is a **stable v1** (Python).
 
 ## Documentation
 
+- [Documentation Index](docs/README.md) - The complete documentation map
 - [Getting Started](docs/getting-started.md) - Choose an install method and an operating mode
+- [Installation](docs/installation.md) - Verified downloads, asset names and platform notes
+- [Getting Started — p2p Mode](docs/getting-started-p2p.md) - Two devices, no server
+- [Getting Started — Server Mode](docs/getting-started-server.md) - Through your own hub
 - [Configuration](docs/configuration.md) - Environment variables and CLI options (complete reference)
 - [Sync Modes](docs/sync-modes.md) - Server and p2p modes (continuous / one-shot)
 - [Server Mode](docs/server-mode.md) - Client-Server synchronization details
 - [p2p Mode](docs/p2p-mode.md) - P2P synchronization details
 - [p2p across networks (bootnode)](docs/p2p-bootnode.md) - Cross-network discovery through a `boot/1` bootstrap node
+- [Scheduling & Automation](docs/scheduling.md) - Cron, systemd timers and alerts
 - [Architecture](docs/internal/architecture.md) - Internal design
 - [Architecture Decision Records](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/README.md) - Why the stable, cross-project decisions were made
 - [Protocol specification](https://github.com/albertsdk/hsync-common/blob/main/docs/protocol.md) - Shared, versioned wire protocol (schemas and fixtures)
@@ -262,8 +246,6 @@ The other components of the HSYNC ecosystem:
 Security is a primary design pillar. To report potential security vulnerabilities or bypasses, utilize the private reporting channel:
 
 👉 **[Report a vulnerability](https://github.com/albertsdk/hsync-client/security/advisories/new)**
-
-Review the [Security Policy](SECURITY.md) for compliance details and infrastructure hardening recommendations.
 
 ## 🙋‍♂️ A note from the maintainer
 
