@@ -19,7 +19,7 @@ import json
 import secrets
 import sqlite3
 import threading
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -1054,26 +1054,34 @@ class P2PInventoryPublisher:
             return self._resnapshot_requested
 
     @staticmethod
-    def _chunk_entries(entries: list[P2PInventoryEntry]) -> list[list[P2PInventoryEntry]]:
-        if not entries:
-            return [[]]
-        chunks: list[list[P2PInventoryEntry]] = []
+    def _iter_chunks(entries: Iterable[P2PInventoryEntry]) -> Iterator[list[P2PInventoryEntry]]:
+        """Yield frame-sized chunks lazily (at most one chunk built ahead).
+
+        The previous implementation materialised every chunk plus a redundant
+        ``list(entries)`` copy, holding O(N) references twice; streaming the
+        chunks keeps the publisher's peak at two chunks.
+        """
         current: list[P2PInventoryEntry] = []
         encoded_size = 0
+        yielded = False
         limit = P2P_INVENTORY_MAX_FRAME_BYTES - _FRAME_SIZE_MARGIN
         for entry in entries:
             item_size = len(compact_json_bytes(entry)) + 1
             if current and (
                 len(current) >= P2P_INVENTORY_MAX_ENTRIES or encoded_size + item_size > limit
             ):
-                chunks.append(current)
+                yielded = True
+                yield current
                 current = []
                 encoded_size = 0
             current.append(entry)
             encoded_size += item_size
         if current:
-            chunks.append(current)
-        return chunks
+            yielded = True
+            yield current
+        if not yielded:
+            # Preserve the terminal empty-snapshot frame.
+            yield []
 
     @staticmethod
     def _serialize(frame: P2PInventoryFrame) -> str:
@@ -1124,22 +1132,29 @@ class P2PInventoryPublisher:
 
     async def _publish_snapshot(self) -> tuple[str, int, int]:
         generation, entries = self._capture_snapshot()
-        chunks = self._chunk_entries(list(entries))
+        chunks = self._iter_chunks(entries)
+        current = next(chunks, None)  # at most two chunks alive (current + next)
+        seq = 0
         terminal: P2PInventoryFrame | None = None
-        for seq, chunk in enumerate(chunks):
-            terminal = build_p2p_inventory_frame(
+        while current is not None:
+            nxt = next(chunks, None)
+            frame = build_p2p_inventory_frame(
                 gen=generation,
                 seq=seq,
                 mode="snapshot",
-                more=seq < len(chunks) - 1,
-                entries=chunk,
+                more=nxt is not None,
+                entries=current,
             )
-            if terminal["more"]:
+            if nxt is not None:
                 websocket = self._websocket
                 if websocket is None:
                     raise ConnectionError("P2P inventory publisher detached")
-                await websocket.send(self._serialize(terminal))
-        if terminal is None:  # pragma: no cover - empty input always creates one chunk
+                await websocket.send(self._serialize(frame))
+            else:
+                terminal = frame
+            current = nxt
+            seq += 1
+        if terminal is None:  # pragma: no cover - empty input always yields one chunk
             raise RuntimeError("inventory snapshot did not produce a terminal frame")
         ack = await self._send_with_ack(terminal)
         if ack["status"] == "rejected":
@@ -1150,7 +1165,7 @@ class P2PInventoryPublisher:
         mutations = self._take_mutations()
         if not mutations:
             return "idle", next_seq
-        for chunk in self._chunk_entries(mutations):
+        for chunk in self._iter_chunks(mutations):
             if not chunk:
                 continue
             frame = build_p2p_inventory_frame(

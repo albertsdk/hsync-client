@@ -21,6 +21,7 @@ from asyncio import (
     FIRST_COMPLETED,
     Event,
     Queue,
+    QueueFull,
     Task,
     create_task,
     current_task,
@@ -48,6 +49,11 @@ log = getLogger("hsync")
 
 # Configuration constants
 MAX_RETRIES = 5
+# Hard cap on queued events. The producer is fire-and-forget
+# (run_coroutine_threadsafe), so this bound is what keeps a stalled websocket
+# from growing RAM without limit; overload drops the newest event and the next
+# full sync reconciles the state.
+EVENT_QUEUE_MAXSIZE = 10_000
 INITIAL_BACKOFF = 1.0  # seconds
 MAX_BACKOFF = 60.0  # seconds
 BACKOFF_MULTIPLIER = 2.0
@@ -82,7 +88,7 @@ async def _await_cancelled(tasks: Iterable[Task]) -> None:
             me.cancel()
 
 
-@dataclass
+@dataclass(slots=True)
 class QueuedEvent:
     """
     An event in the processing queue with retry metadata.
@@ -133,9 +139,11 @@ class EventQueue:
         Args:
             websocket: WebSocket connection for sending events.
         """
-        self.queue: Queue[QueuedEvent] = Queue()
+        self.queue: Queue[QueuedEvent] = Queue(maxsize=EVENT_QUEUE_MAXSIZE)
         self.websocket = websocket
         self._running = False
+        # Events dropped by the overload policy (observable for diagnostics/tests).
+        self.dropped = 0
         # A single failed event awaiting retry. While set, it blocks newer
         # events from being processed, guaranteeing in-order delivery.
         self._pending_retry: QueuedEvent | None = None
@@ -144,15 +152,41 @@ class EventQueue:
         self._stop_event = Event()
 
     async def enqueue(self, event_data: dict[str, Any]) -> None:
-        """
-        Add an event to the queue.
+        """Add an event to the queue, dropping it when the queue is full.
+
+        ``put_nowait`` keeps the producer non-blocking: a bounded ``await
+        put()`` would just move the backlog into pending coroutines (the caller
+        is fire-and-forget), so memory would still grow under a stalled
+        websocket. Dropping under overload is safe because the next full sync
+        reconciles the filesystem state.
 
         Args:
             event_data: The event payload to queue.
         """
-        event = QueuedEvent(data=event_data)
-        await self.queue.put(event)
+        # Fast-path overload check: ``full()`` + ``put_nowait`` run without an
+        # intervening await on the single event-loop thread, so the common drop
+        # path costs no exception.
+        if self.queue.full():
+            self._drop_event(event_data)
+            return
+        try:
+            self.queue.put_nowait(QueuedEvent(data=event_data))
+        except QueueFull:  # defensive: unreachable on the single-loop producers
+            self._drop_event(event_data)
+            return
         log.debug(f"Event queued: {event_data.get('name', 'unknown')}")
+
+    def _drop_event(self, event_data: dict[str, Any]) -> None:
+        """Count and (sparsely) log one event dropped by the overload policy."""
+        self.dropped += 1
+        # Powers of two: a sustained overload must not turn into unbounded log
+        # records/memory on top of the dropped events.
+        if self.dropped == 1 or (self.dropped & (self.dropped - 1)) == 0:
+            log.warning(
+                f"Event queue full ({EVENT_QUEUE_MAXSIZE}); dropped "
+                f"{self.dropped} event(s) so far "
+                f"(latest: {event_data.get('name', 'unknown')})"
+            )
 
     async def _send_event(self, event: QueuedEvent) -> bool:
         """

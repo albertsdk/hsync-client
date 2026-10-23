@@ -543,18 +543,25 @@ async def sync(
         # resurrected. ``existing_keys`` is computed right before this loop, so
         # it reflects the live filesystem at mint time.
         minted = False
-        for key, base_hash, vclock in list(sync_state.iter_merge_bases()):
+        # Collect only the deletions first (usually a handful): the previous
+        # ``list(iter_merge_bases())`` materialised every merge base as an extra
+        # O(N) list on top of the store's own snapshot.
+        offline_deletions: list[tuple[str, str, dict[str, int]]] = []
+        for key, base_hash, vclock in sync_state.iter_merge_bases():
             if key and key not in existing_keys:
-                from hsync_client.tombstones import record_deletion_by_key
+                offline_deletions.append((key, base_hash, vclock))
 
-                record_deletion_by_key(
-                    key,
-                    sha256sum=base_hash or None,
-                    origin_cid=_local_cid_or_none(),
-                    prev_vclock=vclock,
-                    persist=False,
-                )
-                minted = True
+        from hsync_client.tombstones import record_deletion_by_key
+
+        for key, base_hash, vclock in offline_deletions:
+            record_deletion_by_key(
+                key,
+                sha256sum=base_hash or None,
+                origin_cid=_local_cid_or_none(),
+                prev_vclock=vclock,
+                persist=False,
+            )
+            minted = True
         # Persist the minted markers once (one SQLite transaction) and push the
         # union once after all offline-deletion markers are recorded: the
         # intermediate per-marker persists/pushes were redundant (the master

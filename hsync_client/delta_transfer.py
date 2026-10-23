@@ -26,18 +26,21 @@ stdlib P2P master: the wire contract is identical (``hsync_common.delta``).
 from __future__ import annotations
 
 import json
+from contextlib import suppress
 from dataclasses import dataclass
-from os import fsync, remove, replace
+from os import close, fdopen, fsync, remove, replace
 from pathlib import Path
+from tempfile import mkstemp
 from time import monotonic
 from typing import cast
+from uuid import uuid4
 
 import zstandard as zstd
-from hsync_common.constants import CONTENT_TYPE_OCTET_STREAM, PARTIAL_DELTA_SUFFIX
+from hsync_common.constants import PARTIAL_DELTA_SUFFIX
 from hsync_common.delta import (
     apply_delta,
     compute_signatures,
-    find_matches_file,
+    find_matches_file_to_sink,
     is_delta_worthwhile,
     optimal_block_size,
 )
@@ -54,7 +57,7 @@ from loguru import logger as log
 
 from hsync_client.compression import (
     CONTENT_ENCODING_ZSTD,
-    compress_data,
+    compress_file_to_file,
     compression_level,
     decompress_stream,
     should_compress,
@@ -225,85 +228,118 @@ def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:
     # TOCTOU: snapshot before the rolling scan, re-check after — a file that
     # changes mid-scan would produce a delta describing a torn read whose
     # server-side hash check would still pass, poisoning the merge base.
-    pre_stat = Path(file.filepath).stat()
-    ops, literals = find_matches_file(file.filepath, sigs, block_size)
-    post_stat = Path(file.filepath).stat()
-    if (pre_stat.st_mtime, pre_stat.st_size) != (post_stat.st_mtime, post_stat.st_size):
-        raise DeltaTransferError("file changed during delta scan")
+    #
+    # Literals are streamed into a temp file and the multipart body is streamed
+    # from disk: requests' ``files=`` encoder reads a file object fully into
+    # RAM (measured 2x the payload), so it is not used here.
+    raw_path: str | None = None
+    compressed_path: str | None = None
+    try:
+        raw_fd, raw_path = mkstemp(prefix="hsync-delta-", suffix=".bin")
+        with fdopen(raw_fd, "w+b") as raw_literals:
+            pre_stat = Path(file.filepath).stat()
+            ops = find_matches_file_to_sink(file.filepath, sigs, block_size, raw_literals)
+            literal_size = raw_literals.tell()
+            post_stat = Path(file.filepath).stat()
+            if (pre_stat.st_mtime, pre_stat.st_size) != (post_stat.st_mtime, post_stat.st_size):
+                raise DeltaTransferError("file changed during delta scan")
 
-    # For small files, also do a full re-hash to catch content changes that
-    # mtime+size alone miss (e.g., rapid edits within the same second). The
-    # check runs exactly once: the duplicated block wasted a full extra
-    # SHA-256 pass over every small file on each delta upload.
-    from hsync_common.constants import DELTA_TOCTOU_REHASH_THRESHOLD
+        # For small files, also do a full re-hash to catch content changes that
+        # mtime+size alone miss (e.g., rapid edits within the same second). The
+        # check runs exactly once: the duplicated block wasted a full extra
+        # SHA-256 pass over every small file on each delta upload.
+        from hsync_common.constants import DELTA_TOCTOU_REHASH_THRESHOLD
 
-    if file.size < DELTA_TOCTOU_REHASH_THRESHOLD:
-        post_sha256 = compute_sha256(file.filepath)
-        if post_sha256 != file.sha256sum:
-            raise DeltaTransferError("file content changed during delta scan")
+        if file.size < DELTA_TOCTOU_REHASH_THRESHOLD:
+            post_sha256 = compute_sha256(file.filepath)
+            if post_sha256 != file.sha256sum:
+                raise DeltaTransferError("file content changed during delta scan")
 
-    if not is_delta_worthwhile(ops, file_size, len(literals), block_size):
-        raise DeltaTransferError("delta not worthwhile (too many changed blocks)")
+        if not is_delta_worthwhile(ops, file_size, literal_size, block_size):
+            raise DeltaTransferError("delta not worthwhile (too many changed blocks)")
 
-    new_sha256 = file.sha256sum
-    if not is_sha256_hex(new_sha256):
-        raise DeltaTransferError("missing local content hash")
+        new_sha256 = file.sha256sum
+        if not is_sha256_hex(new_sha256):
+            raise DeltaTransferError("missing local content hash")
 
-    compressed = False
-    payload = literals
-    if (
-        literals
-        and CONFIG.get("COMPRESSION_ENABLED", False)
-        and CONFIG.get("SERVER_COMPRESSION_ENABLED", False)
-        and should_compress(file.filepath, len(literals), transfer_type="upload")
-    ):
-        payload = compress_data(literals, level=compression_level(transfer_type="upload"))
-        compressed = True
+        compressed = False
+        payload_path = raw_path
+        if (
+            literal_size
+            and CONFIG.get("COMPRESSION_ENABLED", False)
+            and CONFIG.get("SERVER_COMPRESSION_ENABLED", False)
+            and should_compress(file.filepath, literal_size, transfer_type="upload")
+        ):
+            # Stream-compress the literal file into a second temp file: neither
+            # the raw literals nor the zstd frame are ever fully buffered.
+            comp_fd, compressed_path = mkstemp(prefix="hsync-delta-", suffix=".zst")
+            close(comp_fd)
+            compress_file_to_file(
+                raw_path, compressed_path, level=compression_level(transfer_type="upload")
+            )
+            payload_path = compressed_path
+            compressed = True
 
-    # Attach the effective causal version (vclock + version_id + the ADR-0023
-    # corrected mtime) so the server/master can arbitrate the delta-apply
-    # against its stored version (ADR-0022/ADR-0023). The server's
-    # delta/apply.py reads meta["vclock"] / meta["version_id"] /
-    # meta["corrected_mtime"].
-    vclock_json, version_id, corrected_mtime = _resolve_delta_version_fields(file)
-    metadata = {
-        "cid": CONFIG["CID"],
-        "base_sha256": ctx.base_hash,
-        "new_sha256": new_sha256,
-        "new_size": file.size,
-        "block_size": block_size,
-        "compressed": compressed,
-        "mtime": file.mtime,
-        "permissions": file.permissions,
-        "ops": [op.to_dict() for op in ops],
-        "vclock": vclock_json,
-        "version_id": version_id,
-        "corrected_mtime": corrected_mtime,
-    }
-    apply_uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files/delta/apply"
-    response = post(
-        apply_uri,
-        headers=headers,
-        data={"path": ctx.relpath, "metadata": json.dumps(metadata)},
-        files={"file": ("delta.bin", payload, CONTENT_TYPE_OCTET_STREAM)},
-        verify=get_ssl_verify(),
-        timeout=_upload_timeout(),
-    )
-    if response.status_code >= 500:
-        raise ServerError(f"Server error on delta apply: {response.status_code}")
-    if response.status_code != 200:
-        # 404 (file gone / no delta support), 409 (base changed), 422 (invalid
-        # instructions or hash mismatch) — all recoverable via full upload.
-        raise DeltaTransferError(f"apply rejected ({response.status_code})")
+        # Attach the effective causal version (vclock + version_id + the ADR-0023
+        # corrected mtime) so the server/master can arbitrate the delta-apply
+        # against its stored version (ADR-0022/ADR-0023). The server's
+        # delta/apply.py reads meta["vclock"] / meta["version_id"] /
+        # meta["corrected_mtime"].
+        vclock_json, version_id, corrected_mtime = _resolve_delta_version_fields(file)
+        metadata = {
+            "cid": CONFIG["CID"],
+            "base_sha256": ctx.base_hash,
+            "new_sha256": new_sha256,
+            "new_size": file.size,
+            "block_size": block_size,
+            "compressed": compressed,
+            "mtime": file.mtime,
+            "permissions": file.permissions,
+            "ops": [op.to_dict() for op in ops],
+            "vclock": vclock_json,
+            "version_id": version_id,
+            "corrected_mtime": corrected_mtime,
+        }
+        apply_uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files/delta/apply"
 
-    result = response.json()
-    if result.get("sha256") != new_sha256:
-        raise DeltaTransferError("apply response hash mismatch")
-    log.info(
-        f'[DELTA ↑] "{file.filepath}" {format_bytes(len(literals))} literal '
-        f"(saved {format_bytes(file.size - len(literals))}) "
-        f"{format_duration(monotonic() - t0, subsecond=True)}"
-    )
+        # Stream the multipart body from disk (see _build_multipart_streaming):
+        # the form fields are small and the literal payload is yielded in chunks,
+        # so requests never builds the body in RAM.
+        from hsync_client.transfer import _build_multipart_streaming
+
+        body, content_type = _build_multipart_streaming(
+            payload_path,
+            {"path": ctx.relpath, "metadata": json.dumps(metadata)},
+            boundary=uuid4().hex,
+            filename="delta.bin",
+        )
+        headers["Content-Type"] = content_type
+        response = post(
+            apply_uri,
+            headers=headers,
+            data=body,
+            verify=get_ssl_verify(),
+            timeout=_upload_timeout(),
+        )
+
+        if response.status_code >= 500:
+            raise ServerError(f"Server error on delta apply: {response.status_code}")
+        if response.status_code != 200:
+            raise DeltaTransferError(f"apply rejected ({response.status_code})")
+
+        result = response.json()
+        if result.get("sha256") != new_sha256:
+            raise DeltaTransferError("apply response hash mismatch")
+        log.info(
+            f'[DELTA ↑] "{file.filepath}" {format_bytes(literal_size)} literal '
+            f"(saved {format_bytes(file.size - literal_size)}) "
+            f"{format_duration(monotonic() - t0, subsecond=True)}"
+        )
+    finally:
+        for path in (raw_path, compressed_path):
+            if path is not None:
+                with suppress(OSError):
+                    remove(path)
 
 
 def _parse_data_url(data_url: object) -> str:

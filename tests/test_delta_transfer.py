@@ -158,6 +158,27 @@ def _response(status: int, body: dict | None = None) -> MagicMock:
     return resp
 
 
+def _parse_streaming_multipart(body, content_type: str):
+    """Parse the small multipart body the delta upload streams (test helper)."""
+    raw = b"".join(body)
+    boundary = content_type.split("boundary=")[1].strip().strip('"').encode()
+    fields: dict[str, bytes] = {}
+    file_bytes = b""
+    for part in raw.split(b"--" + boundary):
+        head, sep, data = part.partition(b"\r\n\r\n")
+        if not sep:
+            continue
+        if data.endswith(b"\r\n"):
+            data = data[:-2]  # the multipart CRLF before the next boundary
+        if b'name="metadata"' in head:
+            fields["metadata"] = data
+        elif b'name="path"' in head:
+            fields["path"] = data
+        elif b'name="file"' in head:
+            file_bytes = data
+    return fields, file_bytes
+
+
 class TestUploadDelta:
     def test_full_flow(self, client_config, tmp_path, monkeypatch):
         base = _base_bytes()
@@ -188,8 +209,16 @@ class TestUploadDelta:
 
         def fake_post(uri, **kwargs):
             calls["post_uri"] = uri
-            calls["post_data"] = kwargs.get("data")
-            calls["post_files"] = kwargs.get("files")
+            body = kwargs["data"]
+            content_type = kwargs["headers"]["Content-Type"]
+            # Streaming contract: a sized iterable (requests streams it with a
+            # Content-Length), not a bytes/dict body built in RAM.
+            calls["post_payload_is_stream"] = hasattr(body, "__len__") and not isinstance(
+                body, (bytes, dict)
+            )
+            fields, file_bytes = _parse_streaming_multipart(body, content_type)
+            calls["metadata"] = json.loads(fields["metadata"])
+            calls["post_payload"] = file_bytes
             return _response(
                 200, {"status": "ok", "sha256": sha256(bytes(new)).hexdigest(), "size": len(new)}
             )
@@ -204,14 +233,15 @@ class TestUploadDelta:
 
         assert calls["get_uri"].endswith("/files/delta/signatures")
         assert calls["post_uri"].endswith("/files/delta/apply")
-        metadata = json.loads(calls["post_data"]["metadata"])
+        metadata = calls["metadata"]
         assert metadata["base_sha256"] == base_hash
         assert metadata["new_sha256"] == sha256(bytes(new)).hexdigest()
         assert metadata["new_size"] == len(new)
         assert any(op["type"] == "copy" for op in metadata["ops"])
-        # literal payload is much smaller than the whole file
-        literal_payload = calls["post_files"]["file"][1]
-        assert len(literal_payload) < len(new) // 3
+        # literal payload is much smaller than the whole file, and it is
+        # streamed from a file object rather than passed as a bytes body.
+        assert calls["post_payload_is_stream"] is True
+        assert len(calls["post_payload"]) < len(new) // 3
 
     def test_signatures_404_is_recoverable(self, client_config, tmp_path, monkeypatch):
         abs_path = _mk_file(tmp_path, "big.bin", _base_bytes())
