@@ -73,6 +73,14 @@ class TestUploadFileMaxWaitTimeout:
         )
 
         # is_file_stable always returns False to simulate an unstable file
+        now = [0.0]
+
+        def fake_monotonic() -> float:
+            """Deterministic clock: every read advances one second."""
+            value = now[0]
+            now[0] += 1.0
+            return value
+
         with (
             patch(
                 "hsync_client.transfer.CONFIG",
@@ -86,6 +94,7 @@ class TestUploadFileMaxWaitTimeout:
                 },
             ),
             patch("hsync_client.transfer.is_file_stable", return_value=False),
+            patch("hsync_client.transfer.monotonic", side_effect=fake_monotonic),
             patch("hsync_client.transfer.time_sleep"),
             patch("hsync_client.transfer.post") as mock_post,
             patch("hsync_client.transfer._reschedule_upload") as mock_reschedule,
@@ -95,6 +104,58 @@ class TestUploadFileMaxWaitTimeout:
             # The file never stabilized, so the upload must be deferred, not forced.
             mock_post.assert_not_called()
             mock_reschedule.assert_called_once_with(file, None, False)
+
+    def test_max_wait_budget_is_wall_clock_seconds(self, tmp_path):
+        """The cap is seconds even though each probe sleeps ``STABILITY_DELAY``.
+
+        Counting iterations (the previous behaviour) stretched the documented
+        value by the stability delay: 120 "seconds" were ~12 minutes. Each probe
+        here costs 5 s, so a 12 s budget admits exactly three probes.
+        """
+        test_file = tmp_path / "file.txt"
+        test_file.write_text("test content")
+        file = File(
+            filepath=str(test_file),
+            sha256sum="abc123",
+            size=12,
+            mtime=1000,
+            ctime=1000,
+            permissions="644",
+        )
+
+        now = [0.0]
+        probes: list[float | None] = []
+
+        def probe(_file, interval=None):
+            probes.append(interval)
+            now[0] += 5.0
+            return False
+
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                    "MAX_WAIT_TIMEOUT": 12,
+                },
+            ),
+            patch("hsync_client.transfer.is_file_stable", side_effect=probe),
+            patch("hsync_client.transfer.monotonic", side_effect=lambda: now[0]),
+            patch("hsync_client.transfer.time_sleep"),
+            patch("hsync_client.transfer.post") as mock_post,
+            patch("hsync_client.transfer._reschedule_upload") as mock_reschedule,
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
+            upload_file(file, check_size=True)
+
+        assert len(probes) == 3
+        assert now[0] == 15.0
+        mock_post.assert_not_called()
+        mock_reschedule.assert_called_once_with(file, None, False)
 
     def test_upload_uses_default_max_wait_timeout(self, tmp_path):
         """Upload uses default timeout when not configured."""

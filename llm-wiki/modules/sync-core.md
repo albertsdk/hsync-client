@@ -154,8 +154,10 @@ conflicts. Symlinks and `.hsynckeep` sentinels are excluded. Scoped runs
 values; identical pairs are deduplicated (`sync.py::_last_folder_size`).
 
 No node is authoritative: the server and the elected p2p master are transport
-hubs. Upload arbitration mirrors `hsync_server.arbitration` (client side in
-`hsync_client/arbitration.py`); the tie-break is deterministic by highest
+hubs. Upload arbitration is the shared decision in
+`hsync_common/models/arbitration.py::decide_arbitration` (bound client-side in
+`hsync_client/arbitration.py` and server-side in `hsync_server/arbitration.py`);
+the tie-break is deterministic by highest
 SHA-256 so every node converges without a central authority.
 
 ## delta_transfer.py — rsync-style block sync
@@ -193,7 +195,7 @@ caller falls back to a full transfer.
 | download read chunk | `adaptive_chunk_size` (hsync-common) | tier chosen from the listing size (`CHUNK_SIZE_SMALL/MEDIUM/LARGE`). The sub-1MB tier is 256 KB so a typical burst file is read in **one** iteration: each iteration pays a frame read, the throttle wrapper, one `hash.update` and a write, which at the old 8 KB tier made a 200 KB file pay 26 iterations. A/B on the HTTPS apply path with incompressible payloads: 5.5 ms CPU/file at 8 KB vs 4.3 ms at 256 KB; above ~1 MB the tier is neutral, so it only bounds buffering (`CHUNK_SIZE_LARGE × MAX_CONCURRENT_TRANSFERS`). The end-to-end burst probe could not resolve the saving (the LAN apply path spends ~15 ms CPU/file for reasons still unattributed) |
 | `upload_file` / `_upload_file_attempt` | `transfer.py::upload_file` / `transfer.py::_upload_file_attempt` | retry wrapper + one attempt; resumable via `.part` + offset, but the resumable-upload status probe is skipped below `UPLOAD_STATUS_PREFLIGHT_MIN_SIZE` (1 MiB) for non-permission uploads — a fresh transfer is cheaper than the extra round trip, a stale server-side partial is discarded by the offset=0 POST and an already-complete file is caught by the 409 dedup, while resume is kept for large files; delta upload attempted first via `delta_transfer.upload_delta`. The compressed branch **stream-compresses to a temp file** (`_compress_to_temp_file` → `hsync_common.compress_file_to_file`) and streams it as a regular file part: neither the source nor the zstd frame is ever fully resident in RAM (the old implementation read the whole file into memory before sending) |
 | `_get_upload_status` | `transfer.py::_get_upload_status` | query server for resume offset; not called for small non-permission uploads (see `upload_file`) |
-| `is_file_stable` / `_file_already_settled` / `_wait_for_stable_file` | `transfer.py` | size+mtime stability gate: `from_closed` → 0.3s re-check; conservative path skips the 5s poll when mtime is already older than `STABILITY_DELAY` (reconcile / atomic rename); otherwise poll until `MAX_WAIT_TIMEOUT` |
+| `is_file_stable` / `_file_already_settled` / `_wait_for_stable_file` | `transfer.py` | size+mtime stability gate: `from_closed` → 0.3s re-check; conservative path skips the 5s poll when mtime is already older than `STABILITY_DELAY` (reconcile / atomic rename); otherwise poll until `MAX_WAIT_TIMEOUT` **seconds elapse on a monotonic deadline** (each probe costs `STABILITY_DELAY`, so the budget is not an iteration count) |
 | `_reschedule_upload` | `transfer.py::_reschedule_upload` | §15: defer torn-file uploads (bounded) |
 | `_build_multipart_streaming` / `_SizedStreamingBody` | `transfer.py::_build_multipart_streaming` / `transfer.py::_build_multipart_streaming` | streaming multipart |
 | `_CountingReader` | `transfer.py::_CountingReader` | counts and throttles the compressed download stream; upload pacing lives in `_build_multipart_streaming` via `get_throttle_delay` |

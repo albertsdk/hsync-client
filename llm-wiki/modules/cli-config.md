@@ -14,7 +14,7 @@ How flags/env become the running `CONFIG` and how `run_sync` drives a session.
 | `capabilities_json_callback` | `cli.py::capabilities_json_callback` | `--capabilities-json` (per-subcommand introspection via `collect_subcommand_options`) |
 | `_validate_bucket` | `cli.py::_validate_bucket` | bucket flag validation |
 | `_build_server_url` | `cli.py` | `HOSTNAME[:PORT]` form → `https://host:port` (implied scheme, `SERVER_DEFAULT_PORT` when no port, IPv6 auto-bracketing via the shared `hsync_common.endpoint` parser; rejects URL-like input, refuses `--port` without a hostname, and a port in the host is mutually exclusive with `--port`); `None` hostname → the `server` subcommand resolves the `HSYNC_SERVER` fallback (shell env or `--env-file`) and raises `typer.BadParameter` if still unset |
-| `_validate_shared_options` | `cli.py::_validate_shared_options` | numeric-range / bandwidth / direction / concurrency / mass-delete / delta checks shared by both subcommands |
+| `_validate_shared_options` | `cli.py::_validate_shared_options` | numeric-range / bandwidth / direction / concurrency / mass-delete / delta checks shared by both subcommands. Accepted names are declared once in `_SharedValidationValues` (`cli.py::_SharedValidationValues`), whose field names drive the frame extraction and type every read (a typo is a mypy error); a command frame missing one fails fast naming the option. Shared/mode-specific classification pinned by `tests/test_cli_option_parity.py` |
 | `state` namespace + `state_reset` | `cli.py::state_reset` | `hsync state reset --folder DIR [--json] [--quarantine]`: forgets one folder's versions + tombstones; the CLI is a thin shell and the logic lives in [state_reset.py](../data-models.md#state_resetpy-sync-state-reset) |
 
 Startup note: `build_capabilities` (`hsync_common.protocol.capabilities`) and
@@ -131,16 +131,26 @@ write opt-in is `CLI-opt-in OR environment-opt-in` and defaults false.
    parallel local-file scan/hash pool (`_get_optimal_workers`), combined with the
    cgroup memory limit to cap parallelism inside containers (no effect on bare
    metal, where the memory probe returns `None`).
-- `constants.py::SERVER_DEFAULT_PORT` — `SERVER_DEFAULT_PORT = 9753`: the port `hsync server
-  HOSTNAME` uses when `--port` is omitted. It matches the hsync-server
-  default (`HSYNC_PORT`), so the omitted-port form targets a default server
-  install directly; reverse-proxy deployments pass `--port 443`.
+- `constants.py::SERVER_DEFAULT_PORT` — a re-export of
+  `hsync_common/constants.py::SERVER_DEFAULT_PORT`: the port `hsync server
+  HOSTNAME` uses when `--port` is omitted (the same default the server binds),
+  so the omitted-port form targets a default server install directly;
+  reverse-proxy deployments pass `--port 443`.
+- Shared CLI/GUI defaults and their accepted bounds (HTTP timeout, retry/stability
+  delays, sync direction, bandwidth bounds, mass-delete guard, free-space/inbound
+  limits, max-wait timeout, peer-download caps) live in `hsync_common/defaults.py`;
+  `hsync_client.constants` re-exports them under its own names, and the desktop
+  reads the same values and bounds, so the GUI cannot drift from the engine.
 - Range and bucket validation is inline in `cli.py` (Typer) — e.g.
   `resync`/`reconnect_delay` bounds raise `typer.BadParameter` from
   `_validate_shared_options` (`cli.py::_validate_shared_options`); bucket naming
   via `_validate_bucket` (`cli.py::_validate_bucket`); p2p-only checks (discovery timeout,
   `--prefer-master` exclusivity) live in the `p2p` subcommand. There is no
   separate validators module.
+- Docs drift guard: `tests/test_docs_option_parity.py` walks every command
+  (including the `trust`/`state` groups) and fails when a visible option is
+  missing from the man page or from `docs/*.md`, and when a man-page option
+  entry names a flag the CLI no longer accepts.
 
 ## UI events (`events.py`)
 

@@ -16,7 +16,7 @@ import re
 import sys
 from collections.abc import Mapping
 from os import getcwd
-from typing import Annotated, Any
+from typing import Annotated, Any, TypedDict, cast
 
 import typer
 import typer.main
@@ -34,11 +34,13 @@ from hsync_client.constants import (
     HSYNC_VERSION,
     HTTP_TIMEOUT_MAX,
     HTTP_TIMEOUT_MIN,
+    MASS_DELETE_GUARD_DEFAULT,
     MAX_CONCURRENT_TRANSFERS_MAX,
     MAX_CONCURRENT_TRANSFERS_MIN,
     MAX_INBOUND_SIZE_MB_DEFAULT,
     MAX_INBOUND_SIZE_MB_MAX,
     MAX_INBOUND_SIZE_MB_MIN,
+    MAX_WAIT_TIMEOUT_DEFAULT,
     MAX_WAIT_TIMEOUT_MAX,
     MAX_WAIT_TIMEOUT_MIN,
     MIN_FREE_DISK_SPACE_MB_DEFAULT,
@@ -51,6 +53,7 @@ from hsync_client.constants import (
     SERVER_DEFAULT_PORT,
     STABILITY_DELAY_MAX,
     STABILITY_DELAY_MIN,
+    SYNC_DIRECTION_DEFAULT,
     SYNC_DIRECTIONS,
 )
 from hsync_client.pinning import PinStore
@@ -316,28 +319,73 @@ def _common_run_sync_kwargs(values: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _validate_shared_options(
-    *,
-    http_timeout: int | None,
-    resync: int | None,
-    reconnect_delay: int | None,
-    stability_delay: int | None,
-    max_wait_timeout: int,
-    sync_direction: str,
-    min_free_disk_space: int,
-    max_inbound_size: int,
-    max_bandwidth_upload: str | None,
-    max_bandwidth_download: str | None,
-    max_concurrent_transfers: int | None,
-    mass_delete_threshold: int | None,
-    mass_delete_percent: int | None,
-    delta_min_file_size: int | None,
-    delta_min_file_size_p2p: int | None,
-) -> tuple[int | None, int | None]:
+class _SharedValidationValues(TypedDict):
+    """Options validated identically by the ``p2p`` and ``server`` commands.
+
+    This TypedDict is the single declaration of the set: its field names drive
+    both the frame extraction (:data:`_SHARED_VALIDATION_KEYS`) and the static
+    type of every read, so a typo in a key is a mypy error and a command missing
+    one is a test failure (``tests/test_cli_option_parity.py``).
+    """
+
+    http_timeout: int | None
+    resync: int | None
+    reconnect_delay: int | None
+    stability_delay: int | None
+    max_wait_timeout: int
+    sync_direction: str
+    min_free_disk_space: int
+    max_inbound_size: int
+    max_bandwidth_upload: str | None
+    max_bandwidth_download: str | None
+    max_concurrent_transfers: int | None
+    mass_delete_threshold: int | None
+    mass_delete_percent: int | None
+    delta_min_file_size: int | None
+    delta_min_file_size_p2p: int | None
+
+
+# Derived from the TypedDict, so the key tuple and the field types cannot drift.
+_SHARED_VALIDATION_KEYS: tuple[str, ...] = tuple(_SharedValidationValues.__annotations__)
+
+
+def _validate_shared_options(values: Mapping[str, Any]) -> tuple[int | None, int | None]:
     """Validate the options shared by the ``p2p`` and ``server`` subcommands.
+
+    ``values`` is the command frame's ``locals()`` — the same mapping
+    ``_common_run_sync_kwargs`` consumes — so validation and forwarding cannot
+    disagree about which shared options exist, and neither command repeats the
+    argument list. The accepted names are :class:`_SharedValidationValues`: a
+    command that stops exposing one is a programming error, so it fails
+    immediately naming the option, not with a bare ``KeyError``.
 
     Returns the parsed upload/download bandwidth limits (bytes/s, or ``None``).
     """
+    try:
+        opts = cast(
+            _SharedValidationValues,
+            {name: values[name] for name in _SHARED_VALIDATION_KEYS},
+        )
+    except KeyError as exc:
+        raise RuntimeError(
+            f"shared CLI option {exc.args[0]!r} is missing from the command frame: "
+            "declare it on both `p2p` and `server`"
+        ) from exc
+    http_timeout = opts["http_timeout"]
+    resync = opts["resync"]
+    reconnect_delay = opts["reconnect_delay"]
+    stability_delay = opts["stability_delay"]
+    max_wait_timeout = opts["max_wait_timeout"]
+    sync_direction = opts["sync_direction"]
+    min_free_disk_space = opts["min_free_disk_space"]
+    max_inbound_size = opts["max_inbound_size"]
+    max_bandwidth_upload = opts["max_bandwidth_upload"]
+    max_bandwidth_download = opts["max_bandwidth_download"]
+    max_concurrent_transfers = opts["max_concurrent_transfers"]
+    mass_delete_threshold = opts["mass_delete_threshold"]
+    mass_delete_percent = opts["mass_delete_percent"]
+    delta_min_file_size = opts["delta_min_file_size"]
+    delta_min_file_size_p2p = opts["delta_min_file_size_p2p"]
     if http_timeout is not None and (
         http_timeout < HTTP_TIMEOUT_MIN or http_timeout > HTTP_TIMEOUT_MAX
     ):
@@ -413,8 +461,9 @@ def _validate_shared_options(
 # Declared once and reused by both subcommand signatures. Typer builds a fresh
 # click parameter for each command from the (immutable) Annotated metadata, so
 # sharing the aliases cannot cross-bind options between subcommands; the
-# per-subcommand surfaces are pinned by the black-box tests and by the
-# --capabilities-json introspection.
+# per-subcommand surfaces are pinned by the black-box tests, by the
+# --capabilities-json introspection and by tests/test_cli_option_parity.py
+# (every option is classified as common or mode-specific).
 # =============================================================================
 
 BucketOpt = Annotated[
@@ -485,7 +534,10 @@ MaxWaitTimeoutOpt = Annotated[
     int,
     typer.Option(
         "--max-wait-timeout",
-        help="Maximum time to wait for file stabilization.",
+        help=(
+            "Maximum seconds to wait for a file to stop being written; the upload is "
+            "deferred and retried when it is still changing."
+        ),
         metavar="SEC",
         rich_help_panel="Sync",
     ),
@@ -1121,11 +1173,11 @@ def p2p(
     resync: IntervalOpt = None,
     reconnect_delay: RetryDelayOpt = None,
     stability_delay: StabilityDelayOpt = None,
-    max_wait_timeout: MaxWaitTimeoutOpt = 120,
+    max_wait_timeout: MaxWaitTimeoutOpt = MAX_WAIT_TIMEOUT_DEFAULT,
     filter_path: SubdirOpt = None,
     dryrun: DryRunOpt = False,
     ignore_delete: IgnoreDeleteOpt = False,
-    sync_direction: SyncDirectionOpt = "bidirectional",
+    sync_direction: SyncDirectionOpt = SYNC_DIRECTION_DEFAULT,
     max_bandwidth_upload: LimitUploadOpt = None,
     max_bandwidth_download: LimitDownloadOpt = None,
     no_compression: NoCompressionOpt = False,
@@ -1135,7 +1187,7 @@ def p2p(
     delta_min_file_size_p2p: DeltaMinFileSizeP2POpt = None,
     max_concurrent_transfers: MaxConcurrentTransfersOpt = None,
     no_autotune: NoAutotuneOpt = False,
-    mass_delete_guard: MassDeleteGuardOpt = True,
+    mass_delete_guard: MassDeleteGuardOpt = MASS_DELETE_GUARD_DEFAULT,
     mass_delete_threshold: MassDeleteThresholdOpt = None,
     mass_delete_percent: MassDeletePercentOpt = None,
     min_free_disk_space: MinFreeDiskSpaceOpt = MIN_FREE_DISK_SPACE_MB_DEFAULT,
@@ -1171,23 +1223,7 @@ def p2p(
         [dim]# Bootnode extra ports when your egress firewall blocks UDP 443[/dim]
         $ HSYNC_BOOTNODE_PORTS=53 hsync p2p boot.example.net -b shared
     """
-    parsed_bw_upload, parsed_bw_download = _validate_shared_options(
-        http_timeout=http_timeout,
-        resync=resync,
-        reconnect_delay=reconnect_delay,
-        stability_delay=stability_delay,
-        max_wait_timeout=max_wait_timeout,
-        sync_direction=sync_direction,
-        min_free_disk_space=min_free_disk_space,
-        max_inbound_size=max_inbound_size,
-        max_bandwidth_upload=max_bandwidth_upload,
-        max_bandwidth_download=max_bandwidth_download,
-        max_concurrent_transfers=max_concurrent_transfers,
-        mass_delete_threshold=mass_delete_threshold,
-        mass_delete_percent=mass_delete_percent,
-        delta_min_file_size=delta_min_file_size,
-        delta_min_file_size_p2p=delta_min_file_size_p2p,
-    )
+    parsed_bw_upload, parsed_bw_download = _validate_shared_options(locals())
 
     # P2P-only validation
     if discovery_timeout is not None and discovery_timeout < 0:
@@ -1541,11 +1577,11 @@ def server(
     resync: IntervalOpt = None,
     reconnect_delay: RetryDelayOpt = None,
     stability_delay: StabilityDelayOpt = None,
-    max_wait_timeout: MaxWaitTimeoutOpt = 120,
+    max_wait_timeout: MaxWaitTimeoutOpt = MAX_WAIT_TIMEOUT_DEFAULT,
     filter_path: SubdirOpt = None,
     dryrun: DryRunOpt = False,
     ignore_delete: IgnoreDeleteOpt = False,
-    sync_direction: SyncDirectionOpt = "bidirectional",
+    sync_direction: SyncDirectionOpt = SYNC_DIRECTION_DEFAULT,
     max_bandwidth_upload: LimitUploadOpt = None,
     max_bandwidth_download: LimitDownloadOpt = None,
     no_compression: NoCompressionOpt = False,
@@ -1554,7 +1590,7 @@ def server(
     delta_min_file_size_p2p: DeltaMinFileSizeP2POpt = None,
     max_concurrent_transfers: MaxConcurrentTransfersOpt = None,
     no_autotune: NoAutotuneOpt = False,
-    mass_delete_guard: MassDeleteGuardOpt = True,
+    mass_delete_guard: MassDeleteGuardOpt = MASS_DELETE_GUARD_DEFAULT,
     mass_delete_threshold: MassDeleteThresholdOpt = None,
     mass_delete_percent: MassDeletePercentOpt = None,
     min_free_disk_space: MinFreeDiskSpaceOpt = MIN_FREE_DISK_SPACE_MB_DEFAULT,
@@ -1616,23 +1652,7 @@ def server(
                 "HSYNC_SERVER environment variable."
             )
 
-    parsed_bw_upload, parsed_bw_download = _validate_shared_options(
-        http_timeout=http_timeout,
-        resync=resync,
-        reconnect_delay=reconnect_delay,
-        stability_delay=stability_delay,
-        max_wait_timeout=max_wait_timeout,
-        sync_direction=sync_direction,
-        min_free_disk_space=min_free_disk_space,
-        max_inbound_size=max_inbound_size,
-        max_bandwidth_upload=max_bandwidth_upload,
-        max_bandwidth_download=max_bandwidth_download,
-        max_concurrent_transfers=max_concurrent_transfers,
-        mass_delete_threshold=mass_delete_threshold,
-        mass_delete_percent=mass_delete_percent,
-        delta_min_file_size=delta_min_file_size,
-        delta_min_file_size_p2p=delta_min_file_size_p2p,
-    )
+    parsed_bw_upload, parsed_bw_download = _validate_shared_options(locals())
 
     # Server TLS trust (ADR-0036): validate the pin flags before running.
     server_fingerprints = tuple(server_fingerprint or ())

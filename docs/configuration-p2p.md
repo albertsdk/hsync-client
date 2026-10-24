@@ -57,7 +57,7 @@ seeders are selected through that master and receive their own persistent
 | Option | Description | Default |
 |---|---|---|
 | `--stability-delay` | Seconds a file must stay unchanged before upload. Already-idle files (mtime older than this) skip the wait. After a writer close, a 0.3s re-check is used instead. | `5` |
-| `--max-wait-timeout` | Maximum seconds to wait for a file to stabilize | `120` |
+| `--max-wait-timeout` | Maximum seconds one upload waits for a file to stop being written (the upload is deferred when exceeded) | `120` |
 
 ## Advanced p2p Options
 

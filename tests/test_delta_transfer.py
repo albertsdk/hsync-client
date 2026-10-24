@@ -692,7 +692,9 @@ class TestP2PDelta:
     def test_data_wrong_bucket_is_404(self, p2p_config, tmp_path):
         from hsync_client import p2p_delta as ld
 
-        token = ld._issue_token(bucket="bucket1", relpath="x", payload=b"data", compressed=False)
+        token = ld._token_store.issue(
+            bucket="bucket1", payload=b"data", compressed=False, meta={"relpath": "x"}
+        )
         handler = _FakeHandler()
         ld.handle_delta_data(handler, "bucket2", token)
         assert handler.sent[0][0] == 404

@@ -34,6 +34,7 @@ from hsync_common.models.file import (
     is_hidden_file,
     is_partial_file,
 )
+from hsync_common.models.sentinel import ensure_sentinel as common_ensure_sentinel
 from hsync_common.models.symlink import Symlink
 from hsync_common.models.sync_action import SyncAction, SyncActionName
 from hsync_common.models.tombstone import TombstoneEntry, relpath_in_bucket, tombstone_key
@@ -1046,37 +1047,24 @@ async def _execute_parallel_transfers(
 
 
 def ensure_sentinel(dir_path: str, *, label: str | None = None) -> bool:
-    """Create a ``.hsynckeep`` sentinel in *dir_path* if it is empty.
+    """Create a ``.hsynckeep`` sentinel in *dir_path* if it has no syncable entry.
 
     A directory is considered empty when it has no syncable (non-hidden)
-    entries. An already-present sentinel is never recreated (guarded by an
-    existence check). Returns True when a sentinel was created.
+    entries. An already-present sentinel is never recreated. Returns True when a
+    sentinel was created.
 
     *label* is an optional ``ActionLabel`` prefix for the debug log line
     (e.g. the slave watcher passes ``ActionLabel.LOCAL_KEEP``); callers that
     create sentinels outside the watcher leave it unset.
 
-    Shared by :func:`ensure_hsynckeep_files` (walk-all at cycle start),
-    ``p2p_websocket.P2PSlaveFileEventHandler`` (single dir on create) and
-    ``p2p_server.P2PEndpointMixin`` (parent-of-deleted).
+    The emptiness rule is shared with the server (``hsync_common.models.sentinel``),
+    so a delete on the P2P master and on the central server leave the same tree.
     """
-    try:
-        entries = os.listdir(dir_path)
-    except OSError:
-        return False
-    if any(not is_hidden_file(e) for e in entries):
-        return False
-    sentinel = os.path.join(dir_path, HSYNCKEEP_FILENAME)
-    if os.path.exists(sentinel):
+    if not common_ensure_sentinel(dir_path):
         return False
     prefix = f"{label} " if label else ""
-    try:
-        open(sentinel, "w").close()
-        log.debug(f'{prefix}Created sentinel "{sentinel}"')
-        return True
-    except OSError as e:
-        log.warning(f'Cannot create sentinel "{sentinel}": {e}')
-        return False
+    log.debug(f'{prefix}Created sentinel "{os.path.join(dir_path, HSYNCKEEP_FILENAME)}"')
+    return True
 
 
 def ensure_hsynckeep_files() -> None:

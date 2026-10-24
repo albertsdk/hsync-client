@@ -28,11 +28,36 @@ from pathlib import Path
 import pytest
 import zstandard as zstd
 from hsync_common.constants import PARTIAL_DELTA_SUFFIX
-from hsync_common.delta import compute_signatures, find_matches
+from hsync_common.delta import DeltaTokenStore, compute_signatures, find_matches
 
 from hsync_client import p2p_delta as ld
 
 BLOCK = 4096  # DELTA_BLOCK_SIZE_SMALL
+
+
+def _issue(bucket: str = "bucket1", relpath: str = "x", payload: bytes = b"data", compressed=False):
+    """Issue a token through the shared store (``None`` when the cap is reached)."""
+    try:
+        return ld._token_store.issue(
+            bucket=bucket,
+            payload=payload,
+            compressed=compressed,
+            meta={"relpath": relpath},
+        )
+    except ld.TokenStoreFull:
+        return None
+
+
+def _swap_store(monkeypatch, **kwargs) -> DeltaTokenStore:
+    """Replace the module store with a fresh one bound to the module temp dir."""
+    store = DeltaTokenStore(
+        ttl=kwargs.pop("ttl", ld._token_store.ttl),
+        max_tokens=kwargs.pop("max_tokens", ld._MAX_TOKENS),
+        tmp_dir=lambda: Path(ld._get_payload_dir()),
+        **kwargs,
+    )
+    monkeypatch.setattr(ld, "_token_store", store)
+    return store
 
 
 def _base_bytes(seed: int = 11, size: int = BLOCK * 12) -> bytes:
@@ -217,7 +242,15 @@ class TestSignaturesPostValidation:
         client_base.write_bytes(base)
         sigs = _sigs_for(str(client_base))
 
-        monkeypatch.setattr(ld, "_MAX_TOKENS", 0)
+        monkeypatch.setattr(
+            ld,
+            "_token_store",
+            DeltaTokenStore(
+                ttl=ld._token_store.ttl,
+                max_tokens=0,
+                tmp_dir=lambda: Path(ld._get_payload_dir()),
+            ),
+        )
         handler = _post_handler({"path": "big.bin", "block_size": BLOCK, "signatures": sigs})
         ld.handle_delta_signatures_post(handler)
         assert handler.sent[0][0] == 409
@@ -538,11 +571,13 @@ class TestDeltaData:
         assert body["detail"] == "token_not_found"
 
     def test_expired_token_is_410(self, p2p_config, monkeypatch):
-        token = ld._issue_token(bucket="bucket1", relpath="x", payload=b"data", compressed=False)
+        # TTL 0 makes the entry expired at the endpoint's is_expired check; the
+        # lazy reaper is stubbed so it cannot remove the token first (that path
+        # is the 404 asserted by the cleanup tests).
+        store = _swap_store(monkeypatch, ttl=0)
+        monkeypatch.setattr(store, "cleanup", lambda *a, **k: 0)
+        token = _issue()
         assert token is not None
-        # Freeze the lazy reaper and age the entry past the TTL.
-        monkeypatch.setattr(ld, "_cleanup_tokens", lambda *a, **k: None)
-        ld._tokens[token].created = time.time() - ld._TOKEN_TTL - 1
         handler = _FakeHandler()
         ld.handle_delta_data(handler, "bucket1", token)
         status, body = handler.sent[0]
@@ -550,9 +585,11 @@ class TestDeltaData:
         assert body["detail"] == "token_expired"
 
     def test_missing_payload_file_is_410(self, p2p_config):
-        token = ld._issue_token(bucket="bucket1", relpath="x", payload=b"data", compressed=False)
+        token = _issue()
         assert token is not None
-        Path(ld._tokens[token].payload_file).unlink()
+        entry = ld._token_store.lookup(token)
+        assert entry is not None
+        Path(entry.payload_file).unlink()
         handler = _FakeHandler()
         ld.handle_delta_data(handler, "bucket1", token)
         status, body = handler.sent[0]
@@ -560,18 +597,20 @@ class TestDeltaData:
         assert body["detail"] == "token_expired"
 
     def test_payload_removal_failure_is_tolerated(self, p2p_config, monkeypatch):
-        token = ld._issue_token(bucket="bucket1", relpath="x", payload=b"data", compressed=False)
+        token = _issue()
         assert token is not None
-        payload_file = ld._tokens[token].payload_file
+        entry = ld._token_store.lookup(token)
+        assert entry is not None
+        payload_file = entry.payload_file
 
-        real_remove = ld.os.remove
+        real_unlink = Path.unlink
 
-        def flaky_remove(path, *a, **k):
-            if path == payload_file:
+        def flaky_unlink(self, *a, **k):
+            if str(self) == payload_file:
                 raise OSError("simulated removal failure")
-            return real_remove(path, *a, **k)
+            return real_unlink(self, *a, **k)
 
-        monkeypatch.setattr(ld.os, "remove", flaky_remove)
+        monkeypatch.setattr(Path, "unlink", flaky_unlink)
         handler = _FakeHandler()
         ld.handle_delta_data(handler, "bucket1", token)
         assert handler.response_status == 200
@@ -585,46 +624,56 @@ class TestDeltaData:
 
 class TestTokenStore:
     def test_cleanup_drops_expired_tokens_and_files(self, p2p_config):
-        token = ld._issue_token(bucket="bucket1", relpath="x", payload=b"data", compressed=False)
+        token = _issue()
         assert token is not None
-        payload_file = Path(ld._tokens[token].payload_file)
-        ld._tokens[token].created = time.time() - ld._TOKEN_TTL - 1
-        ld._cleanup_tokens()
-        assert token not in ld._tokens
+        entry = ld._token_store.lookup(token)
+        assert entry is not None
+        payload_file = Path(entry.payload_file)
+        ld._token_store.cleanup(now=time.time() + ld._token_store.ttl + 1)
+        assert ld._token_store.lookup(token) is None
         assert not payload_file.exists()
 
     def test_cleanup_tolerates_missing_payload_file(self, p2p_config):
-        token = ld._issue_token(bucket="bucket1", relpath="x", payload=b"data", compressed=False)
+        token = _issue()
         assert token is not None
-        Path(ld._tokens[token].payload_file).unlink()
-        ld._tokens[token].created = time.time() - ld._TOKEN_TTL - 1
-        ld._cleanup_tokens()  # must not raise
-        assert token not in ld._tokens
+        entry = ld._token_store.lookup(token)
+        assert entry is not None
+        Path(entry.payload_file).unlink()
+        ld._token_store.cleanup(now=time.time() + ld._token_store.ttl + 1)  # must not raise
+        assert ld._token_store.lookup(token) is None
 
-    def test_issue_token_write_failure_returns_none(self, p2p_config, monkeypatch, tmp_path):
-        monkeypatch.setattr(ld, "_payload_dir", str(tmp_path / "no" / "such" / "dir"))
-        token = ld._issue_token(bucket="bucket1", relpath="x", payload=b"data", compressed=False)
+    def test_issue_from_missing_file_returns_none(self, p2p_config, tmp_path):
+        """A payload file that vanished before adoption skips the delta."""
+        token = ld._issue_token_from_file(
+            bucket="bucket1",
+            relpath="x",
+            payload_file=str(tmp_path / "missing.bin"),
+            size=4,
+            compressed=False,
+        )
         assert token is None
 
     def test_issue_token_registry_full_returns_none(self, p2p_config, monkeypatch):
-        monkeypatch.setattr(ld, "_MAX_TOKENS", 0)
+        _swap_store(monkeypatch, max_tokens=0)
         # The payload dir is a process-wide singleton shared across tests:
         # assert no *new* file survives the failed issue, not that it is empty.
         before = set(Path(ld._get_payload_dir()).iterdir())
-        token = ld._issue_token(bucket="bucket1", relpath="x", payload=b"data", compressed=False)
+        token = _issue()
         assert token is None
         after = set(Path(ld._get_payload_dir()).iterdir())
         assert after == before
 
     def test_reset_removes_payloads_and_tolerates_missing(self, p2p_config):
-        t1 = ld._issue_token(bucket="bucket1", relpath="x", payload=b"a", compressed=False)
-        t2 = ld._issue_token(bucket="bucket1", relpath="y", payload=b"b", compressed=False)
+        t1 = _issue(payload=b"a")
+        t2 = _issue(relpath="y", payload=b"b")
         assert t1 and t2
-        p1 = Path(ld._tokens[t1].payload_file)
-        p2 = Path(ld._tokens[t2].payload_file)
-        p2.unlink()  # force the OSError branch
+        e1 = ld._token_store.lookup(t1)
+        e2 = ld._token_store.lookup(t2)
+        assert e1 is not None and e2 is not None
+        p1, p2 = Path(e1.payload_file), Path(e2.payload_file)
+        p2.unlink()  # force the missing-file branch
         ld.reset_delta_p2p_state()
-        assert ld._tokens == {}
+        assert ld._token_store.count == 0
         assert not p1.exists()
 
     def test_payload_dir_is_a_singleton(self, p2p_config, monkeypatch):
@@ -646,7 +695,7 @@ class TestTokenStore:
     def test_shutdown_cleanup_removes_the_payload_dir(self, p2p_config):
         """The registered shutdown hook drops the directory and its leftovers."""
         directory = ld._get_payload_dir()
-        token = ld._issue_token(bucket="bucket1", relpath="x", payload=b"data", compressed=False)
+        token = _issue()
         assert token is not None
         assert Path(directory).is_dir()
 
@@ -669,8 +718,7 @@ class TestTokenStore:
         """
         script = (
             "import hsync_client.p2p_delta as ld\n"
-            "token = ld._issue_token(bucket='b', relpath='r', payload=b'x', compressed=False)\n"
-            "assert token is not None\n"
+            "token = ld._token_store.issue(bucket='b', payload=b'x', compressed=False)\n"
             "print(ld._get_payload_dir())\n"
         )
 

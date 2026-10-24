@@ -1,7 +1,7 @@
 .\" Man page for HSYNC — file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-10-20" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-10-23" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -201,9 +201,13 @@ are uploaded immediately. After a writer close
 (\fIIN_CLOSE_WRITE\fP) a 0.3s re-check is used instead.
 .TP
 .BR \-\-max\-wait\-timeout =\fISEC\fP
-Maximum time to wait for a file to stabilize (default:
+Maximum seconds one upload waits for a file to stop being written
+(default:
 .BR 120 ;
 range: 10\(en3600).
+The wait ends as soon as the size and modification time settle, so large
+files are not delayed; if the file is still changing at the cap the upload
+is deferred and retried after the write ends, never uploaded half-written.
 .TP
 .BR \-\-subdir =\fIPATH\fP
 Sync only files within this subdirectory path.
@@ -394,8 +398,10 @@ instead of acting as a peer-less master.
 Group name for p2p peer filtering. Only peers with the same group
 will discover each other.
 .TP
-.B \-\-force\-master
-Force this client to always act as master in p2p mode.
+.B \-\-prefer\-master
+Prefer this device in the p2p master election. A primary that is already
+serving keeps the role; when several peers prefer it, the deterministic
+election algorithm breaks the tie.
 .TP
 .B \-\-never\-master
 Never become master in p2p mode (always remain a slave).
@@ -545,7 +551,7 @@ read, and 2 on a usage error such as a missing
 .B bidirectional
 Files are synced in both directions: local changes are pushed, remote changes
 are pulled. This is the default and the only mode compatible with
-.B \-\-force\-master
+.B \-\-prefer\-master
 in p2p Mode.
 .TP
 .B upload\-only

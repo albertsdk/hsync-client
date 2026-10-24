@@ -32,17 +32,19 @@ import tempfile
 import threading
 import time
 import uuid
-from dataclasses import dataclass
 from pathlib import Path
 
 import zstandard as zstd
 from hsync_common.constants import (
     CONTENT_TYPE_OCTET_STREAM,
     DELTA_MAX_LITERAL_SIZE,
+    DELTA_TOKEN_TTL,
     PARTIAL_DELTA_SUFFIX,
 )
 from hsync_common.delta import (
     BoundedLiteralSink,
+    DeltaTokenStore,
+    TokenStoreFull,
     changed_block_ratio,
     compute_signatures,
     find_matches_file_to_sink,
@@ -54,8 +56,11 @@ from hsync_common.ignore import should_skip
 from hsync_common.models.delta import (
     BlockSignature,
     DeltaOp,
+    delta_download_payload,
+    delta_signatures_payload,
     sanitize_op_list,
     sanitize_signature_list,
+    validate_op_bounds,
 )
 from hsync_common.models.file import File
 from hsync_common.path_validation import resolve_within
@@ -87,8 +92,9 @@ _MAX_SIG_BODY_BYTES = 50 * 1024 * 1024
 # Sub-limit for CPU-bound delta work inside the global thread cap.
 _delta_compute_sem = threading.Semaphore(4)
 
-# Token TTL (seconds) and the cap on concurrently live tokens.
-_TOKEN_TTL = 300
+# Cap on concurrently live download tokens. The TTL is the shared SSOT
+# (``hsync_common.constants.DELTA_TOKEN_TTL``) so a client and a server of the
+# same deployment expire parked payloads at the same pace.
 _MAX_TOKENS = 100
 
 
@@ -97,18 +103,6 @@ def _file_sha256(filepath: str) -> str:
     file_obj = File.get(filepath)
     return (file_obj.sha256sum if file_obj else None) or compute_sha256(filepath)
 
-
-@dataclass
-class _P2pToken:
-    bucket: str
-    relpath: str
-    payload_file: str
-    compressed: bool
-    created: float
-
-
-_tokens: dict[str, _P2pToken] = {}
-_tokens_lock = threading.Lock()
 
 # Process-wide temp dir for parked payloads (outside LOCAL_BUCKET on purpose).
 # It is created on demand and removed at interpreter exit by
@@ -124,9 +118,7 @@ def _get_payload_dir() -> str:
     The directory is process-wide because a payload must survive across the
     requests of one delta round trip. It is created on first use and dropped by
     :func:`_discard_payload_dir`, which also resets this module global, so the
-    next request after a teardown gets a fresh directory. A directory removed
-    behind the module's back makes the payload write fail, which
-    :func:`_issue_token` already degrades into a skipped delta (never a crash).
+    next request after a teardown gets a fresh directory.
     """
     global _payload_dir
     if _payload_dir is None:
@@ -138,7 +130,7 @@ def _discard_payload_dir() -> None:
     """Remove the parked-payload directory and anything left inside it.
 
     Payload files are reachable only through in-process tokens (TTL
-    ``_TOKEN_TTL``, single use), so at interpreter exit whatever remains is
+    ``DELTA_TOKEN_TTL``, single use), so at interpreter exit whatever remains is
     garbage by construction and the whole tree can go. Registered with
     :mod:`atexit` so no process that ever issued a delta token leaves an empty
     ``hsync-delta-lan-*`` directory behind; failures are swallowed because a
@@ -152,43 +144,13 @@ def _discard_payload_dir() -> None:
 
 atexit.register(_discard_payload_dir)
 
-
-def _cleanup_tokens(now: float | None = None) -> None:
-    """Drop expired tokens and their payload files (lazy reaper)."""
-    cutoff = (now if now is not None else time.time()) - _TOKEN_TTL
-    with _tokens_lock:
-        expired = [t for t, e in _tokens.items() if e.created < cutoff]
-        for token in expired:
-            entry = _tokens.pop(token)
-            try:
-                os.remove(entry.payload_file)
-            except OSError:
-                pass
-
-
-def _issue_token(*, bucket: str, relpath: str, payload: bytes, compressed: bool) -> str | None:
-    """Park *payload* on disk and return its download token (None when full)."""
-    _cleanup_tokens()
-    token = uuid.uuid4().hex
-    payload_file = os.path.join(_get_payload_dir(), f"delta_{token}.bin")
-    try:
-        with open(payload_file, "wb") as f:
-            f.write(payload)
-    except OSError as exc:
-        log.warning(f"Cannot park delta payload: {exc}")
-        return None
-    with _tokens_lock:
-        if len(_tokens) >= _MAX_TOKENS:
-            os.remove(payload_file)
-            return None
-        _tokens[token] = _P2pToken(
-            bucket=bucket,
-            relpath=relpath,
-            payload_file=payload_file,
-            compressed=compressed,
-            created=time.time(),
-        )
-    return token
+# Single-use download tokens: the registry mechanics (TTL, caps, lazy expiry,
+# single use) are shared with the server; the TTL is the common SSOT.
+_token_store = DeltaTokenStore(
+    ttl=DELTA_TOKEN_TTL,
+    max_tokens=_MAX_TOKENS,
+    tmp_dir=lambda: Path(_get_payload_dir()),
+)
 
 
 def _issue_token_from_file(
@@ -201,29 +163,21 @@ def _issue_token_from_file(
     payload produced by the matcher never has to sit in RAM. The caller owns
     *payload_file* and must remove it when this returns None.
     """
-    _cleanup_tokens()
-    token = uuid.uuid4().hex
-    final_path = os.path.join(_get_payload_dir(), f"delta_{token}.bin")
     try:
-        os.replace(payload_file, final_path)
+        return _token_store.issue_from_file(
+            bucket=bucket,
+            payload_file=payload_file,
+            size=size,
+            compressed=compressed,
+            meta={"relpath": relpath},
+        )
+    except TokenStoreFull:
+        return None
     except OSError as exc:
+        # A vanished/unwritable payload only skips the delta: the caller answers
+        # with the full file instead of failing the request.
         log.warning(f"Cannot park delta payload: {exc}")
         return None
-    with _tokens_lock:
-        if len(_tokens) >= _MAX_TOKENS:
-            try:
-                os.remove(final_path)
-            except OSError:
-                pass
-            return None
-        _tokens[token] = _P2pToken(
-            bucket=bucket,
-            relpath=relpath,
-            payload_file=final_path,
-            compressed=compressed,
-            created=time.time(),
-        )
-    return token
 
 
 def reset_delta_p2p_state() -> None:
@@ -233,14 +187,7 @@ def reset_delta_p2p_state() -> None:
     and removed at interpreter exit (:func:`_discard_payload_dir`), so clearing
     ``_payload_dir`` here would orphan it for that handler.
     """
-    with _tokens_lock:
-        entries = list(_tokens.values())
-        _tokens.clear()
-    for entry in entries:
-        try:
-            os.remove(entry.payload_file)
-        except OSError:
-            pass
+    _token_store.reset()
 
 
 def _delta_disabled(handler) -> bool:
@@ -283,12 +230,12 @@ def handle_delta_signatures_get(handler, query: dict) -> None:
         sigs = compute_signatures(filepath, block_size)
     handler._send_json_response(
         _HTTP_OK,
-        {
-            "block_size": block_size,
-            "file_size": file_size,
-            "sha256": sha256sum,
-            "signatures": [s.to_dict() for s in sigs],
-        },
+        delta_signatures_payload(
+            block_size=block_size,
+            file_size=file_size,
+            sha256=sha256sum,
+            signatures=sigs,
+        ),
     )
 
 
@@ -408,18 +355,15 @@ def handle_delta_signatures_post(handler) -> None:
         return
     handler._send_json_response(
         _HTTP_OK,
-        {
-            "delta": True,
-            "block_size": block_size,
-            "new_sha256": new_sha256,
-            "instructions": {
-                "new_size": new_size,
-                "ops": [op.to_dict() for op in ops],
-            },
-            "data_url": rest_delta_data_path(bucket, token),
-            "data_size": literal_size,
-            "compressed": compressed,
-        },
+        delta_download_payload(
+            block_size=block_size,
+            new_sha256=new_sha256,
+            new_size=new_size,
+            ops=ops,
+            data_url=rest_delta_data_path(bucket, token),
+            data_size=literal_size,
+            compressed=compressed,
+        ),
     )
 
 
@@ -497,18 +441,12 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
     # Validate ops against real bounds before touching anything.
     base_size = Path(filepath).stat().st_size
     literal_size = Path(literal_file).stat().st_size
-    total = 0
-    invalid: str | None = None
-    for op in ops:
-        if op.type == "copy" and op.offset + op.length > base_size:
-            invalid = "copy_op_out_of_bounds"
-            break
-        if op.type == "data" and op.data_offset + op.length > literal_size:
-            invalid = "data_op_out_of_bounds"
-            break
-        total += op.length
-    if invalid is None and total != new_size:
-        invalid = "ops_coverage_mismatch"
+    invalid = validate_op_bounds(
+        ops,
+        base_size=base_size,
+        literal_size=literal_size,
+        new_size=new_size,
+    )
     if invalid is not None:
         handler._send_json_response(_HTTP_UNPROCESSABLE, {"detail": invalid})
         return
@@ -578,15 +516,13 @@ def handle_delta_data(handler, bucket: str, token: str) -> None:
     """Stream the parked literal payload for a valid download token."""
     if _delta_disabled(handler):
         return
-    _cleanup_tokens()
-    with _tokens_lock:
-        entry = _tokens.get(token)
+    _token_store.cleanup()
+    entry = _token_store.lookup(token)
     if entry is None:
         handler._send_json_response(_HTTP_NOT_FOUND, {"detail": "token_not_found"})
         return
-    if entry.created < time.time() - _TOKEN_TTL:
-        with _tokens_lock:
-            _tokens.pop(token, None)
+    if _token_store.is_expired(entry):
+        _token_store.discard(token)
         handler._send_json_response(_HTTP_GONE, {"detail": "token_expired"})
         return
     # The token is bound to the bucket it was issued for.
@@ -595,8 +531,7 @@ def handle_delta_data(handler, bucket: str, token: str) -> None:
         return
 
     # Single-use: the entry leaves the registry before streaming starts.
-    with _tokens_lock:
-        _tokens.pop(token, None)
+    _token_store.consume(token)
     payload_file = entry.payload_file
     if not Path(payload_file).is_file():
         handler._send_json_response(_HTTP_GONE, {"detail": "token_expired"})

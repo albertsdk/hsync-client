@@ -1387,13 +1387,17 @@ def _wait_for_stable_file(file: File, from_closed: bool = False) -> bool:
         return True
 
     # Conservative path: poll until size/mtime settle, bounded by the timeout.
+    # ``is_file_stable`` itself sleeps ``STABILITY_DELAY``, so the budget is a
+    # monotonic deadline: counting iterations would stretch the documented
+    # "seconds" by that delay (120 iterations ≈ 12 minutes, not 2). The last
+    # probe may overshoot the deadline by at most one stability interval.
     max_wait = CONFIG.get("MAX_WAIT_TIMEOUT", MAX_WAIT_TIMEOUT_DEFAULT)
-    elapsed = 0
+    deadline = monotonic() + max_wait
     while not is_file_stable(file):
-        if elapsed >= max_wait:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
             return False
-        time_sleep(1)
-        elapsed += 1
+        time_sleep(min(1.0, remaining))
     return True
 
 

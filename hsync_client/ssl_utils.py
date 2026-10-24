@@ -24,17 +24,17 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from cryptography import x509
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 from hsync_common.ssl_utils import (
     SERVICE_CERT_VALIDITY_DAYS,
     build_self_signed_certificate,
     compute_cert_fingerprint,
     generate_ecdsa_private_key,
+    load_pem_keypair,
     serialize_cert_pem,
     serialize_private_key_unencrypted,
     verify_cert_fingerprint,
+    write_pem_keypair,
 )
 from loguru import logger as log
 from requests.adapters import DEFAULT_POOLBLOCK, HTTPAdapter
@@ -120,16 +120,11 @@ def load_or_create_master_cert(common_name: str = "hsync-lan") -> CertificateInf
     key_path = cert_dir / _MASTER_KEY_FILENAME
 
     if cert_path.exists() and key_path.exists():
-        cert_pem = cert_path.read_bytes()
-        key_pem = key_path.read_bytes()
-        cert = x509.load_pem_x509_certificate(cert_pem)
-        key = serialization.load_pem_private_key(key_pem, password=None)
-        if not isinstance(key, ec.EllipticCurvePrivateKey):
-            raise ValueError(
-                f"P2P master identity {key_path} must hold an ECDSA P-256 private "
-                "key; delete the keypair to regenerate it under the current model."
-            )
-        fingerprint = compute_cert_fingerprint(cert)
+        cert_pem, key_pem, fingerprint = load_pem_keypair(
+            cert_path,
+            key_path,
+            subject="P2P master identity",
+        )
         log.info(f"Loaded persistent P2P master certificate: {fingerprint[:16]}...")
         return CertificateInfo(
             cert_pem=cert_pem,
@@ -157,12 +152,15 @@ def load_or_create_master_cert(common_name: str = "hsync-lan") -> CertificateInf
     key_pem = serialize_private_key_unencrypted(private_key)
     fingerprint = compute_cert_fingerprint(cert)
 
-    with open(cert_path, "wb") as f:
-        f.write(cert_pem)
-    os.chmod(cert_path, 0o600)
-    with open(key_path, "wb") as f:
-        f.write(key_pem)
-    os.chmod(key_path, 0o600)
+    # Both files stay owner-only: the P2P identity is never served to another
+    # process, and the directory was already created 0o700 above.
+    write_pem_keypair(
+        cert_pem,
+        key_pem,
+        cert_path,
+        key_path,
+        create_parents=False,
+    )
 
     log.info(f"Generated persistent P2P master certificate: {fingerprint[:16]}...")
     return CertificateInfo(

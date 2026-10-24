@@ -11,6 +11,7 @@ from os.path import abspath, normpath
 from pathlib import Path
 from typing import IO
 
+from hsync_common.models.sentinel import remove_empty_dir
 from hsync_common.models.tombstone import relpath_in_bucket
 from hsync_common.path_validation import (
     FORBIDDEN_FILENAME_CHARS,
@@ -107,10 +108,11 @@ def is_same_paths(path1: str, path2: str) -> bool:
 
 def safe_rmdir_if_empty(dir_path: str, bucket_root: str | None = None) -> bool:
     """
-    Remove *dir_path* only if it is empty and strictly inside *bucket_root*.
+    Remove *dir_path* only if it is empty and not the bucket root.
 
-    Acts as a safety wrapper around ``os.rmdir`` to prevent accidental
-    removal of the LOCAL_BUCKET root (which would destroy the sync target).
+    The emptiness/root guard is shared with the server
+    (``hsync_common.models.sentinel.remove_empty_dir``), so the P2P master and
+    the central server leave the same tree after a sentinel deletion.
 
     Args:
         dir_path: Directory to remove if empty.
@@ -120,19 +122,9 @@ def safe_rmdir_if_empty(dir_path: str, bucket_root: str | None = None) -> bool:
     Returns:
         True if the directory was removed, False otherwise.
     """
-    if not dir_path or not Path(dir_path).exists():
-        return False
     if bucket_root is None:
         bucket_root = CONFIG.get("LOCAL_BUCKET", "")
-    if bucket_root and is_same_paths(dir_path, bucket_root):
-        return False
-    try:
-        if os.listdir(dir_path):
-            return False
-        os.rmdir(dir_path)
-        return True
-    except OSError:
-        return False
+    return remove_empty_dir(dir_path, keep_root=bucket_root or None)
 
 
 def ensure_str_path(path: str | bytes | None) -> str:

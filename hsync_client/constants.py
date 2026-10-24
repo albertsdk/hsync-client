@@ -13,12 +13,8 @@ throughout the application, making them easy to find and modify.
 # =============================================================================
 from typing import Final, Literal
 
+from hsync_common import defaults as _defaults
 from hsync_common.constants import BOOT_DEFAULT_PORT as BOOTNODE_DEFAULT_PORT  # noqa: F401
-from hsync_common.constants import HEADER_CLIENT_NAME as _HEADER_CLIENT_NAME
-from hsync_common.constants import HEADER_CLIENT_VERSION as _HEADER_CLIENT_VERSION
-from hsync_common.constants import (
-    HEADER_PROTOCOL_VERSION as _HEADER_PROTOCOL_VERSION,
-)
 
 # Re-export shared constants from hsync-common. The plain names keep the
 # module's public re-export API consumed across hsync_client (HSYNC_VERSION,
@@ -27,11 +23,20 @@ from hsync_common.constants import (
 # requires literal keys for TypedDicts. BOOTNODE_DEFAULT_PORT (above) is the
 # boot/1 UDP default (QUIC, not HTTPS) — one SSOT with the bootnode's `--port`.
 from hsync_common.constants import (  # noqa: F401
+    CORRECTED_MTIME_MAX_FUTURE_SKEW,
     HOSTNAME_PATTERN,
     HSYNC_VERSION,
     HSYNCKEEP_FILENAME,
     PARTIAL_DOWNLOAD_SUFFIX,
     WS_MAX_MESSAGE_BYTES,
+)
+from hsync_common.constants import HEADER_CLIENT_NAME as _HEADER_CLIENT_NAME
+from hsync_common.constants import HEADER_CLIENT_VERSION as _HEADER_CLIENT_VERSION
+from hsync_common.constants import (
+    HEADER_PROTOCOL_VERSION as _HEADER_PROTOCOL_VERSION,
+)
+from hsync_common.constants import (
+    SERVER_DEFAULT_PORT as _SERVER_DEFAULT_PORT,
 )
 
 # Re-export shared action labels from hsync-common
@@ -71,6 +76,9 @@ SYNC_DIRECTIONS: tuple[str, ...] = (
     SYNC_DIRECTION_DOWNLOAD_ONLY,
 )
 
+# CLI/GUI default direction (shared with the desktop via hsync_common.defaults).
+SYNC_DIRECTION_DEFAULT = _defaults.SYNC_DIRECTION_DEFAULT
+
 
 # =============================================================================
 # Hostname Validation
@@ -101,7 +109,7 @@ CID_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 # Default interval (seconds) to wait between file size/mtime checks
 # before considering a file stable and ready for upload.
 # 5 seconds is a reasonable compromise.
-FILE_STABILITY_INTERVAL_DEFAULT = 5
+FILE_STABILITY_INTERVAL_DEFAULT = _defaults.STABILITY_DELAY_DEFAULT
 
 # Fast re-check interval (seconds) used when an upload is triggered by an
 # on_closed (IN_CLOSE_WRITE) event: the close already signals write completion,
@@ -110,14 +118,14 @@ FILE_STABILITY_INTERVAL_DEFAULT = 5
 STABILITY_DELAY_ON_CLOSED = 0.3
 
 # Limits for stability delay configuration
-STABILITY_DELAY_MIN = 1
-STABILITY_DELAY_MAX = 60
+STABILITY_DELAY_MIN = _defaults.STABILITY_DELAY_MIN
+STABILITY_DELAY_MAX = _defaults.STABILITY_DELAY_MAX
 
 # Max wait timeout for file stability (seconds)
 # Maximum time to wait for a file to stop being written before giving up
-MAX_WAIT_TIMEOUT_MIN = 10
-MAX_WAIT_TIMEOUT_MAX = 3600
-MAX_WAIT_TIMEOUT_DEFAULT = 120  # 2 minutes
+MAX_WAIT_TIMEOUT_MIN = _defaults.MAX_WAIT_TIMEOUT_MIN
+MAX_WAIT_TIMEOUT_MAX = _defaults.MAX_WAIT_TIMEOUT_MAX
+MAX_WAIT_TIMEOUT_DEFAULT = _defaults.MAX_WAIT_TIMEOUT_DEFAULT
 
 # When a file never stabilizes within MAX_WAIT_TIMEOUT the upload is rescheduled
 # for a later attempt instead of being forced, avoiding a "torn" upload of
@@ -135,9 +143,9 @@ UPLOAD_MAX_RESCHEDULES_DEFAULT = 5
 # Higher values increase throughput but also server load.
 # Can be overridden via HSYNC_MAX_CONCURRENT_TRANSFERS environment variable
 # or --max-concurrent-transfers CLI option.
-MAX_CONCURRENT_TRANSFERS_DEFAULT = 5
-MAX_CONCURRENT_TRANSFERS_MIN = 1
-MAX_CONCURRENT_TRANSFERS_MAX = 20
+MAX_CONCURRENT_TRANSFERS_DEFAULT = _defaults.MAX_CONCURRENT_TRANSFERS_DEFAULT
+MAX_CONCURRENT_TRANSFERS_MIN = _defaults.MAX_CONCURRENT_TRANSFERS_MIN
+MAX_CONCURRENT_TRANSFERS_MAX = _defaults.MAX_CONCURRENT_TRANSFERS_MAX
 
 # =============================================================================
 # Per-File Transfer Retry/Backoff
@@ -170,43 +178,43 @@ CONNECTIVITY_RETRY_MAX_WAIT_DEFAULT = 30  # seconds
 # delete more than an absolute count or a percentage of the local files, the
 # deletions are paused (skipped) and surfaced for confirmation instead. A master
 # with 0 files is always treated as a suspect state, never as a delete command.
-MASS_DELETE_GUARD_DEFAULT = True
-MASS_DELETE_THRESHOLD_DEFAULT = 50  # absolute deletions per cycle (0 = disabled)
-MASS_DELETE_PERCENT_DEFAULT = 50  # percentage of total local files (0 = disabled)
+MASS_DELETE_GUARD_DEFAULT = _defaults.MASS_DELETE_GUARD_DEFAULT
+MASS_DELETE_THRESHOLD_DEFAULT = _defaults.MASS_DELETE_THRESHOLD_DEFAULT
+MASS_DELETE_PERCENT_DEFAULT = _defaults.MASS_DELETE_PERCENT_DEFAULT
 
 # =============================================================================
 # Server Connection
 # =============================================================================
 
 # Default HTTPS port of the remote hsync server when `hsync server HOSTNAME`
-# runs without `--port`. Matches the hsync-server default (HSYNC_PORT).
-SERVER_DEFAULT_PORT = 9753
+# runs without `--port` (SSOT: ``hsync_common.constants.SERVER_DEFAULT_PORT``).
+SERVER_DEFAULT_PORT = _SERVER_DEFAULT_PORT
 
 # =============================================================================
 # CLI Validation Limits
 # =============================================================================
 
 # Bandwidth limits for CLI validation (bytes per second)
-BANDWIDTH_MIN = 1024  # 1 KB/s minimum
-BANDWIDTH_MAX = 100 * 1024 * 1024  # 100 MB/s maximum
+BANDWIDTH_MIN = _defaults.BANDWIDTH_MIN_BPS
+BANDWIDTH_MAX = _defaults.BANDWIDTH_MAX_BPS
 
 # Reconnection delay limits (seconds)
-RECONNECT_DELAY_MIN = 1
-RECONNECT_DELAY_MAX = 60
-RECONNECT_DELAY_DEFAULT = 5
+RECONNECT_DELAY_MIN = _defaults.RECONNECT_DELAY_MIN
+RECONNECT_DELAY_MAX = _defaults.RECONNECT_DELAY_MAX
+RECONNECT_DELAY_DEFAULT = _defaults.RECONNECT_DELAY_DEFAULT
 
 # Resync interval limits (seconds)
-RESYNC_MIN = 20
-RESYNC_MAX = 3600
+RESYNC_MIN = _defaults.RESYNC_MIN
+RESYNC_MAX = _defaults.RESYNC_MAX
 # Periodic resync is enabled by default as a safety net against silently
 # missed file-system events (e.g. inotify queue overflow). Set HSYNC_RESYNC=0
 # to disable it.
 RESYNC_DEFAULT = 300
 
 # HTTP timeout limits (seconds)
-HTTP_TIMEOUT_MIN = 1
-HTTP_TIMEOUT_MAX = 300
-HTTP_TIMEOUT_DEFAULT = 30
+HTTP_TIMEOUT_MIN = _defaults.HTTP_TIMEOUT_MIN
+HTTP_TIMEOUT_MAX = _defaults.HTTP_TIMEOUT_MAX
+HTTP_TIMEOUT_DEFAULT = _defaults.HTTP_TIMEOUT_DEFAULT
 
 # P2P heartbeat / peer timeout defaults (seconds)
 HEARTBEAT_INTERVAL = 5
@@ -240,9 +248,9 @@ BOOTNODE_REFRESH_INTERVAL_MAX = 300
 DISCOVERY_TIMEOUT_DEFAULT = 0
 
 # Minimum free disk space limits (MB)
-MIN_FREE_DISK_SPACE_MB_MIN = 0  # 0 = disabled
-MIN_FREE_DISK_SPACE_MB_MAX = 100_000  # 100 GB
-MIN_FREE_DISK_SPACE_MB_DEFAULT = 500  # 500 MB
+MIN_FREE_DISK_SPACE_MB_MIN = _defaults.MIN_FREE_DISK_SPACE_MB_MIN  # 0 = disabled
+MIN_FREE_DISK_SPACE_MB_MAX = _defaults.MIN_FREE_DISK_SPACE_MB_MAX  # 100 GB
+MIN_FREE_DISK_SPACE_MB_DEFAULT = _defaults.MIN_FREE_DISK_SPACE_MB_DEFAULT
 
 # Maximum size of a single inbound file (MB), applied to downloads and to
 # received P2P uploads as an absolute cap on top of the peer-declared size:
@@ -251,24 +259,27 @@ MIN_FREE_DISK_SPACE_MB_DEFAULT = 500  # 500 MB
 # decompression bomb up to it on disk before the SHA-256 check discards it.
 # The default mirrors the server's max_upload_size (10 GB): larger files
 # require raising both.
-MAX_INBOUND_SIZE_MB_MIN = 0  # 0 = disabled (cap = declared size only)
-MAX_INBOUND_SIZE_MB_MAX = 10_000_000  # 10 TB
-MAX_INBOUND_SIZE_MB_DEFAULT = 10_240  # 10 GB
+MAX_INBOUND_SIZE_MB_MIN = (
+    _defaults.MAX_INBOUND_SIZE_MB_MIN
+)  # 0 = disabled (cap = declared size only)
+MAX_INBOUND_SIZE_MB_MAX = _defaults.MAX_INBOUND_SIZE_MB_MAX  # 10 TB
+MAX_INBOUND_SIZE_MB_DEFAULT = _defaults.MAX_INBOUND_SIZE_MB_DEFAULT
 
 # P2P peer-assisted download defaults (ADR-0028/0029).
-P2P_PEER_DOWNLOAD_DEFAULT = True
-P2P_PEER_READ_CAP_DEFAULT = 2
-P2P_PEER_READ_CAP_MIN = 1
-P2P_PEER_READ_CAP_MAX = 32
-P2P_PEER_SOURCES_MAX_DEFAULT = 3
-P2P_PEER_SOURCES_MAX_MIN = 1
-P2P_PEER_SOURCES_MAX_MAX = 8
+P2P_PEER_DOWNLOAD_DEFAULT = _defaults.P2P_PEER_DOWNLOAD_DEFAULT
+P2P_PEER_READ_CAP_DEFAULT = _defaults.P2P_PEER_READ_CAP_DEFAULT
+P2P_PEER_READ_CAP_MIN = _defaults.P2P_PEER_READ_CAP_MIN
+P2P_PEER_READ_CAP_MAX = _defaults.P2P_PEER_READ_CAP_MAX
+P2P_PEER_SOURCES_MAX_DEFAULT = _defaults.P2P_PEER_SOURCES_MAX_DEFAULT
+P2P_PEER_SOURCES_MAX_MIN = _defaults.P2P_PEER_SOURCES_MAX_MIN
+P2P_PEER_SOURCES_MAX_MAX = _defaults.P2P_PEER_SOURCES_MAX_MAX
 
 # Wire-supplied mtimes/ctimes may not exceed now + this skew: a peer asserting
 # far-future timestamps would win every mtime-based conflict resolution on
-# every other peer (conflict engineering). Consumers: hsync_client.p2p_server,
-# hsync_client.p2p_delta.
-MTIME_MAX_FUTURE_SKEW_SECONDS = 300
+# every other peer (conflict engineering). SSOT:
+# ``hsync_common.constants.CORRECTED_MTIME_MAX_FUTURE_SKEW``. Consumers:
+# hsync_client.p2p_server, hsync_client.p2p_delta.
+MTIME_MAX_FUTURE_SKEW_SECONDS = CORRECTED_MTIME_MAX_FUTURE_SKEW
 
 # Per-worker memory budget for the parallel local-file scan/hash pool
 # (``sync._get_optimal_workers`` → ``get_files_local``). Each worker runs

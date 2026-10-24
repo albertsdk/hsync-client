@@ -177,6 +177,7 @@ option to configure.
 | Auto-tune           | `--no-autotune` when unchecked                 | on                               |
 | HTTP timeout        | `--http-timeout`                                    | auto (empty = autotune/default)  |
 | Reconnect delay     | `--retry-delay`                                | auto (empty = autotune/default)  |
+| Max stabilization wait | _(not in WD UI; binary default)_             | `120` s (wait ends when the file settles; the upload is deferred and retried beyond) |
 | Transfer retry min  | `HSYNC_TRANSFER_RETRY_MIN_WAIT` env            | auto (empty = autotune/default)  |
 | Transfer retry max  | `HSYNC_TRANSFER_RETRY_MAX_WAIT` env            | auto (empty = autotune/default)  |
 
