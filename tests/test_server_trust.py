@@ -102,6 +102,48 @@ class TestResolveServerTrust:
         )
 
 
+class TestTrustPolicyResolutionParity:
+    """Both pinned transports must share one flag/env precedence.
+
+    Regression: the bootnode and the sync server used to carry two hand-copied
+    implementations of the same precedence, so a new rule (or a typo in one)
+    silently changed one transport only. Only the fallback may differ.
+    """
+
+    @pytest.mark.parametrize(
+        ("policy", "fingerprints", "tofu", "verify_ssl", "env_default"),
+        [
+            (None, (), False, True, None),
+            (None, (), False, True, "accept-new"),
+            (None, (), False, True, "strict"),
+            ("ask", (), False, True, "accept-new"),
+            (None, (), True, True, "strict"),
+            ("ask", (), True, True, None),
+            (None, (_FP_A,), False, True, "ask"),
+            ("strict", (_FP_A,), True, True, None),
+            ("chain", (), False, False, "ask"),
+        ],
+    )
+    def test_transports_agree(
+        self, monkeypatch, policy, fingerprints, tofu, verify_ssl, env_default
+    ):
+        from hsync_client import main_logic
+
+        monkeypatch.setattr(main_logic, "get_bootnode_trust", lambda: env_default)
+        monkeypatch.setattr(main_logic, "get_server_trust", lambda: env_default)
+
+        bootnode = main_logic._resolve_bootnode_trust(policy, fingerprints, tofu, verify_ssl)
+        server = main_logic._resolve_server_trust(policy, fingerprints, tofu, verify_ssl)
+
+        if env_default is None and policy is None and not fingerprints and not tofu:
+            # No signal at all: only the documented default differs.
+            assert verify_ssl is True
+            assert bootnode is TrustPolicy.ask
+            assert server is TrustPolicy.chain
+            return
+        assert bootnode is server
+
+
 class _FakeSocket:
     def __enter__(self):
         return self

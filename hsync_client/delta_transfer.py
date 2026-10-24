@@ -36,7 +36,7 @@ from typing import cast
 from uuid import uuid4
 
 import zstandard as zstd
-from hsync_common.constants import PARTIAL_DELTA_SUFFIX
+from hsync_common.constants import CHUNK_SIZE_SMALL, PARTIAL_DELTA_SUFFIX
 from hsync_common.delta import (
     MISMATCH_HASH,
     MISMATCH_SIZE,
@@ -51,8 +51,7 @@ from hsync_common.format import format_bytes, format_duration
 from hsync_common.hashing import compute_sha256, is_sha256_hex
 from hsync_common.models.delta import (
     BlockSignature,
-    DeltaOp,
-    sanitize_op_list,
+    parse_op_payload,
     sanitize_signature_list,
 )
 from hsync_common.models.file import File
@@ -91,16 +90,6 @@ from hsync_client.utils import (
 from hsync_client.utils import (
     upload_timeout as _upload_timeout,
 )
-
-
-def _resolve_delta_version_fields(file: File) -> tuple[str, str, int]:
-    """Return ``(vclock_json, version_id, corrected_mtime)`` delta-apply fields.
-
-    Delegates to :func:`sync_state.resolve_upload_version_fields` (the SSOT
-    shared with the full-upload path) so both transfer channels advertise the
-    same effective causal version and the ADR-0023 corrected mtime.
-    """
-    return resolve_upload_version_fields(file)
 
 
 class DeltaTransferError(Exception):
@@ -302,8 +291,9 @@ def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:
         # corrected mtime) so the server/master can arbitrate the delta-apply
         # against its stored version (ADR-0022/ADR-0023). The server's
         # delta/apply.py reads meta["vclock"] / meta["version_id"] /
-        # meta["corrected_mtime"].
-        vclock_json, version_id, corrected_mtime = _resolve_delta_version_fields(file)
+        # meta["corrected_mtime"]. Resolved through the SSOT shared with the
+        # full-upload path, so both channels advertise the same version.
+        vclock_json, version_id, corrected_mtime = resolve_upload_version_fields(file)
         metadata = {
             "cid": CONFIG["CID"],
             "base_sha256": ctx.base_hash,
@@ -443,15 +433,9 @@ def download_file_delta(file: File, ctx: DeltaDownloadContext) -> None:
     new_size = instructions.get("new_size")
     if not is_sha256_hex(new_sha256) or not isinstance(new_size, int) or new_size < 0:
         raise DeltaTransferError("invalid instructions metadata from peer")
-    clean_ops = sanitize_op_list(instructions.get("ops"))
-    if clean_ops is None:
+    ops = parse_op_payload(instructions.get("ops"))
+    if ops is None:
         raise DeltaTransferError("invalid ops from peer")
-    ops = [
-        DeltaOp(
-            type=o["type"], offset=o["offset"], length=o["length"], data_offset=o["data_offset"]
-        )
-        for o in clean_ops
-    ]
     if sum(op.length for op in ops) != new_size:
         raise DeltaTransferError("ops coverage mismatch from peer")
 
@@ -508,7 +492,7 @@ def download_file_delta(file: File, ctx: DeltaDownloadContext) -> None:
                             payload_file.write(chunk)
                             reporter.update(written)
                     else:
-                        for chunk in response.iter_content(chunk_size=256 * 1024):
+                        for chunk in response.iter_content(chunk_size=CHUNK_SIZE_SMALL):
                             if not chunk:
                                 break
                             written += len(chunk)

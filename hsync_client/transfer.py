@@ -14,6 +14,7 @@ import re
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import suppress
+from dataclasses import dataclass
 from os import close, fsync, remove, replace, stat_result, utime
 from pathlib import Path
 from tempfile import mkstemp
@@ -25,7 +26,11 @@ from uuid import uuid4
 
 import zstandard as zstd
 from hsync_common.clock import clamp_incoming_corrected_mtime
-from hsync_common.constants import CONTENT_TYPE_OCTET_STREAM, HEADER_CHECKSUM_SHA256
+from hsync_common.constants import (
+    CHUNK_SIZE_SMALL,
+    CONTENT_TYPE_OCTET_STREAM,
+    HEADER_CHECKSUM_SHA256,
+)
 from hsync_common.disk import check_free_space
 from hsync_common.format import format_bytes, format_duration
 from hsync_common.hashing import adaptive_chunk_size, compute_sha256, is_sha256_hex
@@ -206,10 +211,10 @@ def _record_synced_base(
 
 
 # Upload streaming chunk size (multipart bodies, plain and compressed spool).
-# 256 KiB amortises the per-chunk syscall/Python overhead while keeping the
-# uploader's buffering modest; the download read tiers are chosen separately
-# (see ``adaptive_chunk_size``).
-_UPLOAD_CHUNK_SIZE = 256 * 1024
+# Derived from the shared small tier so the client and the master never drift on
+# the per-chunk buffering; the download read tiers are chosen separately (see
+# ``adaptive_chunk_size``).
+_UPLOAD_CHUNK_SIZE = CHUNK_SIZE_SMALL
 
 # Below this size a fresh upload is cheaper than the resumable-upload status
 # probe (one extra HTTP round trip per file), so the probe is skipped and the
@@ -585,6 +590,392 @@ def _build_download_request(
     return uri, headers, params
 
 
+def _peer_only_failure(
+    source: P2PPeerSource | None,
+    kind: PeerFailureKind,
+    message: str,
+    *,
+    discard_partial: bool = False,
+) -> None:
+    """Raise the peer-channel failure when a seeder served this download.
+
+    Every integrity check runs on two channels: a peer failure is raised so the
+    resolver ranks the next source, while the master channel logs and swallows
+    the same condition. Centralizing the branch keeps the two channels from
+    drifting — a missing ``if source`` test used to turn a peer defect into a
+    silent success.
+    """
+    if source is not None:
+        raise _PeerSourceFailure(kind, message, discard_partial=discard_partial)
+
+
+@dataclass(frozen=True, slots=True)
+class _DownloadPlan:
+    """Validated response headers for one download attempt."""
+
+    content_length: int | None
+    expected_sha: str
+    server_sha256: str | None
+    is_compressed: bool
+
+
+def _already_up_to_date(
+    file: File, full_save_path: str, inventory_observer: InventoryObserver
+) -> bool:
+    """True when the local copy already holds the remote content.
+
+    The mtime shortcut alone is not enough: an equal (or newer) local mtime with
+    *different* content is exactly the conflict case — the caller has already
+    preserved the local copy, and skipping here would prevent the master's
+    version from ever arriving. Skip only when the content is genuinely
+    identical, or when no well-formed hash is available to disprove the mtime
+    shortcut (legacy behaviour preserved for metadata without a valid expected
+    digest).
+    """
+    if not Path(full_save_path).exists():
+        return False
+    if file.mtime is None or Path(full_save_path).stat().st_mtime < file.mtime:
+        return False
+    expected = file.sha256sum or ""
+    if (
+        expected
+        and is_sha256_hex(expected)
+        and not hmac.compare_digest(compute_sha256(full_save_path), expected)
+    ):
+        return False
+    nothing_to_do(file)
+    inventory_observer.upsert(file)
+    return True
+
+
+def _apply_remote_metadata(file: File, path: str) -> None:
+    """Apply the listing's mtime and mode to a downloaded file."""
+    if file.mtime is not None:
+        utime(path, (file.mtime, file.mtime))
+    if file.permissions:
+        set_permissions(path, file.permissions)
+
+
+def _finalize_download(
+    file: File,
+    full_save_path: str,
+    t0: float,
+    *,
+    source: P2PPeerSource | None = None,
+    source_resolver: P2PSourceResolver | None = None,
+    rtt_seconds: float = 0.0,
+    wire_bytes: int = 0,
+    body_seconds: float = 0.0,
+    inventory_observer: InventoryObserver = NOOP_INVENTORY_OBSERVER,
+    metadata_errors_are_fatal: bool = False,
+) -> None:
+    """Complete a committed download: log, event, metadata and merge base.
+
+    Delta and full transfers share this post-condition so they cannot diverge on
+    the recorded merge base. ``metadata_errors_are_fatal`` lets the delta path
+    propagate a metadata failure into its caller's full-transfer fallback; the
+    full path has already committed the destination and can only log it.
+    """
+    source_detail = f" source_cid={source.cid}" if source is not None else ""
+    log.info(
+        f'{ActionLabel.DOWNLOAD} "{full_save_path}" {format_bytes(file.size)} '
+        f"{format_duration(monotonic() - t0, subsecond=True)}{source_detail}"
+    )
+    extra: dict[str, Any] = {"source_cid": source.cid} if source is not None else {}
+    emit_event(
+        UiEventName.transfer,
+        op="download",
+        file=full_save_path,
+        size=file.size or 0,
+        **extra,
+    )
+    if source is not None and source_resolver is not None:
+        source_resolver.record_success(
+            source,
+            rtt_seconds=rtt_seconds,
+            bytes_transferred=wire_bytes,
+            body_seconds=body_seconds,
+        )
+    try:
+        _apply_remote_metadata(file, full_save_path)
+    except OSError as exc:
+        if metadata_errors_are_fatal:
+            raise
+        log.error(f'Could not apply metadata to "{file.filepath}": {exc}')
+    _record_synced_base(
+        file,
+        vclock=_remote_vclock(file),
+        corrected_mtime=_remote_corrected_mtime(file),
+    )
+    inventory_observer.upsert(file)
+
+
+def _try_delta_download(
+    file: File,
+    full_save_path: str,
+    t0: float,
+    inventory_observer: InventoryObserver,
+) -> bool:
+    """Rebuild the file from its recorded base; True when the delta succeeded.
+
+    Any recoverable failure falls through to the full-download body (same
+    attempt, retry policy unchanged).
+    """
+    ctx = prepare_delta_download(file, full_save_path)
+    if ctx is None:
+        return False
+    try:
+        download_file_delta(file, ctx)
+        _finalize_download(
+            file,
+            full_save_path,
+            t0,
+            inventory_observer=inventory_observer,
+            metadata_errors_are_fatal=True,
+        )
+    except (DeltaTransferError, OSError) as exc:
+        log.warning(f'Delta download for "{file.filepath}" fell back to full transfer ({exc})')
+        return False
+    return True
+
+
+def _resolve_resume_offset(
+    file: File, partial_file_path: str, *, force_restart: bool
+) -> int | None:
+    """Offset to resume from, or ``None`` when the caller must skip the file."""
+    if force_restart:
+        return 0 if _discard_partial(partial_file_path) else None
+    if not Path(partial_file_path).exists():
+        return 0
+    try:
+        resume_offset = Path(partial_file_path).stat().st_size
+    except OSError as exc:
+        log.warning(f'Could not inspect partial file for "{file.filepath}": {exc}')
+        _discard_partial(partial_file_path)
+        return 0
+    if resume_offset >= file.size:
+        log.warning(f'Invalid full-size partial for "{file.filepath}", restarting download')
+        return 0 if _discard_partial(partial_file_path) else None
+    if resume_offset > 0:
+        log.info(
+            f'{ActionLabel.RESUME} "{file.filepath}" from '
+            f"{format_bytes(resume_offset)}/{format_bytes(file.size)}"
+        )
+    return resume_offset
+
+
+def _has_download_space(file: File, full_save_path: str, resume_offset: int) -> bool:
+    """Size-aware disk-space guard: False when the file must be skipped.
+
+    Skipping avoids a mid-transfer ENOSPC that would waste bandwidth and leave a
+    ``.part`` behind. The rule itself lives in ``hsync-common``
+    (``check_free_space``), shared with the server and the master upload guard.
+    """
+    space = check_free_space(
+        str(Path(full_save_path).parent),
+        reserve_bytes=CONFIG.get("MIN_FREE_DISK_SPACE", 0),
+        incoming_bytes=max(file.size - resume_offset, 0),
+    )
+    if space.error is not None:
+        log.warning(f"Could not check disk space: {space.error}")
+        return True
+    if space.ok:
+        return True
+    log.error(
+        f'Insufficient disk space for "{file.filepath}": '
+        f"{space.free_mb} MB available, {space.required_mb} MB required"
+    )
+    return False
+
+
+def _accept_download_response(
+    response,
+    file: File,
+    source: P2PPeerSource | None,
+    resume_offset: int,
+    partial_file_path: str,
+) -> int | None:
+    """Validate the response status; return the effective resume offset.
+
+    ``None`` means the caller must skip the file. Retryable channels
+    (``_PeerSourceFailure``, ``ServerError``, ``_RestartMasterDownload``) are
+    raised so the caller's retry policy reacts. A server that ignores ``Range``
+    is normalized to a full restart.
+    """
+    status = response.status_code
+    if source is not None and status not in (200, 206):
+        retry_after_s = _parse_retry_after(response.headers.get("Retry-After"))
+        response.close()
+        if status in (400, 401, 403):
+            kind = PeerFailureKind.unauthorized
+        elif status == 404:
+            kind = PeerFailureKind.not_found
+        elif status == 409:
+            kind = PeerFailureKind.conflict
+        elif status == 503:
+            kind = PeerFailureKind.busy
+        elif 400 <= status < 500:
+            kind = PeerFailureKind.malformed
+        else:
+            kind = PeerFailureKind.transport
+        raise _PeerSourceFailure(
+            kind,
+            f"Seeder returned HTTP {status}",
+            discard_partial=status == 416,
+            retry_after_s=retry_after_s,
+        )
+
+    if status in (401, 403):
+        log.error(f'Authentication failed downloading "{file.filepath}"')
+        emit_event(
+            UiEventName.auth_error, message=f'Authentication failed downloading "{file.filepath}"'
+        )
+        response.close()
+        return None
+    if status == 404:
+        log.error(f'File not found on server: "{file.filepath}"')
+        response.close()
+        return None
+    if status == 416:
+        response.close()
+        if resume_offset:
+            if not _discard_partial(partial_file_path):
+                return None
+            raise _RestartMasterDownload
+        log.error(f'Unexpected range response downloading "{file.filepath}"')
+        return None
+    if status >= 500:
+        response.close()
+        raise ServerError(f'Server error downloading "{file.filepath}": {status}')
+    if status not in (200, 206):
+        log.error(f'Unexpected status downloading "{file.filepath}": {status}')
+        response.close()
+        return None
+
+    if status == 206 and (
+        resume_offset == 0
+        or not _valid_content_range(
+            response.headers.get("Content-Range"),
+            start=resume_offset,
+            total=file.size,
+        )
+    ):
+        response.close()
+        _discard_partial(partial_file_path)
+        _peer_only_failure(
+            source,
+            PeerFailureKind.malformed,
+            "Invalid Content-Range",
+            discard_partial=True,
+        )
+        log.error(f'Invalid Content-Range downloading "{file.filepath}"')
+        return None
+
+    # A 200 for a ranged request means the server ignored Range: restart.
+    if resume_offset > 0 and status == 200:
+        log.debug("Server does not support Range requests, restarting download")
+        if not _discard_partial(partial_file_path):
+            response.close()
+            return None
+        return 0
+    return resume_offset
+
+
+def _validate_download_headers(
+    response,
+    file: File,
+    source: P2PPeerSource | None,
+    request_headers: dict[str, str],
+) -> _DownloadPlan | None:
+    """Extract and validate Content-Length, checksums and Content-Encoding.
+
+    ``None`` means the caller must skip the file; the caller's ``finally`` owns
+    the response close and the ``.part`` cleanup for those paths.
+    """
+    raw_content_length = response.headers.get("Content-Length")
+    content_length: int | None = None
+    if raw_content_length is not None:
+        if not (
+            isinstance(raw_content_length, str)
+            and raw_content_length.isascii()
+            and raw_content_length.isdigit()
+        ):
+            _peer_only_failure(
+                source,
+                PeerFailureKind.malformed,
+                "Invalid Content-Length",
+                discard_partial=True,
+            )
+            log.error(f'Invalid Content-Length downloading "{file.filepath}"')
+            return None
+        content_length = int(raw_content_length)
+
+    expected_sha = file.sha256sum or ""
+    if not is_sha256_hex(expected_sha):
+        _peer_only_failure(
+            source,
+            PeerFailureKind.hash_mismatch,
+            "Invalid listing checksum",
+            discard_partial=True,
+        )
+        log.error(f'Invalid expected checksum downloading "{file.filepath}"')
+        return None
+    expected_sha = expected_sha.lower()
+
+    server_sha256 = response.headers.get(HEADER_CHECKSUM_SHA256)
+    if source is not None:
+        if not is_sha256_hex(server_sha256):
+            _peer_only_failure(
+                source,
+                PeerFailureKind.hash_mismatch,
+                "Invalid source checksum",
+                discard_partial=True,
+            )
+        source_sha256 = cast(str, server_sha256)
+        # Uppercase is rejected explicitly: a seeder must advertise the same
+        # canonical lowercase digest the listing carries.
+        if source_sha256 != source_sha256.lower() or not hmac.compare_digest(
+            source_sha256, expected_sha
+        ):
+            _peer_only_failure(
+                source,
+                PeerFailureKind.hash_mismatch,
+                "Invalid source checksum",
+                discard_partial=True,
+            )
+
+    content_encoding = response.headers.get("Content-Encoding", "").strip().lower()
+    if content_encoding not in ("", "identity", CONTENT_ENCODING_ZSTD):
+        _peer_only_failure(
+            source,
+            PeerFailureKind.malformed,
+            f"Unsupported Content-Encoding: {content_encoding}",
+            discard_partial=True,
+        )
+        log.error(f'Unsupported Content-Encoding downloading "{file.filepath}"')
+        return None
+    is_compressed = content_encoding == CONTENT_ENCODING_ZSTD
+    if is_compressed and (
+        response.status_code == 206
+        or (source is not None and request_headers.get("Accept-Encoding") != CONTENT_ENCODING_ZSTD)
+    ):
+        _peer_only_failure(
+            source,
+            PeerFailureKind.malformed,
+            "Compressed response was not negotiated",
+            discard_partial=True,
+        )
+        log.error(f'Compressed range response downloading "{file.filepath}"')
+        return None
+
+    return _DownloadPlan(
+        content_length=content_length,
+        expected_sha=expected_sha,
+        server_sha256=cast(str | None, server_sha256),
+        is_compressed=is_compressed,
+    )
+
+
 def _download_from_source_attempt(
     file: File,
     inventory_observer: InventoryObserver = NOOP_INVENTORY_OBSERVER,
@@ -618,7 +1009,6 @@ def _download_from_source_attempt(
     """
     t0 = monotonic()
 
-    # Prepare destination directory and partial file path
     full_save_path = _local_dest_path(file)
     if full_save_path is None:
         # Already gated in download_file; stay defensive for direct callers.
@@ -627,95 +1017,19 @@ def _download_from_source_attempt(
     Path(full_save_path).parent.mkdir(parents=True, exist_ok=True)
     partial_file_path = f"{full_save_path}{PARTIAL_DOWNLOAD_SUFFIX}"
 
-    # Check if local file is already up-to-date. The mtime shortcut alone is
-    # not enough: an equal (or newer) local mtime with *different* content is
-    # exactly the conflict case — the caller has already preserved the local
-    # copy, and skipping here would prevent the master's version from ever
-    # arriving. Skip only when the content is genuinely identical, or when no
-    # well-formed hash is available to disprove the mtime shortcut (legacy
-    # behaviour preserved for metadata without a valid expected digest).
-    if Path(full_save_path).exists():
-        local_mtime = Path(full_save_path).stat().st_mtime
-        if file.mtime is not None and local_mtime >= file.mtime:
-            expected = file.sha256sum or ""
-            if (
-                not expected
-                or not is_sha256_hex(expected)
-                or hmac.compare_digest(compute_sha256(full_save_path), expected)
-            ):
-                nothing_to_do(file)
-                inventory_observer.upsert(file)
-                return True
+    if _already_up_to_date(file, full_save_path, inventory_observer):
+        return True
 
-    # Delta branch: when the local file IS the recorded base, only the changed
-    # blocks need to cross the wire. Any recoverable failure falls through to
-    # the full-download body below (same attempt, retry policy unchanged).
-    if allow_delta and (delta_ctx := prepare_delta_download(file, full_save_path)):
-        try:
-            download_file_delta(file, delta_ctx)
-            log.info(
-                f'{ActionLabel.DOWNLOAD} "{full_save_path}" {format_bytes(file.size)} '
-                f"{format_duration(monotonic() - t0, subsecond=True)}"
-            )
-            emit_event(
-                UiEventName.transfer, op="download", file=full_save_path, size=file.size or 0
-            )
-            if file.mtime is not None:
-                utime(full_save_path, (file.mtime, file.mtime))
-            if file.permissions:
-                set_permissions(full_save_path, file.permissions)
-            _record_synced_base(
-                file,
-                vclock=_remote_vclock(file),
-                corrected_mtime=_remote_corrected_mtime(file),
-            )
-            inventory_observer.upsert(file)
-            return True
-        except (DeltaTransferError, OSError) as exc:
-            log.warning(f'Delta download for "{file.filepath}" fell back to full transfer ({exc})')
+    if allow_delta and _try_delta_download(file, full_save_path, t0, inventory_observer):
+        return True
     if delta_only:
         return False
 
-    # Check for an existing exact-prefix partial and determine the Range start.
-    resume_offset = 0
-    if force_restart:
-        if not _discard_partial(partial_file_path):
-            return True
-    elif Path(partial_file_path).exists():
-        try:
-            resume_offset = Path(partial_file_path).stat().st_size
-        except OSError as exc:
-            log.warning(f'Could not inspect partial file for "{file.filepath}": {exc}')
-            _discard_partial(partial_file_path)
-            resume_offset = 0
-        if resume_offset >= file.size:
-            log.warning(f'Invalid full-size partial for "{file.filepath}", restarting download')
-            if not _discard_partial(partial_file_path):
-                return True
-            resume_offset = 0
-        elif resume_offset > 0:
-            log.info(
-                f'{ActionLabel.RESUME} "{file.filepath}" from '
-                f"{format_bytes(resume_offset)}/{format_bytes(file.size)}"
-            )
+    resume_offset = _resolve_resume_offset(file, partial_file_path, force_restart=force_restart)
+    if resume_offset is None:
+        return True
 
-    # Size-aware disk space guard: skip the file if the target filesystem
-    # cannot hold the remaining bytes plus the configured reserve, avoiding a
-    # mid-transfer ENOSPC that would waste bandwidth and leave a .part behind.
-    # The rule itself lives in hsync-common (`check_free_space`), shared with
-    # the server and the LAN master upload guard.
-    space = check_free_space(
-        str(Path(full_save_path).parent),
-        reserve_bytes=CONFIG.get("MIN_FREE_DISK_SPACE", 0),
-        incoming_bytes=max(file.size - resume_offset, 0),
-    )
-    if space.error is not None:
-        log.warning(f"Could not check disk space: {space.error}")
-    elif not space.ok:
-        log.error(
-            f'Insufficient disk space for "{file.filepath}": '
-            f"{space.free_mb} MB available, {space.required_mb} MB required"
-        )
+    if not _has_download_space(file, full_save_path, resume_offset):
         return True
 
     max_inbound_size = CONFIG.get("MAX_INBOUND_SIZE", 0)
@@ -763,82 +1077,11 @@ def _download_from_source_attempt(
     log.debug(f"Request Header: {safe_json_for_log(headers)}")
     log.debug(f"Response status: {response.status_code}")
 
-    if source is not None and response.status_code not in (200, 206):
-        status = response.status_code
-        retry_after_s = _parse_retry_after(response.headers.get("Retry-After"))
-        response.close()
-        if status in (400, 401, 403):
-            kind = PeerFailureKind.unauthorized
-        elif status == 404:
-            kind = PeerFailureKind.not_found
-        elif status == 409:
-            kind = PeerFailureKind.conflict
-        elif status == 503:
-            kind = PeerFailureKind.busy
-        elif 400 <= status < 500:
-            kind = PeerFailureKind.malformed
-        else:
-            kind = PeerFailureKind.transport
-        raise _PeerSourceFailure(
-            kind,
-            f"Seeder returned HTTP {status}",
-            discard_partial=status == 416,
-            retry_after_s=retry_after_s,
-        )
-
-    if response.status_code in (401, 403):
-        log.error(f'Authentication failed downloading "{file.filepath}"')
-        emit_event(
-            UiEventName.auth_error, message=f'Authentication failed downloading "{file.filepath}"'
-        )
-        response.close()
+    resume_offset = _accept_download_response(
+        response, file, source, resume_offset, partial_file_path
+    )
+    if resume_offset is None:
         return True
-    if response.status_code == 404:
-        log.error(f'File not found on server: "{file.filepath}"')
-        response.close()
-        return True
-    if response.status_code == 416:
-        response.close()
-        if resume_offset:
-            if not _discard_partial(partial_file_path):
-                return True
-            raise _RestartMasterDownload
-        log.error(f'Unexpected range response downloading "{file.filepath}"')
-        return True
-    if response.status_code >= 500:
-        response.close()
-        raise ServerError(f'Server error downloading "{file.filepath}": {response.status_code}')
-    if response.status_code not in (200, 206):
-        log.error(f'Unexpected status downloading "{file.filepath}": {response.status_code}')
-        response.close()
-        return True
-
-    if response.status_code == 206 and (
-        resume_offset == 0
-        or not _valid_content_range(
-            response.headers.get("Content-Range"),
-            start=resume_offset,
-            total=file.size,
-        )
-    ):
-        response.close()
-        _discard_partial(partial_file_path)
-        if source is not None:
-            raise _PeerSourceFailure(
-                PeerFailureKind.malformed,
-                "Invalid Content-Range",
-                discard_partial=True,
-            )
-        log.error(f'Invalid Content-Range downloading "{file.filepath}"')
-        return True
-
-    # If server returned 200 instead of 206, it doesn't support Range - restart
-    if resume_offset > 0 and response.status_code == 200:
-        log.debug("Server does not support Range requests, restarting download")
-        resume_offset = 0
-        if not _discard_partial(partial_file_path):
-            response.close()
-            return True
 
     cleanup_partial = True
     # Mark the artifact in flight for the whole body: the sync cycle's
@@ -849,78 +1092,18 @@ def _download_from_source_attempt(
     written = resume_offset
     wire_bytes = 0
     counter: _CountingReader | None = None
-    body_started = monotonic()
-    raw_content_length = response.headers.get("Content-Length")
+    # Bound before the try: the zstd handler reads it, and header validation can
+    # end the attempt before the body loop assigns it.
     content_length: int | None = None
+    body_started = monotonic()
     try:
-        if raw_content_length is not None:
-            if (
-                not isinstance(raw_content_length, str)
-                or not raw_content_length.isascii()
-                or not raw_content_length.isdigit()
-            ):
-                if source is not None:
-                    raise _PeerSourceFailure(
-                        PeerFailureKind.malformed,
-                        "Invalid Content-Length",
-                        discard_partial=True,
-                    )
-                log.error(f'Invalid Content-Length downloading "{file.filepath}"')
-                return True
-            content_length = int(raw_content_length)
-
-        expected_sha = file.sha256sum or ""
-        if not is_sha256_hex(expected_sha):
-            if source is not None:
-                raise _PeerSourceFailure(
-                    PeerFailureKind.hash_mismatch,
-                    "Invalid listing checksum",
-                    discard_partial=True,
-                )
-            log.error(f'Invalid expected checksum downloading "{file.filepath}"')
+        plan = _validate_download_headers(response, file, source, headers)
+        if plan is None:
             return True
-        expected_sha = expected_sha.lower()
-        server_sha256 = response.headers.get(HEADER_CHECKSUM_SHA256)
-        if source is not None:
-            if not is_sha256_hex(server_sha256):
-                raise _PeerSourceFailure(
-                    PeerFailureKind.hash_mismatch,
-                    "Invalid source checksum",
-                    discard_partial=True,
-                )
-            source_sha256 = cast(str, server_sha256)
-            if source_sha256 != source_sha256.lower() or not hmac.compare_digest(
-                source_sha256, expected_sha
-            ):
-                raise _PeerSourceFailure(
-                    PeerFailureKind.hash_mismatch,
-                    "Invalid source checksum",
-                    discard_partial=True,
-                )
-
-        content_encoding = response.headers.get("Content-Encoding", "").strip().lower()
-        if content_encoding not in ("", "identity", CONTENT_ENCODING_ZSTD):
-            if source is not None:
-                raise _PeerSourceFailure(
-                    PeerFailureKind.malformed,
-                    f"Unsupported Content-Encoding: {content_encoding}",
-                    discard_partial=True,
-                )
-            log.error(f'Unsupported Content-Encoding downloading "{file.filepath}"')
-            return True
-        is_compressed = content_encoding == CONTENT_ENCODING_ZSTD
-        if is_compressed and (
-            response.status_code == 206
-            or (source is not None and headers.get("Accept-Encoding") != CONTENT_ENCODING_ZSTD)
-        ):
-            if source is not None:
-                raise _PeerSourceFailure(
-                    PeerFailureKind.malformed,
-                    "Compressed response was not negotiated",
-                    discard_partial=True,
-                )
-            log.error(f'Compressed range response downloading "{file.filepath}"')
-            return True
+        content_length = plan.content_length
+        expected_sha = plan.expected_sha
+        server_sha256 = plan.server_sha256
+        is_compressed = plan.is_compressed
 
         chunk_size = adaptive_chunk_size(file.size)
         write_mode = "ab" if resume_offset > 0 else "wb"
@@ -931,12 +1114,12 @@ def _download_from_source_attempt(
                     prefix_size += len(prefix_chunk)
                     sha256.update(prefix_chunk)
             if prefix_size != resume_offset:
-                if source is not None:
-                    raise _PeerSourceFailure(
-                        PeerFailureKind.malformed,
-                        "Partial prefix changed",
-                        discard_partial=True,
-                    )
+                _peer_only_failure(
+                    source,
+                    PeerFailureKind.malformed,
+                    "Partial prefix changed",
+                    discard_partial=True,
+                )
                 log.error(f'Partial prefix changed for "{file.filepath}"')
                 return True
 
@@ -970,12 +1153,12 @@ def _download_from_source_attempt(
                     wire_bytes += len(chunk)
                     reporter.update(written)
                     if written > write_cap:
-                        if source is not None:
-                            raise _PeerSourceFailure(
-                                PeerFailureKind.malformed,
-                                "Body exceeds listing size",
-                                discard_partial=True,
-                            )
+                        _peer_only_failure(
+                            source,
+                            PeerFailureKind.malformed,
+                            "Body exceeds listing size",
+                            discard_partial=True,
+                        )
                         raise PermanentDownloadError(
                             f'"{file.filepath}" exceeds the maximum download size '
                             f"({write_cap} bytes)"
@@ -995,34 +1178,33 @@ def _download_from_source_attempt(
             if wire_bytes < content_length:
                 cleanup_partial = False
                 message = f"Incomplete wire body ({wire_bytes}/{content_length} bytes)"
-                if source is not None:
-                    raise _PeerSourceFailure(PeerFailureKind.transport, message)
+                _peer_only_failure(source, PeerFailureKind.transport, message)
                 raise RequestException(message)
-            if source is not None:
-                raise _PeerSourceFailure(
-                    PeerFailureKind.malformed,
-                    "Content-Length mismatch",
-                    discard_partial=True,
-                )
+            _peer_only_failure(
+                source,
+                PeerFailureKind.malformed,
+                "Content-Length mismatch",
+                discard_partial=True,
+            )
             log.error(f'Content-Length mismatch downloading "{file.filepath}"')
             return True
 
         if written != file.size:
             if written < file.size:
-                if source is not None:
-                    raise _PeerSourceFailure(
-                        PeerFailureKind.malformed,
-                        f"Complete body has wrong size ({written}/{file.size} bytes)",
-                        discard_partial=True,
-                    )
-                log.error(f'Incomplete body downloading "{file.filepath}"')
-                return True
-            if source is not None:
-                raise _PeerSourceFailure(
+                _peer_only_failure(
+                    source,
                     PeerFailureKind.malformed,
-                    "Body exceeds listing size",
+                    f"Complete body has wrong size ({written}/{file.size} bytes)",
                     discard_partial=True,
                 )
+                log.error(f'Incomplete body downloading "{file.filepath}"')
+                return True
+            _peer_only_failure(
+                source,
+                PeerFailureKind.malformed,
+                "Body exceeds listing size",
+                discard_partial=True,
+            )
             log.error(f'Body exceeds listing size downloading "{file.filepath}"')
             return True
 
@@ -1030,23 +1212,23 @@ def _download_from_source_attempt(
         if is_sha256_hex(server_sha256):
             normalized_server_sha = cast(str, server_sha256).lower()
             if not hmac.compare_digest(sha256sum, normalized_server_sha):
-                if source is not None:
-                    raise _PeerSourceFailure(
-                        PeerFailureKind.hash_mismatch,
-                        "Source checksum mismatch",
-                        discard_partial=True,
-                    )
+                _peer_only_failure(
+                    source,
+                    PeerFailureKind.hash_mismatch,
+                    "Source checksum mismatch",
+                    discard_partial=True,
+                )
                 if resume_offset:
                     raise _RestartMasterDownload
                 log.error(f'Server checksum mismatch downloading "{file.filepath}"')
                 return True
         if not hmac.compare_digest(sha256sum, expected_sha):
-            if source is not None:
-                raise _PeerSourceFailure(
-                    PeerFailureKind.hash_mismatch,
-                    "Listing checksum mismatch",
-                    discard_partial=True,
-                )
+            _peer_only_failure(
+                source,
+                PeerFailureKind.hash_mismatch,
+                "Listing checksum mismatch",
+                discard_partial=True,
+            )
             if resume_offset:
                 raise _RestartMasterDownload
             log.error(f'Invalid checksum downloading "{file.filepath}"')
@@ -1054,45 +1236,17 @@ def _download_from_source_attempt(
 
         replace(partial_file_path, full_save_path)
         cleanup_partial = False
-        duration = monotonic() - t0
-        source_detail = f" source_cid={source.cid}" if source is not None else ""
-        log.info(
-            f'{ActionLabel.DOWNLOAD} "{full_save_path}" {format_bytes(file.size)} '
-            f"{format_duration(duration, subsecond=True)}{source_detail}"
-        )
-        if source is None:
-            emit_event(
-                UiEventName.transfer, op="download", file=full_save_path, size=file.size or 0
-            )
-        else:
-            emit_event(
-                UiEventName.transfer,
-                op="download",
-                file=full_save_path,
-                size=file.size or 0,
-                source_cid=source.cid,
-            )
-            if source_resolver is not None:
-                source_resolver.record_success(
-                    source,
-                    rtt_seconds=rtt_seconds,
-                    bytes_transferred=wire_bytes,
-                    body_seconds=body_seconds,
-                )
-
-        try:
-            if file.mtime is not None:
-                utime(full_save_path, (file.mtime, file.mtime))
-            if file.permissions:
-                set_permissions(full_save_path, file.permissions)
-        except OSError as exc:
-            log.error(f'Could not apply metadata to "{file.filepath}": {exc}')
-        _record_synced_base(
+        _finalize_download(
             file,
-            vclock=_remote_vclock(file),
-            corrected_mtime=_remote_corrected_mtime(file),
+            full_save_path,
+            t0,
+            source=source,
+            source_resolver=source_resolver,
+            rtt_seconds=rtt_seconds,
+            wire_bytes=wire_bytes,
+            body_seconds=body_seconds,
+            inventory_observer=inventory_observer,
         )
-        inventory_observer.upsert(file)
         return True
 
     except _PeerSourceFailure:
@@ -1213,6 +1367,16 @@ def _download_file_attempt(
 # =============================================================================
 
 
+def _file_stats(path: str) -> tuple[int, float] | None:
+    """``(size, mtime)`` used to detect an in-flight write; None when unreadable."""
+    try:
+        st = Path(path).stat()
+    except OSError:
+        # Deleted or unreadable: treated as stable, so the caller's open() reports it.
+        return None
+    return (st.st_size, st.st_mtime)
+
+
 def is_file_stable(file: File, interval: float | None = None) -> bool:
     """
     Check if a file has stopped being written to.
@@ -1235,32 +1399,23 @@ def is_file_stable(file: File, interval: float | None = None) -> bool:
     if not file.filepath:
         return True
 
-    try:
-        last_stat = Path(file.filepath).stat()
-        last_size = last_stat.st_size
-        last_mtime = last_stat.st_mtime
-    except OSError:
-        # File may have been deleted
+    before = _file_stats(file.filepath)
+    if before is None:
         return True
 
     time_sleep(interval)
 
-    try:
-        current_stat = Path(file.filepath).stat()
-        current_size = current_stat.st_size
-        current_mtime = current_stat.st_mtime
-    except OSError:
-        # File may have been deleted
+    after = _file_stats(file.filepath)
+    if after is None:
         return True
 
     log.debug(
         f'Writing file: "{file.filepath}" '
-        f"(size: {format_bytes(last_size)} -> "
-        f"{format_bytes(current_size)}, "
-        f"mtime: {last_mtime} -> {current_mtime})"
+        f"(size: {format_bytes(before[0])} -> {format_bytes(after[0])}, "
+        f"mtime: {before[1]} -> {after[1]})"
     )
 
-    return last_size == current_size and last_mtime == current_mtime
+    return before == after
 
 
 def _file_already_settled(file: File) -> bool:
@@ -1666,16 +1821,22 @@ def _resolve_effective_version(file: File) -> dict | None:
     return None
 
 
+def _resolve_local_version_pair(file: File) -> tuple[dict[str, int] | None, int]:
+    """Return ``(vclock, corrected_mtime)`` of the effective local version.
+
+    One resolution serves both merge-base fields: resolving them separately ran
+    ``_resolve_effective_version`` twice per completed upload, and that helper
+    hits the version map twice (compare view + stored clock).
+    """
+    eff = _resolve_effective_version(file)
+    if eff is None:
+        return None, 0
+    return eff["vclock"], int(eff.get("corrected_mtime", 0) or 0)
+
+
 def _resolve_local_vclock(file: File) -> dict[str, int] | None:
     """Return the effective local vclock for *file*, or ``None``."""
-    eff = _resolve_effective_version(file)
-    return eff["vclock"] if eff else None
-
-
-def _resolve_local_corrected_mtime(file: File) -> int:
-    """Return the effective local corrected mtime for *file*, or 0."""
-    eff = _resolve_effective_version(file)
-    return int(eff.get("corrected_mtime", 0) or 0) if eff else 0
+    return _resolve_local_version_pair(file)[0]
 
 
 def _remote_vclock(file: File) -> dict[str, int] | None:
@@ -1766,7 +1927,7 @@ def _patch_permissions_only(file: File, filename: str) -> bool:
             note_local_edit(abs_path, file.sha256sum)
         except Exception as e:  # pragma: no cover - bookkeeping must never break a transfer
             log.debug(f'Could not self-record metadata edit for "{file.filepath}": {e}')
-    vclock_json, version_id, corrected_mtime = _upload_version_fields(file)
+    vclock_json, version_id, corrected_mtime = resolve_upload_version_fields(file)
     if not patch_permissions_remote(
         filename,
         file.permissions or "",
@@ -1794,18 +1955,6 @@ def _remote_corrected_mtime(file: File) -> int:
         if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
             return int(clamp_incoming_corrected_mtime(float(raw)))
     return 0
-
-
-def _upload_version_fields(file: File) -> tuple[str, str, int]:
-    """Return ``(vclock_json, version_id, corrected_mtime)`` upload form values.
-
-    The uploaded version is the *effective* local version: the stored clock
-    ticked by this node when the content differs from the recorded base (the
-    same honest value ``sync_state.local_version_for_compare`` produces), plus
-    the ADR-0023 corrected mtime. The server arbitrates this against its stored
-    version (ADR-0022).
-    """
-    return resolve_upload_version_fields(file)
 
 
 def _record_201_upload(file: File, response) -> None:
@@ -1845,11 +1994,8 @@ def _record_201_upload(file: File, response) -> None:
         _record_synced_base(file, vclock=record_vclock, corrected_mtime=record_corrected)
     else:
         # Fall back to the local effective clock (merge with stored).
-        _record_synced_base(
-            file,
-            vclock=_resolve_local_vclock(file),
-            corrected_mtime=_resolve_local_corrected_mtime(file),
-        )
+        vclock, corrected_mtime = _resolve_local_version_pair(file)
+        _record_synced_base(file, vclock=vclock, corrected_mtime=corrected_mtime)
 
 
 def _handle_upload_conflict_response(file: File, response) -> bool:
@@ -2000,11 +2146,8 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
                 emit_event(
                     UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0
                 )
-                _record_synced_base(
-                    file,
-                    vclock=_resolve_local_vclock(file),
-                    corrected_mtime=_resolve_local_corrected_mtime(file),
-                )
+                vclock, corrected_mtime = _resolve_local_version_pair(file)
+                _record_synced_base(file, vclock=vclock, corrected_mtime=corrected_mtime)
                 return
             except (DeltaTransferError, OSError) as exc:
                 log.warning(
@@ -2044,7 +2187,7 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
                 f"{format_bytes(offset)}/{format_bytes(file.size)}"
             )
 
-        vclock_json, version_id, corrected_mtime = _upload_version_fields(file)
+        vclock_json, version_id, corrected_mtime = resolve_upload_version_fields(file)
         data = {
             "cid": CONFIG["CID"],
             "path": path,

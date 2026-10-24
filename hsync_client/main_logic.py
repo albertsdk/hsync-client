@@ -21,7 +21,12 @@ from hsync_common.format import format_bytes
 from hsync_common.ignore import IgnoreMatcher, set_active_matcher
 from hsync_common.protocol.handshake import PROTOCOL_VERSION_REST
 from hsync_common.protocol.pairing import fingerprint_matches
-from hsync_common.protocol.tls_trust import TrustAction, TrustPolicy, evaluate_tls_trust
+from hsync_common.protocol.tls_trust import (
+    TrustAction,
+    TrustPolicy,
+    evaluate_tls_trust,
+    resolve_trust_policy,
+)
 from hsync_common.runtime import ColorMode, detect_container, is_tty_interactive, runtime_summary
 
 from hsync_client.config import (
@@ -581,15 +586,19 @@ def _resolve_bootnode_trust(
     Precedence: ``--insecure`` (``none``) > ``--bootnode-fingerprint``
     (``strict``) > ``--bootnode-tofu`` (``accept-new``) > the flag value >
     ``HSYNC_BOOTNODE_TRUST`` > the ``ask`` default.
+
+    The precedence itself is the shared SSOT
+    (:func:`hsync_common.protocol.tls_trust.resolve_trust_policy`); only the
+    ``ask`` fallback and the bootnode env source are transport-specific.
     """
-    if not verify_ssl:
-        return TrustPolicy.none
-    if fingerprints:
-        return TrustPolicy.strict
-    if tofu:
-        return TrustPolicy.accept_new
-    explicit = policy or get_bootnode_trust()
-    return TrustPolicy(explicit) if explicit else TrustPolicy.ask
+    return resolve_trust_policy(
+        policy,
+        fingerprints,
+        tofu,
+        verify_ssl,
+        env_default=get_bootnode_trust(),
+        fallback=TrustPolicy.ask,
+    )
 
 
 class ServerTrustError(RuntimeError):

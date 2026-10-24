@@ -26,7 +26,7 @@ import socket
 import ssl
 from pathlib import Path
 
-from hsync_common.protocol.tls_trust import TrustPolicy
+from hsync_common.protocol.tls_trust import TrustPolicy, resolve_trust_policy
 from hsync_common.state_paths import state_path
 
 from hsync_client._trust_store import StoreError
@@ -117,12 +117,16 @@ def resolve_server_trust(
     Precedence: ``--insecure`` (``none``) > ``--server-fingerprint`` (``strict``) >
     ``--server-tofu`` (``accept-new``) > the ``--server-trust`` flag >
     ``HSYNC_SERVER_TRUST`` (``env_default``) > the ``chain`` default.
+
+    The precedence itself is the shared SSOT
+    (:func:`hsync_common.protocol.tls_trust.resolve_trust_policy`); only the
+    ``chain`` fallback is server-specific.
     """
-    if not verify_ssl:
-        return TrustPolicy.none
-    if fingerprints:
-        return TrustPolicy.strict
-    if tofu:
-        return TrustPolicy.accept_new
-    explicit = policy or env_default
-    return TrustPolicy(explicit) if explicit else TrustPolicy.chain
+    return resolve_trust_policy(
+        policy,
+        fingerprints,
+        tofu,
+        verify_ssl,
+        env_default=env_default,
+        fallback=TrustPolicy.chain,
+    )

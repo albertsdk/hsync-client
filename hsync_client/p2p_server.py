@@ -48,6 +48,7 @@ from aiohttp import web
 from hsync_common.clock import clamp_incoming_corrected_mtime, uncorrect_mtime
 from hsync_common.compression import compression_level
 from hsync_common.constants import (
+    CHUNK_SIZE_SMALL,
     CONTENT_TYPE_JSON,
     CONTENT_TYPE_OCTET_STREAM,
     HEADER_CHECKSUM_SHA256,
@@ -179,10 +180,10 @@ P2P_TLS_HANDSHAKE_TIMEOUT_S = 15.0
 # connections are additionally capped per IP by P2P_MAX_INFLIGHT_PER_IP).
 P2P_SERVER_BACKLOG = 256
 
-# Chunk size (bytes) for streaming file reads on the download path. Mirrors
-# the client transfer module so the master never reads more than necessary
-# into RAM per iteration.
-_P2P_UPLOAD_CHUNK_SIZE = 256 * 1024
+# Chunk size (bytes) for streaming file reads on the download path. Derived from
+# the shared small tier so the master never reads more than the client into RAM
+# per iteration.
+_P2P_UPLOAD_CHUNK_SIZE = CHUNK_SIZE_SMALL
 
 # Cap (bytes) on the file size the compressed download branch accepts. The
 # branch stages a bounded zstd frame in a temporary file before sending any
@@ -692,13 +693,16 @@ class P2PEndpointMixin(_HTTPTransportBase):
         path = parsed.path
         query = _parse_request_query(self.path)
 
+        # Health and clock are role-independent: serving them before the seeder
+        # split keeps one implementation instead of one per role.
+        if path == ENDPOINT_HEALTH:
+            self._handle_health()
+            return
+        if path == ENDPOINT_TIME:
+            self._handle_time()
+            return
+
         if self._is_seeder():
-            if path == ENDPOINT_HEALTH:
-                self._handle_health()
-                return
-            if path == ENDPOINT_TIME:
-                self._handle_time()
-                return
             download_path = (
                 f"{ENDPOINT_BUCKETS_PREFIX}/{self.server.bucket}{ENDPOINT_FILES_DOWNLOAD_SUFFIX}"
             )
@@ -736,56 +740,49 @@ class P2PEndpointMixin(_HTTPTransportBase):
                 slots.release()
             return
 
-        # Health check
-        if path == ENDPOINT_HEALTH:
-            self._handle_health()
-            return
+        # Bucket-scoped REST routes, most specific suffix first. The prefix is
+        # tested once: every one of them lives under /api/v1/buckets/{bucket}.
+        if ENDPOINT_BUCKETS_PREFIX in path:
+            # List directory permissions: /api/v1/buckets/{bucket}/dirs
+            if path.endswith(ENDPOINT_DIRS_SUFFIX):
+                self._handle_list_dirs()
+                return
 
-        # Time endpoint for clock synchronization
-        if path == ENDPOINT_TIME:
-            self._handle_time()
-            return
+            # List files: /api/v1/buckets/{bucket}/files
+            if path.endswith(ENDPOINT_FILES_SUFFIX):
+                self._handle_list_files(query)
+                return
 
-        # List directory permissions: /api/v1/buckets/{bucket}/dirs
-        if path.endswith(ENDPOINT_DIRS_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
-            self._handle_list_dirs()
-            return
+            # Download file: /api/v1/buckets/{bucket}/files/download
+            if path.endswith(ENDPOINT_FILES_DOWNLOAD_SUFFIX):
+                self._handle_download(query)
+                return
 
-        # List files: /api/v1/buckets/{bucket}/files
-        if path.endswith(ENDPOINT_FILES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
-            self._handle_list_files(query)
-            return
+            # Upload status: /api/v1/buckets/{bucket}/files/upload-status
+            if path.endswith(ENDPOINT_FILES_UPLOAD_STATUS_SUFFIX):
+                self._handle_upload_status(query)
+                return
 
-        # Download file: /api/v1/buckets/{bucket}/files/download
-        if path.endswith(ENDPOINT_FILES_DOWNLOAD_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
-            self._handle_download(query)
-            return
+            # Delta signatures: /api/v1/buckets/{bucket}/files/delta/signatures
+            if path.endswith(ENDPOINT_DELTA_SIGNATURES_SUFFIX):
+                from hsync_client.p2p_delta import handle_delta_signatures_get
 
-        # Upload status: /api/v1/buckets/{bucket}/files/upload-status
-        if path.endswith(ENDPOINT_FILES_UPLOAD_STATUS_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
-            self._handle_upload_status(query)
-            return
+                handle_delta_signatures_get(self, query)
+                return
 
-        # Delta signatures: /api/v1/buckets/{bucket}/files/delta/signatures
-        if path.endswith(ENDPOINT_DELTA_SIGNATURES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
-            from hsync_client.p2p_delta import handle_delta_signatures_get
+            # Delta literal payload: /api/v1/buckets/{bucket}/files/delta/data/{token}
+            if ENDPOINT_DELTA_DATA_MARKER in path:
+                from hsync_client.p2p_delta import handle_delta_data
 
-            handle_delta_signatures_get(self, query)
-            return
+                bucket = path.split(f"{ENDPOINT_BUCKETS_PREFIX}/", 1)[-1].split("/", 1)[0]
+                token = path.rsplit(ENDPOINT_DELTA_DATA_MARKER, 1)[-1]
+                handle_delta_data(self, bucket, token)
+                return
 
-        # Delta literal payload: /api/v1/buckets/{bucket}/files/delta/data/{token}
-        if ENDPOINT_DELTA_DATA_MARKER in path and ENDPOINT_BUCKETS_PREFIX in path:
-            from hsync_client.p2p_delta import handle_delta_data
-
-            bucket = path.split(f"{ENDPOINT_BUCKETS_PREFIX}/", 1)[-1].split("/", 1)[0]
-            token = path.rsplit(ENDPOINT_DELTA_DATA_MARKER, 1)[-1]
-            handle_delta_data(self, bucket, token)
-            return
-
-        # Tombstones: /api/v1/buckets/{bucket}/tombstones
-        if path.endswith(ENDPOINT_TOMBSTONES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
-            self._handle_tombstones()
-            return
+            # Tombstones: /api/v1/buckets/{bucket}/tombstones
+            if path.endswith(ENDPOINT_TOMBSTONES_SUFFIX):
+                self._handle_tombstones()
+                return
 
         self._send_error_response(HTTP_NOT_FOUND, "Not found")
 

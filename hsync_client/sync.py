@@ -1766,6 +1766,12 @@ _DOWNLOAD_ONLY_EXCLUDE: frozenset[SyncActionName] = frozenset(
         SyncActionName.delete_remote,
     }
 )
+# Excluded actions per SYNC_DIRECTION. Bidirectional has no entry (nothing is
+# excluded), so an unknown direction degrades to "no filter" like the default.
+_EXCLUDED_BY_DIRECTION: dict[str, frozenset[SyncActionName]] = {
+    "upload-only": _UPLOAD_ONLY_EXCLUDE,
+    "download-only": _DOWNLOAD_ONLY_EXCLUDE,
+}
 
 
 def _apply_local_mtime(abs_path: str, corrected_mtime: int) -> None:
@@ -1831,13 +1837,7 @@ def get_sync_actions(
 
     # Pre-compute the direction filter: excluded actions never enter the list.
     _direction = CONFIG.get("SYNC_DIRECTION", "bidirectional")
-    _excluded: frozenset[SyncActionName] = (
-        _UPLOAD_ONLY_EXCLUDE
-        if _direction == "upload-only"
-        else _DOWNLOAD_ONLY_EXCLUDE
-        if _direction == "download-only"
-        else frozenset()
-    )
+    _excluded = _EXCLUDED_BY_DIRECTION.get(_direction, frozenset())
 
     sync_actions: list[SyncAction] = []
     remote_filepaths: set[str] = set()

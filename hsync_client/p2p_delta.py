@@ -58,10 +58,9 @@ from hsync_common.hashing import compute_sha256, is_sha256_hex
 from hsync_common.ignore import should_skip
 from hsync_common.models.delta import (
     BlockSignature,
-    DeltaOp,
     delta_download_payload,
     delta_signatures_payload,
-    sanitize_op_list,
+    parse_op_payload,
     sanitize_signature_list,
     validate_op_bounds,
 )
@@ -403,16 +402,10 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
     ):
         handler._send_error_response(_HTTP_BAD_REQUEST, "Invalid metadata fields")
         return
-    clean_ops = sanitize_op_list(meta.get("ops"))
-    if clean_ops is None:
+    ops = parse_op_payload(meta.get("ops"))
+    if ops is None:
         handler._send_error_response(_HTTP_BAD_REQUEST, "Invalid ops")
         return
-    ops = [
-        DeltaOp(
-            type=o["type"], offset=o["offset"], length=o["length"], data_offset=o["data_offset"]
-        )
-        for o in clean_ops
-    ]
 
     # Race check: the master's base must still be what the slave saw.
     current_base = _file_sha256(filepath)

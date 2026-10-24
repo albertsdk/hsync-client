@@ -644,6 +644,18 @@ class P2PWebSocketServer:
             raise ConnectionError(f"expected a text frame, got {msg.type!r}")
         return msg.data
 
+    async def _reject_auth(
+        self, websocket: web.WebSocketResponse, reason: str, message: str
+    ) -> None:
+        """End a handshake: warn once, send the failure frame, close the socket.
+
+        Every rejection path must both tell the peer *why* and close; inlining
+        the pair let a new refusal return while leaving the socket attached.
+        """
+        log.warning(message)
+        await websocket.send_str(compact_json_str(build_p2p_auth_failed(reason=reason)))
+        await websocket.close()
+
     async def handle(self, request: web.Request) -> web.WebSocketResponse:
         """aiohttp route handler for one master WebSocket connection.
 
@@ -679,37 +691,33 @@ class P2PWebSocketServer:
                 token = auth_data.get("token")
                 declared_cid = auth_data.get("cid")
                 if not isinstance(declared_cid, str) or not is_valid_cid(declared_cid):
-                    log.warning(
+                    await self._reject_auth(
+                        websocket,
+                        "invalid_cid",
                         f"WebSocket auth rejected – invalid CID from {client_addr}: "
-                        f"{declared_cid!r}"
+                        f"{declared_cid!r}",
                     )
-                    await websocket.send_str(
-                        compact_json_str(build_p2p_auth_failed(reason="invalid_cid"))
-                    )
-                    await websocket.close()
                     return websocket
                 client_cid = declared_cid
                 # Protocol is a hard gate inside the auth contract: a slave
                 # speaking a different P2P protocol must never authenticate.
                 if auth_data.get("protocol_version") != PROTOCOL_VERSION_P2P:
-                    log.warning(
+                    await self._reject_auth(
+                        websocket,
+                        "protocol_incompatible",
                         f"WebSocket auth rejected – incompatible P2P protocol from "
                         f"{client_addr} (CID: {client_cid}): "
-                        f"{auth_data.get('protocol_version')!r}"
+                        f"{auth_data.get('protocol_version')!r}",
                     )
-                    await websocket.send_str(
-                        compact_json_str(build_p2p_auth_failed(reason="protocol_incompatible"))
-                    )
-                    await websocket.close()
                     return websocket
                 if auth_data.get("type") != "auth" or not (
                     isinstance(token, str) and hmac.compare_digest(token, str(p2p_key))
                 ):
-                    log.warning(f"WebSocket auth failed from {client_addr} (CID: {client_cid})")
-                    await websocket.send_str(
-                        compact_json_str(build_p2p_auth_failed(reason="invalid_token"))
+                    await self._reject_auth(
+                        websocket,
+                        "invalid_token",
+                        f"WebSocket auth failed from {client_addr} (CID: {client_cid})",
                     )
-                    await websocket.close()
                     return websocket
                 # Reserve the slave's CID before admitting the connection: a
                 # duplicated device identity (the master's own CID, or a CID
@@ -719,14 +727,12 @@ class P2PWebSocketServer:
                     auth_data.get("serve_slots"), slave_caps
                 )
                 if slot_rejection is not None:
-                    log.warning(
+                    await self._reject_auth(
+                        websocket,
+                        slot_rejection,
                         f"WebSocket auth rejected – invalid capacity advertisement from "
-                        f"{client_addr} (CID: {client_cid}): {slot_rejection}"
+                        f"{client_addr} (CID: {client_cid}): {slot_rejection}",
                     )
-                    await websocket.send_str(
-                        compact_json_str(build_p2p_auth_failed(reason=slot_rejection))
-                    )
-                    await websocket.close()
                     return websocket
                 admitted, inventory_token, inventory_rejection = await self._admit_slave(
                     client_cid,
@@ -747,9 +753,11 @@ class P2PWebSocketServer:
                 log.info(f"WebSocket client authenticated: {client_addr} (CID: {client_cid})")
             except TimeoutError:
                 await self._release_failed_admission(client_cid, websocket, inventory_token)
-                log.warning(f"WebSocket auth timeout from {client_addr} (CID: {client_cid})")
-                await websocket.send_str(compact_json_str(build_p2p_auth_failed(reason="timeout")))
-                await websocket.close()
+                await self._reject_auth(
+                    websocket,
+                    "timeout",
+                    f"WebSocket auth timeout from {client_addr} (CID: {client_cid})",
+                )
                 return websocket
             except Exception as e:
                 # The CID may already be reserved at this point (a failure after

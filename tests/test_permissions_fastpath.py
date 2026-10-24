@@ -170,7 +170,7 @@ class TestUploadAttemptFastPath:
             patch.object(transfer_mod, "_get_upload_status", return_value=("complete", 0)),
             patch.object(transfer_mod, "_patch_permissions_only", return_value=False),
             patch.object(transfer_mod, "prepare_delta_upload", return_value=None),
-            patch.object(transfer_mod, "_upload_version_fields", return_value=("{}", "", 0)),
+            patch.object(transfer_mod, "resolve_upload_version_fields", return_value=("{}", "", 0)),
             patch.object(transfer_mod, "should_compress", return_value=False),
             patch.object(transfer_mod, "_build_multipart_streaming") as mock_build,
             patch.object(transfer_mod, "post", return_value=response),
