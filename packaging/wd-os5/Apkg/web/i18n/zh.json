@@ -48,7 +48,7 @@
     "field.delta_min_size_p2p": "增量最小文件大小 - p2p（字节，0 = 默认）",
     "field.bw_upload": "最大上传带宽（例如 1MB）",
     "field.bw_download": "最大下载带宽（例如 1MB）",
-    "field.min_free_mb": "最小可用磁盘空间（MB，0 = 关闭）",
+    "field.min_free_disk": "最小可用磁盘空间（例如 500MB，0 = 关闭）",
     "field.max_inbound_mb": "最大入站文件大小（MB，0 = 关闭）",
     "field.verbose": "详细日志",
     "section.autotune": "自动调优",

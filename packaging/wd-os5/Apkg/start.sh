@@ -96,7 +96,7 @@ fi
 : "${HSYNC_DELTA_MIN_FILE_SIZE_P2P:=}"
 : "${HSYNC_MAX_BW_UPLOAD:=}"
 : "${HSYNC_MAX_BW_DOWNLOAD:=}"
-: "${HSYNC_MIN_FREE_DISK_MB:=}"
+: "${HSYNC_MIN_FREE_DISK:=}"
 : "${HSYNC_MAX_INBOUND_SIZE_MB:=}"
 : "${HSYNC_VERBOSE:=false}"
 : "${HSYNC_AUTOTUNE:=true}"
@@ -165,7 +165,7 @@ esac
 [ -n "${HSYNC_DELTA_MIN_FILE_SIZE_P2P}" ] && set -- "$@" --delta-min-file-size-p2p "${HSYNC_DELTA_MIN_FILE_SIZE_P2P}"
 [ -n "${HSYNC_MAX_BW_UPLOAD}" ]        && set -- "$@" --limit-upload "${HSYNC_MAX_BW_UPLOAD}"
 [ -n "${HSYNC_MAX_BW_DOWNLOAD}" ]      && set -- "$@" --limit-download "${HSYNC_MAX_BW_DOWNLOAD}"
-[ -n "${HSYNC_MIN_FREE_DISK_MB}" ]     && set -- "$@" --min-free-disk-space "${HSYNC_MIN_FREE_DISK_MB}"
+[ -n "${HSYNC_MIN_FREE_DISK}" ]     && set -- "$@" --min-free-disk-space "${HSYNC_MIN_FREE_DISK}"
 [ -n "${HSYNC_MAX_INBOUND_SIZE_MB}" ] && set -- "$@" --max-inbound-size "${HSYNC_MAX_INBOUND_SIZE_MB}"
 [ "${HSYNC_VERBOSE}" = "true" ]        && set -- "$@" --verbose
 [ "${HSYNC_AUTOTUNE}" = "false" ]      && set -- "$@" --no-autotune

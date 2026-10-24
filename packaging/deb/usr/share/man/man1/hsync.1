@@ -1,7 +1,7 @@
 .\" Man page for HSYNC — file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-10-23" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-10-24" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -253,11 +253,19 @@ Minimum file size in bytes for delta transfer in p2p mode (default:
 1 MB). p2p mode uses a higher threshold because the bandwidth savings are
 less significant on fast local networks.
 .TP
-.BR \-\-min\-free\-disk\-space =\fIMB\fP
-Minimum free disk space in MB before sync is paused
+.BR \-\-min\-free\-disk\-space =\fISIZE\fP
+Minimum free disk space before sync is paused, as a size with an explicit
+unit (e.g.
+.BR 500MB ,
+.BR 2GB ;
+binary multiples, so
+.BR 1MB
+\= 1048576 bytes;
+.BR 0
+disables the check). A bare number without a unit is rejected.
 (default:
-.BR 500 ;
-range: 0\(en100000, 0 = disabled).
+.BR 500MB ;
+range: 0\(en100GB).
 .TP
 .BR \-\-ignore\-pattern =\fIPATTERN\fP
 Extra gitignore-style pattern. May be repeated for multiple patterns.

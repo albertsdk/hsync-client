@@ -450,8 +450,14 @@ class TestApplyValidation:
         def fake_apply(_base, _ops, _literal, out_path):
             Path(out_path).write_bytes(b"short")
 
-        monkeypatch.setattr("hsync_common.delta.apply_delta", fake_apply)
-        monkeypatch.setattr(ld, "compute_sha256", lambda _p: meta["new_sha256"])
+        # The rebuild + verification pair lives in hsync-common (single
+        # implementation shared with the server and the download path), so the
+        # seam to fake is that module, not the p2p handler.
+        monkeypatch.setattr("hsync_common.delta.reconstruct.apply_delta", fake_apply)
+        monkeypatch.setattr(
+            "hsync_common.delta.reconstruct.compute_sha256",
+            lambda _p: meta["new_sha256"],
+        )
         _apply(apply_handler, meta, b"")
         status, body = apply_handler.sent[0]
         assert status == 422

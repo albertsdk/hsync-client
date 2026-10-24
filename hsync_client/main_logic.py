@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
+from hsync_common.defaults import MIN_FREE_DISK_SPACE_DEFAULT
+from hsync_common.disk import check_free_space
 from hsync_common.endpoint import format_authority
 from hsync_common.format import format_bytes
 from hsync_common.ignore import IgnoreMatcher, set_active_matcher
@@ -465,37 +467,34 @@ def _warn_if_p2p_in_container(logger: Any) -> None:
     )
 
 
-def _check_disk_space(local_path: str, min_free_mb: int, logger: Any) -> None:
+def _check_disk_space(local_path: str, min_free_bytes: int, logger: Any) -> None:
     """Check if sufficient disk space is available before sync.
 
     Args:
         local_path: Path to the local sync directory.
-        min_free_mb: Minimum free disk space required in MB. 0 = disabled.
+        min_free_bytes: Minimum free disk space required, in bytes (0 = disabled).
         logger: Logger instance for output.
 
     Raises:
         InsufficientDiskSpaceError: If free space is below the threshold.
     """
-    if min_free_mb <= 0:
+    if min_free_bytes <= 0:
         return
-
-    from shutil import disk_usage
 
     from hsync_client.exceptions import InsufficientDiskSpaceError
 
-    try:
-        usage = disk_usage(local_path)
-        free_mb = usage.free / (1024 * 1024)
-        if free_mb < min_free_mb:
-            raise InsufficientDiskSpaceError(
-                message=(
-                    f"Insufficient disk space: {free_mb:.0f} MB available, "
-                    f"{min_free_mb} MB required"
-                ),
-                details={"available_mb": int(free_mb), "required_mb": min_free_mb},
-            )
-    except OSError as e:
-        logger.warning(f"Could not check disk space: {e}")
+    space = check_free_space(local_path, reserve_bytes=min_free_bytes)
+    if space.error is not None:
+        logger.warning(f"Could not check disk space: {space.error}")
+        return
+    if not space.ok:
+        raise InsufficientDiskSpaceError(
+            message=(
+                f"Insufficient disk space: {format_bytes(space.free_bytes)} available, "
+                f"{format_bytes(min_free_bytes)} required"
+            ),
+            details={"available_bytes": space.free_bytes, "required_bytes": min_free_bytes},
+        )
 
 
 def _start_hsyncignore_watcher(bucket_root: str, matcher: "IgnoreMatcher") -> "Any":
@@ -755,7 +754,7 @@ def run_sync(
     events_json_fd: int | None = None,
     allow_deletions: bool = False,
     p2p_allow_unauthenticated: bool = False,
-    min_free_disk_space: int = 500,
+    min_free_disk_space: int = MIN_FREE_DISK_SPACE_DEFAULT,
     max_inbound_size: int = MAX_INBOUND_SIZE_MB_DEFAULT,
     ignore_patterns: list[str] | None = None,
     max_concurrent_transfers: int | None = None,

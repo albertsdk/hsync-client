@@ -51,7 +51,7 @@ const KEYS = [
     'HSYNC_SERVER_TRUST', 'HSYNC_SERVER_FINGERPRINT', 'HSYNC_SERVER_TOFU',
     'HSYNC_INTERVAL', 'HSYNC_IGNORE_DELETE', 'HSYNC_NO_COMPRESSION',
     'HSYNC_DELTA_ENABLED', 'HSYNC_DELTA_MIN_FILE_SIZE', 'HSYNC_DELTA_MIN_FILE_SIZE_P2P',
-    'HSYNC_MAX_BW_UPLOAD', 'HSYNC_MAX_BW_DOWNLOAD', 'HSYNC_MIN_FREE_DISK_MB',
+    'HSYNC_MAX_BW_UPLOAD', 'HSYNC_MAX_BW_DOWNLOAD', 'HSYNC_MIN_FREE_DISK',
     'HSYNC_MAX_INBOUND_SIZE_MB', 'HSYNC_VERBOSE',
     'HSYNC_AUTOTUNE', 'HSYNC_HTTP_TIMEOUT', 'HSYNC_RECONNECT_DELAY',
     'HSYNC_TRANSFER_RETRY_MIN_WAIT', 'HSYNC_TRANSFER_RETRY_MAX_WAIT',
@@ -137,9 +137,17 @@ foreach (KEYS as $key) {
             // Empty means "use the client default" (chain); otherwise a known policy.
             if (!in_array($val, ['', 'chain', 'ask', 'accept-new', 'strict', 'none'], true)) $val = '';
             break;
+        case 'HSYNC_MIN_FREE_DISK':
+            // A size with an explicit unit ("500MB", "2GB") or "0" (off): the
+            // client rejects a bare number so a value cannot be read as bytes
+            // when MB was meant.
+            if ($val === '0') {
+                break;
+            }
+            if (!preg_match('/^[0-9]+(\.[0-9]+)?\s*(B|K|KB|KiB|M|MB|MiB|G|GB|GiB|T|TB|TiB)$/i', $val)) $val = '';
+            break;
         case 'HSYNC_DISCOVERY_TIMEOUT':
         case 'HSYNC_INTERVAL':
-        case 'HSYNC_MIN_FREE_DISK_MB':
         case 'HSYNC_MAX_INBOUND_SIZE_MB':
         case 'HSYNC_DELTA_MIN_FILE_SIZE':
         case 'HSYNC_DELTA_MIN_FILE_SIZE_P2P':

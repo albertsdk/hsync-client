@@ -48,7 +48,7 @@
     "field.delta_min_size_p2p": "Min. Delta-Dateigröße - p2p (Bytes, 0 = Standard)",
     "field.bw_upload": "Max. Upload-Bandbreite (z. B. 1MB)",
     "field.bw_download": "Max. Download-Bandbreite (z. B. 1MB)",
-    "field.min_free_mb": "Minimaler freier Speicher (MB, 0 = aus)",
+    "field.min_free_disk": "Minimaler freier Speicher (z. B. 500MB, 0 = aus)",
     "field.max_inbound_mb": "Max. eingehende Dateigröße (MB, 0 = aus)",
     "field.verbose": "Ausführliches Log",
     "section.autotune": "Auto-Tuning",

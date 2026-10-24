@@ -98,8 +98,9 @@ re-dialling. The wire is unchanged and trust stays a single pin (shared fleet
 identity), so the fallback never re-prompts.
 
 The bootnode endpoint is `HSYNC_BOOTNODE` (the `_validate_bootnode_host`
-validator accepts `host`, `host:port`, `[IPv6]`, `[IPv6]:port` via the shared
-`parse_host_port` grammar and normalizes to the unbracketed host; no scheme or
+validator accepts `host`, `host:port`, `[IPv6]`, `[IPv6]:port` and normalizes
+through the shared `hsync_common.endpoint.normalize_bare_endpoint` — the same
+rule the desktop GUI applies to its discovery-server field; no scheme or
 path), and UPnP is `HSYNC_UPNP_ENABLED` (default `false`; opt-in). The p2p
 command resolves the bootnode CLI > env (`_build_bootnode`,
 `use_env=True`): a CLI `BOOTNODE[:PORT]` positional replaces the whole env
@@ -124,7 +125,12 @@ write opt-in is `CLI-opt-in OR environment-opt-in` and defaults false.
   mass-delete, bandwidth, resync, and max inbound file size
   (`MAX_INBOUND_SIZE_MB_*`, default 10 GB — absolute anti-bomb cap applied as
   `min(declared, cap)` to downloads and received p2p uploads, wired into
-  `CONFIG["MAX_INBOUND_SIZE"]` in bytes), inotify; the visual
+  `CONFIG["MAX_INBOUND_SIZE"]` in bytes), inotify. The free-space reserve is
+  the same shape: `MIN_FREE_DISK_SPACE_DEFAULT/_MIN/_MAX` are **bytes**
+  (500 MiB / 0 / 100 GiB) and feed `CONFIG["MIN_FREE_DISK_SPACE"]`; the
+  `--min-free-disk-space` option takes a size string (`500MB`, `2GB`) that
+  `cli.py::_parse_size_option` converts with `hsync_common.format.parse_size`
+  (`require_unit=True`, so a bare number is rejected; `0` = disabled). The visual
    `ActionLabel` enum comes from `hsync_common.labels`; delta transfer (`constants.py`): `DELTA_ENABLED`,
    `DELTA_MIN_FILE_SIZE` 256 KB, `DELTA_MIN_FILE_SIZE_P2P` 1 MB, `DELTA_TOCTOU_REHASH_THRESHOLD` 10 MB.
    `WORKER_MEMORY_BUDGET_BYTES` (`constants.py::WORKER_MEMORY_BUDGET_BYTES`, 8 MiB) — per-worker memory budget for the

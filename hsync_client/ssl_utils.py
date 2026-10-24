@@ -18,7 +18,6 @@ certificate is authenticated by pinning its fingerprint, not by WebPKI.
 from __future__ import annotations
 
 import ipaddress
-import os
 import ssl
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,15 +25,10 @@ from pathlib import Path
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 from hsync_common.ssl_utils import (
+    KEY_FILE_MODE,
     SERVICE_CERT_VALIDITY_DAYS,
-    build_self_signed_certificate,
-    compute_cert_fingerprint,
-    generate_ecdsa_private_key,
-    load_pem_keypair,
-    serialize_cert_pem,
-    serialize_private_key_unencrypted,
+    load_or_create_service_identity,
     verify_cert_fingerprint,
-    write_pem_keypair,
 )
 from loguru import logger as log
 from requests.adapters import DEFAULT_POOLBLOCK, HTTPAdapter
@@ -108,35 +102,17 @@ def load_or_create_master_cert(common_name: str = "hsync-lan") -> CertificateInf
     identity is pinned, not derived from an encrypted-at-rest secret, and on the
     P2P threat model local filesystem access already implies full compromise.
 
+    The load-or-create rule itself is shared with the server
+    (``hsync_common.ssl_utils.load_or_create_service_identity``); this function
+    only supplies the P2P subject/SAN set and the device-directory layout.
+
     Returns:
         CertificateInfo with ``cert_file`` and ``key_file`` pointing at the
         persistent keypair.
     """
-    cert_dir = default_master_cert_dir()
-    cert_dir.mkdir(parents=True, exist_ok=True)
-    os.chmod(cert_dir, 0o700)
-
-    cert_path = cert_dir / _MASTER_CERT_FILENAME
-    key_path = cert_dir / _MASTER_KEY_FILENAME
-
-    if cert_path.exists() and key_path.exists():
-        cert_pem, key_pem, fingerprint = load_pem_keypair(
-            cert_path,
-            key_path,
-            subject="P2P master identity",
-        )
-        log.info(f"Loaded persistent P2P master certificate: {fingerprint[:16]}...")
-        return CertificateInfo(
-            cert_pem=cert_pem,
-            key_pem=key_pem,
-            fingerprint=fingerprint,
-            cert_file=str(cert_path),
-            key_file=str(key_path),
-        )
-
-    private_key = generate_ecdsa_private_key()
-    cert = build_self_signed_certificate(
-        private_key,
+    identity = load_or_create_service_identity(
+        default_master_cert_dir() / _MASTER_CERT_FILENAME,
+        default_master_cert_dir() / _MASTER_KEY_FILENAME,
         subject_attrs=[
             x509.NameAttribute(NameOID.COMMON_NAME, common_name),
             x509.NameAttribute(NameOID.ORGANIZATION_NAME, "HSYNC P2P Mode"),
@@ -147,28 +123,20 @@ def load_or_create_master_cert(common_name: str = "hsync-lan") -> CertificateInf
             x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
         ],
         validity_days=MASTER_CERT_VALIDITY_DAYS,
+        subject="P2P master identity",
+        # Both files stay owner-only: the P2P identity is never served to another
+        # process. The device directory is created AND tightened to 0o700.
+        cert_mode=KEY_FILE_MODE,
+        chmod_parents=True,
     )
-    cert_pem = serialize_cert_pem(cert)
-    key_pem = serialize_private_key_unencrypted(private_key)
-    fingerprint = compute_cert_fingerprint(cert)
-
-    # Both files stay owner-only: the P2P identity is never served to another
-    # process, and the directory was already created 0o700 above.
-    write_pem_keypair(
-        cert_pem,
-        key_pem,
-        cert_path,
-        key_path,
-        create_parents=False,
-    )
-
-    log.info(f"Generated persistent P2P master certificate: {fingerprint[:16]}...")
+    action = "Generated" if identity.created else "Loaded"
+    log.info(f"{action} persistent P2P master certificate: {identity.fingerprint[:16]}...")
     return CertificateInfo(
-        cert_pem=cert_pem,
-        key_pem=key_pem,
-        fingerprint=fingerprint,
-        cert_file=str(cert_path),
-        key_file=str(key_path),
+        cert_pem=identity.cert_pem,
+        key_pem=identity.key_pem,
+        fingerprint=identity.fingerprint,
+        cert_file=identity.cert_file,
+        key_file=identity.key_file,
     )
 
 

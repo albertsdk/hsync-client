@@ -15,7 +15,7 @@ from hsync_common.constants import DELTA_MIN_FILE_SIZE, DELTA_MIN_FILE_SIZE_P2P
 from hsync_common.endpoint import (
     HostPort,
     build_https_url,
-    format_authority,
+    normalize_bare_endpoint,
     parse_host_port,
     parse_https_url,
     parse_port_list,
@@ -125,20 +125,13 @@ class EnvSettings(BaseSettings):
         """Accept a ``HOST[:PORT]`` endpoint: no scheme, no path.
 
         The bootnode channel is QUIC/UDP (not HTTPS), so the ``https://``
-        validator used for ``HSYNC_SERVER`` does not apply; the host may be a
-        bare hostname/IPv4, a ``HOST[:PORT]`` pair or a bracketed IPv6 literal.
-        The value is normalized to the unbracketed host, with the composite
-        ``[IPv6]:port`` when a port is present.
+        validator used for ``HSYNC_SERVER`` does not apply; normalization is the
+        shared ``hsync_common.endpoint.normalize_bare_endpoint`` (the same rule
+        the desktop GUI applies to its discovery-server field).
         """
         if v is None:
             return None
-        raw = str(v).strip()
-        if not raw:
-            return None
-        endpoint = parse_host_port(raw)
-        if endpoint.port is None:
-            return endpoint.host
-        return format_authority(endpoint.host, endpoint.port)
+        return normalize_bare_endpoint(str(v))
 
     @field_validator("bootnode_fingerprint", mode="before")
     @classmethod
@@ -826,7 +819,9 @@ class HsyncConfig(TypedDict):
     MAX_BANDWIDTH_UPLOAD: int | None
     # Maximum download bandwidth in bytes per second (None = unlimited)
     MAX_BANDWIDTH_DOWNLOAD: int | None
-    # Minimum free disk space in MB before sync (0 = disabled)
+    # Minimum free disk space in bytes before sync (0 = disabled); the CLI flag
+    # and the desktop use a size string such as "500MB", parsed by
+    # ``hsync_common.format.parse_size``.
     MIN_FREE_DISK_SPACE: int
     # Absolute cap in bytes on a single inbound file, applied on top of the
     # peer-declared size as min(declared, MAX_INBOUND_SIZE) — anti

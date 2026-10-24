@@ -65,7 +65,7 @@ seeders are selected through that master and receive their own persistent
 |---|---|---|
 | `--subdir` | Sync only files under this subdirectory | — (sync everything) |
 | `--http-timeout` | HTTP request timeout in seconds | auto (or `30` with `--no-autotune`) |
-| `--min-free-disk-space` | Minimum free disk space (MB) before syncing stops | `500` (`0` = disabled) |
+| `--min-free-disk-space` | Minimum free disk space before syncing stops, as a size with an explicit unit (`500MB`, `2GB`) | `500MB` (`0` = disabled) |
 
 ## Security opt-ins
 

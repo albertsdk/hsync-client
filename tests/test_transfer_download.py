@@ -179,10 +179,10 @@ class TestDownloadFile:
                     "REMOTE_BUCKET": "test",
                     "REQUEST_HEADERS": {"X-API-Key": "test"},
                     "LOCAL_BUCKET": str(tmp_path),
-                    "MIN_FREE_DISK_SPACE": 100,  # 100 MB reserve
+                    "MIN_FREE_DISK_SPACE": 100 * 1024**2,  # 100 MiB reserve (bytes)
                 },
             ),
-            patch("hsync_client.transfer.disk_usage", return_value=fake_usage),
+            patch("hsync_common.disk.disk_usage", return_value=fake_usage),
             patch("hsync_client.transfer.get") as mock_get,
             patch("hsync_client.transfer.replace") as mock_replace,
         ):

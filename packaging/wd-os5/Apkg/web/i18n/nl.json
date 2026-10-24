@@ -48,7 +48,7 @@
     "field.delta_min_size_p2p": "Minimale bestandsgrootte delta - p2p (bytes, 0 = standaard)",
     "field.bw_upload": "Max. uploadbandbreedte (bijv. 1MB)",
     "field.bw_download": "Max. downloadbandbreedte (bijv. 1MB)",
-    "field.min_free_mb": "Minimale vrije schijfruimte (MB, 0 = uit)",
+    "field.min_free_disk": "Minimale vrije schijfruimte (bijv. 500MB, 0 = uit)",
     "field.max_inbound_mb": "Max. grootte inkomend bestand (MB, 0 = uit)",
     "field.verbose": "Uitgebreid logboek",
     "section.autotune": "Automatische afstelling",

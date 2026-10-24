@@ -38,11 +38,14 @@ from uuid import uuid4
 import zstandard as zstd
 from hsync_common.constants import PARTIAL_DELTA_SUFFIX
 from hsync_common.delta import (
-    apply_delta,
+    MISMATCH_HASH,
+    MISMATCH_SIZE,
+    ReconstructionMismatch,
     compute_signatures,
     find_matches_file_to_sink,
     is_delta_worthwhile,
     optimal_block_size,
+    reconstruct_and_verify,
 )
 from hsync_common.format import format_bytes, format_duration
 from hsync_common.hashing import compute_sha256, is_sha256_hex
@@ -102,6 +105,21 @@ def _resolve_delta_version_fields(file: File) -> tuple[str, str, int]:
 
 class DeltaTransferError(Exception):
     """Recoverable delta failure: the caller falls back to a full transfer."""
+
+
+# The shared reconstruction helper reports *why* it rejected the rebuild; the
+# download path surfaces that as a human-readable fallback reason.
+_RECONSTRUCTION_MESSAGES = {
+    MISMATCH_HASH: "reconstructed file hash mismatch",
+    MISMATCH_SIZE: "reconstructed file size mismatch",
+}
+
+
+def _reconstruction_error_message(mismatch: ReconstructionMismatch) -> str:
+    """Map a shared reconstruction rejection to this module's error text."""
+    return _RECONSTRUCTION_MESSAGES.get(
+        str(mismatch.details.get("reason")), "delta reconstruction failed"
+    )
 
 
 @dataclass(frozen=True)
@@ -504,13 +522,17 @@ def download_file_delta(file: File, ctx: DeltaDownloadContext) -> None:
                 raise DeltaTransferError(f"payload decompression failed: {exc}") from exc
 
         with open(payload_path, "rb") as literal_stream:
-            apply_delta(ctx.local_path, ops, literal_stream, part_path)
-
-        rebuilt = compute_sha256(part_path)
-        if rebuilt != new_sha256:
-            raise DeltaTransferError("reconstructed file hash mismatch")
-        if Path(part_path).stat().st_size != new_size:
-            raise DeltaTransferError("reconstructed file size mismatch")
+            try:
+                reconstruct_and_verify(
+                    ctx.local_path,
+                    ops,
+                    literal_stream,
+                    part_path,
+                    expected_sha256=new_sha256,
+                    expected_size=new_size,
+                )
+            except ReconstructionMismatch as mismatch:
+                raise DeltaTransferError(_reconstruction_error_message(mismatch)) from mismatch
 
         replace(part_path, ctx.local_path)
         log.info(

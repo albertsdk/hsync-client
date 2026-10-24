@@ -43,9 +43,9 @@ from hsync_client.constants import (
     MAX_WAIT_TIMEOUT_DEFAULT,
     MAX_WAIT_TIMEOUT_MAX,
     MAX_WAIT_TIMEOUT_MIN,
-    MIN_FREE_DISK_SPACE_MB_DEFAULT,
-    MIN_FREE_DISK_SPACE_MB_MAX,
-    MIN_FREE_DISK_SPACE_MB_MIN,
+    MIN_FREE_DISK_SPACE_DEFAULT,
+    MIN_FREE_DISK_SPACE_MAX,
+    MIN_FREE_DISK_SPACE_MIN,
     RECONNECT_DELAY_MAX,
     RECONNECT_DELAY_MIN,
     RESYNC_MAX,
@@ -274,6 +274,37 @@ def _parse_and_validate_bandwidth(value: str | None, flag: str, label: str) -> i
     return parsed
 
 
+def _parse_size_option(
+    value: str | None,
+    flag: str,
+    *,
+    minimum: int,
+    maximum: int,
+    default: int,
+) -> int:
+    """Parse a human-readable size option into bytes and enforce its bounds.
+
+    ``None`` (flag omitted) yields *default*. The unit is mandatory for a
+    non-zero value, so ``--min-free-disk-space 500`` can never be silently read
+    as 500 bytes when the operator meant 500 MB; ``0`` (disabled) needs none.
+    A parse error or an out-of-range size raises ``typer.BadParameter`` with the
+    bounds rendered by the shared ``format_bytes``.
+    """
+    if value is None:
+        return default
+    from hsync_common.format import format_bytes, parse_size
+
+    try:
+        parsed = parse_size(value, require_unit=True)
+    except ValueError as e:
+        raise typer.BadParameter(f"Invalid {flag}: {e}")
+    if parsed < minimum or parsed > maximum:
+        raise typer.BadParameter(
+            f"{flag} must be between {format_bytes(minimum)} and {format_bytes(maximum)}."
+        )
+    return parsed
+
+
 def _common_run_sync_kwargs(values: Mapping[str, Any]) -> dict[str, Any]:
     """Map the shared CLI options to ``run_sync`` keyword arguments.
 
@@ -308,7 +339,7 @@ def _common_run_sync_kwargs(values: Mapping[str, Any]) -> dict[str, Any]:
         "logfile": values["logfile"],
         "color": values["color"],
         "allow_deletions": values["allow_deletions"],
-        "min_free_disk_space": values["min_free_disk_space"],
+        "min_free_disk_space": values["parsed_min_free_disk_space"],
         "max_inbound_size": values["max_inbound_size"],
         "ignore_patterns": [p.strip() for p in (values["ignore_patterns"] or []) if p.strip()],
         "max_concurrent_transfers": values["max_concurrent_transfers"],
@@ -334,7 +365,7 @@ class _SharedValidationValues(TypedDict):
     stability_delay: int | None
     max_wait_timeout: int
     sync_direction: str
-    min_free_disk_space: int
+    min_free_disk_space: str | None
     max_inbound_size: int
     max_bandwidth_upload: str | None
     max_bandwidth_download: str | None
@@ -349,7 +380,7 @@ class _SharedValidationValues(TypedDict):
 _SHARED_VALIDATION_KEYS: tuple[str, ...] = tuple(_SharedValidationValues.__annotations__)
 
 
-def _validate_shared_options(values: Mapping[str, Any]) -> tuple[int | None, int | None]:
+def _validate_shared_options(values: Mapping[str, Any]) -> tuple[int | None, int | None, int]:
     """Validate the options shared by the ``p2p`` and ``server`` subcommands.
 
     ``values`` is the command frame's ``locals()`` — the same mapping
@@ -359,7 +390,8 @@ def _validate_shared_options(values: Mapping[str, Any]) -> tuple[int | None, int
     command that stops exposing one is a programming error, so it fails
     immediately naming the option, not with a bare ``KeyError``.
 
-    Returns the parsed upload/download bandwidth limits (bytes/s, or ``None``).
+    Returns the parsed upload/download bandwidth limits (bytes/s, or ``None``)
+    and the parsed free-space reserve (bytes).
     """
     try:
         opts = cast(
@@ -412,14 +444,13 @@ def _validate_shared_options(values: Mapping[str, Any]) -> tuple[int | None, int
         )
     if sync_direction not in SYNC_DIRECTIONS:
         raise typer.BadParameter(f"sync-direction must be one of: {', '.join(SYNC_DIRECTIONS)}.")
-    if (
-        min_free_disk_space < MIN_FREE_DISK_SPACE_MB_MIN
-        or min_free_disk_space > MIN_FREE_DISK_SPACE_MB_MAX
-    ):
-        raise typer.BadParameter(
-            f"Minimum free disk space must be between "
-            f"{MIN_FREE_DISK_SPACE_MB_MIN} and {MIN_FREE_DISK_SPACE_MB_MAX} MB."
-        )
+    parsed_min_free_disk_space = _parse_size_option(
+        min_free_disk_space,
+        "--min-free-disk-space",
+        minimum=MIN_FREE_DISK_SPACE_MIN,
+        maximum=MIN_FREE_DISK_SPACE_MAX,
+        default=MIN_FREE_DISK_SPACE_DEFAULT,
+    )
     if max_inbound_size < MAX_INBOUND_SIZE_MB_MIN or max_inbound_size > MAX_INBOUND_SIZE_MB_MAX:
         raise typer.BadParameter(
             f"Max download size must be between "
@@ -452,7 +483,7 @@ def _validate_shared_options(values: Mapping[str, Any]) -> tuple[int | None, int
     if delta_min_file_size_p2p is not None and delta_min_file_size_p2p < 0:
         raise typer.BadParameter("--delta-min-file-size-p2p must be >= 0.")
 
-    return parsed_bw_upload, parsed_bw_download
+    return parsed_bw_upload, parsed_bw_download, parsed_min_free_disk_space
 
 
 # =============================================================================
@@ -654,11 +685,13 @@ NoAutotuneOpt = Annotated[
     ),
 ]
 MinFreeDiskSpaceOpt = Annotated[
-    int,
+    str | None,
     typer.Option(
         "--min-free-disk-space",
-        help="Minimum free disk space in MB before sync. 0 = disabled.",
-        metavar="MB",
+        help=(
+            "Minimum free disk space before sync, as a size (e.g. '500MB', '2GB'). 0 = disabled."
+        ),
+        metavar="SIZE",
         rich_help_panel="Sync",
     ),
 ]
@@ -1190,7 +1223,7 @@ def p2p(
     mass_delete_guard: MassDeleteGuardOpt = MASS_DELETE_GUARD_DEFAULT,
     mass_delete_threshold: MassDeleteThresholdOpt = None,
     mass_delete_percent: MassDeletePercentOpt = None,
-    min_free_disk_space: MinFreeDiskSpaceOpt = MIN_FREE_DISK_SPACE_MB_DEFAULT,
+    min_free_disk_space: MinFreeDiskSpaceOpt = None,
     max_inbound_size: MaxInboundSizeOpt = MAX_INBOUND_SIZE_MB_DEFAULT,
     ignore_patterns: IgnorePatternOpt = None,
     verbose: VerboseOpt = False,
@@ -1223,7 +1256,11 @@ def p2p(
         [dim]# Bootnode extra ports when your egress firewall blocks UDP 443[/dim]
         $ HSYNC_BOOTNODE_PORTS=53 hsync p2p boot.example.net -b shared
     """
-    parsed_bw_upload, parsed_bw_download = _validate_shared_options(locals())
+    (
+        parsed_bw_upload,
+        parsed_bw_download,
+        parsed_min_free_disk_space,
+    ) = _validate_shared_options(locals())
 
     # P2P-only validation
     if discovery_timeout is not None and discovery_timeout < 0:
@@ -1593,7 +1630,7 @@ def server(
     mass_delete_guard: MassDeleteGuardOpt = MASS_DELETE_GUARD_DEFAULT,
     mass_delete_threshold: MassDeleteThresholdOpt = None,
     mass_delete_percent: MassDeletePercentOpt = None,
-    min_free_disk_space: MinFreeDiskSpaceOpt = MIN_FREE_DISK_SPACE_MB_DEFAULT,
+    min_free_disk_space: MinFreeDiskSpaceOpt = None,
     max_inbound_size: MaxInboundSizeOpt = MAX_INBOUND_SIZE_MB_DEFAULT,
     ignore_patterns: IgnorePatternOpt = None,
     verbose: VerboseOpt = False,
@@ -1652,7 +1689,11 @@ def server(
                 "HSYNC_SERVER environment variable."
             )
 
-    parsed_bw_upload, parsed_bw_download = _validate_shared_options(locals())
+    (
+        parsed_bw_upload,
+        parsed_bw_download,
+        parsed_min_free_disk_space,
+    ) = _validate_shared_options(locals())
 
     # Server TLS trust (ADR-0036): validate the pin flags before running.
     server_fingerprints = tuple(server_fingerprint or ())

@@ -5,6 +5,8 @@
 
 import time
 
+from hsync_common.format import parse_size
+
 # Per-direction time by which the bytes already handed out finish draining at
 # the configured rate. One entry per transfer direction ("upload"/"download"),
 # so concurrent transfers of the same direction share the budget instead of
@@ -14,12 +16,16 @@ _bandwidth_due: dict[str, float] = {}
 
 def parse_bandwidth(value: str | int | None) -> int | None:
     """
-    Parse bandwidth value from string or integer.
+    Parse a bandwidth value (bytes per second) from a string or an integer.
 
     Accepts:
     - Integer bytes per second
-    - String with suffix: "KB", "MB", "GB", "KB/s", "MB/s", "GB/s"
-    - None or 0 for unlimited
+    - Size strings with an optional rate suffix: "500KB", "1MB", "2GB/s"
+    - None, 0 or "0" for unlimited
+
+    The number/suffix parsing is the shared ``hsync_common.format.parse_size``
+    (binary units); this wrapper only adds the rate-specific contract: an
+    optional "/s" suffix and ``None`` for "unlimited".
 
     Args:
         value: Bandwidth value to parse.
@@ -33,43 +39,26 @@ def parse_bandwidth(value: str | int | None) -> int | None:
     if value is None or value == 0 or value == "0":
         return None
 
+    if isinstance(value, bool):
+        raise ValueError(f"Invalid bandwidth type: {type(value)}")
     if isinstance(value, int):
         if value < 0:
             raise ValueError("Bandwidth must be positive")
         return value
+    if not isinstance(value, str):
+        raise ValueError(f"Invalid bandwidth type: {type(value)}")
 
-    if isinstance(value, str):
-        value = value.strip().upper()
-        if not value:
-            return None
-
-        # Parse value with suffix
-        multipliers = {
-            "KB/S": 1024,
-            "KB": 1024,
-            "MB/S": 1024**2,
-            "MB": 1024**2,
-            "GB/S": 1024**3,
-            "GB": 1024**3,
-            "B/S": 1,
-            "B": 1,
-        }
-
-        for suffix, mult in multipliers.items():
-            if value.endswith(suffix):
-                num_str = value[: -len(suffix)].strip()
-                try:
-                    return int(float(num_str) * mult)
-                except ValueError:
-                    raise ValueError(f"Invalid bandwidth value: {value}")
-
-        # Try parsing as plain number (bytes)
-        try:
-            return int(value)
-        except ValueError:
-            raise ValueError(f"Invalid bandwidth value: {value}")
-
-    raise ValueError(f"Invalid bandwidth type: {type(value)}")
+    text = value.strip()
+    if not text:
+        return None
+    # The rate suffix carries no size information: drop it before parsing.
+    if text.lower().endswith("/s"):
+        text = text[:-2].strip()
+    try:
+        parsed = parse_size(text)
+    except ValueError:
+        raise ValueError(f"Invalid bandwidth value: {value}") from None
+    return parsed or None
 
 
 def reset_bandwidth_throttle() -> None:

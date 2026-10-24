@@ -3,14 +3,11 @@
 
 """File/directory permission helpers (remote-value sanitization applied)."""
 
-from os import chmod
-from pathlib import Path
-
+from hsync_common.permissions import apply_remote_permissions
 from hsync_common.permissions import get_permissions as _read_permissions
-from hsync_common.permissions import octal_to_mode, sanitize_remote_permissions
 from loguru import logger as log
 
-from hsync_client.constants import OWNER_DIRECTORY_ACCESS, ActionLabel
+from hsync_client.constants import ActionLabel
 
 
 def get_permissions(obj_path: str) -> str:
@@ -24,19 +21,6 @@ def get_permissions(obj_path: str) -> str:
         Octal permission string like '644'.
     """
     return _read_permissions(obj_path)
-
-
-def _apply_permissions(path: str, permissions: str, *, extra_mode_bits: int = 0) -> None:
-    """Apply sanitized remote permissions to *path*, OR-ing *extra_mode_bits*."""
-    permissions = sanitize_remote_permissions(permissions)
-
-    # Skip if permissions already match
-    if Path(path).exists() and permissions == get_permissions(path):
-        return
-
-    mode = octal_to_mode(permissions) | extra_mode_bits
-    log.debug(f'{ActionLabel.PERMISSION} Set permission "{permissions}" to {path}')
-    chmod(path, mode)
 
 
 def set_permissions(file_path: str, permissions: str) -> None:
@@ -64,7 +48,13 @@ def set_permissions_on_dir(dir_path: str, permissions: str) -> None:
     Same sanitization contract as :func:`set_permissions` (special bits
     stripped — a synced directory must never become setuid/setgid/sticky),
     plus the owner rwx floor that keeps the directory traversable by the
-    sync engine and its own storage (mirrors the server's
-    ``set_directory_permissions``).
+    sync engine and its own storage.
     """
-    _apply_permissions(dir_path, permissions, extra_mode_bits=OWNER_DIRECTORY_ACCESS)
+    _apply_permissions(dir_path, permissions, directory=True)
+
+
+def _apply_permissions(path: str, permissions: str, *, directory: bool = False) -> None:
+    """Apply remote permissions, logging only a real mode change."""
+    applied = apply_remote_permissions(path, permissions, directory=directory, skip_if_equal=True)
+    if applied is not None:
+        log.debug(f'{ActionLabel.PERMISSION} Set permission "{applied}" to {path}')

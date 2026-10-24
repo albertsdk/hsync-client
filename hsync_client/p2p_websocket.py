@@ -69,7 +69,7 @@ from hsync_common.protocol.rest import (
     REST_FILES_SUFFIX,
     rest_bucket_path,
 )
-from hsync_common.text import escape_loguru_markup
+from hsync_common.text import compact_json_str, escape_loguru_markup
 from loguru import logger as log
 from watchdog.events import (
     DirCreatedEvent,
@@ -574,7 +574,7 @@ class P2PWebSocketServer:
             if authenticated:
                 with contextlib.suppress(Exception):
                     await websocket.send_str(
-                        json.dumps(build_p2p_auth_failed(reason="cid_conflict"))
+                        compact_json_str(build_p2p_auth_failed(reason="cid_conflict"))
                     )
             await websocket.close()
             return False, None, None
@@ -669,7 +669,9 @@ class P2PWebSocketServer:
         master_caps = local_capabilities()
         p2p_key = CONFIG.get("P2P_KEY")
         if p2p_key:
-            await websocket.send_str(json.dumps(build_p2p_auth_required(capabilities=master_caps)))
+            await websocket.send_str(
+                compact_json_str(build_p2p_auth_required(capabilities=master_caps))
+            )
             try:
                 # Wait for auth message
                 auth_msg = await self._recv_text(websocket, 10.0)
@@ -682,7 +684,7 @@ class P2PWebSocketServer:
                         f"{declared_cid!r}"
                     )
                     await websocket.send_str(
-                        json.dumps(build_p2p_auth_failed(reason="invalid_cid"))
+                        compact_json_str(build_p2p_auth_failed(reason="invalid_cid"))
                     )
                     await websocket.close()
                     return websocket
@@ -696,7 +698,7 @@ class P2PWebSocketServer:
                         f"{auth_data.get('protocol_version')!r}"
                     )
                     await websocket.send_str(
-                        json.dumps(build_p2p_auth_failed(reason="protocol_incompatible"))
+                        compact_json_str(build_p2p_auth_failed(reason="protocol_incompatible"))
                     )
                     await websocket.close()
                     return websocket
@@ -705,7 +707,7 @@ class P2PWebSocketServer:
                 ):
                     log.warning(f"WebSocket auth failed from {client_addr} (CID: {client_cid})")
                     await websocket.send_str(
-                        json.dumps(build_p2p_auth_failed(reason="invalid_token"))
+                        compact_json_str(build_p2p_auth_failed(reason="invalid_token"))
                     )
                     await websocket.close()
                     return websocket
@@ -722,7 +724,7 @@ class P2PWebSocketServer:
                         f"{client_addr} (CID: {client_cid}): {slot_rejection}"
                     )
                     await websocket.send_str(
-                        json.dumps(build_p2p_auth_failed(reason=slot_rejection))
+                        compact_json_str(build_p2p_auth_failed(reason=slot_rejection))
                     )
                     await websocket.close()
                     return websocket
@@ -739,12 +741,14 @@ class P2PWebSocketServer:
                     f"WebSocket slave {client_cid} capabilities: "
                     f"{sorted(c.value for c in slave_caps) or 'none'}"
                 )
-                await websocket.send_str(json.dumps(build_p2p_auth_ok(capabilities=master_caps)))
+                await websocket.send_str(
+                    compact_json_str(build_p2p_auth_ok(capabilities=master_caps))
+                )
                 log.info(f"WebSocket client authenticated: {client_addr} (CID: {client_cid})")
             except TimeoutError:
                 await self._release_failed_admission(client_cid, websocket, inventory_token)
                 log.warning(f"WebSocket auth timeout from {client_addr} (CID: {client_cid})")
-                await websocket.send_str(json.dumps(build_p2p_auth_failed(reason="timeout")))
+                await websocket.send_str(compact_json_str(build_p2p_auth_failed(reason="timeout")))
                 await websocket.close()
                 return websocket
             except Exception as e:
@@ -760,7 +764,7 @@ class P2PWebSocketServer:
             # hello handshake so the operator can distinguish peers in logs.
             # The CID is NOT authenticated (no P2P_KEY), so every log line
             # carries an explicit "(unauthenticated)" qualifier.
-            await websocket.send_str(json.dumps(build_p2p_hello(capabilities=master_caps)))
+            await websocket.send_str(compact_json_str(build_p2p_hello(capabilities=master_caps)))
             try:
                 hello_msg = await self._recv_text(websocket, 5.0)
                 hello_data = json.loads(hello_msg)
@@ -860,7 +864,7 @@ class P2PWebSocketServer:
                         )
                     else:
                         ack = _inventory_rejection(payload, inventory_rejection or "unsupported")
-                    await websocket.send_str(json.dumps(ack, separators=(",", ":")))
+                    await websocket.send_str(compact_json_str(ack))
                     continue
                 log.debug(
                     f"Received from {client_addr} (CID: {client_cid}): "
@@ -892,7 +896,7 @@ class P2PWebSocketServer:
         if not self._publishing or not self._clients:
             return
 
-        message = json.dumps(event_dict)
+        message = compact_json_str(event_dict)
         origin_cid = event_dict.get("cid")
         origin_info = f" (origin: {origin_cid})" if origin_cid else ""
         log.debug(
@@ -1412,7 +1416,7 @@ async def p2p_websocket_client(
                 if not p2p_key:
                     log.error("WebSocket authentication failed – server requires P2P key")
                     return
-                auth_msg = json.dumps(
+                auth_msg = compact_json_str(
                     build_p2p_auth(
                         token=p2p_key,
                         cid=CONFIG["CID"],
@@ -1464,7 +1468,7 @@ async def p2p_websocket_client(
                 # with an "(unauthenticated)" qualifier). Capabilities are
                 # exchanged for coherence, not trusted (no shared secret).
                 await websocket.send(
-                    json.dumps(
+                    compact_json_str(
                         build_p2p_hello(
                             capabilities=local_capabilities(),
                             cid=CONFIG["CID"],

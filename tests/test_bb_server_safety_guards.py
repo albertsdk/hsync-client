@@ -26,9 +26,9 @@ class TestDiskSpaceGuard:
         # Given a local dir with content and an impossibly high free-space requirement
         (Path(local_dir) / "a.txt").write_bytes(b"a")
 
-        # When running with --min-free-disk-space far above what is available
+        # When running with a free-space reserve outside the accepted range
         result = run_cli(
-            "anybucket", local_dir, "--allow-deletions", "--min-free-disk-space", "999999"
+            "anybucket", local_dir, "--allow-deletions", "--min-free-disk-space", "1TB"
         )
 
         # Then the sync aborts (non-zero exit) without proceeding

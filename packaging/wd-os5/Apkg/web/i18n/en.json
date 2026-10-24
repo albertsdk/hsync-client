@@ -48,7 +48,7 @@
     "field.delta_min_size_p2p": "Delta min file size - p2p (bytes, 0 = default)",
     "field.bw_upload": "Max upload bandwidth (e.g. 1MB)",
     "field.bw_download": "Max download bandwidth (e.g. 1MB)",
-    "field.min_free_mb": "Minimum free disk space (MB, 0 = off)",
+    "field.min_free_disk": "Minimum free disk space (e.g. 500MB, 0 = off)",
     "field.max_inbound_mb": "Max inbound file size (MB, 0 = off)",
     "field.verbose": "Verbose log",
     "section.autotune": "Auto-tuning",

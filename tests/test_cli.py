@@ -1124,7 +1124,7 @@ def test_common_run_sync_kwargs_maps_and_normalizes_shared_options():
         "logfile": "",
         "color": "auto",
         "allow_deletions": True,
-        "min_free_disk_space": 0,
+        "parsed_min_free_disk_space": 0,
         "max_inbound_size": 0,
         "ignore_patterns": [" a ", ""],
         "max_concurrent_transfers": 4,

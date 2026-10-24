@@ -16,7 +16,6 @@ from collections.abc import Callable, Iterator
 from contextlib import suppress
 from os import close, fsync, remove, replace, stat_result, utime
 from pathlib import Path
-from shutil import disk_usage
 from tempfile import mkstemp
 from time import monotonic
 from time import sleep as time_sleep
@@ -27,6 +26,7 @@ from uuid import uuid4
 import zstandard as zstd
 from hsync_common.clock import clamp_incoming_corrected_mtime
 from hsync_common.constants import CONTENT_TYPE_OCTET_STREAM, HEADER_CHECKSUM_SHA256
+from hsync_common.disk import check_free_space
 from hsync_common.format import format_bytes, format_duration
 from hsync_common.hashing import adaptive_chunk_size, compute_sha256, is_sha256_hex
 from hsync_common.models.file import File
@@ -702,20 +702,21 @@ def _download_from_source_attempt(
     # Size-aware disk space guard: skip the file if the target filesystem
     # cannot hold the remaining bytes plus the configured reserve, avoiding a
     # mid-transfer ENOSPC that would waste bandwidth and leave a .part behind.
-    reserve_mb = CONFIG.get("MIN_FREE_DISK_SPACE", 0)
-    if reserve_mb and reserve_mb > 0:
-        try:
-            free = disk_usage(str(Path(full_save_path).parent)).free
-            required = reserve_mb * 1024 * 1024 + max(file.size - resume_offset, 0)
-            if free < required:
-                log.error(
-                    f'Insufficient disk space for "{file.filepath}": '
-                    f"{free // (1024 * 1024)} MB available, "
-                    f"{required // (1024 * 1024)} MB required"
-                )
-                return True
-        except OSError as e:
-            log.warning(f"Could not check disk space: {e}")
+    # The rule itself lives in hsync-common (`check_free_space`), shared with
+    # the server and the LAN master upload guard.
+    space = check_free_space(
+        str(Path(full_save_path).parent),
+        reserve_bytes=CONFIG.get("MIN_FREE_DISK_SPACE", 0),
+        incoming_bytes=max(file.size - resume_offset, 0),
+    )
+    if space.error is not None:
+        log.warning(f"Could not check disk space: {space.error}")
+    elif not space.ok:
+        log.error(
+            f'Insufficient disk space for "{file.filepath}": '
+            f"{space.free_mb} MB available, {space.required_mb} MB required"
+        )
+        return True
 
     max_inbound_size = CONFIG.get("MAX_INBOUND_SIZE", 0)
     if max_inbound_size and file.size > max_inbound_size:

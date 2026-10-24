@@ -167,7 +167,7 @@ option to configure.
 | Delta min size      | `HSYNC_DELTA_MIN_FILE_SIZE`                    | `262144` (256 KB)                |
 | Delta min size p2p  | `HSYNC_DELTA_MIN_FILE_SIZE_P2P`                | `1048576` (1 MB)                 |
 | NTP hosts           | `HSYNC_NTP_HOSTS` env var                      | `pool.ntp.org,time.cloudflare.com,time.google.com` (probed in order; used by the client for LAN time synchronisation / conflict tie-break) |
-| Min free disk space | `--min-free-disk-space`                        | service default                  |
+| Min free disk space | `HSYNC_MIN_FREE_DISK` (`--min-free-disk-space`) | `500MB` (size string, `0` = off) |
 | Max inbound size    | `--max-inbound-size`                          | service default                  |
 | Max concurrent      | _(not in WD UI; binary default)_               | autotune / `5`                   |
 | Mass-delete guard   | _(not in WD UI; binary default)_               | on                               |

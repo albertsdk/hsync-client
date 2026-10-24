@@ -42,14 +42,17 @@ from hsync_common.constants import (
     PARTIAL_DELTA_SUFFIX,
 )
 from hsync_common.delta import (
+    MISMATCH_HASH,
     BoundedLiteralSink,
     DeltaTokenStore,
+    ReconstructionMismatch,
     TokenStoreFull,
     changed_block_ratio,
     compute_signatures,
     find_matches_file_to_sink,
     is_delta_worthwhile,
     optimal_block_size,
+    reconstruct_and_verify,
 )
 from hsync_common.hashing import compute_sha256, is_sha256_hex
 from hsync_common.ignore import should_skip
@@ -457,25 +460,20 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
     cleanup_path: str | None = part_path
     try:
         with _delta_compute_sem, open(literal_file, "rb") as literal_stream:
-            from hsync_common.delta import apply_delta
-
-            apply_delta(filepath, ops, literal_stream, part_path)
-        rebuilt = compute_sha256(part_path)
-        if rebuilt != new_sha256:
-            handler._send_json_response(
-                _HTTP_UNPROCESSABLE,
-                {
-                    "detail": "reconstructed_file_hash_mismatch",
-                    "expected_sha256": new_sha256,
-                    "actual_sha256": rebuilt,
-                },
-            )
-            return
-        if Path(part_path).stat().st_size != new_size:
-            handler._send_json_response(
-                _HTTP_UNPROCESSABLE, {"detail": "reconstructed_file_size_mismatch"}
-            )
-            return
+            try:
+                rebuilt = reconstruct_and_verify(
+                    filepath,
+                    ops,
+                    literal_stream,
+                    part_path,
+                    expected_sha256=new_sha256,
+                    expected_size=new_size,
+                )
+            except ReconstructionMismatch as mismatch:
+                details = dict(mismatch.details)
+                reason = str(details.pop("reason", MISMATCH_HASH))
+                handler._send_json_response(_HTTP_UNPROCESSABLE, {"detail": reason, **details})
+                return
 
         cid = meta.get("cid", "")
         if cid:

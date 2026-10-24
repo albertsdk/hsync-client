@@ -48,7 +48,7 @@
     "field.delta_min_size_p2p": "Minimalny rozmiar pliku różnicowego - p2p (bajty, 0 = domyślnie)",
     "field.bw_upload": "Maks. przepustowość wysyłania (np. 1MB)",
     "field.bw_download": "Maks. przepustowość pobierania (np. 1MB)",
-    "field.min_free_mb": "Minimalna wolna przestrzeń dyskowa (MB, 0 = wył.)",
+    "field.min_free_disk": "Minimalna wolna przestrzeń dyskowa (np. 500MB, 0 = wył.)",
     "field.max_inbound_mb": "Maks. rozmiar pliku przychodzącego (MB, 0 = wył.)",
     "field.verbose": "Szczegółowy dziennik",
     "section.autotune": "Automatyczne dostrajanie",

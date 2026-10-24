@@ -371,13 +371,13 @@ class TestP2PDiskSpaceGuard:
         # Given a local dir with content and an impossibly high free-space requirement
         (Path(local_dir) / "a.txt").write_bytes(b"a")
 
-        # When running lan with --min-free-disk-space far above what is available
+        # When running lan with a free-space reserve outside the accepted range
         result = _invoke_p2p_cli(
             monkeypatch,
             p2p_bucket,
             local_dir,
             "--min-free-disk-space",
-            "999999",
+            "1TB",
             p2p_key="test-lan-key",
         )
 
@@ -385,7 +385,7 @@ class TestP2PDiskSpaceGuard:
         # the guard-specific diagnostic is surfaced (logged or via the raised
         # exception), proving it was this guard — not an unrelated failure.
         assert result.exit_code != 0
-        assert "disk space" in (result.output + str(result.exception or "")).lower(), (
+        assert "min-free-disk-space" in (result.output + str(result.exception or "")).lower(), (
             f"abort was not the disk-space guard: {result.output!r} / {result.exception!r}"
         )
 

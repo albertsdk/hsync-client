@@ -39,9 +39,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import contextmanager
 from enum import StrEnum
 from http import HTTPStatus
-from os import walk
 from pathlib import Path
-from shutil import disk_usage
 from typing import IO, TYPE_CHECKING, overload
 from urllib.parse import parse_qs, urlparse
 
@@ -56,8 +54,9 @@ from hsync_common.constants import (
     MTIME_PROPAGATION_TOLERANCE_SECONDS,
     PARTIAL_DOWNLOAD_SUFFIX,
 )
+from hsync_common.disk import check_free_space
 from hsync_common.hashing import compute_sha256, is_sha256_hex
-from hsync_common.models.dir import Dir, is_hidden_dir
+from hsync_common.listing import file_entry, iter_dir_entries, symlink_entry
 from hsync_common.models.event import is_valid_cid
 from hsync_common.models.file import File
 from hsync_common.models.tombstone import TOMBSTONE_MAX_ENTRIES
@@ -676,7 +675,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
         # Unsupported seeder requests are never parsed or drained. Closing the
         # connection prevents an unread mutation body becoming a second request.
         self.close_connection = True
-        body = json.dumps({"error": "Method not allowed"}, separators=(",", ":")).encode()
+        body = compact_json_bytes({"error": "Method not allowed"})
         self.send_response(HTTP_METHOD_NOT_ALLOWED)
         self.send_header("Allow", "GET")
         self.send_header("Content-Type", CONTENT_TYPE_JSON)
@@ -1033,6 +1032,31 @@ class P2PEndpointMixin(_HTTPTransportBase):
         self._send_error_response(HTTP_CONFLICT, "Duplicate device identity")
         return True
 
+    def _valid_origin(self, query: dict) -> str | None:
+        """Return the request's ``cid`` when it is a well-formed CID, else None."""
+        origin_cid = _first(query, "cid")
+        return origin_cid if isinstance(origin_cid, str) and is_valid_cid(origin_cid) else None
+
+    def _mark_origin(self, query: dict, *paths: str) -> str | None:
+        """Attribute *paths* to the requesting peer's CID for echo suppression.
+
+        Returns the CID that was recorded, or ``None`` when the request carries
+        no valid one. The mark is only *honoured* on authenticated requests
+        (``mark_inbound_origin``'s ``authenticated`` gate): without ``P2P_KEY``
+        any peer could otherwise spoof another peer's CID and silence its events.
+        Shared by every mutation handler so the validity check and that gate
+        cannot drift.
+        """
+        origin_cid = self._valid_origin(query)
+        if origin_cid is None:
+            return None
+        from hsync_client.p2p_websocket import mark_inbound_origin
+
+        authenticated = bool(CONFIG.get("P2P_KEY"))
+        for path in paths:
+            mark_inbound_origin(path, origin_cid, authenticated=authenticated)
+        return origin_cid
+
     def _resolve_confined_path(
         self, rel_path: str, *, resolve_final: bool = True
     ) -> tuple[str, str] | None:
@@ -1108,19 +1132,13 @@ class P2PEndpointMixin(_HTTPTransportBase):
             self._send_error_response(HTTP_NOT_FOUND, "File not found")
             return
 
-        origin_cid = _first(query, "cid")
-        valid_origin_cid = (
-            origin_cid if isinstance(origin_cid, str) and is_valid_cid(origin_cid) else None
-        )
-        authenticated = bool(CONFIG.get("P2P_KEY"))
+        origin_cid = self._valid_origin(query)
         try:
             # Attribute the resulting IN_ATTRIB event to the slave that sent it
             # so its watcher can suppress its own echo (only honoured on
             # authenticated requests).
-            if valid_origin_cid:
-                from hsync_client.p2p_websocket import mark_inbound_origin
-
-                mark_inbound_origin(full_path, valid_origin_cid, authenticated=authenticated)
+            if origin_cid:
+                self._mark_origin(query, full_path)
 
             from hsync_client.utils import set_permissions
 
@@ -1193,13 +1211,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
             # CID, allowing the sender to discard its own echo.  The CID is
             # only honoured on authenticated requests: without P2P_KEY any P2P
             # peer could spoof another peer's CID and suppress its events.
-            origin_cid = _first(query, "cid")
-            if origin_cid and is_valid_cid(origin_cid):
-                from hsync_client.p2p_websocket import mark_inbound_origin
-
-                authenticated = bool(CONFIG.get("P2P_KEY"))
-                mark_inbound_origin(src_path, origin_cid, authenticated=authenticated)
-                mark_inbound_origin(dst_path, origin_cid, authenticated=authenticated)
+            self._mark_origin(query, src_path, dst_path)
 
             rename(src_path, dst_path)
 
@@ -1248,14 +1260,8 @@ class P2PEndpointMixin(_HTTPTransportBase):
         # filesystem watcher is broadcast with the originator's CID.
         # The CID is always recorded for accurate logging; only authenticated
         # CIDs are used for echo suppression (consume_inbound_origin gate).
-        origin_cid = _first(query, "cid")
-        marked = False
-        if origin_cid and is_valid_cid(origin_cid):
-            from hsync_client.p2p_websocket import mark_inbound_origin
-
-            authenticated = bool(CONFIG.get("P2P_KEY"))
-            mark_inbound_origin(full_path, origin_cid, authenticated=authenticated)
-            marked = True
+        origin_cid = self._valid_origin(query)
+        marked = self._mark_origin(query, full_path) is not None
         log.debug(
             f"[DELETE-API] delete branch: path={full_path} is_dir={is_dir} "
             f"origin_cid={origin_cid} marked={marked} p2p_key_set={bool(CONFIG.get('P2P_KEY'))}"
@@ -1337,10 +1343,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
             return
         full_path, local_bucket = resolved
 
-        origin_cid = _first(query, "cid")
-        valid_origin_cid = (
-            origin_cid if isinstance(origin_cid, str) and is_valid_cid(origin_cid) else None
-        )
+        origin_cid = self._valid_origin(query)
         authenticated = bool(CONFIG.get("P2P_KEY"))
         try:
             # Only mark inbound origin if the directory doesn't already
@@ -1356,7 +1359,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
             # would be logged/broadcast as local creates (no echo
             # suppression possible on the slaves). Mark every missing
             # ancestor BEFORE the mkdir.
-            if valid_origin_cid:
+            if origin_cid:
                 from hsync_client.p2p_websocket import mark_inbound_origin
 
                 bucket_path = Path(local_bucket)
@@ -1367,9 +1370,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
                     if not (candidate == bucket_path or bucket_path in candidate.parents):
                         continue
                     if not candidate.exists():
-                        mark_inbound_origin(
-                            str(candidate), valid_origin_cid, authenticated=authenticated
-                        )
+                        mark_inbound_origin(str(candidate), origin_cid, authenticated=authenticated)
                 if not Path(full_path).exists():
                     # A symlink *inside* the bucket pointing outside it must not
                     # redirect the mkdir into the out-of-bucket location (the
@@ -1377,7 +1378,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
                     # existing symlink components — a symlink that would escape is
                     # rejected there). Nothing extra is needed here: resolve_within
                     # returns None when the path crosses an escaping symlink.
-                    mark_inbound_origin(full_path, valid_origin_cid, authenticated=authenticated)
+                    mark_inbound_origin(full_path, origin_cid, authenticated=authenticated)
 
             Path(full_path).mkdir(parents=True, exist_ok=True)
 
@@ -1456,12 +1457,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
             # Mark the path as inbound so the master's watcher rebroadcasts
             # the symlink event with the originator CID (echo suppression).
-            origin_cid = _first(query, "cid")
-            if origin_cid and is_valid_cid(origin_cid):
-                from hsync_client.p2p_websocket import mark_inbound_origin
-
-                authenticated = bool(CONFIG.get("P2P_KEY"))
-                mark_inbound_origin(full_path, origin_cid, authenticated=authenticated)
+            self._mark_origin(query, full_path)
 
             parent = str(Path(full_path).parent)
             if not Path(parent).exists():
@@ -1504,30 +1500,15 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
         Mirrors the central server's ``GET …/dirs`` endpoint so the client
         download-only directory-permission converge works identically in
-        remote and P2P mode.
+        remote and P2P mode. The walk, the hidden filter and the entry shape
+        come from the shared ``hsync_common.listing.iter_dir_entries``.
         """
         local_bucket = CONFIG.get("LOCAL_BUCKET", "")
         if not local_bucket or not Path(local_bucket).exists():
             self._send_error_response(HTTP_NOT_FOUND, "Bucket not found")
             return
 
-        entries: list[dict] = []
-        for root, dirs, _files in walk(local_bucket):
-            dirs[:] = [d for d in dirs if not is_hidden_dir(f"{root}/{d}")]
-            for name in dirs:
-                full = f"{root}/{name}"
-                if Path(full).is_symlink():
-                    continue
-                dir_obj = Dir.get(full)
-                if dir_obj is None or dir_obj.permissions is None:
-                    continue
-                rel = os.path.relpath(full, local_bucket)
-                if rel == ".":
-                    continue
-                entries.append({"path": rel, "permissions": dir_obj.permissions})
-
-        entries.sort(key=lambda x: x.get("path", ""))
-        self._send_json_response(HTTP_OK, entries)
+        self._send_json_response(HTTP_OK, list(iter_dir_entries(local_bucket)))
 
     def _handle_list_files(self, query: dict) -> None:
         """Handle list files endpoint.
@@ -1553,9 +1534,6 @@ class P2PEndpointMixin(_HTTPTransportBase):
             note_local_edit,
         )
 
-        def _entry_bytes(entry: dict) -> bytes:
-            return json.dumps(entry, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-
         self_recorded = False
         self._begin_chunked_json()
         try:
@@ -1566,17 +1544,19 @@ class P2PEndpointMixin(_HTTPTransportBase):
                 # never dereferenced: File.get() (exists/stat/sha256) would
                 # follow the link and the listing would either exfiltrate an
                 # out-of-bucket target (e.g. ``secret -> /etc/passwd``) to every
-                # slave or advertise the target content instead of the link.
+                # slave or advertise the target content instead of the link. The
+                # shared entry builder also re-checks the confinement rule.
                 if link is not None:
-                    entry = link.to_dict()
-                    entry["filepath"] = str(Path(file_path).relative_to(local_bucket))
+                    symlink_payload = symlink_entry(link, file_path, local_bucket)
+                    if symlink_payload is None:
+                        continue
+                    entry = symlink_payload
                 else:
                     file_obj = File.get(file_path)
                     if not file_obj:
                         continue
-                    file_dict = file_obj.to_dict()
-                    # Normalize path to be relative to bucket (like server does)
-                    file_normalized = File.from_dict(file_dict, local_bucket).to_dict()
+                    # Bucket-relative entry shape shared with the server listing.
+                    file_normalized = file_entry(file_obj, local_bucket)
 
                     # Attach the effective causal version so slaves can run the
                     # causal matrix on the listing (ADR-0022). The listing is the
@@ -1611,7 +1591,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
                     first = False
                 else:
                     self._write_chunk(b",")
-                self._write_chunk(_entry_bytes(entry))
+                self._write_chunk(compact_json_bytes(entry))
             self._write_chunk(b"]")
         except Exception as exc:
             # The status/headers are already committed: truncate (invalid JSON)
@@ -2015,22 +1995,22 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
         # Size-aware disk space guard: reject before writing if the target
         # filesystem cannot hold the incoming bytes plus the configured reserve,
-        # avoiding a mid-transfer ENOSPC that leaves a .part behind.
-        reserve_mb = CONFIG.get("MIN_FREE_DISK_SPACE", 0)
-        if reserve_mb and reserve_mb > 0:
-            try:
-                free = disk_usage(local_bucket or ".").free
-                required = reserve_mb * 1024 * 1024 + content_length
-                if free < required:
-                    log.error(
-                        f"Insufficient disk space for upload: "
-                        f"{free // (1024 * 1024)} MB available, "
-                        f"{required // (1024 * 1024)} MB required"
-                    )
-                    self._send_error_response(HTTP_INSUFFICIENT_STORAGE, "Insufficient disk space")
-                    return
-            except OSError as e:
-                log.warning(f"Could not check disk space: {e}")
+        # avoiding a mid-transfer ENOSPC that leaves a .part behind. The rule is
+        # shared with the client download path and the server (`check_free_space`).
+        space = check_free_space(
+            local_bucket or ".",
+            reserve_bytes=CONFIG.get("MIN_FREE_DISK_SPACE", 0),
+            incoming_bytes=content_length,
+        )
+        if space.error is not None:
+            log.warning(f"Could not check disk space: {space.error}")
+        elif not space.ok:
+            log.error(
+                f"Insufficient disk space for upload: {space.free_mb} MB available, "
+                f"{space.required_mb} MB required"
+            )
+            self._send_error_response(HTTP_INSUFFICIENT_STORAGE, "Insufficient disk space")
+            return
 
         parser = _StreamingMultipartParser(self.rfile, content_length, boundary)
 

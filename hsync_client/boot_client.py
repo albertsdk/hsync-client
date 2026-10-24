@@ -49,6 +49,7 @@ from hsync_common.protocol.tls_trust import (
     evaluate_tls_trust,
 )
 from hsync_common.ssl_utils import compute_cert_fingerprint
+from hsync_common.text import compact_json_bytes
 from loguru import logger as log
 
 from hsync_client.bootnode_trust import BootnodeTrustStore, default_bootnode_trust_store
@@ -336,7 +337,7 @@ class BootnodeClient:
         validated = validate_boot_frame(frame)
         if validated is None:
             raise BootnodeProtocolError(f"refusing to send an invalid {frame.get('type')!r} frame")
-        payload = json.dumps(validated, separators=(",", ":")).encode("utf-8")
+        payload = compact_json_bytes(validated)
         try:
             raw = asyncio.run(self._exchange_async(payload, expect=expect))
         except BootnodeError:

@@ -27,11 +27,11 @@ from traceback import print_tb
 from typing import Any, cast
 
 from hsync_common.clock import clamp_incoming_corrected_mtime, offset_store, uncorrect_mtime
+from hsync_common.listing import iter_bucket_entries as _iter_bucket_entries
 from hsync_common.models.dir import Dir, is_hidden_dir
 from hsync_common.models.file import (
     File,
     invalidate_sha256_cache,
-    is_hidden_file,
     is_partial_file,
 )
 from hsync_common.models.sentinel import ensure_sentinel as common_ensure_sentinel
@@ -47,7 +47,6 @@ from hsync_common.models.version import (
 )
 from hsync_common.path_validation import (
     is_internal_name,
-    is_safe_symlink_target,
     resolve_within,
     validate_remote_relpath,
 )
@@ -1208,47 +1207,16 @@ def _get_optimal_workers(file_count: int) -> int:
 def iter_bucket_entries(bucket: str) -> Iterator[tuple[str, Symlink | None]]:
     """Yield ``(abs_path, symlink_or_none)`` for every syncable bucket entry.
 
-    Walks *bucket* with ``followlinks=False`` (the default), skipping hidden
-    directories, hidden files, and unsafe file-symlinks (a link whose target
-    escapes the bucket would be dereferenced and exfiltrated). Safe symlinks
-    yield their :class:`Symlink` (never dereferenced); regular files and
-    unreadable symlinks yield ``None``.
+    Thin wrapper over the shared ``hsync_common.listing.iter_bucket_entries``,
+    which owns the walk, the hidden/ignored filters and the symlink-confinement
+    check (a link whose target escapes the bucket is skipped, never
+    dereferenced). Shared with the P2P master's listing and the central server so
+    the three surfaces cannot drift on the security filter.
 
-    Shared by :func:`get_files_local` and the P2P master's ``_handle_list_files``
-    so the two listing surfaces can never drift on the security filter.
+    Safe symlinks yield their :class:`Symlink`; regular files and unreadable
+    symlinks yield ``None``.
     """
-    for root, dirs, files in walk(bucket):
-        # Skip hidden directories. ``os.walk`` runs with followlinks=False (the
-        # default), so a symlinked directory *inside* the bucket pointing
-        # outside it is never descended into; only its name appears in ``dirs``
-        # and, being a directory, it is never emitted as a ``File`` entry.
-        # Sorted: the P2P master streams this order on the wire, so it must be
-        # deterministic (filesystem order is not).
-        dirs[:] = sorted(d for d in dirs if not is_hidden_dir(d))
-
-        for file in sorted(files):
-            # Skip hidden files
-            if is_hidden_file(file):
-                continue
-            file_path = os.path.join(root, file)
-            # Security: a file-symlink whose target escapes the bucket must never
-            # be followed. ``os.walk`` (followlinks=False, the default) already
-            # prevents descending into symlinked *directories*, but a symlink to a
-            # file is still enumerated in ``files``. Without this guard,
-            # ``File.get`` (exists/stat/sha256) and the upload path would
-            # dereference it and exfiltrate the out-of-bucket target — e.g.
-            # ``secret -> /etc/passwd`` would leak its content to the peer.
-            if Path(file_path).is_symlink():
-                link = Symlink.get(file_path)
-                if link is not None and not is_safe_symlink_target(file_path, link.target, bucket):
-                    log.warning(
-                        f"{ActionLabel.SECURITY} Symlink target escapes bucket, "
-                        f'skipping: "{file_path}" -> "{link.target}"'
-                    )
-                    continue
-                yield file_path, link
-            else:
-                yield file_path, None
+    yield from _iter_bucket_entries(bucket)
 
 
 def _in_subdir_rel(rel: str, filter_path: str) -> bool:

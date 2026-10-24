@@ -41,7 +41,6 @@ from hsync_common.constants import (
 
 # Re-export shared action labels from hsync-common
 from hsync_common.labels import ActionLabel  # noqa: F401
-from hsync_common.permissions import OWNER_DIRECTORY_ACCESS  # noqa: F401
 
 # Application name sent as the X-Client-Name REST header. Identifies the
 # originating product (the CLI / sync daemon), never an internal module.
@@ -247,10 +246,11 @@ BOOTNODE_REFRESH_INTERVAL_MAX = 300
 # the client waits for the initial peer discovery before reporting no peer.
 DISCOVERY_TIMEOUT_DEFAULT = 0
 
-# Minimum free disk space limits (MB)
-MIN_FREE_DISK_SPACE_MB_MIN = _defaults.MIN_FREE_DISK_SPACE_MB_MIN  # 0 = disabled
-MIN_FREE_DISK_SPACE_MB_MAX = _defaults.MIN_FREE_DISK_SPACE_MB_MAX  # 100 GB
-MIN_FREE_DISK_SPACE_MB_DEFAULT = _defaults.MIN_FREE_DISK_SPACE_MB_DEFAULT
+# Free-space reserve, in bytes (the unit every consumer stores). The operator
+# surfaces accept a size string such as "500MB" (``hsync_common.format.parse_size``).
+MIN_FREE_DISK_SPACE_MIN = _defaults.MIN_FREE_DISK_SPACE_MIN  # 0 = disabled
+MIN_FREE_DISK_SPACE_MAX = _defaults.MIN_FREE_DISK_SPACE_MAX  # 100 GiB
+MIN_FREE_DISK_SPACE_DEFAULT = _defaults.MIN_FREE_DISK_SPACE_DEFAULT  # 500 MiB
 
 # Maximum size of a single inbound file (MB), applied to downloads and to
 # received P2P uploads as an absolute cap on top of the peer-declared size:

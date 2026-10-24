@@ -48,7 +48,7 @@
     "field.delta_min_size_p2p": "デルタ最小ファイルサイズ - p2p（バイト、0 = 既定）",
     "field.bw_upload": "最大アップロード帯域（例: 1MB）",
     "field.bw_download": "最大ダウンロード帯域（例: 1MB）",
-    "field.min_free_mb": "最小空きディスク容量（MB、0 = オフ）",
+    "field.min_free_disk": "最小空きディスク容量（例: 500MB、0 = オフ）",
     "field.max_inbound_mb": "受信ファイルの最大サイズ（MB、0 = オフ）",
     "field.verbose": "詳細ログ",
     "section.autotune": "自動調整",
