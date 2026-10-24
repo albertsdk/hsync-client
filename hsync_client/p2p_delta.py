@@ -42,9 +42,10 @@ from hsync_common.constants import (
     PARTIAL_DELTA_SUFFIX,
 )
 from hsync_common.delta import (
+    BoundedLiteralSink,
     changed_block_ratio,
     compute_signatures,
-    find_matches_file,
+    find_matches_file_to_sink,
     is_delta_worthwhile,
     optimal_block_size,
 )
@@ -63,7 +64,7 @@ from loguru import logger as log
 
 from hsync_client.compression import (
     CONTENT_ENCODING_ZSTD,
-    compress_data,
+    compress_file_to_file,
     compression_level,
     decompress_stream,
     should_compress,
@@ -190,6 +191,41 @@ def _issue_token(*, bucket: str, relpath: str, payload: bytes, compressed: bool)
     return token
 
 
+def _issue_token_from_file(
+    *, bucket: str, relpath: str, payload_file: str, size: int, compressed: bool
+) -> str | None:
+    """Adopt an already-written payload file as a token (None when full).
+
+    The payload is *moved* into place (same directory, so ``os.replace`` is
+    atomic) instead of being written from a bytes buffer, so a multi-GB literal
+    payload produced by the matcher never has to sit in RAM. The caller owns
+    *payload_file* and must remove it when this returns None.
+    """
+    _cleanup_tokens()
+    token = uuid.uuid4().hex
+    final_path = os.path.join(_get_payload_dir(), f"delta_{token}.bin")
+    try:
+        os.replace(payload_file, final_path)
+    except OSError as exc:
+        log.warning(f"Cannot park delta payload: {exc}")
+        return None
+    with _tokens_lock:
+        if len(_tokens) >= _MAX_TOKENS:
+            try:
+                os.remove(final_path)
+            except OSError:
+                pass
+            return None
+        _tokens[token] = _P2pToken(
+            bucket=bucket,
+            relpath=relpath,
+            payload_file=final_path,
+            compressed=compressed,
+            created=time.time(),
+        )
+    return token
+
+
 def reset_delta_p2p_state() -> None:
     """Drop every token and payload (tests + P2PServer lifecycle hook).
 
@@ -295,35 +331,79 @@ def handle_delta_signatures_post(handler) -> None:
     new_size = Path(filepath).stat().st_size
     new_sha256 = _file_sha256(filepath)
 
+    literal_path = os.path.join(_get_payload_dir(), f"delta_literals_{uuid.uuid4().hex}.bin")
+
+    def _match() -> tuple[list, int, bool]:
+        # Literals stream straight to the temp file (never a RAM buffer) and the
+        # data-op offsets come from the bounded sink, which reports the true
+        # payload size and whether the cap was hit.
+        with open(literal_path, "wb") as sink_file:
+            sink = BoundedLiteralSink(sink_file, DELTA_MAX_LITERAL_SIZE)
+            ops = find_matches_file_to_sink(filepath, sigs, block_size, sink)
+        return ops, sink.total, sink.over_limit
+
     with _delta_compute_sem:
-        ops, literals = find_matches_file(filepath, sigs, block_size)
+        ops, literal_size, capped = _match()
+
+    if capped:
+        os.remove(literal_path)
+        handler._send_json_response(
+            _HTTP_OK, {"delta": False, "reason": "literal_payload_too_large"}
+        )
+        return
 
     base_size = max((s.offset + s.length for s in sigs), default=0)
     ratio = changed_block_ratio(ops, base_size, block_size)
-    if not is_delta_worthwhile(ops, base_size, len(literals), block_size):
-        reason = (
-            "literal_payload_too_large"
-            if len(literals) > DELTA_MAX_LITERAL_SIZE
-            else "too_many_changed_blocks"
-        )
+    if not is_delta_worthwhile(ops, base_size, literal_size, block_size):
+        # Only the change-ratio branch can trigger here: the literal cap is
+        # enforced by the bounded sink while the match runs.
+        os.remove(literal_path)
         handler._send_json_response(
-            _HTTP_OK, {"delta": False, "reason": reason, "changed_percentage": round(ratio, 4)}
+            _HTTP_OK,
+            {
+                "delta": False,
+                "reason": "too_many_changed_blocks",
+                "changed_percentage": round(ratio, 4),
+            },
         )
         return
 
     compressed = False
-    payload = literals
+    payload_path = literal_path
     if (
-        literals
+        literal_size
         and CONFIG.get("COMPRESSION_ENABLED", False)
-        and should_compress(filepath, len(literals), is_p2p=True)
+        and should_compress(filepath, literal_size, is_p2p=True)
     ):
-        payload = compress_data(literals, level=compression_level(is_p2p=True))
+        # Second pass: the sink must hold raw literals (the data ops reference
+        # its offsets), so compression streams the temp file into a new one.
+        compressed_path = os.path.join(_get_payload_dir(), f"delta_literals_{uuid.uuid4().hex}.zst")
+        try:
+            compress_file_to_file(
+                literal_path, compressed_path, level=compression_level(is_p2p=True)
+            )
+        except Exception:
+            os.remove(literal_path)
+            if os.path.exists(compressed_path):
+                os.remove(compressed_path)
+            raise
+        os.remove(literal_path)
+        payload_path = compressed_path
         compressed = True
 
     bucket = CONFIG.get("REMOTE_BUCKET", "")
-    token = _issue_token(bucket=bucket, relpath=relpath, payload=payload, compressed=compressed)
+    token = _issue_token_from_file(
+        bucket=bucket,
+        relpath=relpath,
+        payload_file=payload_path,
+        size=literal_size,
+        compressed=compressed,
+    )
     if token is None:
+        try:
+            os.remove(payload_path)
+        except OSError:
+            pass
         handler._send_error_response(_HTTP_CONFLICT, "Too many active delta tokens")
         return
     handler._send_json_response(
@@ -337,7 +417,7 @@ def handle_delta_signatures_post(handler) -> None:
                 "ops": [op.to_dict() for op in ops],
             },
             "data_url": rest_delta_data_path(bucket, token),
-            "data_size": len(literals),
+            "data_size": literal_size,
             "compressed": compressed,
         },
     )

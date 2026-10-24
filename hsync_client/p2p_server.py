@@ -583,6 +583,29 @@ class P2PEndpointMixin(_HTTPTransportBase):
         """Send an error response."""
         self._send_json_response(status, {"error": message}, extra_headers=extra_headers)
 
+    # -- Chunked streaming (for responses of unknown length) ----------------
+    #
+    # The listing endpoint cannot know its body size without materialising the
+    # whole array, so it streams instead. These helpers frame the body as
+    # ``Transfer-Encoding: chunked`` (valid for the HTTP/1.1 keep-alive the
+    # transport is built around); the aiohttp transport overrides them because
+    # its StreamResponse frames the body itself.
+
+    def _begin_chunked_json(self) -> None:
+        """Start a chunked ``application/json`` 200 response."""
+        self.send_response(HTTP_OK)
+        self.send_header("Content-Type", CONTENT_TYPE_JSON)
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+
+    def _write_chunk(self, data: bytes) -> None:
+        """Write one chunk (hex length, CRLF, payload, CRLF)."""
+        self.wfile.write(b"%x\r\n" % len(data) + data + b"\r\n")
+
+    def _end_chunked(self) -> None:
+        """Write the terminating zero-length chunk."""
+        self.wfile.write(b"0\r\n\r\n")
+
     def _send_error_response_safe(self, status: int, message: str) -> None:
         """Send an error response, silently swallowing socket/SSL failures.
 
@@ -1507,7 +1530,14 @@ class P2PEndpointMixin(_HTTPTransportBase):
         self._send_json_response(HTTP_OK, entries)
 
     def _handle_list_files(self, query: dict) -> None:
-        """Handle list files endpoint."""
+        """Handle list files endpoint.
+
+        The listing is streamed as a chunked JSON array in deterministic path
+        order, so the master holds O(directory fanout + one entry) instead of one
+        dict per file and the first entry reaches the slave without waiting for
+        the walk to finish. Slaves collect the whole array and apply the
+        ``mtime`` priority locally.
+        """
         filter_path = _first(query, "path")
 
         local_bucket = CONFIG.get("LOCAL_BUCKET", "")
@@ -1517,73 +1547,84 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
         from hsync_client.sync import iter_bucket_entries
         from hsync_client.sync_state import flush as _flush_state
+        from hsync_client.sync_state import (
+            get_base_hash,
+            local_version_for_compare,
+            note_local_edit,
+        )
 
-        file_list = []
+        def _entry_bytes(entry: dict) -> bytes:
+            return json.dumps(entry, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
         self_recorded = False
-        for file_path, link in iter_bucket_entries(local_bucket):
-            # Symlinks are emitted as structural entries (path + target),
-            # never dereferenced: File.get() (exists/stat/sha256) would
-            # follow the link and the listing would either exfiltrate an
-            # out-of-bucket target (e.g. ``secret -> /etc/passwd``) to every
-            # slave or advertise the target content instead of the link.
-            if link is not None:
-                entry = link.to_dict()
-                entry["filepath"] = str(Path(file_path).relative_to(local_bucket))
-                file_list.append(entry)
-                continue
-
-            file_obj = File.get(file_path)
-            if file_obj:
-                file_dict = file_obj.to_dict()
-                # Normalize path to be relative to bucket (like server does)
-                file_normalized = File.from_dict(file_dict, local_bucket).to_dict()
-
-                # Attach the effective causal version so slaves can run the
-                # causal matrix on the listing (ADR-0022). The listing is the
-                # master's *publication point*: before advertising, persist
-                # the self-record for a dirty/edited file (catch-all of the
-                # anti-aliasing invariant, §3.4.7) so two distinct contents
-                # can never share the same advertised clock — a pure tick
-                # without persistence would alias {master:1} across edits,
-                # letting a slave silently dominate a genuine divergence.
-                from hsync_client.sync_state import (
-                    get_base_hash,
-                    local_version_for_compare,
-                    note_local_edit,
-                )
-
-                prev_hash = get_base_hash(file_path)
-                note_local_edit(file_path, file_obj.sha256sum or "")
-                if get_base_hash(file_path) != prev_hash:
-                    self_recorded = True
-                eff = local_version_for_compare(file_path, file_obj.sha256sum)
-                if eff is not None:
-                    file_normalized["version"] = {
-                        "vclock": eff["vclock"],
-                        "version_id": eff.get("version_id", ""),
-                        "origin_cid": eff.get("origin_cid"),
-                        "ts": eff.get("ts", 0),
-                        "corrected_mtime": eff.get("corrected_mtime", 0),
-                    }
-
-                # Apply path filter if specified
-                if filter_path:
-                    rel_path = file_normalized.get("filepath", "")
-                    if not rel_path.startswith(filter_path):
+        self._begin_chunked_json()
+        try:
+            first = True
+            self._write_chunk(b"[")
+            for file_path, link in iter_bucket_entries(local_bucket):
+                # Symlinks are emitted as structural entries (path + target),
+                # never dereferenced: File.get() (exists/stat/sha256) would
+                # follow the link and the listing would either exfiltrate an
+                # out-of-bucket target (e.g. ``secret -> /etc/passwd``) to every
+                # slave or advertise the target content instead of the link.
+                if link is not None:
+                    entry = link.to_dict()
+                    entry["filepath"] = str(Path(file_path).relative_to(local_bucket))
+                else:
+                    file_obj = File.get(file_path)
+                    if not file_obj:
                         continue
-                file_list.append(file_normalized)
+                    file_dict = file_obj.to_dict()
+                    # Normalize path to be relative to bucket (like server does)
+                    file_normalized = File.from_dict(file_dict, local_bucket).to_dict()
 
-        # Sort by mtime ascending (oldest first) to prioritize updating older files
-        file_list.sort(key=lambda x: x.get("mtime", 0))
+                    # Attach the effective causal version so slaves can run the
+                    # causal matrix on the listing (ADR-0022). The listing is the
+                    # master's *publication point*: before advertising, persist
+                    # the self-record for a dirty/edited file (catch-all of the
+                    # anti-aliasing invariant, §3.4.7) so two distinct contents
+                    # can never share the same advertised clock — a pure tick
+                    # without persistence would alias {master:1} across edits,
+                    # letting a slave silently dominate a genuine divergence.
+                    prev_hash = get_base_hash(file_path)
+                    note_local_edit(file_path, file_obj.sha256sum or "")
+                    if get_base_hash(file_path) != prev_hash:
+                        self_recorded = True
+                    eff = local_version_for_compare(file_path, file_obj.sha256sum)
+                    if eff is not None:
+                        file_normalized["version"] = {
+                            "vclock": eff["vclock"],
+                            "version_id": eff.get("version_id", ""),
+                            "origin_cid": eff.get("origin_cid"),
+                            "ts": eff.get("ts", 0),
+                            "corrected_mtime": eff.get("corrected_mtime", 0),
+                        }
 
-        # The master runs no sync cycle of its own, so any self-record made
-        # while publishing must be persisted immediately: the advertised clock
-        # has to survive a master restart (same guarantee as the server's
-        # arbitration self-record).
-        if self_recorded:
-            _flush_state()
+                    # Apply path filter if specified
+                    if filter_path:
+                        rel_path = file_normalized.get("filepath", "")
+                        if not rel_path.startswith(filter_path):
+                            continue
+                    entry = file_normalized
 
-        self._send_json_response(HTTP_OK, file_list)
+                if first:
+                    first = False
+                else:
+                    self._write_chunk(b",")
+                self._write_chunk(_entry_bytes(entry))
+            self._write_chunk(b"]")
+        except Exception as exc:
+            # The status/headers are already committed: truncate (invalid JSON)
+            # so the slave fails loudly instead of acting on a partial listing.
+            log.error(f"Listing stream failed after the first byte: {exc}")
+        finally:
+            self._end_chunked()
+            # The master runs no sync cycle of its own, so any self-record made
+            # while publishing must be persisted immediately: the advertised clock
+            # has to survive a master restart (same guarantee as the server's
+            # arbitration self-record).
+            if self_recorded:
+                _flush_state()
 
     def _handle_tombstones(self) -> None:
         """Serve this peer's deletion markers so slaves avoid resurrection."""
@@ -2475,6 +2516,21 @@ class _AiohttpTransport(P2PEndpointMixin):
             raise RuntimeError("response body written before end_headers()")
         self._loop_run(self._response.write(bytes(data)))
         self._written += len(data)
+
+    # aiohttp frames the streamed body itself (chunked when no Content-Length is
+    # set), so only the status/headers are emitted here; the driver finalizes the
+    # StreamResponse after the handler returns.
+
+    def _begin_chunked_json(self) -> None:
+        self.send_response(HTTP_OK)
+        self.send_header("Content-Type", CONTENT_TYPE_JSON)
+        self.end_headers()
+
+    def _write_chunk(self, data: bytes) -> None:
+        self.write(data)
+
+    def _end_chunked(self) -> None:
+        pass
 
     def flush(self) -> None:
         pass

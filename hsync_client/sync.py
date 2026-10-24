@@ -1234,9 +1234,11 @@ def iter_bucket_entries(bucket: str) -> Iterator[tuple[str, Symlink | None]]:
         # default), so a symlinked directory *inside* the bucket pointing
         # outside it is never descended into; only its name appears in ``dirs``
         # and, being a directory, it is never emitted as a ``File`` entry.
-        dirs[:] = [d for d in dirs if not is_hidden_dir(d)]
+        # Sorted: the P2P master streams this order on the wire, so it must be
+        # deterministic (filesystem order is not).
+        dirs[:] = sorted(d for d in dirs if not is_hidden_dir(d))
 
-        for file in files:
+        for file in sorted(files):
             # Skip hidden files
             if is_hidden_file(file):
                 continue
@@ -1390,10 +1392,23 @@ def get_files_remote() -> list[dict]:
                     details={"status_code": response.status_code, "response": response.text},
                 )
 
-            return response.json()
+            files: list[dict] = response.json()
+            # The listing is streamed in path order (server) / walk order (P2P
+            # master); restore the oldest-first priority the sync scheduler was
+            # written against, and surface a truncated body (invalid JSON) as the
+            # normal download error instead of an unhandled decode error.
+            files.sort(key=lambda entry: entry.get("mtime", 0))
+            return files
         except RequestException as e:
             raise NetworkError(
                 message=f"Error downloading files list: {e}",
+                details={"url": uri},
+            )
+        except ValueError as e:
+            # A truncated stream (mid-walk failure) or a non-JSON body: never a
+            # silently partial listing acted upon as if it were complete.
+            raise NetworkError(
+                message=f"Invalid files list response: {e}",
                 details={"url": uri},
             )
 

@@ -254,7 +254,13 @@ data loss to every peer). Presence checks are dangling-aware
 `/files` listing and `/files/download` handlers additionally skip/refuse file-symlinks
 whose target escapes `LOCAL_BUCKET` (`is_safe_symlink_target`): a slave must
 never be able to dereference `secret -> /etc/passwd` through the master and
-learn its hash (listing) or content (download). In-bucket symlinks are listed
+learn its hash (listing) or content (download). The listing itself is **streamed**
+as a chunked JSON array (`P2PEndpointMixin._handle_list_files`, path order): the
+master holds O(fanout + one entry) instead of the whole listing in RAM, and the
+slave (`sync.py::get_files_remote`) sorts the collected entries by `mtime` to keep
+the oldest-first priority. The transport helpers
+(`P2PEndpointMixin._begin_chunked_json` / `_write_chunk` / `_end_chunked`) frame
+the body for the stdlib transport; the aiohttp bridge frames it natively. In-bucket symlinks are listed
 as STRUCTURAL entries (`type: "symlink"` with `(filepath, target)`, never a
 dereferenced File), so a full-sync download re-creates the LINK on the slave
 (`materialize_symlink_local`). Uploads require
