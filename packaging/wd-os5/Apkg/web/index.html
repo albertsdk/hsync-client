@@ -296,6 +296,54 @@
     border-top: 1px solid #cfd8d8;
     margin: 16px 0 0 0 !important;
 }
+/* ---- secondary dialogs (ignore rules, trusted servers & devices) ---- */
+#hsync-app #hsync-ignore-modal,
+#hsync-app #hsync-trust-modal {
+    display: flex !important;
+    position: fixed !important;
+    inset: 0;
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+    padding: 20px !important;
+    background: rgba(0, 0, 0, 0.5);
+}
+#hsync-app #hsync-ignore-modal[hidden],
+#hsync-app #hsync-trust-modal[hidden] { display: none !important; }
+#hsync-app .hsync-dialog {
+    display: flex !important;
+    flex-direction: column;
+    width: 100% !important;
+    max-width: 760px !important;
+    max-height: 80vh;
+    background: #ffffff;
+    border: 1px solid #cfd8d8;
+    border-radius: 6px;
+    overflow: hidden;
+}
+#hsync-app .hsync-dialog textarea {
+    flex: 1;
+    margin: 0 !important;
+    padding: 12px 16px !important;
+    min-height: 220px;
+    border: 0 !important;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important;
+    font-size: 12px !important;
+    line-height: 1.45;
+}
+#hsync-app .hsync-dialog .hsync-list {
+    flex: 1;
+    margin: 0 !important;
+    padding: 10px 16px !important;
+    overflow: auto;
+    font-size: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+#hsync-app .hsync-dialog .hsync-list div {
+    padding: 4px 0 !important;
+    border-bottom: 1px solid #eef2f2;
+    word-break: break-all;
+}
 </style>
 
 <div id="hsync-app">
@@ -327,49 +375,68 @@
                 <option value="server" data-i18n="mode.server">Server (central HSYNC server)</option>
             </select>
         </label>
-        <label class="hsync-label">
-            <span data-i18n="field.role">Role</span>
-            <select name="HSYNC_ROLE" id="HSYNC_ROLE">
-                <option value="auto"   data-i18n="role.auto">Auto (bidirectional, automatic election)</option>
-                <option value="master" data-i18n="role.master">Master (NAS coordinates the sync group)</option>
-                <option value="slave"  data-i18n="role.slave">Slave (NAS is a read-only replica)</option>
-                <option value="never-master" data-i18n="role.never_master">Never master (syncs both ways but never becomes master)</option>
-            </select>
-        </label>
     </div>
 
-    <!-- Paths ------------------------------------------------------ -->
+    <!-- Share & Path ----------------------------------------------- -->
     <div class="hsync-section">
-        <div class="hsync-legend" data-i18n="section.paths">Paths</div>
+        <div class="hsync-legend" data-i18n="section.paths">Share &amp; Path</div>
         <label class="hsync-label">
-            <span data-i18n="field.path">Local path</span>
+            <span data-i18n="field.path">Local folder</span>
             <input type="text" name="HSYNC_PATH" id="HSYNC_PATH" placeholder="/mnt/HD/HD_a2/hsync/data">
         </label>
         <label class="hsync-label">
-            <span data-i18n="field.bucket">Bucket</span>
-            <input type="text" name="HSYNC_BUCKET" id="HSYNC_BUCKET" pattern="^[A-Za-z0-9]([A-Za-z0-9_\-]*[A-Za-z0-9])?$" placeholder="hsync">
+            <span data-i18n="field.bucket">Share name</span>
+            <input type="text" name="HSYNC_BUCKET" id="HSYNC_BUCKET" pattern="^[A-Za-z0-9]([A-Za-z0-9_\-]*[A-Za-z0-9])?$" placeholder="my-bucket">
         </label>
+        <label class="hsync-label">
+            <span data-i18n="field.subdir">Sync only a specific subfolder</span>
+            <input type="text" name="HSYNC_FILTER_PATH" id="HSYNC_FILTER_PATH" placeholder="photos/2026">
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.ignore_patterns">Extra ignore patterns</span>
+            <input type="text" name="HSYNC_IGNORE_PATTERNS" id="HSYNC_IGNORE_PATTERNS" placeholder="*.tmp,*.log,cache/">
+        </label>
+        <div class="hsync-actions">
+            <button type="button" id="hsync-btn-ignore" class="hsync-btn" data-i18n="action.edit_ignore">Ignore rules…</button>
+        </div>
     </div>
 
-    <!-- LAN -------------------------------------------------------- -->
-    <div class="hsync-section" id="hsync-p2p-options">
-        <div class="hsync-legend" data-i18n="section.p2p">LAN options</div>
-        <p class="hsync-note" data-i18n="note.p2p_secure">LAN transport is always encrypted (HTTPS/WSS). The master keeps a persistent identity and peers pin its certificate on first contact.</p>
+    <!-- p2p: Mode & Group ------------------------------------------ -->
+    <div id="hsync-p2p-options">
+    <div class="hsync-section">
+        <div class="hsync-legend" data-i18n="section.p2p">Mode &amp; Group</div>
         <label class="hsync-label">
-            <span data-i18n="field.p2p_key">LAN shared key (optional)</span>
+            <span data-i18n="field.p2p_group">p2p Group Name</span>
+            <input type="text" name="HSYNC_P2P_GROUP" id="HSYNC_P2P_GROUP" placeholder="my-group">
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.p2p_key">Shared password (optional)</span>
             <input type="password" name="HSYNC_P2P_KEY" id="HSYNC_P2P_KEY" autocomplete="new-password">
         </label>
+        <label class="hsync-label">
+            <span data-i18n="field.p2p_port">Port (0 = Auto)</span>
+            <input type="number" name="HSYNC_P2P_PORT" id="HSYNC_P2P_PORT" min="0" max="65535">
+        </label>
         <label class="hsync-label hsync-check">
-            <input type="checkbox" name="HSYNC_P2P_REQUIRE_PAIRING" id="HSYNC_P2P_REQUIRE_PAIRING">
-            <span data-i18n="field.p2p_require_pairing">Strict pairing (confirm the master certificate out of band)</span>
+            <input type="checkbox" name="HSYNC_P2P_PEER_DOWNLOAD" id="HSYNC_P2P_PEER_DOWNLOAD" checked>
+            <span data-i18n="field.p2p_peer_download">Download from other devices</span>
         </label>
         <label class="hsync-label">
-            <span data-i18n="field.p2p_group">p2p group (optional)</span>
-            <input type="text" name="HSYNC_P2P_GROUP" id="HSYNC_P2P_GROUP">
+            <span data-i18n="field.p2p_peer_read_cap">Max simultaneous reads from other devices</span>
+            <input type="number" name="HSYNC_P2P_PEER_READ_CAP" id="HSYNC_P2P_PEER_READ_CAP" min="1" max="32">
         </label>
         <label class="hsync-label">
-            <span data-i18n="field.discovery_timeout">Discovery timeout (s)</span>
-            <input type="number" name="HSYNC_DISCOVERY_TIMEOUT" id="HSYNC_DISCOVERY_TIMEOUT" min="1" max="600">
+            <span data-i18n="field.p2p_peer_sources_max">Max devices per file</span>
+            <input type="number" name="HSYNC_P2P_PEER_SOURCES_MAX" id="HSYNC_P2P_PEER_SOURCES_MAX" min="1" max="8">
+        </label>
+    </div>
+    <!-- p2p: Finding devices --------------------------------------- -->
+    <div class="hsync-section">
+        <div class="hsync-legend" data-i18n="section.p2p_discovery">Finding devices</div>
+        <p class="hsync-note" data-i18n="note.p2p_secure">p2p transport is encrypted (HTTPS/WSS). The master keeps a persistent identity and peers pin it on first contact.</p>
+        <label class="hsync-label">
+            <span data-i18n="field.discovery_timeout">Device search timeout (s)</span>
+            <input type="number" name="HSYNC_DISCOVERY_TIMEOUT" id="HSYNC_DISCOVERY_TIMEOUT" min="5" max="60">
         </label>
         <label class="hsync-label">
             <span data-i18n="field.bootnode">Discovery server (optional)</span>
@@ -388,32 +455,86 @@
             <span data-i18n="field.bootnode_tofu">Trust the discovery server on first use</span>
         </label>
         <label class="hsync-label">
-            <span data-i18n="field.bootnode_trust">Discovery server trust policy</span>
+            <span data-i18n="field.bootnode_trust">Discovery server identity check</span>
             <select name="HSYNC_BOOTNODE_TRUST" id="HSYNC_BOOTNODE_TRUST">
-                <option value="" data-i18n="field.bootnode_trust_default">Default (ask on first use)</option>
-                <option value="ask" data-i18n="field.bootnode_trust_ask">Ask on first use</option>
-                <option value="accept-new" data-i18n="field.bootnode_trust_accept_new">Accept new</option>
-                <option value="strict" data-i18n="field.bootnode_trust_strict">Require a pin</option>
-                <option value="none" data-i18n="field.bootnode_trust_none">No verification</option>
+                <option value="ask" data-i18n="trust_option.ask">Ask on first use</option>
+                <option value="accept-new" data-i18n="trust_option.accept_new">Accept automatically</option>
+                <option value="strict" data-i18n="trust_option.strict">Require the saved identity</option>
+                <option value="none" data-i18n="trust_option.none">Don't verify</option>
             </select>
         </label>
         <label class="hsync-label hsync-check">
             <input type="checkbox" name="HSYNC_UPNP_ENABLED" id="HSYNC_UPNP_ENABLED">
-            <span data-i18n="field.upnp">Map the master port with UPnP</span>
+            <span data-i18n="field.upnp">Open the port on my router automatically</span>
         </label>
+        <label class="hsync-label">
+            <span data-i18n="field.ntp_hosts">Time servers (comma-separated)</span>
+            <input type="text" name="HSYNC_NTP_HOSTS" id="HSYNC_NTP_HOSTS"
+                   placeholder="pool.ntp.org,time.cloudflare.com,time.google.com">
+        </label>
+        <div class="hsync-actions">
+            <button type="button" id="hsync-btn-test-bootnode" class="hsync-btn" data-i18n="action.test_bootnode">Test discovery server</button>
+        </div>
+    </div>
+
+    <!-- p2p: Role & security --------------------------------------- -->
+    <div class="hsync-section">
+        <div class="hsync-legend" data-i18n="section.p2p_security">Role &amp; security</div>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_PREFER_MASTER" id="HSYNC_PREFER_MASTER">
+            <span data-i18n="field.prefer_master">Prefer primary role</span>
+        </label>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_NEVER_MASTER" id="HSYNC_NEVER_MASTER">
+            <span data-i18n="field.never_master">Never become primary</span>
+        </label>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_P2P_REQUIRE_PAIRING" id="HSYNC_P2P_REQUIRE_PAIRING">
+            <span data-i18n="field.p2p_require_pairing">Ask before trusting new devices</span>
+        </label>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES" id="HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES">
+            <span data-i18n="field.p2p_unauthenticated_writes">Dangerous: allow p2p writes without a shared key</span>
+        </label>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_P2P_ALLOW_UNAUTHENTICATED" id="HSYNC_P2P_ALLOW_UNAUTHENTICATED">
+            <span data-i18n="field.p2p_unauthenticated">Run p2p without a shared key (peers unauthenticated, reads open)</span>
+        </label>
+    </div>
     </div>
 
     <!-- Server ----------------------------------------------------- -->
-    <div class="hsync-section" id="hsync-server-options" hidden>
-        <div class="hsync-legend" data-i18n="section.server">Server options</div>
+    <div id="hsync-server-options" hidden>
+    <div class="hsync-section">
+        <div class="hsync-legend" data-i18n="section.server">Server</div>
         <label class="hsync-label">
-            <span data-i18n="field.server">Server host or URL</span>
+            <span data-i18n="field.server">Server address</span>
             <input type="text" name="HSYNC_SERVER" id="HSYNC_SERVER" placeholder="server.example.com:9753">
         </label>
         <label class="hsync-label">
-            <span data-i18n="field.api_key">API key</span>
+            <span data-i18n="field.api_key">API Key</span>
             <input type="password" name="HSYNC_API_KEY" id="HSYNC_API_KEY" autocomplete="new-password">
         </label>
+        <div class="hsync-actions">
+            <button type="button" id="hsync-btn-test-server" class="hsync-btn" data-i18n="action.test_server">Test Connection</button>
+        </div>
+    </div>
+
+    <!-- Server certificates ---------------------------------------- -->
+    <div class="hsync-section">
+        <div class="hsync-legend" data-i18n="section.server_certs">Certificates</div>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_INSECURE" id="HSYNC_INSECURE">
+            <span data-i18n="field.insecure">Skip certificate check (insecure)</span>
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.ca_cert">Certificate authority file</span>
+            <input type="text" name="HSYNC_CA_CERT" id="HSYNC_CA_CERT" placeholder="/mnt/HD/HD_a2/hsync/config/ca.pem">
+        </label>
+        <div class="hsync-actions">
+            <button type="button" id="hsync-btn-upload-ca" class="hsync-btn" data-i18n="action.upload_ca">Upload…</button>
+            <input type="file" id="hsync-ca-file" accept=".pem,.crt,.cer" hidden>
+        </div>
         <label class="hsync-label">
             <span data-i18n="field.server_fingerprint">Server fingerprint (optional)</span>
             <input type="text" name="HSYNC_SERVER_FINGERPRINT" id="HSYNC_SERVER_FINGERPRINT" placeholder="sha256:...">
@@ -423,15 +544,161 @@
             <span data-i18n="field.server_tofu">Trust the server on first use</span>
         </label>
         <label class="hsync-label">
-            <span data-i18n="field.server_trust">Server trust policy</span>
+            <span data-i18n="field.server_trust">Server identity check</span>
             <select name="HSYNC_SERVER_TRUST" id="HSYNC_SERVER_TRUST">
-                <option value="" data-i18n="field.server_trust_default">Default (standard CA validation)</option>
-                <option value="chain" data-i18n="field.server_trust_chain">Standard CA validation</option>
-                <option value="ask" data-i18n="field.server_trust_ask">Ask on first use</option>
-                <option value="accept-new" data-i18n="field.server_trust_accept_new">Accept new</option>
-                <option value="strict" data-i18n="field.server_trust_strict">Require a pin</option>
-                <option value="none" data-i18n="field.server_trust_none">No verification</option>
+                <option value="chain" data-i18n="trust_option.chain">Standard verification (recommended)</option>
+                <option value="ask" data-i18n="trust_option.ask">Ask on first use</option>
+                <option value="accept-new" data-i18n="trust_option.accept_new">Accept automatically</option>
+                <option value="strict" data-i18n="trust_option.strict">Require the saved identity</option>
+                <option value="none" data-i18n="trust_option.none">Don't verify</option>
             </select>
+        </label>
+    </div>
+    </div>
+
+    <!-- Sync Mode -------------------------------------------------- -->
+    <div class="hsync-section">
+        <div class="hsync-legend" data-i18n="section.behaviour">Sync Mode</div>
+        <label class="hsync-label">
+            <span data-i18n="field.sync_direction">Sync Type</span>
+            <select name="HSYNC_SYNC_DIRECTION" id="HSYNC_SYNC_DIRECTION">
+                <option value="bidirectional" data-i18n="direction.bidirectional">Keep aligned (Send &amp; Receive)</option>
+                <option value="upload-only" data-i18n="direction.upload_only">Send only (to other devices)</option>
+                <option value="download-only" data-i18n="direction.download_only">Receive only (from other devices)</option>
+            </select>
+        </label>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_IGNORE_DELETE" id="HSYNC_IGNORE_DELETE">
+            <span data-i18n="field.ignore_delete">Keep deleted files (Backup Mode)</span>
+        </label>
+        <p class="hsync-note" data-i18n="note.ignore_delete">Backup Mode keeps every file a client deletes. Turning it off propagates deletions, so the save asks for confirmation first.</p>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_COMPRESSION_ENABLED" id="HSYNC_COMPRESSION_ENABLED" checked>
+            <span data-i18n="field.compression">Enable compression</span>
+        </label>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_DELTA_ENABLED" id="HSYNC_DELTA_ENABLED" checked>
+            <span data-i18n="field.delta_enabled">Enable delta transfer</span>
+        </label>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_DRY_RUN" id="HSYNC_DRY_RUN">
+            <span data-i18n="field.dry_run">Simulation Mode</span>
+        </label>
+        <p class="hsync-note" data-i18n="note.simulate">Simulation Mode previews every cycle without transferring or deleting anything.</p>
+    </div>
+
+    <!-- Timing & Intervals ----------------------------------------- -->
+    <div class="hsync-section">
+        <div class="hsync-legend" data-i18n="section.timing">Timing &amp; Intervals</div>
+        <label class="hsync-label">
+            <span data-i18n="field.interval">Periodic full check (s, 0 = disabled)</span>
+            <input type="number" name="HSYNC_INTERVAL" id="HSYNC_INTERVAL" min="0" max="3600">
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.reconnect_delay">Wait before retry (s)</span>
+            <input type="number" name="HSYNC_RECONNECT_DELAY" id="HSYNC_RECONNECT_DELAY" min="1" max="60">
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.stability_delay">Wait for file to settle (s)</span>
+            <input type="number" name="HSYNC_STABILITY_DELAY" id="HSYNC_STABILITY_DELAY" min="1" max="60">
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.max_wait">Maximum wait (s)</span>
+            <input type="number" name="HSYNC_MAX_WAIT_TIMEOUT" id="HSYNC_MAX_WAIT_TIMEOUT" min="10" max="3600">
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.http_timeout">Request timeout (s)</span>
+            <input type="number" name="HSYNC_HTTP_TIMEOUT" id="HSYNC_HTTP_TIMEOUT" min="1" max="300">
+        </label>
+    </div>
+
+    <!-- Performance ------------------------------------------------ -->
+    <div class="hsync-section">
+        <div class="hsync-legend" data-i18n="section.autotune">Performance</div>
+        <p class="hsync-note" data-i18n="note.autotune">Auto-tuning derives timeout, retry and concurrency from the measured network and storage.</p>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_AUTOTUNE" id="HSYNC_AUTOTUNE" checked>
+            <span data-i18n="field.autotune">Auto-tune performance</span>
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.max_concurrent">Max concurrent transfers (0 = Auto)</span>
+            <input type="number" name="HSYNC_MAX_CONCURRENT_TRANSFERS" id="HSYNC_MAX_CONCURRENT_TRANSFERS" min="0" max="20">
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.delta_min_size">Delta minimum size (KB)</span>
+            <input type="number" name="HSYNC_DELTA_MIN_FILE_SIZE" id="HSYNC_DELTA_MIN_FILE_SIZE" min="0">
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.delta_min_size_p2p">Delta minimum size - p2p (KB)</span>
+            <input type="number" name="HSYNC_DELTA_MIN_FILE_SIZE_P2P" id="HSYNC_DELTA_MIN_FILE_SIZE_P2P" min="0">
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.bw_upload">Upload limit (MB/s, empty = unlimited)</span>
+            <input type="text" name="HSYNC_MAX_BW_UPLOAD" id="HSYNC_MAX_BW_UPLOAD" placeholder="4">
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.bw_download">Download limit (MB/s, empty = unlimited)</span>
+            <input type="text" name="HSYNC_MAX_BW_DOWNLOAD" id="HSYNC_MAX_BW_DOWNLOAD" placeholder="4">
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.min_free_disk">Min free disk space (e.g. 500MB, 0 = off)</span>
+            <input type="text" name="HSYNC_MIN_FREE_DISK" id="HSYNC_MIN_FREE_DISK" placeholder="500MB">
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.max_inbound_mb">Max inbound file size (MB, 0 = off)</span>
+            <input type="number" name="HSYNC_MAX_INBOUND_SIZE_MB" id="HSYNC_MAX_INBOUND_SIZE_MB" min="0">
+        </label>
+    </div>
+
+    <!-- Deletion protection ---------------------------------------- -->
+    <div class="hsync-section">
+        <div class="hsync-legend" data-i18n="section.deletion">Deletion protection</div>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_MASS_DELETE_GUARD" id="HSYNC_MASS_DELETE_GUARD" checked>
+            <span data-i18n="field.mass_delete_guard">Deletion protection</span>
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.mass_delete_threshold">Max deletions per cycle (0 = off)</span>
+            <input type="number" name="HSYNC_MASS_DELETE_THRESHOLD" id="HSYNC_MASS_DELETE_THRESHOLD" min="0">
+        </label>
+        <label class="hsync-label">
+            <span data-i18n="field.mass_delete_percent">Max deletions percent (0 = off)</span>
+            <input type="number" name="HSYNC_MASS_DELETE_PERCENT" id="HSYNC_MASS_DELETE_PERCENT" min="0" max="100">
+        </label>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_ALLOW_DELETIONS" id="HSYNC_ALLOW_DELETIONS">
+            <span data-i18n="field.allow_deletions">Accept the deletion risk without confirmation</span>
+        </label>
+    </div>
+
+    <!-- Trusted servers & devices ---------------------------------- -->
+    <div class="hsync-section">
+        <div class="hsync-legend" data-i18n="section.trusted">Trusted servers &amp; devices</div>
+        <p class="hsync-note" data-i18n="note.trusted">Pinned certificates are shared with the sync engine; a changed fingerprint is reported, never trusted silently.</p>
+        <div class="hsync-actions">
+            <button type="button" id="hsync-btn-trust" class="hsync-btn" data-i18n="action.manage_trust">Manage trusted servers &amp; devices…</button>
+        </div>
+    </div>
+
+    <!-- Maintenance ------------------------------------------------ -->
+    <div class="hsync-section">
+        <div class="hsync-legend" data-i18n="section.maintenance">Maintenance</div>
+        <p class="hsync-note" data-i18n="note.reset_state">The next cycle re-scans every file. Nothing is transferred or deleted; the service restarts around it.</p>
+        <div class="hsync-actions">
+            <button type="button" id="hsync-btn-reset-state" class="hsync-btn" data-i18n="action.reset_state">Reset sync state…</button>
+        </div>
+    </div>
+
+    <!-- Logging ---------------------------------------------------- -->
+    <div class="hsync-section">
+        <div class="hsync-legend" data-i18n="section.logging">Logging</div>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_VERBOSE" id="HSYNC_VERBOSE">
+            <span data-i18n="field.verbose">Detailed log output</span>
+        </label>
+        <label class="hsync-label hsync-check">
+            <input type="checkbox" name="HSYNC_QUIET" id="HSYNC_QUIET">
+            <span data-i18n="field.quiet">Quiet (suppress output)</span>
         </label>
     </div>
 
@@ -439,110 +706,12 @@
     <div class="hsync-section">
         <div class="hsync-legend" data-i18n="section.connect">Connect another device</div>
         <p class="hsync-note" id="hsync-connect-note-p2p" data-i18n="note.connect_p2p">Run this command on another device to connect it directly to this NAS. Replace the local folder with the folder to sync on that device.</p>
-        <p class="hsync-note" id="hsync-connect-note-server" data-i18n="note.connect_server" hidden>This NAS runs in server mode and connects to a central HSYNC server. To sync another device with the same data, point it at the same server URL and bucket.</p>
-        <textarea id="hsync-connect-command" class="hsync-connect-cmd" readonly rows="2" spellcheck="false">hsync p2p -b 'hsync' -p '<local-folder>'</textarea>
+        <p class="hsync-note" id="hsync-connect-note-server" data-i18n="note.connect_server" hidden>This NAS connects to a central HSYNC server. To sync another device with the same data, point it at the same server URL and share.</p>
+        <textarea id="hsync-connect-command" class="hsync-connect-cmd" readonly rows="2" spellcheck="false">hsync p2p -b 'my-bucket' -p '<local-folder>'</textarea>
         <div class="hsync-actions">
             <button type="button" id="hsync-btn-copy" class="hsync-btn" data-i18n="action.copy">Copy</button>
             <button type="button" id="hsync-btn-reveal-key" class="hsync-btn" data-i18n="action.reveal_key" hidden>Show key</button>
         </div>
-    </div>
-
-    <!-- Sync behaviour --------------------------------------------- -->
-    <div class="hsync-section">
-        <div class="hsync-legend" data-i18n="section.behaviour">Sync behaviour</div>
-        <label class="hsync-label">
-            <span data-i18n="field.interval">Forced re-sync interval (s, 0 = off)</span>
-            <input type="number" name="HSYNC_INTERVAL" id="HSYNC_INTERVAL" min="0">
-        </label>
-        <label class="hsync-label hsync-check">
-            <input type="checkbox" name="HSYNC_IGNORE_DELETE" id="HSYNC_IGNORE_DELETE">
-            <span data-i18n="field.ignore_delete">Ignore deletions (backup-friendly)</span>
-        </label>
-        <label class="hsync-label hsync-check">
-            <input type="checkbox" name="HSYNC_NO_COMPRESSION" id="HSYNC_NO_COMPRESSION">
-            <span data-i18n="field.no_compression">Disable zstd compression</span>
-        </label>
-        <label class="hsync-label hsync-check">
-            <input type="checkbox" name="HSYNC_DELTA_ENABLED" id="HSYNC_DELTA_ENABLED" checked>
-            <span data-i18n="field.delta_enabled">Enable delta transfer (rsync-style block sync)</span>
-        </label>
-        <label class="hsync-label hsync-check">
-            <input type="checkbox" name="HSYNC_P2P_PEER_DOWNLOAD" id="HSYNC_P2P_PEER_DOWNLOAD" checked>
-            <span data-i18n="field.p2p_peer_download">Enable peer-assisted p2p downloads</span>
-        </label>
-        <label class="hsync-label hsync-check">
-            <input type="checkbox" name="HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES" id="HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES">
-            <span data-i18n="field.p2p_unauthenticated_writes">Dangerous: allow LAN writes without a shared key</span>
-        </label>
-        <label class="hsync-label hsync-check">
-            <input type="checkbox" name="HSYNC_P2P_ALLOW_UNAUTHENTICATED" id="HSYNC_P2P_ALLOW_UNAUTHENTICATED">
-            <span data-i18n="field.p2p_unauthenticated">Run p2p without a shared key (peers unauthenticated, reads open)</span>
-        </label>
-        <label class="hsync-label hsync-check">
-            <input type="checkbox" name="HSYNC_ALLOW_DELETIONS" id="HSYNC_ALLOW_DELETIONS">
-            <span data-i18n="field.allow_deletions">Accept the deletion risk without confirmation</span>
-        </label>
-        <input type="hidden" name="HSYNC_P2P_PEER_READ_CAP" id="HSYNC_P2P_PEER_READ_CAP" value="2">
-        <input type="hidden" name="HSYNC_P2P_PEER_SOURCES_MAX" id="HSYNC_P2P_PEER_SOURCES_MAX" value="3">
-        <label class="hsync-label">
-            <span data-i18n="field.delta_min_size">Delta min file size - server (bytes, 0 = default)</span>
-            <input type="number" name="HSYNC_DELTA_MIN_FILE_SIZE" id="HSYNC_DELTA_MIN_FILE_SIZE" min="0">
-        </label>
-        <label class="hsync-label">
-            <span data-i18n="field.delta_min_size_p2p">Delta min file size - LAN (bytes, 0 = default)</span>
-            <input type="number" name="HSYNC_DELTA_MIN_FILE_SIZE_P2P" id="HSYNC_DELTA_MIN_FILE_SIZE_P2P" min="0">
-        </label>
-        <label class="hsync-label">
-            <span data-i18n="field.bw_upload">Max upload bandwidth (e.g. 1MB)</span>
-            <input type="text" name="HSYNC_MAX_BW_UPLOAD" id="HSYNC_MAX_BW_UPLOAD">
-        </label>
-        <label class="hsync-label">
-            <span data-i18n="field.bw_download">Max download bandwidth (e.g. 1MB)</span>
-            <input type="text" name="HSYNC_MAX_BW_DOWNLOAD" id="HSYNC_MAX_BW_DOWNLOAD">
-        </label>
-        <label class="hsync-label">
-            <span data-i18n="field.min_free_disk">Minimum free disk space (e.g. 500MB, 0 = off)</span>
-            <input type="text" name="HSYNC_MIN_FREE_DISK" id="HSYNC_MIN_FREE_DISK">
-        </label>
-        <label class="hsync-label">
-            <span data-i18n="field.max_inbound_mb">Max inbound file size (MB, 0 = off)</span>
-            <input type="number" name="HSYNC_MAX_INBOUND_SIZE_MB" id="HSYNC_MAX_INBOUND_SIZE_MB" min="0">
-        </label>
-        <label class="hsync-label hsync-check">
-            <input type="checkbox" name="HSYNC_VERBOSE" id="HSYNC_VERBOSE">
-            <span data-i18n="field.verbose">Verbose log</span>
-        </label>
-    </div>
-
-    <!-- Auto-tuning ------------------------------------------------ -->
-    <div class="hsync-section">
-        <div class="hsync-legend" data-i18n="section.autotune">Auto-tuning</div>
-        <p class="hsync-note" data-i18n="note.autotune">Auto-tuning probes the network and storage at startup and derives adaptive defaults for timeout, retry, and concurrency. Leave the fields below empty to use the auto-tuned values.</p>
-        <label class="hsync-label hsync-check">
-            <input type="checkbox" name="HSYNC_AUTOTUNE" id="HSYNC_AUTOTUNE" checked>
-            <span data-i18n="field.autotune">Enable auto-tuning</span>
-        </label>
-        <label class="hsync-label">
-            <span data-i18n="field.http_timeout">HTTP timeout (s, 1-300, empty = auto)</span>
-            <input type="number" name="HSYNC_HTTP_TIMEOUT" id="HSYNC_HTTP_TIMEOUT" min="1" max="300">
-        </label>
-        <label class="hsync-label">
-            <span data-i18n="field.reconnect_delay">Reconnect delay (s, 1-60, empty = auto)</span>
-            <input type="number" name="HSYNC_RECONNECT_DELAY" id="HSYNC_RECONNECT_DELAY" min="1" max="60">
-        </label>
-        <label class="hsync-label">
-            <span data-i18n="field.retry_min_wait">Retry min wait (s, empty = auto)</span>
-            <input type="number" name="HSYNC_TRANSFER_RETRY_MIN_WAIT" id="HSYNC_TRANSFER_RETRY_MIN_WAIT" min="0.1" step="0.1">
-        </label>
-        <label class="hsync-label">
-            <span data-i18n="field.retry_max_wait">Retry max wait (s, empty = auto)</span>
-            <input type="number" name="HSYNC_TRANSFER_RETRY_MAX_WAIT" id="HSYNC_TRANSFER_RETRY_MAX_WAIT" min="0.1" step="0.1">
-        </label>
-        <label class="hsync-label">
-            <span data-i18n="field.ntp_hosts">NTP hosts (comma-separated; used for LAN time synchronisation)</span>
-            <input type="text" name="HSYNC_NTP_HOSTS" id="HSYNC_NTP_HOSTS"
-                   placeholder="pool.ntp.org,time.cloudflare.com,time.google.com">
-        </label>
     </div>
 
     <!-- Actions ---------------------------------------------------- -->
@@ -569,6 +738,40 @@
             <button type="button" id="hsync-log-close" class="hsync-btn" data-i18n="log.close">Close</button>
         </div>
         <pre id="hsync-log-view"></pre>
+    </div>
+</div>
+
+<!-- Ignore-rules editor: edits .hsyncignore at the shared folder root. -->
+<div id="hsync-ignore-modal" hidden>
+    <div class="hsync-dialog">
+        <div class="hsync-log-head">
+            <span class="hsync-log-title" data-i18n="ignore.title">Ignore rules</span>
+            <button type="button" id="hsync-ignore-save" class="hsync-btn" data-i18n="action.save">Save</button>
+            <button type="button" id="hsync-ignore-close" class="hsync-btn" data-i18n="log.close">Close</button>
+        </div>
+        <textarea id="hsync-ignore-text" spellcheck="false"></textarea>
+    </div>
+</div>
+
+<!-- Trusted servers &amp; devices: list, add and remove pinned certificates. -->
+<div id="hsync-trust-modal" hidden>
+    <div class="hsync-dialog">
+        <div class="hsync-log-head">
+            <span class="hsync-log-title" data-i18n="trust.title">Trusted servers &amp; devices</span>
+            <button type="button" id="hsync-trust-close" class="hsync-btn" data-i18n="log.close">Close</button>
+        </div>
+        <div class="hsync-list" id="hsync-trust-list"></div>
+        <div class="hsync-actions" style="padding: 10px 16px !important; margin: 0 !important;">
+            <select id="hsync-trust-kind">
+                <option value="bootnode" data-i18n="trust.kind_bootnode">Discovery server</option>
+                <option value="server" data-i18n="trust.kind_server">Server</option>
+                <option value="peer" data-i18n="trust.kind_peer">Device</option>
+            </select>
+            <input type="text" id="hsync-trust-host" placeholder="host" aria-label="host">
+            <input type="text" id="hsync-trust-fingerprint" placeholder="sha256:..." aria-label="fingerprint">
+            <button type="button" id="hsync-trust-add" class="hsync-btn" data-i18n="trust.add">Add</button>
+            <button type="button" id="hsync-trust-remove" class="hsync-btn" data-i18n="trust.remove">Remove</button>
+        </div>
     </div>
 </div>
 

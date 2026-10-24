@@ -79,83 +79,125 @@ if [ ! -f "${HSYNC_ENV_FILE}" ]; then
     cat > "${HSYNC_ENV_FILE}" <<EOF
 # HSYNC configuration — edited from the web UI at http://<NAS>/${APKG_NAME}/
 # Values follow the .env convention; quoted strings are recommended.
-
-# Defaults tuned for using the NAS as a BACKUP target: it runs as the LAN
-# master (coordinating the sync group) and never loses files when a client
-# deletes them (HSYNC_IGNORE_DELETE=true). Adjust from the web UI for other
-# use cases.
+#
+# Defaults match the HSYNC desktop application, with one deliberate exception:
+# the NAS is a BACKUP target, so deletions made on the clients are never
+# propagated here (HSYNC_IGNORE_DELETE=true) and the backup cannot lose files
+# because a source host removed them.
 
 # Mode: p2p | server
 HSYNC_MODE="p2p"
 
-# Local path to synchronize.
+# Local folder to synchronize.
 HSYNC_PATH="${HSYNC_DATA_DIR}"
 
-# Bucket name (alphanumeric, hyphens and underscores).
-HSYNC_BUCKET="hsync"
+# Share name (alphanumeric, hyphens and underscores).
+HSYNC_BUCKET="my-bucket"
 
-# Role in p2p mode: auto | master | slave | never-master
-HSYNC_ROLE="master"
+# Sync type: bidirectional | upload-only | download-only
+HSYNC_SYNC_DIRECTION="bidirectional"
 
-# LAN options. The LAN transport is HTTPS/WSS-only (protocol p2p/1); the master
-# uses a persistent self-signed identity and slaves pin its fingerprint (TOFU).
-HSYNC_P2P_GROUP=""
-# Random shared secret generated at install time; required for LAN writes.
+# Restrict the sync to one subfolder of the shared folder (relative; empty = all).
+HSYNC_FILTER_PATH=""
+
+# Extra gitignore-style patterns, comma-separated (layered on .hsyncignore).
+HSYNC_IGNORE_PATTERNS=""
+
+# p2p mode. The transport is HTTPS/WSS-only (protocol p2p/1): the master keeps
+# a persistent identity and slaves pin its fingerprint (TOFU).
+HSYNC_P2P_GROUP="my-group"
+# Random shared secret generated at install time; required for p2p writes.
 HSYNC_P2P_KEY="${P2P_KEY}"
+# Master TCP listen port (0 = auto-assign).
+HSYNC_P2P_PORT="0"
+# Role: an equal peer unless one of the two overrides below is set.
+HSYNC_PREFER_MASTER="false"
+HSYNC_NEVER_MASTER="false"
 # Strict pairing: refuse a first-seen master fingerprint until confirmed
 # out of band (disables Trust-On-First-Use auto-pinning).
 HSYNC_P2P_REQUIRE_PAIRING="false"
-# Peer-assisted reads are enabled by default. Writes without the p2p key remain
-# blocked unless the dangerous explicit opt-in is enabled.
+# Peer-assisted reads and the caps that bound them.
 HSYNC_P2P_PEER_DOWNLOAD="true"
 HSYNC_P2P_PEER_READ_CAP="2"
 HSYNC_P2P_PEER_SOURCES_MAX="3"
+# Writes without the p2p key stay blocked unless these dangerous opt-ins are set.
 HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES="false"
 HSYNC_P2P_ALLOW_UNAUTHENTICATED="false"
 HSYNC_ALLOW_DELETIONS="false"
-HSYNC_DISCOVERY_TIMEOUT="0"
-# Optional bootnode host for cross-network discovery (bare hostname, no scheme
-# and no port; empty = discovery stays on the local network). Set the same host
-# on every device of the group.
+# Seconds to wait for peer discovery.
+HSYNC_DISCOVERY_TIMEOUT="10"
+# Optional discovery server for cross-network discovery (bare host, no scheme,
+# no port; empty = discovery stays on the local network). Set the same host on
+# every device of the group.
 HSYNC_BOOTNODE=""
-# Pin the bootnode certificate fingerprint ('sha256:<hex>' or bare hex,
+# Extra UDP ports to try for the same discovery server (comma-separated, ordered),
+# e.g. "53" so a client whose egress firewall blocks UDP 443 reaches the node
+# on 53. Empty = single-port. The discovery server must listen on the same set.
+HSYNC_BOOTNODE_PORTS=""
+# Pin the discovery server certificate fingerprint ('sha256:<hex>' or bare hex,
 # comma-separated up to two for a rotation window); empty = no pin (fail closed).
 HSYNC_BOOTNODE_FINGERPRINT=""
-# Trust the bootnode certificate on first use (TOFU).
+# Trust the discovery server certificate on first use (TOFU).
 HSYNC_BOOTNODE_TOFU="false"
-# Extra UDP ports to try for the same bootnode (comma-separated, ordered),
-# e.g. "53" so a client whose egress firewall blocks UDP 443 reaches the node
-# on 53. Empty = single-port. The bootnode must listen on the same set.
-HSYNC_BOOTNODE_PORTS=""
+# Discovery server identity check: ask | accept-new | strict | none
+HSYNC_BOOTNODE_TRUST="ask"
 # Map the master TCP port with UPnP so peers on other networks can dial this
-# device. Only effective with HSYNC_BOOTNODE set. Opt-in: set to "true" to
-# enable (default "false").
-HSYNC_UPNP_ENABLED="false"
+# device. Only effective with a discovery server.
+HSYNC_UPNP_ENABLED="true"
 
-# Server options (used only when HSYNC_MODE=server)
+# Server mode (used only when HSYNC_MODE=server)
 HSYNC_SERVER=""
 HSYNC_API_KEY=""
-# Sync-server TLS trust policy (ADR-0036): chain (default, standard CA
-# validation) or the SSH-style ask/accept-new/strict/none for a self-signed
-# server. Empty = the client default (chain).
-HSYNC_SERVER_TRUST=""
-# Pin the sync-server certificate fingerprint ('sha256:<hex>' or bare hex,
+# Skip the certificate check (insecure; mutually exclusive with a pin or TOFU).
+HSYNC_INSECURE="false"
+# Certificate authority file used to validate the server certificate.
+HSYNC_CA_CERT=""
+# Server identity check: chain (standard CA validation) | ask | accept-new | strict | none
+HSYNC_SERVER_TRUST="chain"
+# Pin the server certificate fingerprint ('sha256:<hex>' or bare hex,
 # comma-separated up to two for a rotation window); empty = no pin.
 HSYNC_SERVER_FINGERPRINT=""
-# Trust the sync-server certificate on first use (TOFU).
+# Trust the server certificate on first use (TOFU).
 HSYNC_SERVER_TOFU="false"
 
-# Sync behaviour (continuous/daemon mode is the client default)
+# Sync behaviour
+# Periodic full check in seconds (0 = disabled).
 HSYNC_INTERVAL="0"
 HSYNC_IGNORE_DELETE="true"
-HSYNC_NO_COMPRESSION="false"
+HSYNC_COMPRESSION_ENABLED="true"
+HSYNC_DELTA_ENABLED="true"
+# Delta floors in KB; files at least this large use block-level sync.
+HSYNC_DELTA_MIN_FILE_SIZE="256"
+HSYNC_DELTA_MIN_FILE_SIZE_P2P="1024"
 HSYNC_MAX_BW_UPLOAD=""
 HSYNC_MAX_BW_DOWNLOAD=""
-HSYNC_MIN_FREE_DISK=""
-HSYNC_MAX_INBOUND_SIZE_MB=""
+HSYNC_MIN_FREE_DISK="500MB"
+HSYNC_MAX_INBOUND_SIZE_MB="10240"
+
+# Deletion protection: pause a cycle that would delete too many local files.
+HSYNC_MASS_DELETE_GUARD="true"
+HSYNC_MASS_DELETE_THRESHOLD="50"
+HSYNC_MASS_DELETE_PERCENT="50"
+
+# Timing
+HSYNC_HTTP_TIMEOUT="30"
+HSYNC_RECONNECT_DELAY="5"
+HSYNC_STABILITY_DELAY="5"
+HSYNC_MAX_WAIT_TIMEOUT="120"
+# Per-file retry waits (seconds); empty = engine default.
+HSYNC_TRANSFER_RETRY_MIN_WAIT=""
+HSYNC_TRANSFER_RETRY_MAX_WAIT=""
+
+# Performance
+HSYNC_AUTOTUNE="true"
+# Simultaneous file transfers (0 = auto).
+HSYNC_MAX_CONCURRENT_TRANSFERS="0"
+# SNTP servers used for clock-offset correction in p2p mode.
+HSYNC_NTP_HOSTS=""
 
 # Logging
 HSYNC_VERBOSE="false"
+HSYNC_QUIET="false"
 EOF
     chown 0:0 "${HSYNC_ENV_FILE}" 2>/dev/null || true
     chmod 0640 "${HSYNC_ENV_FILE}"

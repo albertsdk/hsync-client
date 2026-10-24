@@ -34,14 +34,19 @@
     };
     const CHECKBOX_KEYS = [
         'HSYNC_P2P_REQUIRE_PAIRING',
+        'HSYNC_PREFER_MASTER',
+        'HSYNC_NEVER_MASTER',
         'HSYNC_UPNP_ENABLED',
         'HSYNC_BOOTNODE_TOFU',
         'HSYNC_SERVER_TOFU',
+        'HSYNC_INSECURE',
         'HSYNC_P2P_PEER_DOWNLOAD', 'HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES',
         'HSYNC_P2P_ALLOW_UNAUTHENTICATED',
         'HSYNC_IGNORE_DELETE',
-        'HSYNC_NO_COMPRESSION', 'HSYNC_DELTA_ENABLED', 'HSYNC_VERBOSE',
+        'HSYNC_COMPRESSION_ENABLED', 'HSYNC_DELTA_ENABLED', 'HSYNC_VERBOSE',
+        'HSYNC_QUIET', 'HSYNC_DRY_RUN',
         'HSYNC_AUTOTUNE',
+        'HSYNC_MASS_DELETE_GUARD',
         'HSYNC_ALLOW_DELETIONS',
     ];
 
@@ -54,7 +59,7 @@
     }
 
     // Placeholder shown for the local folder on the *other* device (unknowable
-    // from the NAS) and the fixed mask used for the LAN shared key in the
+    // from the NAS) and the fixed mask used for the shared password in the
     // generated connect command (fixed length so it does not leak the key length).
     const PATH_PLACEHOLDER = '<local-folder>';
     const KEY_MASK = '••••••••';
@@ -63,6 +68,9 @@
     // so typing in another field does not re-mask an already-revealed key.
     let keyRevealed = false;
     let connectUnmasked = '';
+    // Persisted Backup Mode state, used to ask for confirmation before a save
+    // that would start propagating deletions.
+    let persistedIgnoreDelete = true;
 
     // ID lookups use getElementById: querySelector can miss nodes while the
     // WD dashboard is still injecting the fragment (jQuery .load / remotewd).
@@ -155,6 +163,7 @@
             }
         });
         if (cfg.__VERSION__) $('#hsync-app-version').textContent = cfg.__VERSION__;
+        persistedIgnoreDelete = (cfg.HSYNC_IGNORE_DELETE === 'true');
         syncModeVisibility();
     }
 
@@ -187,11 +196,11 @@
     // -----------------------------------------------------------------
     // Builds the hsync command to run on a second device to join the sync
     // group coordinated by this NAS. Only the connection-matching fields are
-    // emitted (bucket, mode, group, p2p key); per-device sync-behaviour flags
-    // (ignore-delete, compression, ...) are intentionally omitted — they
-    // do not need to match between peers. The NAS role is also omitted: LAN
-    // master election resolves the remote device's role automatically regardless
-    // of the NAS role (auto/master/slave/never-master).
+    // emitted (share, mode, group, shared password); per-device
+    // sync-behaviour flags (keep deleted files, compression, ...) are
+    // intentionally omitted — they do not need to match between peers. The
+    // role is also omitted: p2p primary election resolves the remote device's
+    // role automatically.
     function buildConnectCommand() {
         const bucketEl = $('#HSYNC_BUCKET');
         const bucket = (bucketEl && bucketEl.value.trim())
@@ -270,14 +279,14 @@
 
         const noteP2p = $('#hsync-connect-note-p2p');
         const noteServer = $('#hsync-connect-note-server');
-        if (noteLan) noteP2p.hidden = !isLan;
-        if (noteServer) noteServer.hidden = isLan;
+        if (noteP2p) noteP2p.hidden = !isP2p;
+        if (noteServer) noteServer.hidden = isP2p;
 
         const copyBtn = $('#hsync-btn-copy');
         const revealBtn = $('#hsync-btn-reveal-key');
-        if (copyBtn) copyBtn.hidden = !isLan;
+        if (copyBtn) copyBtn.hidden = !isP2p;
         if (revealBtn) {
-            revealBtn.hidden = !isLan || !showKey;
+            revealBtn.hidden = !isP2p || !showKey;
             revealBtn.textContent = keyRevealed
                 ? t('action.hide_key', 'Hide key')
                 : t('action.reveal_key', 'Show key');
@@ -410,6 +419,164 @@
     }
 
     // -----------------------------------------------------------------
+    // Ignore rules (.hsyncignore at the shared folder root)
+    // -----------------------------------------------------------------
+    async function openIgnoreEditor() {
+        const modal = $('#hsync-ignore-modal');
+        const text = $('#hsync-ignore-text');
+        try {
+            const r = await fetch(`${BASE}/hsyncignore_get.php`, { cache: 'no-store' });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const j = await r.json();
+            if (text) text.value = j.content || '';
+            if (modal) modal.hidden = false;
+        } catch (e) {
+            toast(t('toast.ignore_error', 'Failed to load the ignore rules') + ': ' + e.message, 'error');
+        }
+    }
+
+    function closeIgnoreEditor() {
+        const modal = $('#hsync-ignore-modal');
+        if (modal) modal.hidden = true;
+    }
+
+    async function saveIgnoreRules() {
+        const text = $('#hsync-ignore-text');
+        try {
+            const r = await fetch(`${BASE}/hsyncignore_set.php`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({ content: text ? text.value : '' }).toString(),
+            });
+            const j = await r.json();
+            if (!r.ok || !j.ok) throw new Error(j.error || `HTTP ${r.status}`);
+            toast(t('toast.ignore_saved', 'Ignore rules saved'), 'ok');
+            closeIgnoreEditor();
+        } catch (e) {
+            toast(t('toast.ignore_error', 'Failed to save the ignore rules') + ': ' + e.message, 'error');
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Trusted servers & devices
+    // -----------------------------------------------------------------
+    function trustKind() {
+        const sel = $('#hsync-trust-kind');
+        return sel ? sel.value : 'bootnode';
+    }
+
+    async function trustRequest(payload) {
+        const r = await fetch(`${BASE}/trust.php`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams(payload).toString(),
+        });
+        const j = await r.json();
+        if (!r.ok || !j.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        return j;
+    }
+
+    async function renderTrustList() {
+        const list = $('#hsync-trust-list');
+        if (!list) return;
+        list.textContent = '';
+        try {
+            const j = await trustRequest({ action: 'list', kind: trustKind() });
+            const entries = j.entries || [];
+            if (!entries.length) {
+                const empty = document.createElement('div');
+                empty.textContent = t('trust.empty', 'No entries.');
+                list.appendChild(empty);
+                return;
+            }
+            entries.forEach((entry) => {
+                const row = document.createElement('div');
+                const host = entry.host || '';
+                const port = entry.port ? ':' + entry.port : '';
+                const extra = entry.peer || entry.bucket || '';
+                row.textContent = (host + port + ' ' + extra).trim() + '  ' + (entry.fingerprint || '');
+                list.appendChild(row);
+            });
+        } catch (e) {
+            const err = document.createElement('div');
+            err.textContent = t('toast.trust_error', 'Failed to read the trusted keys') + ': ' + e.message;
+            list.appendChild(err);
+        }
+    }
+
+    async function trustAction(action) {
+        const hostEl = $('#hsync-trust-host');
+        const fpEl = $('#hsync-trust-fingerprint');
+        const host = hostEl ? hostEl.value.trim() : '';
+        if (!host) {
+            toast(t('toast.trust_host_missing', 'Enter the host first'), 'error');
+            return;
+        }
+        try {
+            await trustRequest({
+                action: action,
+                kind: trustKind(),
+                host: host,
+                fingerprint: fpEl ? fpEl.value.trim() : '',
+            });
+            await renderTrustList();
+        } catch (e) {
+            toast(t('toast.trust_error', 'The operation failed') + ': ' + e.message, 'error');
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Probes, maintenance and certificate upload
+    // -----------------------------------------------------------------
+    async function testEndpoint(target) {
+        const hostEl = $(target === 'server' ? '#HSYNC_SERVER' : '#HSYNC_BOOTNODE');
+        const host = hostEl ? hostEl.value.trim() : '';
+        if (!host) {
+            toast(t('toast.test_missing', 'Set the address first'), 'error');
+            return;
+        }
+        try {
+            const r = await fetch(`${BASE}/test.php`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({ target: target, host: host }).toString(),
+            });
+            const j = await r.json();
+            if (!r.ok || !j.ok) throw new Error(j.error || `HTTP ${r.status}`);
+            toast(t('toast.test_ok', 'Reachable') + ' — ' + (j.fingerprint || ''), 'ok');
+        } catch (e) {
+            toast(t('toast.test_fail', 'Not reachable') + ': ' + e.message, 'error');
+        }
+    }
+
+    async function resetSyncState() {
+        if (!window.confirm(t('confirm.reset_state', 'Forget the sync history of this folder? The next sync re-scans every file.'))) return;
+        try {
+            const r = await fetch(`${BASE}/state_reset.php`, { method: 'POST' });
+            const j = await r.json();
+            if (!r.ok || !j.ok) throw new Error(j.error || `HTTP ${r.status}`);
+            toast(t('toast.reset_ok', 'Sync state reset'), 'ok');
+        } catch (e) {
+            toast(t('toast.reset_fail', 'The sync state could not be reset') + ': ' + e.message, 'error');
+        }
+    }
+
+    async function uploadCaCert(file) {
+        const form = new FormData();
+        form.append('file', file);
+        try {
+            const r = await fetch(`${BASE}/ca_cert_upload.php`, { method: 'POST', body: form });
+            const j = await r.json();
+            if (!r.ok || !j.ok) throw new Error(j.error || `HTTP ${r.status}`);
+            const field = $('#HSYNC_CA_CERT');
+            if (field && j.path) field.value = j.path;
+            toast(t('toast.ca_uploaded', 'Certificate uploaded'), 'ok');
+        } catch (e) {
+            toast(t('toast.ca_error', 'Upload failed') + ': ' + e.message, 'error');
+        }
+    }
+
+    // -----------------------------------------------------------------
     // Wiring
     // -----------------------------------------------------------------
     // The dashboard injects this HTML via jQuery .load() after its own
@@ -460,6 +627,15 @@
 
         const saveBtn = $('#hsync-btn-save');
         if (saveBtn) saveBtn.addEventListener('click', async () => {
+            // Turning Backup Mode off starts propagating deletions on the NAS.
+            // Ask once, like the desktop dialog, and restore the toggle when the
+            // answer is no.
+            const ignoreEl = $('#HSYNC_IGNORE_DELETE');
+            if (ignoreEl && persistedIgnoreDelete && !ignoreEl.checked
+                && !window.confirm(t('confirm.ignore_delete', 'Turning Backup Mode off propagates deletions to this NAS. Continue?'))) {
+                ignoreEl.checked = true;
+                return;
+            }
             try {
                 await saveConfig(collectConfig());
                 toast(t('toast.saved', 'Configuration saved'), 'ok');
@@ -485,6 +661,33 @@
         bind('hsync-btn-log', openLog);
         bind('hsync-log-close', closeLog);
         bind('hsync-log-clear', () => { const v = $('#hsync-log-view'); if (v) v.textContent = ''; });
+        bind('hsync-btn-ignore', openIgnoreEditor);
+        bind('hsync-ignore-close', closeIgnoreEditor);
+        bind('hsync-ignore-save', saveIgnoreRules);
+        bind('hsync-btn-test-server', () => testEndpoint('server'));
+        bind('hsync-btn-test-bootnode', () => testEndpoint('bootnode'));
+        bind('hsync-btn-reset-state', resetSyncState);
+        bind('hsync-btn-trust', async () => {
+            const modal = $('#hsync-trust-modal');
+            if (modal) modal.hidden = false;
+            await renderTrustList();
+        });
+        bind('hsync-trust-close', () => {
+            const modal = $('#hsync-trust-modal');
+            if (modal) modal.hidden = true;
+        });
+        bind('hsync-trust-add', () => trustAction('add'));
+        bind('hsync-trust-remove', () => trustAction('remove'));
+        const trustKindEl = $('#hsync-trust-kind');
+        if (trustKindEl) trustKindEl.addEventListener('change', renderTrustList);
+        const caBtn = $('#hsync-btn-upload-ca');
+        const caInput = $('#hsync-ca-file');
+        if (caBtn && caInput) {
+            caBtn.addEventListener('click', () => caInput.click());
+            caInput.addEventListener('change', () => {
+                if (caInput.files && caInput.files[0]) uploadCaCert(caInput.files[0]);
+            });
+        }
 
         refreshStatus();
         setInterval(refreshStatus, 10000);

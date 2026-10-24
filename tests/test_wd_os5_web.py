@@ -11,6 +11,7 @@ escaped the hyphen, ``fe37d97`` re-broke it).
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -188,3 +189,167 @@ def test_language_selector_has_native_names_for_every_locale() -> None:
     names = dict(re.findall(r"(\w+):\s*'([^']*)'", match.group(1)))
     for locale in _supported_locales():
         assert names.get(locale), f"missing native name for {locale!r}"
+
+
+# ── desktop parity: keys, labels, defaults ─────────────────────────────
+def _form_names() -> set[str]:
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    return set(re.findall(r'name="(HSYNC_[A-Z0-9_]+)"', html))
+
+
+def _php_keys(name: str) -> set[str]:
+    text = (WEB / name).read_text(encoding="utf-8")
+    block = text.split("const KEYS = [", 1)[1].split("];", 1)[0]
+    return set(re.findall(r"'(HSYNC_[A-Z0-9_]+)'", block))
+
+
+def test_php_whitelists_match_the_form() -> None:
+    """config_get.php, config_set.php and the form expose the same key set.
+
+    The per-file retry waits are the only keys kept in the whitelist without a
+    form field: the desktop does not expose them either, and keeping them means
+    a hand-edited value survives a save.
+    """
+    get_keys = _php_keys("config_get.php")
+    set_keys = _php_keys("config_set.php")
+    form = _form_names()
+    assert get_keys == set_keys
+    assert form <= get_keys, sorted(form - get_keys)
+    assert get_keys - form == {
+        "HSYNC_TRANSFER_RETRY_MIN_WAIT",
+        "HSYNC_TRANSFER_RETRY_MAX_WAIT",
+    }, sorted(get_keys - form)
+
+
+def test_every_boolean_key_is_normalized() -> None:
+    """Every boolean the server validates is a checkbox the UI collects."""
+    app = APP_JS.read_text(encoding="utf-8")
+    block = re.search(r"const CHECKBOX_KEYS = \[(.*?)\];", app, re.DOTALL)
+    assert block is not None, "CHECKBOX_KEYS not found in app.js"
+    checkboxes = set(re.findall(r"'(HSYNC_[A-Z0-9_]+)'", block.group(1)))
+
+    php = (WEB / "config_set.php").read_text(encoding="utf-8")
+    tail = php.split("case 'HSYNC_PREFER_MASTER':", 1)[1]
+    tail = tail.split("if (!in_array($val, ['true', 'false'], true))", 1)[0]
+    booleans = {"HSYNC_PREFER_MASTER"} | set(re.findall(r"case '(HSYNC_[A-Z0-9_]+)':", tail))
+    assert checkboxes == booleans, (sorted(checkboxes - booleans), sorted(booleans - checkboxes))
+
+
+def test_inline_labels_match_the_dictionary() -> None:
+    """The English fallback inside index.html must equal en.json, key by key."""
+    import html as html_mod
+    import json
+
+    data = json.loads((I18N / "en.json").read_text(encoding="utf-8"))
+    src = INDEX_HTML.read_text(encoding="utf-8")
+    mismatches = {}
+    for key, text in re.findall(r'data-i18n="([^"]+)"[^>]*>([^<]*)<', src):
+        inline = html_mod.unescape(text).strip()
+        if inline and data.get(key) != inline:
+            mismatches[key] = (inline, data.get(key))
+    assert not mismatches, mismatches
+
+
+def test_no_numeric_flag_receives_an_empty_value() -> None:
+    """The launcher guards every numeric flag and disables the resync explicitly."""
+    start = (PKG / "Apkg" / "start.sh").read_text(encoding="utf-8")
+    for var in (
+        "HSYNC_DISCOVERY_TIMEOUT",
+        "HSYNC_HTTP_TIMEOUT",
+        "HSYNC_RECONNECT_DELAY",
+        "HSYNC_STABILITY_DELAY",
+        "HSYNC_MAX_WAIT_TIMEOUT",
+        "HSYNC_MAX_INBOUND_SIZE_MB",
+    ):
+        assert f'is_uint "${{{var}}}"' in start or f'is_uint_gt0 "${{{var}}}"' in start, var
+    assert "export HSYNC_RESYNC=0" in start
+
+
+def test_defaults_match_the_desktop_reference() -> None:
+    """The shipped NAS defaults equal hsync-desktop's (see hsync_desktop/config.py)."""
+    install = (PKG / "Apkg" / "install.sh").read_text(encoding="utf-8")
+    start = (PKG / "Apkg" / "start.sh").read_text(encoding="utf-8")
+    expected = {
+        "HSYNC_BUCKET": "my-bucket",
+        "HSYNC_P2P_GROUP": "my-group",
+        "HSYNC_DISCOVERY_TIMEOUT": "10",
+        "HSYNC_UPNP_ENABLED": "true",
+        "HSYNC_HTTP_TIMEOUT": "30",
+        "HSYNC_RECONNECT_DELAY": "5",
+        "HSYNC_STABILITY_DELAY": "5",
+        "HSYNC_MAX_WAIT_TIMEOUT": "120",
+        "HSYNC_MIN_FREE_DISK": "500MB",
+        "HSYNC_MAX_INBOUND_SIZE_MB": "10240",
+        "HSYNC_DELTA_MIN_FILE_SIZE": "256",
+        "HSYNC_DELTA_MIN_FILE_SIZE_P2P": "1024",
+        "HSYNC_SERVER_TRUST": "chain",
+        "HSYNC_BOOTNODE_TRUST": "ask",
+        "HSYNC_COMPRESSION_ENABLED": "true",
+        "HSYNC_PREFER_MASTER": "false",
+        "HSYNC_NEVER_MASTER": "false",
+        "HSYNC_AUTOTUNE": "true",
+        "HSYNC_MASS_DELETE_GUARD": "true",
+        "HSYNC_MASS_DELETE_THRESHOLD": "50",
+        "HSYNC_MASS_DELETE_PERCENT": "50",
+        "HSYNC_MAX_CONCURRENT_TRANSFERS": "0",
+        # Deliberate NAS deviation: this device is a backup target.
+        "HSYNC_IGNORE_DELETE": "true",
+    }
+    for key, value in expected.items():
+        assert f'{key}="{value}"' in install, f"install.sh seed for {key}"
+        assert f': "${{{key}:={value}}}"' in start, f"start.sh fallback for {key}"
+
+
+def test_config_set_clamps_ranges(tmp_path: Path) -> None:
+    """A behavioural check: out-of-range and empty values become valid ones."""
+    env_file = tmp_path / "hsync.env"
+    prepend = tmp_path / "prepend.php"
+    prepend.write_text(
+        "<?php\n"
+        f"define('HSYNC_ENV', '{env_file}');\n"
+        f"define('HSYNC_CONFIG', '{tmp_path}');\n"
+        "$_SERVER['REQUEST_METHOD'] = 'POST';\n"
+        "$_SERVER['CONTENT_TYPE'] = 'application/x-www-form-urlencoded';\n"
+        "$_POST = [\n"
+        "    'HSYNC_MODE' => 'p2p',\n"
+        "    'HSYNC_BUCKET' => 'bad bucket',\n"
+        "    'HSYNC_HTTP_TIMEOUT' => '',\n"
+        "    'HSYNC_DISCOVERY_TIMEOUT' => '999',\n"
+        "    'HSYNC_RECONNECT_DELAY' => '0',\n"
+        "    'HSYNC_P2P_PEER_READ_CAP' => '100',\n"
+        "    'HSYNC_SYNC_DIRECTION' => 'sideways',\n"
+        "    'HSYNC_COMPRESSION_ENABLED' => 'true',\n"
+        "    'HSYNC_INTERVAL' => '5',\n"
+        "    'HSYNC_MASS_DELETE_PERCENT' => '250',\n"
+        "    'HSYNC_P2P_GROUP' => \"grp\\nHSYNC_VERBOSE\",\n"
+        "];\n",
+        encoding="utf-8",
+    )
+    subprocess.run(
+        [
+            "php",
+            "-d",
+            f"auto_prepend_file={prepend}",
+            "-d",
+            "display_errors=0",
+            str(WEB / "config_set.php"),
+        ],
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    written = dict(re.findall(r"^(HSYNC_[A-Z0-9_]+)='([^']*)'$", env_file.read_text(), re.M))
+    assert written["HSYNC_BUCKET"] == "my-bucket"
+    assert written["HSYNC_HTTP_TIMEOUT"] == "30"
+    assert written["HSYNC_DISCOVERY_TIMEOUT"] == "60"
+    assert written["HSYNC_RECONNECT_DELAY"] == "1"
+    assert written["HSYNC_P2P_PEER_READ_CAP"] == "32"
+    assert written["HSYNC_SYNC_DIRECTION"] == "bidirectional"
+    assert written["HSYNC_INTERVAL"] == "20"
+    assert written["HSYNC_MASS_DELETE_PERCENT"] == "100"
+
+    # A newline in a free-text field must not break the line-based .env file.
+    lines = [ln for ln in env_file.read_text().splitlines() if ln and not ln.startswith("#")]
+    assert all(re.fullmatch(r"HSYNC_[A-Z0-9_]+='.*'", ln) for ln in lines), lines
+    group_line = next(ln for ln in lines if ln.startswith("HSYNC_P2P_GROUP="))
+    assert "HSYNC_VERBOSE" in group_line and group_line.count("=") == 1

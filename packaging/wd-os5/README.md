@@ -120,75 +120,87 @@ and firmware upgrades.
 
 ## Configuration
 
-The web UI exposes the following options (all map 1:1 to `hsync` CLI flags).
-The shipped defaults are tuned for using the NAS as a **backup target**: it
-runs as the LAN **master** (it coordinates the sync group; the master is a
-transport hub, not a conflict authority) and **ignores client-side
-deletions**, so the backup never loses files because a source host removed
-them. Adjust from the UI for other use cases.
+The web UI exposes the options of the HSYNC desktop application, each mapped
+1:1 to a `hsync` CLI flag (or to the environment variable for the knobs that
+have no flag). The defaults are seeded by `Apkg/install.sh` and mirrored by the
+fallbacks in `Apkg/start.sh`, with one deliberate exception: the NAS is a
+**backup target**, so it ignores client-side deletions and the backup never
+loses files because a source host removed them. Adjust everything from the UI
+for other use cases.
 
 The p2p transport is **HTTPS/WSS-only** (protocol `p2p/1`): the master serves
 over TLS with a persistent self-signed identity and advertises its certificate
-fingerprint, which slaves pin (Trust-On-First-Use). There is no plain-HTTP
+fingerprint, which the peers pin (Trust-On-First-Use). There is no plain-HTTP
 option to configure.
 
-| UI field            | CLI flag                                       | Default                          |
+| UI field            | CLI flag / environment                         | Default                          |
 | ------------------- | ---------------------------------------------- | -------------------------------- |
-| Sync path           | `-p / --path`                                  | `/mnt/HD/HD_a2/hsync/data`       |
-| Mode                | `hsync p2p` vs `hsync server <hostname>`      | LAN                              |
-| Role                | `--prefer-master` + `--sync-direction`          | Master (NAS coordinates the group) |
-| Bucket              | `-b / --bucket`                                | `hsync`                          |
-| LAN shared key      | `HSYNC_P2P_KEY` env var                        | random 192-bit value generated at install |
-| Strict pairing      | `--require-pairing`                            | off                              |
-| Peer-assisted p2p downloads | `--no-peer-download` (when disabled)    | enabled                          |
-| Unauthenticated LAN writes | `--allow-unauthenticated-writes`          | disabled                         |
-| Unauthenticated p2p | `--allow-unauthenticated-p2p`              | disabled                         |
-| Accept deletion risk | `--allow-deletions`                        | disabled                         |
-| Seeder read cap     | `HSYNC_P2P_PEER_READ_CAP`                      | `2`                              |
-| Peer attempts       | `HSYNC_P2P_PEER_SOURCES_MAX`                    | `3`                              |
-| Group               | `--group`                                  | _empty_                          |
-| Discovery timeout   | `--discovery-timeout`                          | `0` (wait indefinitely)          |
-| Discovery server (optional) | `HSYNC_BOOTNODE` env var               | _empty_ (discovery stays on the local network; set the same host on every device) |
-| Discovery server fingerprint | `HSYNC_BOOTNODE_FINGERPRINT` env var  | _empty_ (no pin; the NAS has no terminal, so set a policy or a pin explicitly) |
-| Discovery server extra UDP ports | `HSYNC_BOOTNODE_PORTS` env var   | _empty_ (single-port dialing; e.g. `53` lets a client whose egress firewall blocks UDP 443 reach the same node on 53; the bootnode must listen on the same set with `--ports`) |
-| Discovery server TOFU | `HSYNC_BOOTNODE_TOFU` env var                | `false` (trust the bootnode certificate on first use when `true`) |
-| Discovery server trust policy | `HSYNC_BOOTNODE_TRUST` env var       | empty = client default (`ask`); one of `ask`, `accept-new`, `strict`, `none` |
-| UPnP port mapping   | `HSYNC_UPNP_ENABLED` env var                   | `false` (opt-in; only effective with a discovery server) |
-| Server URL          | `HSYNC_SERVER` env var                         | _empty_                          |
+| Sync folder         | `-p / --path`                                  | `/mnt/HD/HD_a2/hsync/data`       |
+| Mode                | `hsync p2p` vs `hsync server`                  | p2p                              |
+| Share name          | `-b / --bucket`                                | `my-bucket`                      |
+| Sync type           | `--sync-direction`                             | bidirectional                    |
+| Subfolder           | `--subdir`                                     | _empty_ (whole share)            |
+| Extra ignore patterns | `--ignore-pattern` (repeated)                | _empty_                          |
+| Ignore rules editor | `.hsyncignore` at the share root               | _empty file_                     |
+| Keep deleted files  | `--ignore-delete`                              | on (backup target)               |
+| Compression         | `--no-compression` when disabled               | enabled                          |
+| Delta transfer      | `--no-delta` when disabled                     | enabled                          |
+| Simulation mode     | `--dry-run`                                    | off                              |
+| Periodic full check | `-i / --interval` (`0` = `HSYNC_RESYNC=0`)     | `0` (disabled)                   |
+| Wait before retry   | `--retry-delay`                                | `5` s                            |
+| Wait for file to settle | `--stability-delay`                        | `5` s                            |
+| Maximum wait        | `--max-wait-timeout`                           | `120` s                          |
+| Request timeout     | `--http-timeout`                               | `30` s                           |
+| Auto-tune           | `--no-autotune` when disabled                  | on                               |
+| Max concurrent transfers | `--max-concurrent-transfers`              | `0` (auto)                       |
+| Delta minimum size  | `--delta-min-file-size` (edited in KB)         | `256` KB                         |
+| Delta minimum size p2p | `--delta-min-file-size-p2p` (edited in KB)  | `1024` KB                        |
+| Upload / download limit | `--limit-upload` / `--limit-download`      | unlimited                        |
+| Min free disk space | `--min-free-disk-space`                        | `500MB` (size string, `0` = off) |
+| Max inbound size    | `--max-inbound-size`                           | `10240` MB (`0` = off)           |
+| Deletion protection | `--no-mass-delete-guard` when disabled         | on                               |
+| Max deletions per cycle | `--mass-delete-threshold`                  | `50` (`0` = off)                 |
+| Max deletions percent | `--mass-delete-percent`                      | `50` (`0` = off)                 |
+| Accept deletion risk | `--allow-deletions`                           | off                              |
+| p2p group           | `--group`                                      | `my-group`                       |
+| Shared password     | `HSYNC_P2P_KEY` env var                        | random 192-bit value at install  |
+| Port                | `--listen-port`                                | `0` (auto)                       |
+| Download from other devices | `--no-peer-download` when disabled     | on                               |
+| Max simultaneous reads | `HSYNC_P2P_PEER_READ_CAP`                   | `2`                              |
+| Max devices per file | `HSYNC_P2P_PEER_SOURCES_MAX`                  | `3`                              |
+| Device search timeout | `--discovery-timeout`                        | `10` s (5-60)                    |
+| Discovery server    | `HSYNC_BOOTNODE` env var                       | _empty_ (local discovery only)   |
+| Discovery server extra UDP ports | `HSYNC_BOOTNODE_PORTS` env var    | _empty_ (single-port dialing; e.g. `53`) |
+| Discovery server fingerprint | `HSYNC_BOOTNODE_FINGERPRINT` env var  | _empty_ (no pin)                 |
+| Discovery server TOFU | `HSYNC_BOOTNODE_TOFU` env var               | `false`                          |
+| Discovery server identity check | `HSYNC_BOOTNODE_TRUST` env var     | `ask`; `ask`, `accept-new`, `strict`, `none` |
+| Router port mapping | `HSYNC_UPNP_ENABLED` env var                   | on (only with a discovery server) |
+| Time servers        | `HSYNC_NTP_HOSTS` env var                      | client defaults (p2p clock offset) |
+| Server address      | `HSYNC_SERVER` env var                         | _empty_                          |
 | API key             | `HSYNC_API_KEY` env var                        | _empty_                          |
-| Server fingerprint  | `HSYNC_SERVER_FINGERPRINT` env var             | _empty_ (no pin; standard CA validation) |
-| Server TOFU         | `HSYNC_SERVER_TOFU` env var                    | `false` (trust the server certificate on first use when `true`) |
-| Server trust policy | `HSYNC_SERVER_TRUST` env var                   | empty = client default (`chain`); one of `chain`, `ask`, `accept-new`, `strict`, `none` |
-| Resync interval     | `-i / --interval`                              | `0` (off)                        |
-| Ignore deletions    | `--ignore-delete`                              | on (backup-friendly)             |
-| Bandwidth limits    | `--limit-upload` / `--limit-download`         | unlimited                        |
-| Compression         | `--no-compression`                             | enabled                          |
-| Delta transfer      | `HSYNC_DELTA_ENABLED`                          | enabled                          |
-| Delta min size      | `HSYNC_DELTA_MIN_FILE_SIZE`                    | `262144` (256 KB)                |
-| Delta min size p2p  | `HSYNC_DELTA_MIN_FILE_SIZE_P2P`                | `1048576` (1 MB)                 |
-| NTP hosts           | `HSYNC_NTP_HOSTS` env var                      | `pool.ntp.org,time.cloudflare.com,time.google.com` (probed in order; used by the client for LAN time synchronisation / conflict tie-break) |
-| Min free disk space | `HSYNC_MIN_FREE_DISK` (`--min-free-disk-space`) | `500MB` (size string, `0` = off) |
-| Max inbound size    | `--max-inbound-size`                          | service default                  |
-| Max concurrent      | _(not in WD UI; binary default)_               | autotune / `5`                   |
-| Mass-delete guard   | _(not in WD UI; binary default)_               | on                               |
-| Mass-delete thresh  | _(not in WD UI; binary default)_               | `50`                             |
-| Mass-delete percent | _(not in WD UI; binary default)_               | `50`                             |
-| Verbose log         | `-v / --verbose`                               | off                              |
-| Auto-tune           | `--no-autotune` when unchecked                 | on                               |
-| HTTP timeout        | `--http-timeout`                                    | auto (empty = autotune/default)  |
-| Reconnect delay     | `--retry-delay`                                | auto (empty = autotune/default)  |
-| Max stabilization wait | _(not in WD UI; binary default)_             | `120` s (wait ends when the file settles; the upload is deferred and retried beyond) |
-| Transfer retry min  | `HSYNC_TRANSFER_RETRY_MIN_WAIT` env            | auto (empty = autotune/default)  |
-| Transfer retry max  | `HSYNC_TRANSFER_RETRY_MAX_WAIT` env            | auto (empty = autotune/default)  |
+| Skip certificate check | `--insecure`                                | off (excludes a pin or TOFU)     |
+| Certificate authority file | `--ca-cert` (upload stores `config/ca.pem`) | _empty_                    |
+| Server identity check | `HSYNC_SERVER_TRUST` env var                 | `chain`; `chain`, `ask`, `accept-new`, `strict`, `none` |
+| Server fingerprint  | `HSYNC_SERVER_FINGERPRINT` env var             | _empty_ (no pin)                 |
+| Server TOFU         | `HSYNC_SERVER_TOFU` env var                    | `false`                          |
+| Detailed log output | `-v / --verbose`                               | off                              |
+| Quiet               | `--quiet`                                      | off                              |
+The role is expressed with the same two switches as the desktop:
 
-The role selector maps to the existing CLI primitives:
+| Control                | Flag                | Meaning                                         |
+| ---------------------- | ------------------- | ----------------------------------------------- |
+| Prefer primary role    | `--prefer-master`   | this device coordinates the group when possible |
+| Never become primary   | `--never-master`    | syncs both ways but never takes the primary role |
 
-| Role        | Flags                                           | Meaning                              |
-| ----------- | ----------------------------------------------- | ------------------------------------ |
-| Auto        | _(none)_                                        | Bidirectional, automatic election    |
-| Master      | `--prefer-master`                                | NAS coordinates the sync group       |
-| Slave       | `--sync-direction download-only`                | NAS is a read-only replica           |
-| Never master| `--never-master`                                | Syncs both ways but never becomes master |
+Both are off by default, so election decides. "Prefer primary" is applied only
+for a bidirectional sync: the client rejects that pair with a one-way direction.
+
+Four actions delegate to the packaged binary and therefore share its trust
+stores and state directory: **Test Connection** and **Test discovery server**
+(`hsync trust server|bootnode fingerprint`), **Manage trusted servers &
+devices** (`hsync trust <kind> list|add|remove`) and **Reset sync state**
+(`hsync state reset --folder … --quarantine`, executed with the service
+stopped).
 
 ## Connect another device
 
@@ -198,50 +210,47 @@ on another device to join the sync group coordinated by the NAS instead of
 assembling the flags by hand.
 
 The command is built client-side from the current form values and contains
-only the connection-matching fields. It is recomputed whenever the bucket,
-group or p2p-key fields change, and after pressing **Save** it is rebuilt from
-the configuration actually persisted by the backend (which normalizes inputs
-such as an invalid bucket or boolean fields), so the command always matches
-what the NAS runs with:
+only the connection-matching fields. It is recomputed whenever the share name,
+group or shared-password fields change, and after pressing **Save** it is
+rebuilt from the configuration actually persisted by the backend (which
+normalizes inputs such as an invalid share name or boolean fields), so the
+command always matches what the NAS runs with:
 
 ```
-HSYNC_P2P_KEY='<masked>' hsync p2p -b '<bucket>' -p '<local-folder>' [--group '<group>']
+HSYNC_P2P_KEY='<masked>' hsync p2p -b '<share>' -p '<local-folder>' [--group '<group>']
 ```
 
-- `<bucket>` and `--group` mirror the NAS settings so the peer can find the
+- `<share>` and `--group` mirror the NAS settings so the peer can find the
   group; `<local-folder>` is a placeholder for the folder to sync on the other
   device. Every interpolated value is POSIX single-quoted, so the command is
   safe to paste even if a value contains `$`, `"`, backticks, or spaces.
-- The LAN shared key (when set) is shown **masked** with a *Show key* toggle;
-  the *Copy* button copies the full command including the real key value.
-- Per-device sync behaviour (ignore-delete, compression, delta,
+- The shared password (when set) is shown **masked** with a *Show key* toggle;
+  the *Copy* button copies the full command including the real value.
+- Per-device sync behaviour (keep deleted files, compression, delta,
   bandwidth, …) and the NAS role are intentionally omitted: continuous mode
-  is the default in both LAN and server mode, and master election resolves
+  is the default in both p2p and server mode, and primary election resolves
   the remote device's role automatically.
 
 In **server mode** the NAS is itself a client of a central `hsync-server`, so
 there is no direct "connect to the NAS" command; the section shows a note
-explaining how to point another device at the same server and bucket.
+explaining how to point another device at the same server and share.
 
 ## Maintenance
 
-The service only ever runs a sync mode (`hsync p2p` / `hsync server`); the
-maintenance namespaces (`hsync trust`, `hsync state`) are not exposed by the web
-UI. If a share keeps re-syncing or its local state looks inconsistent, stop the
-service and forget the share's sync state from the NAS shell, using the same
-`HSYNC_DEVICE_DIR` / `HSYNC_STATE_DIR` that `start.sh` exports (they are also in
-`hsync.env`, so source that file first):
+The **Reset sync state** button stops the service, runs
+`hsync state reset --folder <shared folder> --quarantine --json` with the same
+`HSYNC_STATE_DIR` that `start.sh` exports, and starts the service again. Only
+the folder's merge bases and deletion markers are dropped: synced files, the
+shared password, the device identity and the trusted fingerprints stay
+untouched. The next cycle re-scans the share, so the first sync is slower and
+files deleted shortly before the reset can come back.
 
-```bash
-. /mnt/HD/HD_a2/hsync/config/hsync.env
-"${APKG_PATH}/bin/${BINARY}/hsync" state reset --folder /mnt/HD/HD_a2/hsync/data
-```
-
-Only the folder's merge bases and deletion markers are dropped: synced files,
-the p2p key, the device identity and the trusted fingerprints stay untouched.
-The next cycle re-scans the share, so the first sync is slower and files deleted
-shortly before the reset can come back. The command refuses while the service
-still syncs the folder, which is why it must be stopped first.
+The **Manage trusted servers & devices** panel lists and edits the same trust
+stores (`hsync trust bootnode|server|peer list|add|remove`), while
+**Test Connection** and **Test discovery server** read the peer certificate
+fingerprint (`hsync trust … fingerprint`). Every action runs the packaged
+binary with the service's state directory, so it behaves exactly like the same
+command on the NAS shell.
 
 ## Locales
 

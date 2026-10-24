@@ -59,16 +59,21 @@ if [ -f "${HSYNC_ENV_FILE}" ]; then
     . "${HSYNC_ENV_FILE}"
 fi
 
-# Backup-oriented defaults: the NAS runs as the master (it coordinates the
-# sync group) and keeps a safe copy of the clients' data. Deletions on the
-# clients are NOT propagated (HSYNC_IGNORE_DELETE=true), so the backup never
-# loses files because a source host removed them.
+# These values are the defaults the web UI ships and match the desktop
+# application, with one deliberate exception: the NAS is a backup target, so
+# deletions from the clients are never propagated (HSYNC_IGNORE_DELETE=true)
+# and the backup cannot lose files because a source host removed them.
 : "${HSYNC_MODE:=p2p}"
 : "${HSYNC_PATH:=${HSYNC_DATA_DIR}}"
-: "${HSYNC_BUCKET:=hsync}"
-: "${HSYNC_ROLE:=master}"
-: "${HSYNC_P2P_GROUP:=}"
+: "${HSYNC_BUCKET:=my-bucket}"
+: "${HSYNC_SYNC_DIRECTION:=bidirectional}"
+: "${HSYNC_FILTER_PATH:=}"
+: "${HSYNC_IGNORE_PATTERNS:=}"
+: "${HSYNC_P2P_GROUP:=my-group}"
 : "${HSYNC_P2P_KEY:=}"
+: "${HSYNC_P2P_PORT:=0}"
+: "${HSYNC_PREFER_MASTER:=false}"
+: "${HSYNC_NEVER_MASTER:=false}"
 : "${HSYNC_P2P_REQUIRE_PAIRING:=false}"
 : "${HSYNC_P2P_PEER_DOWNLOAD:=true}"
 : "${HSYNC_P2P_PEER_READ_CAP:=2}"
@@ -76,35 +81,64 @@ fi
 : "${HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES:=false}"
 : "${HSYNC_P2P_ALLOW_UNAUTHENTICATED:=false}"
 : "${HSYNC_ALLOW_DELETIONS:=false}"
-: "${HSYNC_DISCOVERY_TIMEOUT:=0}"
+: "${HSYNC_DISCOVERY_TIMEOUT:=10}"
 : "${HSYNC_BOOTNODE:=}"
 : "${HSYNC_BOOTNODE_FINGERPRINT:=}"
 : "${HSYNC_BOOTNODE_TOFU:=false}"
-: "${HSYNC_BOOTNODE_TRUST:=}"
+: "${HSYNC_BOOTNODE_TRUST:=ask}"
 : "${HSYNC_BOOTNODE_PORTS:=}"
-: "${HSYNC_UPNP_ENABLED:=false}"
+: "${HSYNC_UPNP_ENABLED:=true}"
 : "${HSYNC_SERVER:=}"
 : "${HSYNC_API_KEY:=}"
-: "${HSYNC_SERVER_TRUST:=}"
+: "${HSYNC_INSECURE:=false}"
+: "${HSYNC_CA_CERT:=}"
+: "${HSYNC_SERVER_TRUST:=chain}"
 : "${HSYNC_SERVER_FINGERPRINT:=}"
 : "${HSYNC_SERVER_TOFU:=false}"
 : "${HSYNC_INTERVAL:=0}"
 : "${HSYNC_IGNORE_DELETE:=true}"
-: "${HSYNC_NO_COMPRESSION:=false}"
+: "${HSYNC_COMPRESSION_ENABLED:=true}"
 : "${HSYNC_DELTA_ENABLED:=true}"
-: "${HSYNC_DELTA_MIN_FILE_SIZE:=}"
-: "${HSYNC_DELTA_MIN_FILE_SIZE_P2P:=}"
+: "${HSYNC_DELTA_MIN_FILE_SIZE:=256}"
+: "${HSYNC_DELTA_MIN_FILE_SIZE_P2P:=1024}"
 : "${HSYNC_MAX_BW_UPLOAD:=}"
 : "${HSYNC_MAX_BW_DOWNLOAD:=}"
-: "${HSYNC_MIN_FREE_DISK:=}"
-: "${HSYNC_MAX_INBOUND_SIZE_MB:=}"
+: "${HSYNC_MIN_FREE_DISK:=500MB}"
+: "${HSYNC_MAX_INBOUND_SIZE_MB:=10240}"
 : "${HSYNC_VERBOSE:=false}"
+: "${HSYNC_QUIET:=false}"
+: "${HSYNC_DRY_RUN:=false}"
 : "${HSYNC_AUTOTUNE:=true}"
-: "${HSYNC_HTTP_TIMEOUT:=}"
-: "${HSYNC_RECONNECT_DELAY:=}"
+: "${HSYNC_MAX_CONCURRENT_TRANSFERS:=0}"
+: "${HSYNC_MASS_DELETE_GUARD:=true}"
+: "${HSYNC_MASS_DELETE_THRESHOLD:=50}"
+: "${HSYNC_MASS_DELETE_PERCENT:=50}"
+: "${HSYNC_HTTP_TIMEOUT:=30}"
+: "${HSYNC_RECONNECT_DELAY:=5}"
+: "${HSYNC_STABILITY_DELAY:=5}"
+: "${HSYNC_MAX_WAIT_TIMEOUT:=120}"
 : "${HSYNC_TRANSFER_RETRY_MIN_WAIT:=}"
 : "${HSYNC_TRANSFER_RETRY_MAX_WAIT:=}"
 : "${HSYNC_NTP_HOSTS:=}"
+
+# Numeric guard: a hand-edited hsync.env must never make the launcher pass a
+# non-numeric token to a numeric CLI flag.
+is_uint() { case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
+is_uint_gt0() { is_uint "$1" && [ "$1" -gt 0 ]; }
+
+# Enum guard for the hand-editable policy/direction fields.
+case "${HSYNC_SYNC_DIRECTION}" in
+    bidirectional|upload-only|download-only) ;;
+    *) HSYNC_SYNC_DIRECTION=bidirectional ;;
+esac
+case "${HSYNC_SERVER_TRUST}" in
+    chain|ask|accept-new|strict|none) ;;
+    *) HSYNC_SERVER_TRUST=chain ;;
+esac
+case "${HSYNC_BOOTNODE_TRUST}" in
+    ask|accept-new|strict|none) ;;
+    *) HSYNC_BOOTNODE_TRUST=ask ;;
+esac
 
 mkdir -p "${HSYNC_LOG_DIR}" "${HSYNC_RUN_DIR}" "${HSYNC_PATH}"
 
@@ -138,13 +172,16 @@ case "${HSYNC_MODE}" in
         [ "${HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES}" = "true" ] && set -- "$@" --allow-unauthenticated-writes
         [ "${HSYNC_P2P_ALLOW_UNAUTHENTICATED}" = "true" ] && set -- "$@" --allow-unauthenticated-p2p
         [ -n "${HSYNC_P2P_GROUP}" ]                   && set -- "$@" --group "${HSYNC_P2P_GROUP}"
-        set -- "$@" --discovery-timeout "${HSYNC_DISCOVERY_TIMEOUT}"
-        case "${HSYNC_ROLE}" in
-            master)       set -- "$@" --prefer-master ;;
-            slave)        set -- "$@" --sync-direction download-only ;;
-            never-master) set -- "$@" --never-master ;;
-            *)            : ;;   # auto — no extra flag
-        esac
+        is_uint_gt0 "${HSYNC_P2P_PORT}"               && set -- "$@" --listen-port "${HSYNC_P2P_PORT}"
+        # A non-numeric or empty timeout must never reach the CLI: it would
+        # abort the startup, so the client's own default applies instead.
+        is_uint_gt0 "${HSYNC_DISCOVERY_TIMEOUT}"      && set -- "$@" --discovery-timeout "${HSYNC_DISCOVERY_TIMEOUT}"
+        # A p2p master is always bidirectional, so "prefer master" cannot be
+        # combined with a one-way direction (the client rejects that pair).
+        if [ "${HSYNC_PREFER_MASTER}" = "true" ] && [ "${HSYNC_SYNC_DIRECTION}" = "bidirectional" ]; then
+            set -- "$@" --prefer-master
+        fi
+        [ "${HSYNC_NEVER_MASTER}" = "true" ]          && set -- "$@" --never-master
         ;;
     server)
         if [ -z "${HSYNC_SERVER}" ]; then
@@ -157,20 +194,61 @@ case "${HSYNC_MODE}" in
         ;;
 esac
 
-[ "${HSYNC_INTERVAL}" -gt 0 ] 2>/dev/null && set -- "$@" --interval "${HSYNC_INTERVAL}"
+# Periodic full check: 0 disables it. The client has no CLI "off" for
+# --interval (absence means its own default), so the off state travels through
+# the environment and overrides an ambient HSYNC_RESYNC.
+if is_uint_gt0 "${HSYNC_INTERVAL}"; then
+    set -- "$@" --interval "${HSYNC_INTERVAL}"
+else
+    export HSYNC_RESYNC=0
+fi
 [ "${HSYNC_IGNORE_DELETE}" = "true" ]  && set -- "$@" --ignore-delete
-[ "${HSYNC_NO_COMPRESSION}" = "true" ] && set -- "$@" --no-compression
+[ "${HSYNC_COMPRESSION_ENABLED}" = "false" ] && set -- "$@" --no-compression
 [ "${HSYNC_DELTA_ENABLED}" = "false" ] && set -- "$@" --no-delta
-[ -n "${HSYNC_DELTA_MIN_FILE_SIZE}" ]     && set -- "$@" --delta-min-file-size "${HSYNC_DELTA_MIN_FILE_SIZE}"
-[ -n "${HSYNC_DELTA_MIN_FILE_SIZE_P2P}" ] && set -- "$@" --delta-min-file-size-p2p "${HSYNC_DELTA_MIN_FILE_SIZE_P2P}"
+[ "${HSYNC_DRY_RUN}" = "true" ]        && set -- "$@" --dry-run
+set -- "$@" --sync-direction "${HSYNC_SYNC_DIRECTION}"
+# Relative subfolder only: an absolute path would escape the bucket root.
+case "${HSYNC_FILTER_PATH}" in
+    ''|/*) ;;
+    *) set -- "$@" --subdir "${HSYNC_FILTER_PATH}" ;;
+esac
+if [ -n "${HSYNC_IGNORE_PATTERNS}" ]; then
+    _old_ifs=$IFS
+    IFS=','
+    set -f
+    for _pattern in ${HSYNC_IGNORE_PATTERNS}; do
+        [ -n "${_pattern}" ] && set -- "$@" --ignore-pattern "${_pattern}"
+    done
+    set +f
+    IFS=$_old_ifs
+fi
+# Delta floors are edited in KB (the desktop unit) and passed in bytes.
+is_uint "${HSYNC_DELTA_MIN_FILE_SIZE}" \
+    && set -- "$@" --delta-min-file-size "$(( HSYNC_DELTA_MIN_FILE_SIZE * 1024 ))"
+is_uint "${HSYNC_DELTA_MIN_FILE_SIZE_P2P}" \
+    && set -- "$@" --delta-min-file-size-p2p "$(( HSYNC_DELTA_MIN_FILE_SIZE_P2P * 1024 ))"
 [ -n "${HSYNC_MAX_BW_UPLOAD}" ]        && set -- "$@" --limit-upload "${HSYNC_MAX_BW_UPLOAD}"
 [ -n "${HSYNC_MAX_BW_DOWNLOAD}" ]      && set -- "$@" --limit-download "${HSYNC_MAX_BW_DOWNLOAD}"
-[ -n "${HSYNC_MIN_FREE_DISK}" ]     && set -- "$@" --min-free-disk-space "${HSYNC_MIN_FREE_DISK}"
-[ -n "${HSYNC_MAX_INBOUND_SIZE_MB}" ] && set -- "$@" --max-inbound-size "${HSYNC_MAX_INBOUND_SIZE_MB}"
+[ -n "${HSYNC_MIN_FREE_DISK}" ]        && set -- "$@" --min-free-disk-space "${HSYNC_MIN_FREE_DISK}"
+is_uint "${HSYNC_MAX_INBOUND_SIZE_MB}" && set -- "$@" --max-inbound-size "${HSYNC_MAX_INBOUND_SIZE_MB}"
+is_uint_gt0 "${HSYNC_MAX_CONCURRENT_TRANSFERS}" \
+    && set -- "$@" --max-concurrent-transfers "${HSYNC_MAX_CONCURRENT_TRANSFERS}"
+[ "${HSYNC_MASS_DELETE_GUARD}" = "false" ] && set -- "$@" --no-mass-delete-guard
+is_uint "${HSYNC_MASS_DELETE_THRESHOLD}" \
+    && set -- "$@" --mass-delete-threshold "${HSYNC_MASS_DELETE_THRESHOLD}"
+is_uint "${HSYNC_MASS_DELETE_PERCENT}" \
+    && set -- "$@" --mass-delete-percent "${HSYNC_MASS_DELETE_PERCENT}"
 [ "${HSYNC_VERBOSE}" = "true" ]        && set -- "$@" --verbose
+[ "${HSYNC_QUIET}" = "true" ]          && set -- "$@" --quiet
 [ "${HSYNC_AUTOTUNE}" = "false" ]      && set -- "$@" --no-autotune
-[ -n "${HSYNC_HTTP_TIMEOUT}" ]         && set -- "$@" --http-timeout "${HSYNC_HTTP_TIMEOUT}"
-[ -n "${HSYNC_RECONNECT_DELAY}" ]      && set -- "$@" --retry-delay "${HSYNC_RECONNECT_DELAY}"
+is_uint "${HSYNC_HTTP_TIMEOUT}"        && set -- "$@" --http-timeout "${HSYNC_HTTP_TIMEOUT}"
+is_uint "${HSYNC_RECONNECT_DELAY}"     && set -- "$@" --retry-delay "${HSYNC_RECONNECT_DELAY}"
+is_uint "${HSYNC_STABILITY_DELAY}"     && set -- "$@" --stability-delay "${HSYNC_STABILITY_DELAY}"
+is_uint "${HSYNC_MAX_WAIT_TIMEOUT}"    && set -- "$@" --max-wait-timeout "${HSYNC_MAX_WAIT_TIMEOUT}"
+if [ "${HSYNC_MODE}" = "server" ]; then
+    [ "${HSYNC_INSECURE}" = "true" ] && set -- "$@" --insecure
+    [ -n "${HSYNC_CA_CERT}" ]        && set -- "$@" --ca-cert "${HSYNC_CA_CERT}"
+fi
 
 # ---------------------------------------------------------------------------
 # Launch under nohup. Secrets are exported (not passed as flags) so the binary

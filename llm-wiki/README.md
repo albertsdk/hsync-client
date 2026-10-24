@@ -25,7 +25,7 @@ one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
 | [modules/remote-mode.md](modules/remote-mode.md) | server mode: `remote_websocket.py`, REST via `utils` session, `server_trust.py` server TLS trust, reconnect |
 | [modules/p2p-mode.md](modules/p2p-mode.md) | `p2p_peers.py` + `p2p_discovery.py` interface + `p2p_discovery_mdns.py` / `p2p_discovery_hybrid.py` (mDNS + bootnode over one shared manager) / `boot_client.py` + `stun.py` (bootnode plan) discovery/election, `p2p_server.py`, `p2p_websocket.py`, `p2p_handler.py`, `pinning.py`, `known_hosts.py` + `bootnode_trust.py` + `server_trust.py` (trust stores), `trust_messages.py` (shared SSH-style trust prose), `ssl_utils.py`, `identity.py` (device identity + instance lock) |
 | [modules/cli-config.md](modules/cli-config.md) | `cli.py`, `main_logic.py`, `config.py`, `constants.py` |
-| [modules/wd-os5-web.md](modules/wd-os5-web.md) | WD My Cloud OS5 web UI (`packaging/wd-os5/Apkg/web`) + connect-command generator |
+| [modules/wd-os5-web.md](modules/wd-os5-web.md) | WD My Cloud OS5 web UI (`packaging/wd-os5/Apkg/web`): config endpoints, ignore/trust/probe/reset actions, connect-command generator |
 | [modules/autotune.md](modules/autotune.md) | `autotune.py` — adaptive tuning of timeout, retry & concurrency |
 | [modules/benchmarks.md](modules/benchmarks.md) | L1 micro-benchmark suite + L2 loopback p2p peer-download bench (`bench/`): tiers, scenario→code anchors, methodology, findings |
 | [data-models.md](data-models.md) | reused common models + client-local state stores (sync_state, tombstones, pins) |
