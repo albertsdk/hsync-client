@@ -88,7 +88,7 @@ requester (`download_file`, `P2PSourceResolver`, telemetry) and the peer seeder.
 | `mint_50(memory)` / `mint_50_then_flush` | offline-deletion mint loop end-to-end (`record_deletion_by_key(persist=False)` × 50 + one `flush`) |
 | `merge_payload(dominant)` | `tombstones.merge_payload` (`hsync_client/tombstones.py::merge_payload`) — causal merge + persist |
 | `arbitrate_upload(first\|dominant\|superseded\|conflict)` | `arbitration.arbitrate_upload` (`hsync_client/arbitration.py::arbitrate_upload`) — client store/cid binding over `resolve_three_way` |
-| `conflicted_copy_name` | `arbitration.conflicted_copy_name` (`hsync_client/arbitration.py::conflicted_copy_name`) — ADR-0021 loser-path builder |
+| `conflicted_copy_name` | `hsync-common/hsync_common/arbitration.py::conflicted_copy_name` — ADR-0021 loser-path builder (re-exported by `hsync_client/arbitration.py`) |
 | `compare_files(in_sync\|download\|upload\|conflict_*)` | `sync._compare_files` (`hsync_client/sync.py::_compare_files`) — per-file causal decision over `resolve_three_way` |
 | `tombstone_clock_dominates(dom\|sub\|invalid)` | `sync._tombstone_clock_dominates` (`hsync_client/sync.py::_tombstone_clock_dominates`) — deletion proof via `compare_vclocks` |
 | `tombstone_deletes_local(delete\|keep)` | `sync._tombstone_deletes_local` (`hsync_client/sync.py::_tombstone_deletes_local`) |
@@ -185,7 +185,7 @@ producing false positives. A scenario present in `before` but missing from
   `resolve_three_way` cost dominates, the outcome (accept/supersede/conflict)
   adds nothing measurable.
 * **Client hot-path micro-opts (`ed050a3`, `bench_result.txt` 2026-09-23)** —
-  `conflicted_copy_name` parses the path once (`arbitration.py::conflicted_copy_name`)
+  `conflicted_copy_name` parses the path once (`hsync-common/hsync_common/arbitration.py::conflicted_copy_name`)
   (~0.0052→0.0028 ms, **~1.9x**); autotune drops the per-call constants import
   and hoists the storage base-concurrency dict (`derive_profile` ~0.0023→0.0019 ms,
   `derive_concurrency(ssd,mid)` ~0.0005→0.0003 ms); `get_sync_actions` reuses the
