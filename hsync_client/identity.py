@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from hsync_common.models.event import is_valid_cid
+from hsync_common.state_paths import state_path
 from loguru import logger as log
 
 from hsync_client._filelock import try_lock, unlock
@@ -73,16 +74,14 @@ __all__ = [
 
 
 def default_device_dir() -> Path:
-    """Resolve the device identity dir: ``$HSYNC_DEVICE_DIR`` or an OS state dir.
+    """Resolve the device identity dir: ``$HSYNC_DEVICE_DIR`` or the state dir.
 
     This is the single source of truth for the identity directory:
-    ``ssl_utils.default_master_cert_dir`` delegates here.
+    ``ssl_utils.default_master_cert_dir`` delegates here. Without an explicit
+    override it lives under ``HSYNC_STATE_DIR`` (``<state dir>/device``), so
+    relocating the installation state moves the identity with it.
     """
-    override = os.environ.get(DEVICE_DIR_ENV)
-    if override:
-        return Path(override)
-    base = os.environ.get("XDG_STATE_HOME") or os.path.join(Path.home(), ".local", "state")
-    return Path(base) / "hsync" / "device"
+    return state_path("device", override_env=DEVICE_DIR_ENV)
 
 
 def default_locks_dir(device_dir: Path | None = None) -> Path:

@@ -191,6 +191,7 @@ class TestDefaultMasterCertDir:
     def test_xdg_state_home(self, monkeypatch):
         """Falls back to $XDG_STATE_HOME when no override is set."""
         monkeypatch.delenv("HSYNC_DEVICE_DIR", raising=False)
+        monkeypatch.delenv("HSYNC_STATE_DIR", raising=False)
         monkeypatch.setenv("XDG_STATE_HOME", "/xdg/state")
         result = default_master_cert_dir()
         assert str(result) == os.path.join("/xdg/state", "hsync", "device")
@@ -198,6 +199,7 @@ class TestDefaultMasterCertDir:
     def test_default_local_state(self, monkeypatch):
         """Falls back to ~/.local/state when nothing else is set."""
         monkeypatch.delenv("HSYNC_DEVICE_DIR", raising=False)
+        monkeypatch.delenv("HSYNC_STATE_DIR", raising=False)
         monkeypatch.delenv("XDG_STATE_HOME", raising=False)
         result = default_master_cert_dir()
         assert result.name == "device"

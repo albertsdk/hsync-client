@@ -18,10 +18,10 @@ Pins live outside the synced bucket (an OS state directory, overridable via
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from hsync_common.protocol.pairing import PinDecision, evaluate_pin, normalize_fingerprint
+from hsync_common.state_paths import state_path
 from hsync_common.time_utils import utc_now_iso
 
 from hsync_client._trust_store import JsonStore, StoreError
@@ -44,12 +44,8 @@ class PinStoreError(StoreError):
 
 
 def default_pin_store_path() -> Path:
-    """Resolve the pin-store path: ``$HSYNC_P2P_PIN_FILE`` or an OS state dir."""
-    override = os.environ.get(PIN_FILE_ENV)
-    if override:
-        return Path(override)
-    base = os.environ.get("XDG_STATE_HOME") or os.path.join(Path.home(), ".local", "state")
-    return Path(base) / "hsync" / "p2p_known_peers.json"
+    """Resolve the pin-store path: ``$HSYNC_P2P_PIN_FILE`` or the state dir."""
+    return state_path("p2p_known_peers.json", override_env=PIN_FILE_ENV)
 
 
 def _pin_key(cid: str, bucket: str) -> str:

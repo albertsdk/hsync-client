@@ -190,7 +190,7 @@ systemd unit's `ExecStart`; the rest are consumed directly by the hsync binary.
 | `HSYNC_P2P_GROUP` | *(empty)* | Restrict discovery to a group |
 | `HSYNC_P2P_KEY` | *(empty)* | Shared secret for peer authentication (also the bootnode group key for protected/private bootnodes) |
 | `HSYNC_DEVICE_DIR` | `/var/lib/hsync/device` | Directory for the persistent device identity (device ID + p2p keypair) and the per-folder sync-state DBs (`syncstate/<uuid>.db`, `syncstate/index.db`) |
-| `HSYNC_STATE_DIR` | `/var/lib/hsync/state` | Installation state directory (client shows it in the verbose log only; the server keeps its per-bucket state here) |
+| `HSYNC_STATE_DIR` | `/var/lib/hsync/state` | Installation state directory: the server's per-bucket state and the default parent of the device identity, trust stores and p2p pins when their own override is unset |
 | `HSYNC_LOCKS_DIR` | `/var/lib/hsync/locks` | Directory for the per-directory instance locks (`<sha256>.lock` per synced directory) |
 | `HSYNC_P2P_PIN_FILE` | `/var/lib/hsync/p2p_known_peers.json` | File storing pinned fingerprints of known p2p peers (TOFU) |
 | `HSYNC_BOOTNODE_TRUST_FILE` | `/var/lib/hsync/bootnode_known_hosts.json` | File storing trusted bootnode fingerprints (known-hosts store) |

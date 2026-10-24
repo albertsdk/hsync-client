@@ -909,10 +909,21 @@ or
 when
 .I XDG_STATE_HOME
 is unset).
-Used by the server for its per-bucket state; the client only shows the
-resolved value in its verbose startup log and keeps its sync state under
-the device dir instead (see
-.BR HSYNC_DEVICE_DIR ).
+This is also the default parent of the client's persistent state: the device
+identity lives in
+.IR device/ ,
+and the trusted keys live in
+.IR server_known_hosts.json ,
+.IR bootnode_known_hosts.json
+and
+.IR p2p_known_peers.json .
+Set
+.BR HSYNC_DEVICE_DIR ,
+.BR HSYNC_SERVER_TRUST_FILE ,
+.BR HSYNC_BOOTNODE_TRUST_FILE
+or
+.BR HSYNC_P2P_PIN_FILE
+to move one item out of it. The server keeps its per-bucket state here.
 .TP
 .B HSYNC_STATE_DB
 Explicit, process-wide sync-state database path. When set, the client opens

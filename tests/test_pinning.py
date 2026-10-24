@@ -42,9 +42,16 @@ class TestDefaultPinStorePath:
 
     def test_xdg_state_home_is_used_when_no_override(self, tmp_path, monkeypatch):
         monkeypatch.delenv(PIN_FILE_ENV, raising=False)
+        monkeypatch.delenv("HSYNC_STATE_DIR", raising=False)
         monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
         path = default_pin_store_path()
         assert path == tmp_path / "hsync" / "p2p_known_peers.json"
+
+    def test_state_dir_is_the_default_parent(self, tmp_path, monkeypatch):
+        """HSYNC_STATE_DIR relocates the pins together with the rest of the state."""
+        monkeypatch.delenv(PIN_FILE_ENV, raising=False)
+        monkeypatch.setenv("HSYNC_STATE_DIR", str(tmp_path / "state"))
+        assert default_pin_store_path() == tmp_path / "state" / "p2p_known_peers.json"
 
 
 class TestPinStore:

@@ -22,12 +22,12 @@ Consumers: ``hsync-client`` (server connect path, ``hsync trust server``).
 
 from __future__ import annotations
 
-import os
 import socket
 import ssl
 from pathlib import Path
 
 from hsync_common.protocol.tls_trust import TrustPolicy
+from hsync_common.state_paths import state_path
 
 from hsync_client._trust_store import StoreError
 from hsync_client.known_hosts import KnownHostsStore
@@ -55,12 +55,8 @@ class ServerTrustStoreError(StoreError):
 
 
 def default_server_trust_path() -> Path:
-    """Resolve the trust-store path: ``$HSYNC_SERVER_TRUST_FILE`` or an OS state dir."""
-    override = os.environ.get(SERVER_TRUST_FILE_ENV)
-    if override:
-        return Path(override)
-    base = os.environ.get("XDG_STATE_HOME") or os.path.join(Path.home(), ".local", "state")
-    return Path(base) / "hsync" / "server_known_hosts.json"
+    """Resolve the trust-store path: ``$HSYNC_SERVER_TRUST_FILE`` or the state dir."""
+    return state_path("server_known_hosts.json", override_env=SERVER_TRUST_FILE_ENV)
 
 
 class ServerTrustStore(KnownHostsStore):

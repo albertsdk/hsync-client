@@ -59,7 +59,7 @@ out-of-band step.
 | `HSYNC_SERVER_TRUST` | TLS trust policy (`chain`/`ask`/`accept-new`/`strict`/`none`) | `chain` |
 | `HSYNC_SERVER_FINGERPRINT` | Certificate fingerprint(s) to pin (up to two) | — |
 | `HSYNC_SERVER_TOFU` | Trust the certificate on first use | `false` |
-| `HSYNC_SERVER_TRUST_FILE` | File storing the trusted server fingerprints | `$XDG_STATE_HOME/hsync/server_known_hosts.json` |
+| `HSYNC_SERVER_TRUST_FILE` | File storing the trusted server fingerprints | `$HSYNC_STATE_DIR/server_known_hosts.json`; the XDG/local-state path when the state dir is unset |
 | `HSYNC_DELTA_MIN_FILE_SIZE` | Min file size for delta transfer in server mode | `262144` (256 KB) |
 
 Bucket, local path, sync mode (`--once`), and sync direction are **CLI flags**, not

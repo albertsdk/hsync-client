@@ -97,8 +97,8 @@ Both must be explicit: a TTY or `--allow-deletions` never grants them.
 | `HSYNC_NEVER_MASTER` | Never become master | `false` |
 | `HSYNC_DEVICE_DIR` | Device identity dir (device ID + p2p keypair + per-folder sync-state DBs `syncstate/<uuid>.db`, `syncstate/index.db`) | `$XDG_STATE_HOME/hsync/device` or `~/.local/state/hsync/device` |
 | `HSYNC_LOCKS_DIR` | Instance-lock dir (`<sha256>.lock` per synced directory) | `$XDG_RUNTIME_DIR/hsync/locks`, else `<device-dir>/locks` |
-| `HSYNC_P2P_PIN_FILE` | Pinned fingerprints of known p2p peers (TOFU) | `$XDG_STATE_HOME/hsync/p2p_known_peers.json` or `~/.local/state/hsync/p2p_known_peers.json` |
-| `HSYNC_BOOTNODE_TRUST_FILE` | Trusted bootnode fingerprints (known-hosts store) | `$XDG_STATE_HOME/hsync/bootnode_known_hosts.json` or `~/.local/state/hsync/bootnode_known_hosts.json` |
+| `HSYNC_P2P_PIN_FILE` | Pinned fingerprints of known p2p peers (TOFU) | `$HSYNC_STATE_DIR/p2p_known_peers.json`; `$XDG_STATE_HOME/hsync/…` or `~/.local/state/hsync/…` when the state dir is unset |
+| `HSYNC_BOOTNODE_TRUST_FILE` | Trusted bootnode fingerprints (known-hosts store) | `$HSYNC_STATE_DIR/bootnode_known_hosts.json`; the XDG/local-state path when the state dir is unset |
 | `HSYNC_P2P_REQUIRE_PAIRING` | Require pairing confirmation | `false` |
 | `HSYNC_DISCOVERY_TIMEOUT` | p2p peer discovery timeout in seconds (`0` = indefinitely) | `0` |
 | `HSYNC_HEARTBEAT_INTERVAL` | LAN mDNS re-announce / liveness-evaluation cadence in seconds (`1`–`60`) | `5` |

@@ -97,8 +97,15 @@ class TestDeviceDirResolution:
 
     def test_xdg_state_home_default(self, monkeypatch):
         monkeypatch.delenv(DEVICE_DIR_ENV, raising=False)
+        monkeypatch.delenv("HSYNC_STATE_DIR", raising=False)
         monkeypatch.setenv("XDG_STATE_HOME", "/xdg/state")
         assert str(default_device_dir()) == os.path.join("/xdg/state", "hsync", "device")
+
+    def test_state_dir_is_the_default_parent(self, monkeypatch, tmp_path):
+        """HSYNC_STATE_DIR relocates the identity together with the rest of the state."""
+        monkeypatch.delenv(DEVICE_DIR_ENV, raising=False)
+        monkeypatch.setenv("HSYNC_STATE_DIR", str(tmp_path / "state"))
+        assert default_device_dir() == tmp_path / "state" / "device"
 
     def test_master_cert_dir_delegates_to_device_dir(self, monkeypatch):
         from hsync_client.ssl_utils import default_master_cert_dir

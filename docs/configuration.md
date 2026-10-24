@@ -187,7 +187,7 @@ identity marker.
 | Variable | Description | Default |
 |---|---|---|
 | `HSYNC_DEVICE_DIR` | Directory holding the device identity **and** the per-folder sync-state DBs | `$XDG_STATE_HOME/hsync/device` or `~/.local/state/hsync/device` |
-| `HSYNC_STATE_DIR` | Installation state directory (server-side per-bucket state; also the default parent of the device dir) | `$XDG_STATE_HOME/hsync` or `~/.local/state/hsync` |
+| `HSYNC_STATE_DIR` | Installation state directory: the server's per-bucket state and the default parent of the device identity, the trust stores and the p2p pins (each keeps its own override) | `$XDG_STATE_HOME/hsync` or `~/.local/state/hsync` |
 | `HSYNC_STATE_DB` | Explicit single sync-state DB for this process (overrides the per-folder layout) | unset |
 
 ## Tuning for containers and VMs
