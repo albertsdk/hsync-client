@@ -446,7 +446,10 @@ design).
 - The `tests/conftest.py` autouse fixture `_kill_orphan_hsync_processes`
   terminates orphaned `hsync_client` subprocesses (direct children of the
   pytest PID, via `pgrep -P`) after each test, preventing stale mDNS peers
-  from cascading into subsequent tests.
+  from cascading into subsequent tests. It performs a single `pgrep` and
+  returns immediately when no child exists (the common non-BB path); the
+  SIGTERM → bounded wait → SIGKILL grace period is spent only when a child is
+  actually present.
 
 **Known limitations**:
 - The tests are timing-sensitive by design (multi‑process + mDNS + election

@@ -2,6 +2,7 @@
 Tests for client file event handler functionality.
 """
 
+import threading
 import time
 from unittest.mock import ANY, MagicMock, patch
 
@@ -1088,12 +1089,20 @@ class TestSlaveFileEventHandler:
     def test_wait_pending_timeout(self, handler):
         """Test wait_pending returns count of timed-out operations."""
 
-        def slow_op():
-            time.sleep(5)
+        release = threading.Event()
 
-        handler._start_operation(slow_op, name="slow")
-        timed_out = handler.wait_pending(timeout=0.1)
-        assert timed_out >= 1
+        def slow_op():
+            # Block until the test releases it: the operation must outlive the
+            # 0.1 s wait below, but must not outlive the test (a fixed sleep
+            # would keep a non-daemon pool worker alive past teardown).
+            release.wait(timeout=5)
+
+        try:
+            handler._start_operation(slow_op, name="slow")
+            timed_out = handler.wait_pending(timeout=0.1)
+            assert timed_out >= 1
+        finally:
+            release.set()
 
     def test_on_created_defers_non_empty_file_upload(self, handler, tmp_path):
         """A non-empty regular file at on_created is NOT uploaded immediately;

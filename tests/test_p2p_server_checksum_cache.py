@@ -11,7 +11,6 @@ an unchanged file, recomputed after a content change, header values match
 the actual content).
 """
 
-import time
 from hashlib import sha256 as _sha256
 from http.client import HTTPConnection
 from unittest.mock import patch
@@ -102,7 +101,6 @@ class TestDownloadChecksumCacheIntegration:
         port = get_free_port()
         srv = P2PServer(port=port)
         srv.start()
-        time.sleep(0.1)
         yield srv, port
         srv.stop()
 

@@ -534,7 +534,6 @@ class TestLANServerHardening:
         port = get_free_port()
         server = P2PServer(port=port)
         server.start()
-        time.sleep(0.1)
         yield server, port
         server.stop()
 

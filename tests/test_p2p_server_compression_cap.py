@@ -1,7 +1,6 @@
 """Regression tests for bounded P2P compressed-download staging."""
 
 import tempfile
-import time
 from unittest.mock import patch
 
 import pytest
@@ -19,7 +18,6 @@ def server():
     port = get_free_port()
     srv = P2PServer(port=port)
     srv.start()
-    time.sleep(0.1)
     yield srv, port
     srv.stop()
 

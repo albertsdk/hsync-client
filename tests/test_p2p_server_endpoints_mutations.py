@@ -2,7 +2,6 @@
 Tests for P2P embedded HTTP server endpoints.
 """
 
-import time
 from unittest.mock import patch
 
 import pytest
@@ -26,7 +25,6 @@ class TestLANRequestHandlerCreateDir:
         port = get_free_port()
         server = P2PServer(port=port)
         server.start()
-        time.sleep(0.1)
         yield server, port
         server.stop()
 
@@ -117,7 +115,6 @@ class TestLANRequestHandlerDELETE:
         port = get_free_port()
         server = P2PServer(port=port)
         server.start()
-        time.sleep(0.1)
         yield server, port
         server.stop()
 
@@ -193,7 +190,6 @@ class TestLANRequestHandlerPATCH:
         port = get_free_port()
         server = P2PServer(port=port)
         server.start()
-        time.sleep(0.1)
         yield server, port
         server.stop()
 
@@ -302,7 +298,6 @@ class TestLANRequestHandlerSymlink:
         port = get_free_port()
         server = P2PServer(port=port)
         server.start()
-        time.sleep(0.1)
         yield server, port
         server.stop()
 

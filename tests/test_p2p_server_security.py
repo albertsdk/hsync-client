@@ -2,7 +2,6 @@
 Tests for P2P embedded HTTP server security.
 """
 
-import time
 from unittest.mock import patch
 
 import pytest
@@ -23,7 +22,6 @@ class TestLANRequestHandlerDownloadSecurity:
         port = get_free_port()
         server = P2PServer(port=port)
         server.start()
-        time.sleep(0.1)
         yield server, port
         server.stop()
 
@@ -61,7 +59,6 @@ class TestLANRequestHandlerUploadSecurity:
         port = get_free_port()
         server = P2PServer(port=port)
         server.start()
-        time.sleep(0.1)
         yield server, port
         server.stop()
 
@@ -98,7 +95,6 @@ class TestLANRequestHandlerDeleteSecurity:
         port = get_free_port()
         server = P2PServer(port=port)
         server.start()
-        time.sleep(0.1)
         yield server, port
         server.stop()
 
@@ -127,7 +123,6 @@ class TestLANRequestHandlerRenameSecurity:
         port = get_free_port()
         server = P2PServer(port=port)
         server.start()
-        time.sleep(0.1)
         yield server, port
         server.stop()
 
@@ -158,7 +153,6 @@ class TestLANUploadAbsoluteCap:
         port = get_free_port()
         server = P2PServer(port=port)
         server.start()
-        time.sleep(0.1)
         yield server, port
         server.stop()
 
@@ -258,7 +252,6 @@ class TestLANUploadCidValidation:
         port = get_free_port()
         server = P2PServer(port=port)
         server.start()
-        time.sleep(0.1)
         yield server, port
         server.stop()
 
@@ -328,7 +321,6 @@ class TestLANMultipartCaps:
         port = get_free_port()
         server = P2PServer(port=port)
         server.start()
-        time.sleep(0.1)
         yield server, port
         server.stop()
 
@@ -360,7 +352,6 @@ class TestLANRequestHandlerBucketNotConfigured:
         port = get_free_port()
         server = P2PServer(port=port)
         server.start()
-        time.sleep(0.1)
         yield server, port
         server.stop()
 

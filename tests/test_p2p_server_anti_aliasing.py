@@ -8,7 +8,6 @@ points — the file listing and the realtime watcher broadcast — persist the
 self-record, so the advertised clock actually progresses.
 """
 
-import time
 from http.client import HTTPConnection
 from unittest.mock import patch
 
@@ -33,7 +32,6 @@ def _server_fixture():
     port = get_free_port()
     server = P2PServer(port=port)
     server.start()
-    time.sleep(0.1)
     return server, port
 
 

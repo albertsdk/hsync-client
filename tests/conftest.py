@@ -215,8 +215,10 @@ def deterministic_cli_output(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(rich_utils, "FORCE_TERMINAL", False, raising=False)
 
 
-def _terminate_child_hsync_processes() -> None:
-    """Terminate orphaned hsync_client/hsync_server subprocesses of this pytest.
+def _terminate_child_hsync_processes(
+    patterns: tuple[str, ...] = ("hsync_client",),
+) -> None:
+    """Terminate orphaned hsync_client subprocesses of this pytest process.
 
     The P2P black-box tests spawn ``hsync_client`` subprocesses via
     ``_p2p_start`` (``p2p_helpers.py``). When an assertion fires before the
@@ -232,6 +234,11 @@ def _terminate_child_hsync_processes() -> None:
     the P2P BB suite already requires Linux inotify / ``on_closed`` behaviour
     (``file_event_handler.py`` ``SUPPORTS_ON_CLOSED``), so ``pgrep`` is
     guaranteed available. Falls back to a silent skip if ``pgrep`` is missing.
+
+    The common path (no child spawned, i.e. every non-BB test) costs one
+    ``pgrep`` and returns without waiting: the grace period is only spent when
+    there is actually something to reap. ``patterns`` is injectable so the
+    reaping behaviour can be unit-tested with marker children.
     """
     import os
     import signal
@@ -239,38 +246,59 @@ def _terminate_child_hsync_processes() -> None:
     import time
 
     pid = os.getpid()
-    for pattern in ("hsync_client",):
-        try:
-            out = subprocess.run(
-                ["pgrep", "-P", str(pid), "-f", pattern],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-        except FileNotFoundError:
-            return  # pgrep missing: skip (tests manage their own Popen)
-        for line in out.stdout.split():
+
+    def _child_pids() -> list[int]:
+        pids: list[int] = []
+        for pattern in patterns:
             try:
-                os.kill(int(line), signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
-                pass
-    time.sleep(0.3)
-    # SIGKILL survivors
-    for pattern in ("hsync_client",):
+                out = subprocess.run(
+                    ["pgrep", "-P", str(pid), "-f", pattern],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+            except FileNotFoundError:
+                return []  # pgrep missing: nothing to reap (tests own their Popen)
+            pids.extend(int(token) for token in out.stdout.split() if token.isdigit())
+        return pids
+
+    def _is_running(child: int) -> bool:
+        # A zombie keeps its PID until the parent reaps it and SIGTERM cannot
+        # clear it, so treat it as gone: otherwise the grace period would be
+        # burned on every later test until the Popen is collected.
         try:
-            out = subprocess.run(
-                ["pgrep", "-P", str(pid), "-f", pattern],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-        except FileNotFoundError:
+            os.kill(child, 0)
+        except (ProcessLookupError, PermissionError):
+            return False
+        try:
+            with open(f"/proc/{child}/stat", encoding="utf-8") as stat:
+                state = stat.read().rsplit(") ", 1)[1][:1]
+        except (OSError, IndexError):
+            return True
+        return state not in ("Z",)
+
+    pids = _child_pids()
+    if not pids:
+        return  # nothing spawned: no wait on the common path
+
+    for child in pids:
+        try:
+            os.kill(child, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+    deadline = time.monotonic() + 0.3
+    while time.monotonic() < deadline:
+        if not any(_is_running(child) for child in pids):
             return
-        for line in out.stdout.split():
-            try:
-                os.kill(int(line), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
+        time.sleep(0.02)
+
+    # SIGKILL survivors
+    for child in _child_pids():
+        try:
+            os.kill(child, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
 
 
 @pytest.fixture(autouse=True)
@@ -278,8 +306,9 @@ def _kill_orphan_hsync_processes() -> Generator[None]:
     """Reap orphaned P2P subprocesses after each test (see helper above).
 
     Function-scoped because the mDNS cascade happens *between* tests: a peer
-    orphaned by test N interferes with the election of test N+1. Overhead is
-    two ``pgrep`` calls per test (~ms).
+    orphaned by test N interferes with the election of test N+1. The common
+    path costs one ``pgrep`` and no wait; the SIGTERM→SIGKILL grace period is
+    only spent when a child actually exists.
     """
     yield
     _terminate_child_hsync_processes()

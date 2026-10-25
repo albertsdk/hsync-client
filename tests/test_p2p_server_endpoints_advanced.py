@@ -37,7 +37,6 @@ class TestLANRequestHandlerInboundOriginMarking:
         port = get_free_port()
         server = P2PServer(port=port)
         server.start()
-        time.sleep(0.1)
         yield server, port
         server.stop()
 
@@ -206,7 +205,6 @@ class TestLANRequestHandlerRange:
         port = get_free_port()
         server = P2PServer(port=port)
         server.start()
-        time.sleep(0.1)
         yield server, port
         server.stop()
 
@@ -288,7 +286,6 @@ class TestLANRequestHandlerTime:
         port = get_free_port()
         server = P2PServer(port=port)
         server.start()
-        time.sleep(0.1)
         yield server, port
         server.stop()
 
@@ -319,7 +316,6 @@ class TestLANRequestHandlerListFilesFilter:
         port = get_free_port()
         server = P2PServer(port=port)
         server.start()
-        time.sleep(0.1)
         yield server, port
         server.stop()
 
@@ -356,7 +352,6 @@ class TestLANRequestHandlerUpload:
         port = get_free_port()
         server = P2PServer(port=port)
         server.start()
-        time.sleep(0.1)
         yield server, port
         server.stop()
 
@@ -415,7 +410,6 @@ class TestLANServerEdgeCases:
         port = get_free_port()
         server = P2PServer(port=port)
         server.start()
-        time.sleep(0.1)
 
         with patch("hsync_client.p2p_server.log") as mock_log:
             server.start()
@@ -443,7 +437,6 @@ class TestLANRequestHandlerTombstones:
         port = get_free_port()
         server = P2PServer(port=port)
         server.start()
-        time.sleep(0.1)
         yield server, port
         server.stop()
 
