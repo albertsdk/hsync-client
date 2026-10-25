@@ -137,6 +137,28 @@ them), and `cli.run` as the process-level net — the latter importing `loguru`
 the `--version` / `--help` fast paths keep the minimal import surface pinned by
 `tests/test_startup_imports.py`.
 
+**The sinks are closed on exit** (`logger.py::shutdown_logging`, drain then
+`logger.remove()`): `enqueue=True` hands every sink a multiprocessing queue whose
+semaphores belong to the stdlib resource tracker, and a single `--log-file` sink
+accounts for eight of them. A process that ended with the handlers installed made
+the tracker warn `There appear to be 8 leaked semaphore objects` at every stop;
+closing them unregisters the semaphores. `cli.run` calls it in its `finally`, so
+it covers normal exits, `SystemExit`, unhandled errors and signals.
+
+**A stop is a `SIGTERM`, and it unwinds like Ctrl+C**
+(`cli.py::_install_sigterm_handler`): the default action kills the process before
+any `finally` runs, which is why a service stop used to skip the server/P2P
+teardown and leave the sinks open. `cli.run` installs a handler that raises
+`KeyboardInterrupt` in the main thread, so `systemctl stop`, `docker stop` and the
+desktop's Stop button (SIGTERM, then SIGKILL after 5 s) follow the same path as
+`SIGINT`: `run_p2p_mode` catches it, stops its servers, the sinks flush and close,
+and the process exits normally. A **stop is not a failure**, which takes two
+catches in `cli.run`: the plain `KeyboardInterrupt`, and the
+`SystemExit(_INTERRUPTED_EXIT_CODE)` value that Typer produces on its own
+(`typer/core.py::main` converts an interrupt into `Exit(130)` before any handler
+can see it) — the server modes therefore left the run with status 130 until it was
+remapped. Any other exit code is re-raised untouched.
+
 ## State persistence (external SQLite, ADR-0025)
 
 | Store | Module | File | Purpose |

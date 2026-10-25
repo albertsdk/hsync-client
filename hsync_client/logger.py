@@ -304,3 +304,24 @@ def flush_logs() -> None:
         logger.complete()
     except Exception:  # pragma: no cover - flushing must never break the exit path
         pass
+
+
+def shutdown_logging() -> None:
+    """Drain the asynchronous sinks, then close them.
+
+    ``enqueue=True`` gives every sink a multiprocessing queue, and the stdlib
+    resource tracker owns the semaphores behind it: a single ``--log-file`` sink
+    accounts for eight of them. A process that exits with the handlers still
+    installed makes the tracker report ``There appear to be N leaked semaphore
+    objects`` at shutdown, which is exactly what a service stop used to print
+    (the desktop's Stop button sends ``SIGTERM``). Closing the handlers
+    unregisters them, so this is the last logging call of a run: nothing is
+    written anywhere afterwards.
+
+    Consumers: ``cli.run`` (the process entry point, in its ``finally``).
+    """
+    flush_logs()
+    try:
+        logger.remove()
+    except Exception:  # pragma: no cover - closing must never break the exit path
+        pass

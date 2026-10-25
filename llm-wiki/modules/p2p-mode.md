@@ -96,7 +96,12 @@ stay on the pre-connect state while the status bar already said "connected".
 `stdin_commands.py::StdinCommandHandler.run_in_thread` (a plain thread on a
 duplicate of stdin, same line contract as the async reader) for the whole master
 stint and answers `PREVIEW`/`SYNC` through
-`master_status.py::MasterSyncStatus`. The master is the source of the share, so
+`master_status.py::MasterSyncStatus`. That thread waits on stdin **and** on a wake
+pipe (`select`): closing a descriptor does not interrupt a pending `os.read`, so
+`stdin_commands.py::StdinCommandHandler.stop_thread` writes a byte to the wake
+pipe — closing it instead made `_MasterChannel.stop` burn its whole 5 s
+`thread.join(timeout=…)`, the same budget the desktop allows between `SIGTERM`
+and `SIGKILL`. The master is the source of the share, so
 `get_files_remote()` (the configured server URL) says nothing: the classification
 compares the local listing with the identities the devices published in
 `p2p_inventory.py::P2PInventoryStore.held_identities` — **one** bulk query, never

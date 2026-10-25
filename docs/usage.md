@@ -53,6 +53,14 @@ read-only mirror, scripted execution and so on — see the dedicated
 [Examples](examples.md) document, split between server-based and p2p
 deployments.
 
+## Stopping a Run
+
+A continuous run ends gracefully on `Ctrl+C` **and** on `SIGTERM`, which is what
+`systemctl stop`, `docker stop`, a container runtime or the HSYNC Desktop Stop
+button sends. The client stops its servers and watchers, flushes the log and
+exits with code `0` — the same teardown as an interactive interruption. Only a
+`SIGKILL` (`kill -9`), which no process can handle, skips that teardown.
+
 ## Log Labels
 
 `hsync-client` tags every log line with a bracketed action label

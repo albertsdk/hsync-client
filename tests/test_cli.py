@@ -4,6 +4,7 @@
 """Tests for the CLI module using Typer's CliRunner."""
 
 import runpy
+import signal
 from unittest.mock import patch
 
 import pytest
@@ -50,6 +51,76 @@ class TestEntryPoints:
             runpy.run_module("hsync_client.__main__", run_name="__main__")
 
         mock_main.assert_called_once_with()
+
+    def test_sigterm_becomes_a_keyboard_interrupt(self):
+        """SIGTERM must unwind like Ctrl+C, not kill the process outright.
+
+        Regression: the default SIGTERM action terminates immediately, so the
+        ``finally`` blocks that stop the P2P/server tasks never ran, the last log
+        records stayed queued and the sinks kept the semaphores the resource
+        tracker then reported as leaked — the ``8 leaked semaphore objects``
+        warning printed on every stop (the desktop's Stop button sends SIGTERM).
+        """
+        from hsync_client.cli import _raise_keyboard_interrupt
+
+        with pytest.raises(KeyboardInterrupt):
+            _raise_keyboard_interrupt(signal.SIGTERM, None)
+
+    def test_run_installs_the_sigterm_handler(self):
+        """The process entry point wires the handler before running the CLI."""
+        from hsync_client.cli import _install_sigterm_handler, _raise_keyboard_interrupt
+
+        previous = signal.getsignal(signal.SIGTERM)
+        try:
+            _install_sigterm_handler()
+            assert signal.getsignal(signal.SIGTERM) is _raise_keyboard_interrupt
+        finally:
+            signal.signal(signal.SIGTERM, previous)
+
+    def test_run_closes_the_log_sinks_on_every_exit_path(self):
+        """``run`` drains and closes the sinks after the CLI returns or raises."""
+        from hsync_client.cli import run
+
+        with (
+            patch("hsync_client.cli._install_sigterm_handler"),
+            patch("hsync_client.cli.app", side_effect=SystemExit(3)),
+            patch("hsync_client.logger.shutdown_logging") as mock_shutdown,
+        ):
+            with pytest.raises(SystemExit):
+                run()
+
+        mock_shutdown.assert_called_once_with()
+
+    def test_run_turns_typers_interrupted_exit_into_a_clean_stop(self):
+        """Typer's ``Exit(130)`` after an interruption must not fail the run.
+
+        Typer converts ``KeyboardInterrupt`` into ``Exit(130)`` inside its own
+        runner (``typer/core.py::main``), before the exception can reach a
+        handler: without this remap a service stop exited 130, which a service
+        manager records as a failed stop.
+        """
+        from hsync_client.cli import _INTERRUPTED_EXIT_CODE, run
+
+        with (
+            patch("hsync_client.cli._install_sigterm_handler"),
+            patch("hsync_client.cli.app", side_effect=SystemExit(_INTERRUPTED_EXIT_CODE)),
+            patch("hsync_client.logger.shutdown_logging"),
+        ):
+            run()  # returns normally, so the process exits 0
+
+    def test_run_keeps_every_other_exit_code(self):
+        """Only the interruption code is remapped: real failures still exit."""
+        from hsync_client.cli import run
+
+        with (
+            patch("hsync_client.cli._install_sigterm_handler"),
+            patch("hsync_client.cli.app", side_effect=SystemExit(1)),
+            patch("hsync_client.logger.shutdown_logging"),
+        ):
+            with pytest.raises(SystemExit) as excinfo:
+                run()
+
+        assert excinfo.value.code == 1
 
 
 class TestTyperCli:

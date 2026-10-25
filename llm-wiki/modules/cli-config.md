@@ -9,7 +9,7 @@ How flags/env become the running `CONFIG` and how `run_sync` drives a session.
 | `main` (parent callback) | `cli.py::main` | global options `--version` / `--capabilities-json` / `--help-symbols` (typed before the subcommand); no implicit mode |
 | `p2p` | `cli.py::p2p` | p2p subcommand: shared + p2p-only flags, including final `--no-peer-download` opt-out and dangerous `--allow-unauthenticated-writes`; validates and calls `run_sync` |
 | `server` | `cli.py::server` | central-server subcommand: `HOSTNAME[:PORT]` positional + `--port` + shared flags, resolves the server URL eagerly (`HOSTNAME`/`HOSTNAME:PORT` form, else `HSYNC_SERVER` from shell or `--env-file`) and fails fast with `typer.BadParameter` when no server can be resolved, then calls `run_sync` |
-| `run` | `cli.py::run` | console-script entry |
+| `run` | `cli.py::run` | console-script entry: installs the `SIGTERM`→`KeyboardInterrupt` handler (`cli.py::_install_sigterm_handler`, so a service/desktop stop unwinds like Ctrl+C), maps an operator stop to a clean exit (plain `KeyboardInterrupt`, plus Typer's own `Exit(130)` kept in `cli.py::_INTERRUPTED_EXIT_CODE)`), and in its `finally` drains and closes the log sinks (`logger.py::shutdown_logging`) — the close is what releases the semaphores `resource_tracker` would otherwise report as leaked |
 | `collect_subcommand_options` | `cli.py::collect_subcommand_options` | introspects each subcommand's long flags for the capabilities document |
 | `capabilities_json_callback` | `cli.py::capabilities_json_callback` | `--capabilities-json` (per-subcommand introspection via `collect_subcommand_options`) |
 | `_validate_bucket` | `cli.py::_validate_bucket` | bucket flag validation |

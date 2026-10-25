@@ -27,6 +27,7 @@ import contextlib
 import inspect
 import json
 import os
+import select
 import stat
 import threading
 from collections.abc import Callable
@@ -93,8 +94,10 @@ class StdinCommandHandler:
         self._log = log
         self._handlers: dict[str, Callable[..., Any]] = {}
         self._should_stop = False
-        # Duplicate of stdin owned by the thread reader (see run_in_thread).
+        # Duplicate of stdin owned by the thread reader (see run_in_thread) and
+        # the wake pipe that unblocks its pending read on stop.
         self._thread_fd: int | None = None
+        self._wake_w: int | None = None
         self._thread_lock = threading.Lock()
 
     # ── public API ────────────────────────────────────────────────────
@@ -137,9 +140,12 @@ class StdinCommandHandler:
         """Blocking reader for callers that have no event loop.
 
         The p2p serving role runs outside any asyncio loop for most of its life,
-        so it needs the same command channel as the slave paths. Closing the
-        duplicate of stdin in :meth:`stop_thread` unblocks both this read and a
-        pending blocking call.
+        so it needs the same command channel as the slave paths. The loop waits on
+        stdin **and** on a wake pipe, because closing stdin does not interrupt a
+        pending ``os.read`` (the syscall keeps the open file description alive):
+        :meth:`stop_thread` writes a byte to the wake pipe instead. Without it,
+        ``_MasterChannel.stop`` always burned its whole 5 s join timeout — the same
+        budget the desktop allows between ``SIGTERM`` and ``SIGKILL``.
         """
         try:
             dup_fd = os.dup(0)
@@ -155,19 +161,29 @@ class StdinCommandHandler:
             self._log.debug("stdin command reader unavailable: stdin is not a pipe or terminal")
             os.close(dup_fd)
             return
+        wake_r, wake_w = os.pipe()
+        os.set_blocking(wake_w, False)
         with self._thread_lock:
             if self._thread_fd is not None:
-                os.close(dup_fd)
+                for fd in (dup_fd, wake_r, wake_w):
+                    os.close(fd)
                 raise RuntimeError("a stdin thread reader is already active")
             self._thread_fd = dup_fd
+            self._wake_w = wake_w
         self._log.debug("stdin command reader started (thread)")
         buf = bytearray()
         try:
             while not stop.is_set():
                 try:
+                    ready, _, _ = select.select([dup_fd, wake_r], [], [])
+                except (OSError, ValueError):
+                    break  # a descriptor was closed under us
+                if wake_r in ready:
+                    break  # stop_thread
+                try:
                     chunk = os.read(dup_fd, _BoundedLineReader._READ_CHUNK)
                 except OSError:
-                    break  # fd closed by stop_thread
+                    break  # stdin closed by the parent
                 if not chunk:
                     break  # EOF: the parent process closed the pipe
                 buf.extend(chunk)
@@ -185,17 +201,25 @@ class StdinCommandHandler:
         finally:
             with self._thread_lock:
                 self._thread_fd = None
+                self._wake_w = None
+                # Closed under the lock: a concurrent ``stop_thread`` writes to
+                # the pipe from inside it, so the byte can never reach a
+                # descriptor number the process has already reused.
+                for fd in (wake_r, wake_w):
+                    with contextlib.suppress(OSError):
+                        os.close(fd)
             with contextlib.suppress(OSError):
                 os.close(dup_fd)
             self._log.debug("stdin command reader stopped")
 
     def stop_thread(self) -> None:
-        """Unblock :meth:`run_in_thread` by closing its duplicate of stdin."""
+        """Unblock :meth:`run_in_thread` through its wake pipe."""
         with self._thread_lock:
-            fd = self._thread_fd
-        if fd is not None:
+            wake_w = self._wake_w
+            if wake_w is None:
+                return
             with contextlib.suppress(OSError):
-                os.close(fd)
+                os.write(wake_w, b"\0")
 
     def _dispatch_in_thread(self, line: bytes) -> None:
         parsed = self._parse(line)

@@ -320,6 +320,41 @@ class TestSetupLogging:
         with patch("hsync_client.logger.logger.complete", side_effect=RuntimeError("boom")):
             flush_logs()
 
+    def test_shutdown_logging_flushes_then_closes_every_sink(self):
+        """``shutdown_logging`` delivers the last record and closes the handlers.
+
+        Regression: ``enqueue=True`` gives the sink a multiprocessing queue whose
+        semaphores belong to the stdlib resource tracker. A run that ended with
+        the handler still installed made the tracker print ``There appear to be 8
+        leaked semaphore objects`` — one ``--log-file`` sink accounts for eight
+        semaphores — which is the noise the desktop's Stop button (SIGTERM) used
+        to produce on every shutdown. Closing the handlers unregisters them, and
+        the queued record must still reach the file.
+        """
+        from hsync_client.logger import logger as loguru_logger
+        from hsync_client.logger import shutdown_logging
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False) as f:
+            logfile = f.name
+
+        try:
+            log = setup_logging(logfile=logfile)
+            log.error("Last line before the stop")
+            shutdown_logging()
+
+            assert loguru_logger._core.handlers == {}
+            with open(logfile) as f:
+                assert "Last line before the stop" in f.read()
+        finally:
+            os.unlink(logfile)
+
+    def test_shutdown_logging_is_idempotent_and_never_raises(self):
+        """Closing twice is silent: the exit path must never fail on cleanup."""
+        from hsync_client.logger import shutdown_logging
+
+        shutdown_logging()
+        shutdown_logging()
+
 
 class TestInterceptHandler:
     """Tests for InterceptHandler class."""

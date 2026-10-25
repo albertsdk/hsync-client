@@ -13,7 +13,9 @@ namespaces: ``trust`` (certificate pins) and ``state`` (local sync state).
 
 import json
 import re
+import signal
 import sys
+import threading
 from collections.abc import Mapping
 from os import getcwd
 from typing import Annotated, Any, TypedDict, cast
@@ -1826,15 +1828,55 @@ def state_reset(
     )
 
 
+# What Typer's runner exits with after an interruption (``typer/core.py::main``
+# converts ``KeyboardInterrupt``/``EOFError`` into ``Exit(130)``).
+_INTERRUPTED_EXIT_CODE = 130
+
+
+def _raise_keyboard_interrupt(_signum: int, _frame: object) -> None:
+    raise KeyboardInterrupt
+
+
+def _install_sigterm_handler() -> None:
+    """Turn ``SIGTERM`` into ``KeyboardInterrupt`` so a stop shuts down cleanly.
+
+    The default action kills the process on the spot and skips every ``finally``:
+    the P2P/server tasks are never stopped, the last records stay in the
+    asynchronous log queue, and the sinks keep the semaphores the resource
+    tracker then reports as leaked. Raising ``KeyboardInterrupt`` in the main
+    thread reuses the ``SIGINT`` path (``run_p2p_mode`` catches it, stops the
+    servers, flushes), which is what ``systemctl stop``, ``docker stop`` and the
+    desktop's Stop button (``SIGTERM``, then ``SIGKILL`` after 5 s) expect.
+    """
+    # ``signal.signal`` is main-thread only; embedded callers (tests, the
+    # desktop's own process) simply keep the default action.
+    if threading.current_thread() is not threading.main_thread():
+        return
+    signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
+
+
 def run() -> None:
     """Entry point for the CLI application."""
+    _install_sigterm_handler()
     try:
         app()
+    except KeyboardInterrupt:
+        # An operator stop is not a failure: every mode logs its own shutdown and
+        # the process leaves with status 0, without a traceback.
+        pass
+    except SystemExit as exc:
+        # Typer answers an interruption with ``Exit(_INTERRUPTED_EXIT_CODE)``
+        # before the exception reaches a handler (``typer/core.py::main``), so a
+        # SIGTERM in a mode that does not catch ``KeyboardInterrupt`` itself
+        # surfaces here: a stop must be a clean exit, not a failed one.
+        if exc.code != _INTERRUPTED_EXIT_CODE:
+            raise
     finally:
         # Process-level safety net for the asynchronous log sinks: whatever
-        # exit path was taken (normal, SystemExit, unhandled error), the queued
-        # records reach the terminal before the interpreter tears the stream
-        # down.
+        # exit path was taken (normal, SystemExit, unhandled error, SIGTERM),
+        # the queued records reach the terminal and the sinks are closed before
+        # the interpreter tears the stream down — closing them is also what
+        # releases the semaphores ``resource_tracker`` would otherwise report.
         #
         # Drained only when the logging stack was actually initialised: the same
         # entry point serves the fast paths (``--version`` / ``--help``), whose
@@ -1842,6 +1884,6 @@ def run() -> None:
         # dependencies (pinned by ``tests/test_startup_imports.py``), so the
         # import stays lazy and conditional.
         if "hsync_client.logger" in sys.modules:
-            from hsync_client.logger import flush_logs
+            from hsync_client.logger import shutdown_logging
 
-            flush_logs()
+            shutdown_logging()

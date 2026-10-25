@@ -574,3 +574,43 @@ class TestContinuousSyncClientRestart:
             assert (Path(local_dir) / "post.txt").read_bytes() == content
         finally:
             _terminate(proc2)
+
+
+class TestGracefulStop:
+    """A service stop ends a continuous run cleanly (same contract as Ctrl+C)."""
+
+    def test_sigterm_tears_the_run_down_and_releases_the_log_sinks(
+        self, bb_bucket, local_dir, watch_sync
+    ):
+        """``SIGTERM`` must not skip the teardown.
+
+        Regression: the default SIGTERM action killed the client on the spot, so
+        the servers were never stopped and the asynchronous log sinks were never
+        closed — the stdlib resource tracker then printed ``There appear to be 8
+        leaked semaphore objects`` on every stop (a service manager, a container
+        runtime and the desktop's Stop button all send SIGTERM).
+        """
+        log_path = _client_log_path(local_dir)
+        stderr_path = Path(local_dir).parent / "client.log"
+        proc = watch_sync(bb_bucket, local_dir, "--log-file", log_path)
+        assert _wait_for_ready(local_dir, proc, log_path), (
+            "continuous mode did not become ready\n"
+            f"--- client log tail ---\n{_watch_client_log_tail(log_path)}"
+        )
+
+        # When the process is stopped the way a service manager stops it
+        proc.terminate()
+        try:
+            assert proc.wait(timeout=15) == 0, (
+                "a graceful stop must exit cleanly\n"
+                f"--- stderr ---\n{stderr_path.read_text(errors='replace')}\n"
+                f"--- log tail ---\n{_watch_client_log_tail(log_path)}"
+            )
+        finally:
+            _terminate(proc)
+
+        # Then the client ran its own teardown: no traceback from the signal and
+        # no semaphore left behind by the asynchronous log sinks
+        stderr = stderr_path.read_text(errors="replace")
+        assert "Traceback" not in stderr, f"the stop crashed:\n{stderr}"
+        assert "leaked semaphore" not in stderr, f"the sinks were not closed:\n{stderr}"

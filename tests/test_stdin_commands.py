@@ -7,12 +7,25 @@ JSON parsing, and error handling.
 
 import asyncio
 import contextlib
+import os
 import stat
+import threading
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from hsync_client.stdin_commands import StdinCommandHandler
+
+
+def _wait_for(predicate, timeout: float = 5.0) -> bool:
+    """Poll *predicate* until it is true or *timeout* expires."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return bool(predicate())
 
 
 class TestStdinCommandHandlerInit:
@@ -460,3 +473,64 @@ class TestThreadReader:
         handler = StdinCommandHandler(MagicMock())
 
         handler.stop_thread()  # must not raise
+
+    def test_the_thread_reader_dispatches_a_command_line(self):
+        """The select loop still delivers a line written to stdin."""
+        handler = StdinCommandHandler(MagicMock())
+        seen: list[str] = []
+        handler.register("SYNC", lambda **_kw: seen.append("sync"))
+
+        read_fd, write_fd = os.pipe()
+        real_dup = os.dup
+        thread = threading.Thread(
+            target=handler.run_in_thread,
+            args=(threading.Event(),),
+            daemon=True,
+        )
+        try:
+            with patch("os.dup", side_effect=lambda _fd: real_dup(read_fd)):
+                thread.start()
+                assert _wait_for(lambda: handler._thread_fd is not None)
+                os.write(write_fd, b'{"cmd": "SYNC"}\n')
+                assert _wait_for(lambda: seen == ["sync"])
+                handler.stop_thread()
+                thread.join(timeout=2)
+            assert not thread.is_alive()
+        finally:
+            for fd in (read_fd, write_fd):
+                with contextlib.suppress(OSError):
+                    os.close(fd)
+
+    def test_stop_thread_unblocks_a_pending_read_immediately(self):
+        """``stop_thread`` wakes an idle reader instead of waiting a timeout.
+
+        Regression: it used to close the duplicate of stdin, which does **not**
+        interrupt a pending ``os.read`` (the syscall keeps the open file
+        description alive), so ``_MasterChannel.stop`` always burned its whole
+        5 s join timeout — exactly the budget the desktop allows between
+        ``SIGTERM`` and ``SIGKILL``, which could kill the client mid-teardown.
+        """
+        handler = StdinCommandHandler(MagicMock())
+
+        read_fd, write_fd = os.pipe()
+        real_dup = os.dup
+        thread = threading.Thread(
+            target=handler.run_in_thread,
+            args=(threading.Event(),),
+            daemon=True,
+        )
+        try:
+            with patch("os.dup", side_effect=lambda _fd: real_dup(read_fd)):
+                thread.start()
+                assert _wait_for(lambda: handler._thread_fd is not None)
+
+                started = time.monotonic()
+                handler.stop_thread()
+                thread.join(timeout=2)
+                elapsed = time.monotonic() - started
+            assert not thread.is_alive()
+            assert elapsed < 1.0
+        finally:
+            for fd in (read_fd, write_fd):
+                with contextlib.suppress(OSError):
+                    os.close(fd)
