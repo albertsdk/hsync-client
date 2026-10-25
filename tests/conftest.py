@@ -444,11 +444,17 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
 
 
 def _free_port() -> int:
+    """Reserve and release an ephemeral port for the server's wildcard bind.
+
+    The probe binds ``0.0.0.0`` — what ``hsync_server`` binds by default — not
+    loopback: an ephemeral port free on ``127.0.0.1`` can already be taken on
+    another local address, in which case the server's wildcard bind fails.
+    """
     import socket
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        sock.bind(("127.0.0.1", 0))
+        sock.bind(("0.0.0.0", 0))
         return sock.getsockname()[1]
     finally:
         sock.close()
