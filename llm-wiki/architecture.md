@@ -117,10 +117,10 @@ call wait via `logger.complete()`.
 recipe** (`logging.basicConfig(..., level=level)`): a NOTSET root answers
 `True` to `isEnabledFor(DEBUG)`, so every DEBUG line a library emits would
 build a `LogRecord` and walk the stack in `findCaller` before the interceptor
-forwarded it to loguru, whose sink then dropped it — ~26 dropped records per
+forwards it to loguru, whose sink drops it — ~26 wasted records per
 transferred file on a LAN burst, 6.5 µs each against 0.08 µs for the level
-check that now avoids them. Output is unchanged (those records were discarded
-either way); `--debug` raises the root to DEBUG and lets them through.
+check that filters them first. `--debug` raises the root to DEBUG and lets
+them through.
 
 **Exit paths flush the sinks** (`logger.py::flush_logs`, blocking `complete()`
 wrapper, best-effort): an asynchronous sink writes from another thread, so a
@@ -147,9 +147,10 @@ it covers normal exits, `SystemExit`, unhandled errors and signals.
 
 **A stop is a `SIGTERM`, and it unwinds like Ctrl+C**
 (`cli.py::_install_sigterm_handler`): the default action kills the process before
-any `finally` runs, which is why a service stop used to skip the server/P2P
-teardown and leave the sinks open. `cli.run` installs a handler that raises
-`KeyboardInterrupt` in the main thread, so `systemctl stop`, `docker stop` and the
+any `finally` runs, which is why a service stop without the handler skips the
+server/P2P teardown and leaves the sinks open. `cli.run` installs a handler
+that raises `KeyboardInterrupt` in the main thread, so `systemctl stop`,
+`docker stop` and the
 desktop's Stop button (SIGTERM, then SIGKILL after 5 s) follow the same path as
 `SIGINT`: `run_p2p_mode` catches it, stops its servers, the sinks flush and close,
 and the process exits normally. A **stop is not a failure**, which takes two

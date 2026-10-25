@@ -16,16 +16,16 @@ engine (requests/loguru) and never `zeroconf`/`watchdog` (LAN-only) or
 | ------ | ---- | ---- |
 | `sync` | `sync.py::sync` | one full reconcile cycle (p2p_mode flag) |
 | `log_initial_sync_start` | `sync.py::log_initial_sync_start` (above `sync`) | emits the colored `[INITIAL SYNC]` phase marker; called by the three initial-sync entry points (`p2p_handler._run_as_slave`, `remote_websocket.remote_connect`, `main_logic` one-shot) right before the first `sync()` of a run |
-| `periodic_resync` | `sync.py::periodic_resync` | shared RESYNC loop for remote + p2p slave; re-raises `CancelledError`. **Safety-net watchdog**: the skip branch consults `sync_cycle_age()` and escalates to WARNING when the running cycle is older than the RESYNC interval — at that point the loop recovers nothing and previously said so only at DEBUG, so a permanently stuck cycle disabled the only recovery for missed watcher events invisibly. Cycle timing is module bookkeeping (`_sync_cycle_started_at` / `_last_cycle_ended_at` under `_cycle_bookkeeping_lock`, exposed by `sync_cycle_age()` / `seconds_since_last_cycle()`); `sync()` rebinds it under an explicit `global` (a missing declaration would silently bind locals and the watchdog would always read "idle"). Measured cost of the loop itself: a quiescent cycle is **0.23–0.43 s on 2000 files** (0.7 s at 6000, extrapolated) against a 300 s interval, so the safety net is cheap — its risk is silence, not overhead |
-| `get_files_local` | `sync.py::get_files_local` | scan local tree (parallel, adaptive workers `_get_optimal_workers:816`); rejects file-symlinks whose target escapes `LOCAL_BUCKET` via `is_safe_symlink_target` (security: prevents exfiltrating out-of-bucket targets such as `secret -> /etc/passwd`). `os.walk` (followlinks=False) never descends into symlinked dirs, so an in-bucket dir-symlink pointing outside is not traversed. `_get_optimal_workers` bounds the `ThreadPoolExecutor` by the cgroup CPU quota **and**, when a cgroup memory limit is detected (containers), by `get_memory_limit_bytes` / `WORKER_MEMORY_BUDGET_BYTES` (8 MiB/worker); on bare metal the memory probe is `None` and only the CPU quota applies. **Unchanged files are never re-hashed across cycles**: `File.get`'s SHA-256 cache is keyed on the nanosecond stat identity (see `hsync-common` data-models) and `sync()` no longer clears it per cycle — continuous-mode force resyncs are metadata-only. Applies the `--subdir` scope (`CONFIG["FILTER_PATH"]` through `_in_subdir`) so a scoped run restricts the **local** listing too — component-aware (`media` never matches `media2`); without it an upload/bidirectional `--subdir` run would still push files outside the subtree |
+| `periodic_resync` | `sync.py::periodic_resync` | shared RESYNC loop for remote + p2p slave; re-raises `CancelledError`. **Safety-net watchdog**: the skip branch consults `sync_cycle_age()` and escalates to WARNING when the running cycle is older than the RESYNC interval — at that point the loop recovers nothing, and the WARNING is what keeps a permanently stuck cycle from silently disabling the only recovery for missed watcher events. Cycle timing is module bookkeeping (`_sync_cycle_started_at` / `_last_cycle_ended_at` under `_cycle_bookkeeping_lock`, exposed by `sync_cycle_age()` / `seconds_since_last_cycle()`); `sync()` rebinds it under an explicit `global` (a missing declaration would silently bind locals and the watchdog would always read "idle"). Measured cost of the loop itself: a quiescent cycle is **0.23–0.43 s on 2000 files** (0.7 s at 6000, extrapolated) against a 300 s interval, so the safety net is cheap — its risk is silence, not overhead |
+| `get_files_local` | `sync.py::get_files_local` | scan local tree (parallel, adaptive workers `_get_optimal_workers:816`); rejects file-symlinks whose target escapes `LOCAL_BUCKET` via `is_safe_symlink_target` (security: prevents exfiltrating out-of-bucket targets such as `secret -> /etc/passwd`). `os.walk` (followlinks=False) never descends into symlinked dirs, so an in-bucket dir-symlink pointing outside is not traversed. `_get_optimal_workers` bounds the `ThreadPoolExecutor` by the cgroup CPU quota **and**, when a cgroup memory limit is detected (containers), by `get_memory_limit_bytes` / `WORKER_MEMORY_BUDGET_BYTES` (8 MiB/worker); on bare metal the memory probe is `None` and only the CPU quota applies. **Unchanged files are never re-hashed across cycles**: `File.get`'s SHA-256 cache is keyed on the nanosecond stat identity (see `hsync-common` data-models) and `sync()` keeps it across cycles — continuous-mode force resyncs are metadata-only. Applies the `--subdir` scope (`CONFIG["FILTER_PATH"]` through `_in_subdir`) so a scoped run restricts the **local** listing too — component-aware (`media` never matches `media2`); without it an upload/bidirectional `--subdir` run would still push files outside the subtree |
 | `get_files_remote` | `sync.py::get_files_remote` | fetch remote file list |
 | `get_tombstones_remote` / `push_tombstones_remote` | `sync.py::get_tombstones_remote` / `sync.py::push_tombstones_remote` | tombstone exchange |
-| offline-deletion tombstone minting | `sync.py`, within `sync()` | a merge-base entry missing from the local filesystem is tombstoned (deleted while offline, or below the watcher's radar in a one-shot run). The existence check uses the ignore-agnostic `_existing_file_paths` (`sync.py`) snapshot only — it enumerates every real file bypassing the active `IgnoreMatcher`, so a file hidden by `.hsyncignore` is never mistaken for a deletion ("exclude protects, it does not delete", rsync `--exclude`, Syncthing `.stignore`); it is a superset of the syncable listing for on-disk files, so the syncable `local_keys` set is redundant and was dropped to fix a mid-scan race (a file deleted while `get_files_remote` retries bridge a transiently-unreachable master would otherwise survive in the stale listing and be resurrected). The same snapshot keeps the merge base alive across `retain`, so re-including the file later reconciles with full causal history instead of a false conflict. Paths are normalized via `relpath_in_bucket` before hashing (absolute-path hashes never match the relative-keyed store) |
+| offline-deletion tombstone minting | `sync.py`, within `sync()` | a merge-base entry missing from the local filesystem is tombstoned (deleted while offline, or below the watcher's radar in a one-shot run). The existence check uses the ignore-agnostic `_existing_file_paths` (`sync.py`) snapshot only — it enumerates every real file bypassing the active `IgnoreMatcher`, so a file hidden by `.hsyncignore` is never mistaken for a deletion ("exclude protects, it does not delete", rsync `--exclude`, Syncthing `.stignore`); it is a superset of the syncable listing for on-disk files, so no separate syncable `local_keys` set is kept: it would race a mid-scan deletion (a file deleted while `get_files_remote` retries bridge a transiently-unreachable master would survive in the stale listing and be resurrected). The same snapshot keeps the merge base alive across `retain`, so re-including the file later reconciles with full causal history instead of a false conflict. Paths are normalized via `relpath_in_bucket` before hashing (absolute-path hashes never match the relative-keyed store) |
 | `get_sync_actions` | `sync.py::get_sync_actions` | diff → `SyncAction`s; applies `--sync-direction` filter; skips unsafe/internal listing entries (`validate_remote_relpath`); `persist_state=False` (preview/dry-run) skips `merge_and_record` so the state DB is never mutated. **Symlink entries** (`"type": "symlink"`, local or remote listing) are routed to `SyncActionName.upload_symlink` / `download_symlink` — the pair (path,target) is replicated STRUCTURALLY, never as File content (regola 1); direction filters treat them as uploads/downloads |
 | remote-only tombstone proofs | `sync.py::sync` | the remote-only branch decides **download vs `delete_remote`** on positive causal proof only: `_tombstone_clock_dominates(entry, remote_vclock)` (`sync.py::_tombstone_clock_dominates`) — the tombstone clock dominating the remote advertised version proves the remote copy is a stale ancestor (ADR-0003). Content equality is **not** a delete proof: a file re-created byte-for-byte identically (an empty file being the trivial case — every empty file shares the same SHA-256) is an intentional re-creation and is downloaded (add-wins, mirroring Syncthing's modification-beats-deletion policy). A marker without a valid causal clock never deletes. `delete_remote` is executed best-effort per cycle (`sync.py`) and retried by the next reconcile because the tombstone stays in the local store |
 | `_parse_advertised_version` | `sync.py::_parse_advertised_version` | shared wire `version` parser (vclock + corrected mtime) used by the remote-only branch, the two-sided compare, and `update_file` — third use extracted per the Rule of Three |
 | `_compare_files` | `sync.py::_compare_files` | per-file decision via `resolve_three_way` (ADR-0022/0023): content identity → causal dominance → **corrected_mtime** tie-break on true concurrency → SHA-256 if mtime missing or tied. Raw wall clock is never consulted |
-| `_save_conflict_copy` | `sync.py::_save_conflict_copy` | write a conflict copy on `conflict_download` (remote won the causal tie-break); resolves bucket-relative action paths against `LOCAL_BUCKET` before reading/preserving the local file (raw relative paths were silently skipped) |
+| `_save_conflict_copy` | `sync.py::_save_conflict_copy` | write a conflict copy on `conflict_download` (remote won the causal tie-break); resolves bucket-relative action paths against `LOCAL_BUCKET` before reading/preserving the local file (a raw relative path is silently skipped) |
 | `_execute_parallel_transfers` | `sync.py` | run downloads+uploads via `asyncio.Semaphore`; resolves one bounded peer-source wantlist for initial downloads, passes an immutable candidate map explicitly to each worker, and catches `PermanentDownloadError`. Threads come from a process-wide persistent executor so per-thread, per-fingerprint HTTP sessions remain warm across cycles |
 | `_mass_deletion_blocked` | `sync.py::_mass_deletion_blocked` | §12 guard: pause when deletions exceed threshold/percent or empty master |
 | `_permanent_download_failures` / `_reset_permanent_failures` / `_is_permanently_failed` | `sync.py::_permanent_download_failures` | H8 per-cycle skip-set of permanently-failed downloads (keyed `filepath\|sha256`); cleared at the start of each cycle |
@@ -126,9 +126,10 @@ published through `hsync_client/events.py::set_link_status`, which drops a repea
 of the current state (consumers act on `connected` — the desktop starts a preview
 — so a per-cycle repetition would restart it on every cycle). Remote mode: a
 successful REST round publishes `connected` as soon as the cycle has fetched both
-listings (`sync.py::sync`), so the initial sync — whose event channel only
-connects *afterwards* (`remote_websocket.py::remote_connect`) — and the re-sync
-after a drop no longer read "waiting"/"connecting" while transferring; `waiting`
+listings (`sync.py::sync`), so the initial sync — whose event channel connects
+*afterwards* (`remote_websocket.py::remote_connect`) — and the re-sync after a
+drop show `connected` before the channel attaches and never report
+"waiting"/"connecting" while transferring; `waiting`
 is published when the event channel closes (`remote_websocket.py::remote_events`)
 and `connected` when it (re)connects. p2p mode keeps its peer-based state:
 `connecting` on connection teardown, `connected` once the slave link is ready
@@ -192,16 +193,16 @@ caller falls back to a full transfer.
 | ------ | ---- | ---- |
 | `download_file` / `_download_file_attempt` | `transfer.py` | per-path lock + retry wrapper around the frozen source order: master delta, ranked exact-hash peer full downloads, canonical master full fallback. Peer failures advance immediately; only final master transient errors reach retry. Every source uses an explicit certificate fingerprint/session, a completed body must match listing size + SHA-256, and peer success adds `source_cid` to the transfer event |
 | `_download_from_source_attempt` | `transfer.py` | shared peer/master streaming implementation, split into named phases: `_already_up_to_date` (mtime shortcut + hash proof), `_try_delta_download`, `_resolve_resume_offset`, `_has_download_space`, `_accept_download_response` (status/`Content-Range`), `_validate_download_headers` (`_DownloadPlan`), the body stream, and `_finalize_download`. `_peer_only_failure` is the single two-channel branch: a defect raises `_PeerSourceFailure` on a seeder and is logged/swallowed on the master. A valid interrupted prefix survives across sources; `206` requires the exact start/total `Content-Range`; range requests force `identity`; fresh peers may negotiate zstd. `Content-Length` is checked against wire bytes while decoded bytes are checked against listing size. Malformed range/total/source hash or completed hash mismatch deletes `.part`; a resumed master hash mismatch retries that master once from byte zero |
-| download read chunk | `adaptive_chunk_size` (hsync-common) | tier chosen from the listing size (`CHUNK_SIZE_SMALL/MEDIUM/LARGE`). The sub-1MB tier is 256 KB so a typical burst file is read in **one** iteration: each iteration pays a frame read, the throttle wrapper, one `hash.update` and a write, which at the old 8 KB tier made a 200 KB file pay 26 iterations. A/B on the HTTPS apply path with incompressible payloads: 5.5 ms CPU/file at 8 KB vs 4.3 ms at 256 KB; above ~1 MB the tier is neutral, so it only bounds buffering (`CHUNK_SIZE_LARGE × MAX_CONCURRENT_TRANSFERS`). The end-to-end burst probe could not resolve the saving (the LAN apply path spends ~15 ms CPU/file for reasons still unattributed) |
-| `upload_file` / `_upload_file_attempt` | `transfer.py::upload_file` / `transfer.py::_upload_file_attempt` | retry wrapper + one attempt; resumable via `.part` + offset, but the resumable-upload status probe is skipped below `UPLOAD_STATUS_PREFLIGHT_MIN_SIZE` (1 MiB) for non-permission uploads — a fresh transfer is cheaper than the extra round trip, a stale server-side partial is discarded by the offset=0 POST and an already-complete file is caught by the 409 dedup, while resume is kept for large files; delta upload attempted first via `delta_transfer.upload_delta`. The compressed branch **stream-compresses to a temp file** (`_compress_to_temp_file` → `hsync_common.compress_file_to_file`) and streams it as a regular file part: neither the source nor the zstd frame is ever fully resident in RAM (the old implementation read the whole file into memory before sending) |
+| download read chunk | `adaptive_chunk_size` (hsync-common) | tier chosen from the listing size (`CHUNK_SIZE_SMALL/MEDIUM/LARGE`). The sub-1MB tier is 256 KB so a typical burst file is read in **one** iteration: each iteration pays a frame read, the throttle wrapper, one `hash.update` and a write, which at an 8 KB tier would make a 200 KB file pay 26 iterations. A/B on the HTTPS apply path with incompressible payloads: 5.5 ms CPU/file at 8 KB vs 4.3 ms at 256 KB; above ~1 MB the tier is neutral, so it only bounds buffering (`CHUNK_SIZE_LARGE × MAX_CONCURRENT_TRANSFERS`). The end-to-end burst probe could not resolve the saving (the LAN apply path spends ~15 ms CPU/file for reasons still unattributed) |
+| `upload_file` / `_upload_file_attempt` | `transfer.py::upload_file` / `transfer.py::_upload_file_attempt` | retry wrapper + one attempt; resumable via `.part` + offset, but the resumable-upload status probe is skipped below `UPLOAD_STATUS_PREFLIGHT_MIN_SIZE` (1 MiB) for non-permission uploads — a fresh transfer is cheaper than the extra round trip, a stale server-side partial is discarded by the offset=0 POST and an already-complete file is caught by the 409 dedup, while resume is kept for large files; delta upload attempted first via `delta_transfer.upload_delta`. The compressed branch **stream-compresses to a temp file** (`_compress_to_temp_file` → `hsync_common.compress_file_to_file`) and streams it as a regular file part: neither the source nor the zstd frame is ever fully resident in RAM |
 | `_get_upload_status` | `transfer.py::_get_upload_status` | query server for resume offset; not called for small non-permission uploads (see `upload_file`) |
 | `is_file_stable` / `_file_stats` / `_file_already_settled` / `_wait_for_stable_file` | `transfer.py` | size+mtime stability gate: `_file_stats` is the single `(size, mtime)` probe (an unreadable/deleted file counts as stable so the caller's `open` reports it); `from_closed` → 0.3s re-check; conservative path skips the 5s poll when mtime is already older than `STABILITY_DELAY` (reconcile / atomic rename); otherwise poll until `MAX_WAIT_TIMEOUT` **seconds elapse on a monotonic deadline** (each probe costs `STABILITY_DELAY`, so the budget is not an iteration count) |
 | `_reschedule_upload` | `transfer.py::_reschedule_upload` | §15: defer torn-file uploads (bounded) |
 | `_build_multipart_streaming` / `_SizedStreamingBody` | `transfer.py::_build_multipart_streaming` / `transfer.py::_build_multipart_streaming` | streaming multipart |
 | `_CountingReader` | `transfer.py::_CountingReader` | counts and throttles the compressed download stream; upload pacing lives in `_build_multipart_streaming` via `get_throttle_delay` |
-| `_record_synced_base` | `transfer.py::_record_synced_base` | persist merge base after success (sync_state); resolves relative action paths to absolute before recording (raw relative paths were silent no-ops that degraded every later cycle to the mtime heuristic); accepts the merged `vclock` to record (convergence invariant, ADR-0022 §5). **Durability**: for real-time transfers (watcher uploads / inbound event downloads, detected via `is_sync_cycle_active()` being False) the merge base is flushed to the state DB immediately, so a process kill cannot lose it and resurrect a file deleted while offline; during a full reconcile cycle the record stays in memory and is flushed once by the single end-of-cycle `sync_state.flush()` (batch, avoids per-file rewrites of the whole version map) |
-| `_handle_upload_conflict_response` | `transfer.py` | handle 409 upload responses: `superseded`/`conflict_lost` → download needed (next cycle); legacy "already present" → record base as in-sync |
-| `resolve_upload_version_fields` (`sync_state.py::resolve_upload_version_fields`) / `_resolve_local_version_pair` (`transfer.py::_resolve_local_version_pair`) | `transfer.py` | resolve the effective local `vclock`/`version_id` for the upload form and merge-base recording. Both the full-upload and the delta channel call the `sync_state` SSOT directly (the former per-module wrapper functions were removed); `_resolve_local_version_pair` resolves `(vclock, corrected_mtime)` once for the merge-base record instead of twice |
+| `_record_synced_base` | `transfer.py::_record_synced_base` | persist merge base after success (sync_state); resolves relative action paths to absolute before recording (a raw relative path is a silent no-op that degrades every later cycle to the mtime heuristic); accepts the merged `vclock` to record (convergence invariant, ADR-0022 §5). **Durability**: for real-time transfers (watcher uploads / inbound event downloads, detected via `is_sync_cycle_active()` being False) the merge base is flushed to the state DB immediately, so a process kill cannot lose it and resurrect a file deleted while offline; during a full reconcile cycle the record stays in memory and is flushed once by the single end-of-cycle `sync_state.flush()` (batch, avoids per-file rewrites of the whole version map) |
+| `_handle_upload_conflict_response` | `transfer.py` | handle 409 upload responses: `superseded`/`conflict_lost` → download needed (next cycle); `409 File already present` → record base as in-sync |
+| `resolve_upload_version_fields` (`sync_state.py::resolve_upload_version_fields`) / `_resolve_local_version_pair` (`transfer.py::_resolve_local_version_pair`) | `transfer.py` | resolve the effective local `vclock`/`version_id` for the upload form and merge-base recording. Both the full-upload and the delta channel call the `sync_state` SSOT directly; `_resolve_local_version_pair` resolves `(vclock, corrected_mtime)` once for the merge-base record instead of twice |
 | `_emit_transfer_failed` | `transfer.py::_emit_transfer_failed` | emit `transfer_failed` UI event on exhaustion |
 | `_local_dest_path` | `transfer.py::_local_dest_path` | confine remote path to `LOCAL_BUCKET` via `resolve_within` (returns `None` on unsafe input) |
 | `open_partial_no_follow` | `utils/paths.py::open_partial_no_follow` | `.part` writes with `O_NOFOLLOW` where supported (anti-TOCTOU) |
@@ -321,7 +322,7 @@ the delete has nothing to act on (the originator removed it, a peer's delete
 converged after a local deletion, or the path never existed here). This is logged
 at **DEBUG**, not WARNING — mirroring the master's "File already deleted" success
 branch (`p2p_server.py:_handle_delete`) and the rename 404-echo degradation
-(`_rename_on_master`). WARNINGs here were noise because echo suppression can miss
+(`_rename_on_master`). WARNINGs here are noise because echo suppression can miss
 when the master has no `P2P_KEY` set (the `mark_inbound_origin` cid gate is a
 security measure) or when a directory's children are removed by `rmtree` without
 being individually marked.
@@ -365,7 +366,7 @@ peer-caused, so the prefix is the module constant `INBOUND_PREFIX = "REMOTE "`
 (`file_event_handler.py::BaseFileEventHandler._label`) and every dispatch label is `REMOTE_*` (`[REMOTE RENAME]`,
 `[REMOTE DELETE]`, `[REMOTE SECURITY]`, `[REMOTE ECHO]`, …). There is no
 project-local label table, and `EventDispatchContext` carries no `log_prefix`
-field (removed as dead configuration — both inbound contexts would share the
+field — both inbound contexts share the
 same value).
 
 ## file_event_handler.py — watchdog adapter
@@ -427,8 +428,7 @@ two-stage dedup). Subclasses implement `_on_file_ready` and, for a
 content-identical `touch`, `_on_metadata_changed` (remote/LAN-master variants). `_label` (`file_event_handler.py::BaseFileEventHandler._label`) resolves bracketed log labels
 through `hsync_common.labels.resolve_label` with an **origin-aware prefix**:
 `"REMOTE "` when `_origin_cid(src, dst)` attributes the event to a peer (the
-master's inbound-origin map), `"LOCAL "` otherwise. The static `_LOG_PREFIX`
-class attribute no longer exists. `RemoteFileEventHandler` never overrides
+master's inbound-origin map), `"LOCAL "` otherwise. `RemoteFileEventHandler` never overrides
 `_origin_cid`, so its lines are always `LOCAL_*`; on the p2p master the same
 hook produces `REMOTE_*` for peer-caused events, so the master's watchdog
 output is colorized identically to the slave's inbound dispatcher. The `[MOVE]`
@@ -452,7 +452,7 @@ like a close (`_process_file_ready(dest, trigger="move-in")`; directories via
 `on_created`), empty destination → routed through `on_deleted` (tombstones,
 coalescing, delete broadcast). This closes the gap where a file moved into the
 folder from elsewhere (drag & drop, `mv`, extraction tools, atomic publishers)
-was silently dropped: the standard emitter produced a `FileCreatedEvent`, which
+would be silently dropped: the standard emitter produces a `FileCreatedEvent`, which
 `on_created` deliberately ignores on inotify (a plain `IN_CREATE` fires while
 the file is still being written — content propagates via `on_closed`, which a
 move-in never emits).
@@ -470,9 +470,9 @@ when no events fd is attached.
 
 **Stdin command reader guard** (`stdin_commands.py::_BoundedLineReader`): `epoll` cannot
 register every file type — `/dev/null` and regular files fail with `EPERM`,
-and since Python 3.14 the pipe transport no longer swallows that failure (it
-surfaced as an unhandled `Exception in callback
-_UnixReadPipeTransport._add_reader()` and left the transport half-broken). The
+and Python 3.14 propagates that failure (it surfaces as an unhandled
+`Exception in callback _UnixReadPipeTransport._add_reader()` and leaves the
+transport half-broken). The
 reader therefore skips itself up front unless stdin is a pipe, socket or
 terminal (the documented channel contract is a parent-process pipe / TTY).
 
@@ -486,8 +486,8 @@ materialises links as files would copy the target's content). In-bucket
 symlinks are broadcast normally.
 
 **Content-aware dedup** (`_process_file_ready`, `file_event_handler.py::_process_file_ready`): a two-stage filter
-suppresses spurious broadcasts without a naive time-based debounce (which was
-counterproductive: it suppressed the real safe-save rename while keeping the
+suppresses spurious broadcasts without a naive time-based debounce (which is
+counterproductive: it suppresses the real safe-save rename while keeping the
 preceding no-op close):
 
 1. **Stat pre-check** — compares `(mtime, size, mode)` with the last broadcast
@@ -527,7 +527,7 @@ preceding no-op close):
   `complete`, the `PATCH …/files/permissions` endpoint is tried first
   (`patch_permissions_remote` / `_patch_permissions_only`, `transfer.py`):
   the mode travels alone, NO file bytes cross the wire. When the peer does
-  not expose the endpoint (older version), the legacy same-SHA full-upload
+  not expose the endpoint (older peer), the same-SHA full-upload
   branch is the fallback. The p2p master broadcasts `modified` so slaves
   converge via `update_file`. The p2p slave handler
   (`P2PSlaveFileEventHandler.on_modified` Linux branch) keeps its own
@@ -599,7 +599,7 @@ stat-suppressed by the directory-create dedup.
 coalescing buffer rejects an identical `(path, is_directory)` pair already
 pending in the same window. A directory with its own watch reports its
 deletion twice (`IN_DELETE` from the parent's watch and `IN_DELETE_SELF` from
-its own watch on the same path); before this guard the flush emitted two
+its own watch on the same path); without the guard the flush emits two
 identical `[LOCAL DELETE]` lines and two identical `deleted` broadcasts. The
 p2p slave's own buffer (`p2p_websocket.py`) applies the same dedup before
 sending the single recursive DELETE to the master.
@@ -608,11 +608,11 @@ sending the single recursive DELETE to the master.
 `file_event_handler.py`): the coalescing window can outlive the path it refers
 to. `rm <f>` immediately followed by a rewrite of the same name — an ordinary
 atomic-writer pattern — leaves the delete queued while the fresh file already
-exists, and the flush then broadcast a delete for a **live** file: the peer
-removed the re-created file and its own delete echo came back through the
-master's DELETE API, wiping the source too (observed in the LAN stress suite as
-a permanently diverged path). Both flushes (base class broadcast and the LAN
-slave's DELETE request) now re-check existence at flush time and drop the stale
+exists, and a flush without the guard broadcasts a delete for a **live** file:
+the peer removes the re-created file and its own delete echo comes back through
+the master's DELETE API, wiping the source too (a permanently diverged path).
+Both flushes (base class broadcast and the LAN
+slave's DELETE request) re-check existence at flush time and drop the stale
 entry; the slave additionally clears the causal tombstone it had recorded when
 buffering, so the marker does not outlive the deletion it refers to. Because the
 folding prefixes are built from the surviving entries only, a re-created
@@ -689,13 +689,13 @@ that cannot be JSON-serialized (`TypeError`/`ValueError` from `dumps`) is a
 **permanent** failure — retries would re-serialize the same broken payload and
 stall the queue with head-of-line blocking — so the event is dropped immediately
 (terminal outcome) and the next event proceeds; the affected file is picked up
-by the next full sync. Transient `send` failures are retried as before.
+by the next full sync. Transient `send` failures are retried.
 
 `_await_event` (`event_queue.py::_await_event`) races `queue.get()` against `_stop_event`. Both waiters
 are always cancelled-and-awaited via `_await_cancelled` (`event_queue.py::_await_cancelled`), including when
 `process()` itself is cancelled in the same tick as `stop()` (`remote_events`
-finally). Leaving a `Queue.get()` task pending and dropping the queue used to
-log `Task was destroyed but it is pending!` during later GC (e.g. a large
+finally). A `Queue.get()` task left pending makes the queue
+log `Task was destroyed but it is pending!` during later GC (e.g. after a large
 upload).
 
 > Human-facing: event processing + stability + parallel transfers in

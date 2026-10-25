@@ -156,7 +156,7 @@ write opt-in is `CLI-opt-in OR environment-opt-in` and defaults false.
 - Docs drift guard: `tests/test_docs_option_parity.py` walks every command
   (including the `trust`/`state` groups) and fails when a visible option is
   missing from the man page or from `docs/*.md`, and when a man-page option
-  entry names a flag the CLI no longer accepts.
+  entry names a flag the CLI does not accept.
 
 ## UI events (`events.py`)
 
