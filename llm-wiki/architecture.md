@@ -155,9 +155,9 @@ desktop's Stop button (SIGTERM, then SIGKILL after 5 s) follow the same path as
 and the process exits normally. A **stop is not a failure**, which takes two
 catches in `cli.run`: the plain `KeyboardInterrupt`, and the
 `SystemExit(_INTERRUPTED_EXIT_CODE)` value that Typer produces on its own
-(`typer/core.py::main` converts an interrupt into `Exit(130)` before any handler
-can see it) — the server modes therefore left the run with status 130 until it was
-remapped. Any other exit code is re-raised untouched.
+(`typer/core.py` turns an interrupt into `Exit(130)` before any handler can see
+it) — a server mode would otherwise exit with status 130. Any other exit code is
+re-raised untouched.
 
 ## State persistence (external SQLite, ADR-0025)
 
