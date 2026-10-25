@@ -965,14 +965,14 @@ files = [
 
 [[package]]
 name = "fastapi"
-version = "0.143.5"
+version = "0.161.1"
 description = "FastAPI framework, high performance, easy to learn, fast to code, ready for production"
 optional = false
 python-versions = ">=3.10"
 groups = ["blackbox"]
 files = [
-    {file = "fastapi-0.143.5-py3-none-any.whl", hash = "sha256:09cc38ed8c6a95f407783ef4d98ceeb350e192fe8fbb8ed711070bcd5208fdfa"},
-    {file = "fastapi-0.143.5.tar.gz", hash = "sha256:0b5c8e52d243cd2f015376b41e78db5bee585578782481abd145e1ab5a62a3ba"},
+    {file = "fastapi-0.161.1-py3-none-any.whl", hash = "sha256:a1363080cf9aeedecd99f4e1a23669d7e77542227f6536f4d7bbd59f07ecaa94"},
+    {file = "fastapi-0.161.1.tar.gz", hash = "sha256:4076b88434452e20289379068e976c4a04c65ffc8e6be31510106e150a422f0f"},
 ]
 
 [package.dependencies]
@@ -1155,7 +1155,7 @@ files = [
 
 [[package]]
 name = "hsync-common"
-version = "1.0.5"
+version = "1.0.6"
 description = "HSYNC Common - shared models, constants, and compression utilities"
 optional = false
 python-versions = ">=3.12,<3.15"
@@ -1177,7 +1177,7 @@ url = "../hsync-common"
 
 [[package]]
 name = "hsync-server"
-version = "1.0.5"
+version = "1.0.6"
 description = "HSYNC File Server"
 optional = false
 python-versions = ">=3.12,<3.15"
@@ -1188,8 +1188,8 @@ develop = true
 [package.dependencies]
 aiofiles = ">=25.1.0,<26.0.0"
 cryptography = ">=50.0.2,<51.0.0"
-fastapi = ">=0.143.1,<0.144.0"
-hsync-common = "1.0.5"
+fastapi = ">=0.161.1,<0.162.0"
+hsync-common = "1.0.6"
 loguru = ">=0.7.3,<0.8.0"
 prometheus-fastapi-instrumentator = ">=8.1.0,<9.0.0"
 pydantic-settings = ">=2.12.0,<3.0.0"
@@ -3565,4 +3565,4 @@ cffi = ["cffi (>=1.17,<2.0) ; platform_python_implementation != \"PyPy\" and pyt
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.15"
-content-hash = "8c28386a9edbe019a5c63ab637b1059656ab68531e0da2203db3f4151bd0e683"
+content-hash = "67436ac8a16786c96cf35b4003ffd6d8b7b18d60a269ab23db945716e8bbdc15"
