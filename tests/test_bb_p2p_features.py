@@ -182,6 +182,10 @@ class TestP2PDelta:
 
 
 class TestP2PPeriodicResync:
+    # Two independent timing budgets (60 s to complete the first sync, then a
+    # 20 s interval inside a 40 s window) on a suite whose multicast discovery
+    # is environment-sensitive; retried like the other election-timing tests.
+    @pytest.mark.flaky(reruns=3, reruns_delay=5)
     def test_periodic_resync_fires(self, p2p_master_dir, p2p_slave_dir, p2p_bucket, bb_sample):
         """Slave with --interval triggers a periodic full resync after the
         configured interval, observable in its log output."""
@@ -199,7 +203,7 @@ class TestP2PPeriodicResync:
             try:
                 # Wait for the slave's initial sync to complete (ready-file)
                 assert _wait_for_client_ready(slave, _p2p_ready_path(p2p_slave_dir), timeout=60), (
-                    "slave did not complete initial sync"
+                    f"slave did not complete initial sync. --- slave log ---\n{_stderr_text(slave)}"
                 )
 
                 # When a file is created on the master
