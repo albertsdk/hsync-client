@@ -1163,7 +1163,7 @@ def main(
         $ hsync p2p -b shared
 
         [dim]# P2P mode with authentication[/dim]
-        $ HSYNC_P2P_KEY=mysecret hsync p2p -b shared
+        $ HSYNC_P2P_KEY=YOUR_SHARED_KEY_AT_LEAST_32_CHARACTERS hsync p2p -b shared
 
     [bold]Environment Variables:[/bold]
 
@@ -1250,7 +1250,7 @@ def p2p(
         $ hsync p2p -b shared --prefer-master
 
         [dim]# Isolate a sync group and authenticate it[/dim]
-        $ HSYNC_P2P_KEY=mysecret hsync p2p -b shared --group home
+        $ HSYNC_P2P_KEY=YOUR_SHARED_KEY_AT_LEAST_32_CHARACTERS hsync p2p -b shared --group home
 
         [dim]# Discover peers across networks through a bootnode[/dim]
         $ hsync p2p boot.example.net -b shared

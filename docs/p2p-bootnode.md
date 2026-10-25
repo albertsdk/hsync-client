@@ -109,7 +109,8 @@ endpoint is known, the device stays **slave-only** instead of advertising an
 address that cannot be reached.
 
 The client publishes its **full candidate list** to the node (the UPnP/public
-endpoint *and* the LAN address), and a peer tries them host/LAN-first. Two
+endpoint *and* the LAN address); the node relays the first four of them, and a
+peer tries them host/LAN-first. Two
 devices behind the same NAT therefore connect over the local path even when the
 router's public IP has no hairpin (NAT loopback) route — the public endpoint is
 simply the last candidate. If no advertised candidate is reachable, the client

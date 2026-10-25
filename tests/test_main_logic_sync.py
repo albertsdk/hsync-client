@@ -821,6 +821,31 @@ class TestRunSync:
             mock_check.assert_not_called()
             assert any("No API key configured" in str(c) for c in mock_logger.error.call_args_list)
 
+    def test_weak_p2p_key_aborts(self, tmp_path):
+        """A group key below the shared strength floor fails fast with a clear message."""
+        kwargs = _default_run_sync_kwargs(tmp_path, server_url="https://localhost:8000")
+
+        with (
+            patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
+            patch("hsync_client.main_logic.get_api_key", return_value="api-key"),
+            patch("hsync_client.main_logic.get_p2p_key", return_value="tooshort"),
+            patch("hsync_client.main_logic._check_server_connectivity") as mock_check,
+            patch("hsync_client.main_logic.set_config") as mock_set_cfg,
+            patch("hsync_client.main_logic.set_debug"),
+        ):
+            mock_logger = MagicMock()
+            mock_log_setup.return_value = mock_logger
+            with pytest.raises(SystemExit) as exc_info:
+                run_sync(**kwargs)
+            assert exc_info.value.code != 0
+            # Aborted before configuring or contacting the server.
+            mock_set_cfg.assert_not_called()
+            mock_check.assert_not_called()
+            assert any(
+                "HSYNC_P2P_KEY is not acceptable" in str(c)
+                for c in mock_logger.error.call_args_list
+            )
+
     def test_env_file_loading_failure(self, tmp_path):
         """run_sync exits when env file is not found."""
         kwargs = _default_run_sync_kwargs(tmp_path, env_file="/nonexistent/.env")

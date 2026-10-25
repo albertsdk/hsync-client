@@ -1,7 +1,7 @@
 .\" Man page for HSYNC — file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-10-24" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-10-26" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -1084,14 +1084,14 @@ hsync server server.example.com \-b backup \-n
 p2p peer-to-peer mode (the shared key authorizes writes):
 .RS
 .EX
-HSYNC_P2P_KEY=mysecret hsync p2p \-b shared
+HSYNC_P2P_KEY=YOUR_SHARED_KEY_AT_LEAST_32_CHARACTERS hsync p2p \-b shared
 .EE
 .RE
 .TP
 p2p mode with a specific group:
 .RS
 .EX
-HSYNC_P2P_KEY=mysecret hsync p2p \-b shared \-\-group home
+HSYNC_P2P_KEY=YOUR_SHARED_KEY_AT_LEAST_32_CHARACTERS hsync p2p \-b shared \-\-group home
 .EE
 .RE
 .
@@ -1130,7 +1130,7 @@ Authenticate to a private node or a protected bucket (the key must match the
 node's group-keys entry):
 .PP
 .EX
-HSYNC_P2P_KEY=mysecret hsync p2p boot.example.net \-b shared
+HSYNC_P2P_KEY=YOUR_SHARED_KEY_AT_LEAST_32_CHARACTERS hsync p2p boot.example.net \-b shared
 .EE
 .PP
 Manage the p2p known-peers store (like

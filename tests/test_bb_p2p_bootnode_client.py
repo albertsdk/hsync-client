@@ -40,7 +40,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 CID = "A1b2C3d4E5f6G7h8I9j0K"
-FP = "AA:BB:CC"
+FP = "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
 BUCKET = "shared"
 
 

@@ -438,13 +438,20 @@ class BootnodeDiscovery(DiscoveryPlanState):
         mid-exchange leaves the generation unsent, so the lease loop republishes
         on the next wake instead of advertising a stale role indefinitely.
         """
+        cert_fp = self._cert_fingerprint
+        if not cert_fp:
+            # ``cert_fp`` is the pin the requester compares: the frame carries a
+            # full SHA-256 digest or it is not sent at all (an empty/placeholder
+            # value would be an invalid frame — and a pin nobody can compare).
+            log.warning("Bootnode register skipped: no local certificate fingerprint yet")
+            return
         generation = self._advert_generation
         endpoints = self._endpoint_wire() if publish_endpoint else []
         ack = self._client.register(
             build_register_frame(
                 cid=self._cid,
                 bucket=self._bucket,
-                cert_fp=self._cert_fingerprint or "",
+                cert_fp=cert_fp,
                 version=_client_version(),
                 group=self._group,
                 bucket_token=self._token,

@@ -225,7 +225,11 @@ HSYNC_P2P_KEY='<masked>' hsync p2p -b '<share>' -p '<local-folder>' [--group '<g
   device. Every interpolated value is POSIX single-quoted, so the command is
   safe to paste even if a value contains `$`, `"`, backticks, or spaces.
 - The shared password (when set) is shown **masked** with a *Show key* toggle;
-  the *Copy* button copies the full command including the real value.
+  the *Copy* button copies the full command including the real value. The field
+  requires **at least 32 characters** (the value is the only entropy behind the
+  bucket token; the client refuses to start with a shorter `HSYNC_P2P_KEY`). The
+  value generated at install is a random 192-bit key, so the default is already
+  compliant.
 - Per-device sync behaviour (keep deleted files, compression, delta,
   bandwidth, …) and the NAS role are intentionally omitted: continuous mode
   is the default in both p2p and server mode, and primary election resolves

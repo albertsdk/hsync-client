@@ -19,6 +19,7 @@ from hsync_common.disk import check_free_space
 from hsync_common.endpoint import format_authority
 from hsync_common.format import format_bytes
 from hsync_common.ignore import IgnoreMatcher, set_active_matcher
+from hsync_common.protocol.boot_tokens import validate_group_key
 from hsync_common.protocol.handshake import PROTOCOL_VERSION_REST
 from hsync_common.protocol.pairing import fingerprint_matches
 from hsync_common.protocol.tls_trust import (
@@ -899,6 +900,15 @@ def run_sync(
     # Resolve API key once: FD-pipe value takes precedence over env var
     resolved_api_key = api_key_from_fd or get_api_key()
     resolved_p2p_key = p2p_key_from_fd or get_p2p_key()
+    # Fail fast on a weak shared key: it is the only entropy behind a bucket
+    # token, so a short HSYNC_P2P_KEY would make a protected bucket guessable.
+    # Reported here (like the missing-API-key gate below) instead of mid-sync.
+    if resolved_p2p_key:
+        try:
+            validate_group_key(resolved_p2p_key)
+        except ValueError as exc:
+            log.error(f"HSYNC_P2P_KEY is not acceptable: {exc}")
+            sys.exit(1)
     allow_unauthenticated_p2p_writes = (
         p2p_allow_unauthenticated_writes or get_p2p_allow_unauthenticated_writes()
     )

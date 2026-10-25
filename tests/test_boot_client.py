@@ -56,7 +56,7 @@ class TestFrameBuilders:
         frame = build_register_frame(
             cid=CID,
             bucket="shared",
-            cert_fp="AA:BB",
+            cert_fp="aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
             version="1.0.0",
             group="home",
             bucket_token=TOKEN,
@@ -77,7 +77,7 @@ class TestFrameBuilders:
         frame = build_register_frame(
             cid=CID,
             bucket="shared",
-            cert_fp="AA:BB",
+            cert_fp="aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
             version="1.0.0",
             server_ready=True,
             never_master=True,
@@ -105,7 +105,12 @@ class TestFrameBuilders:
         assert frame["limit"] == 10
 
     def test_optional_fields_omitted_when_none(self):
-        frame = build_register_frame(cid=CID, bucket="shared", cert_fp="AA:BB", version="1.0.0")
+        frame = build_register_frame(
+            cid=CID,
+            bucket="shared",
+            cert_fp="aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+            version="1.0.0",
+        )
         assert "group" not in frame
         assert "bucket_token" not in frame
         assert "connected" not in frame
@@ -120,7 +125,7 @@ class TestFailFast:
         frame = build_register_frame(
             cid=CID,
             bucket="shared",
-            cert_fp="AA:BB",
+            cert_fp="aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
             version="1.0.0",
             capacity=CAPACITY_MAX + 1,
         )
@@ -512,7 +517,12 @@ class TestPinVerify:
         monkeypatch.setattr("hsync_client.boot_client.connect", lambda *_a, **_k: _Manager())
         with pytest.raises(BootnodeFingerprintMismatch):
             client.register(
-                build_register_frame(cid=CID, bucket="shared", cert_fp="AA:BB", version="1.0.0")
+                build_register_frame(
+                    cid=CID,
+                    bucket="shared",
+                    cert_fp="aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+                    version="1.0.0",
+                )
             )
         assert "create_stream" not in calls
 
@@ -674,7 +684,12 @@ class TestRefusals:
         client = self._client_returning(monkeypatch, self._refusal_frame("rate_limited", 42))
         with pytest.raises(BootnodeRefused) as excinfo:
             client.register(
-                build_register_frame(cid=CID, bucket="shared", cert_fp="AA:BB", version="1.0.0")
+                build_register_frame(
+                    cid=CID,
+                    bucket="shared",
+                    cert_fp="aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+                    version="1.0.0",
+                )
             )
         assert excinfo.value.error == "rate_limited"
         assert excinfo.value.retry_after == 42
@@ -691,7 +706,12 @@ class TestRefusals:
         client = self._client_returning(monkeypatch, self._refusal_frame("overloaded", 60))
         with pytest.raises(BootnodeRefused) as excinfo:
             client.register(
-                build_register_frame(cid=CID, bucket="shared", cert_fp="AA:BB", version="1.0.0")
+                build_register_frame(
+                    cid=CID,
+                    bucket="shared",
+                    cert_fp="aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+                    version="1.0.0",
+                )
             )
         assert excinfo.value.error == "overloaded"
         assert excinfo.value.retry_after == 60
@@ -708,7 +728,12 @@ class TestRefusals:
         client = self._client_returning(monkeypatch, malformed)
         with pytest.raises(BootnodeProtocolError):
             client.register(
-                build_register_frame(cid=CID, bucket="shared", cert_fp="AA:BB", version="1.0.0")
+                build_register_frame(
+                    cid=CID,
+                    bucket="shared",
+                    cert_fp="aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+                    version="1.0.0",
+                )
             )
 
     def test_another_frame_type_is_still_a_protocol_error(self, monkeypatch):

@@ -31,6 +31,12 @@ sync is refused unless the dangerous CLI or environment opt-in is explicit.
 Parent processes (desktop GUI) may pass it on a pipe with the hidden
 `--p2p-key-fd` flag.
 
+The key must be **at least 32 characters**: it is the only entropy behind the
+`bucket_token`, so the client refuses to start with a shorter value (the
+bootnode enforces the same floor on its own key source). Generate one with
+`openssl rand -hex 32` and share that exact value between the peers that must
+trust each other.
+
 With a bootnode (see [Sync across networks](p2p-bootnode.md)) the same key is also
 the bootnode credential: the client derives the `bucket_token`
 (`HMAC-SHA256(key, "boot/1" || bucket)[:32]`) it must present to a **protected
@@ -81,7 +87,7 @@ Both must be explicit: a TTY or `--allow-deletions` never grants them.
 | Variable | Description | Default |
 |---|---|---|
 | `HSYNC_P2P_GROUP` | p2p group name (alternative to `--group`) | — |
-| `HSYNC_P2P_KEY` | Shared secret for peer authentication; with a bootnode, also the group key the `bucket_token` is derived from (must match the bootnode's key for protected/private buckets) | — (reads only unless explicitly opted into unauthenticated writes) |
+| `HSYNC_P2P_KEY` | Shared secret for p2p peer authentication; with a bootnode, also the group key the `bucket_token` is derived from (must match the bootnode's key for protected/private buckets). **At least 32 characters** — it is the token's only entropy, so a shorter value is refused at startup | — (reads only unless explicitly opted into unauthenticated writes) |
 | `HSYNC_P2P_PEER_DOWNLOAD` | Ask the master for exact-hash sources and try eligible peers before master full-download fallback | `true` |
 | `HSYNC_P2P_PEER_READ_CAP` | Maximum concurrent response bodies served by each continuous slave seeder (announced on the handshake so requesters stay within it) | `2` |
 | `HSYNC_P2P_PEER_SOURCES_MAX` | Maximum unique peer devices attempted per file before master fallback | `3` |
@@ -120,7 +126,7 @@ slaves serve only exact-hash `GET` downloads; all mutating routes are disabled.
 The client does **not** load `./.env` by itself. Example:
 
 ```bash
-export HSYNC_P2P_KEY="shared-secret"    # required for writes (a keyless p2p is read-only)
+export HSYNC_P2P_KEY="$(openssl rand -hex 32)"    # required for writes (a keyless p2p is read-only)
 hsync p2p --env-file ./hsync.env -b documents -p "$HOME/Documents"
 ```
 

@@ -33,7 +33,7 @@ from hsync_client.stun import ObservedAddress
 
 CID = "A1b2C3d4E5f6G7h8I9j0K"
 OTHER = "B2c3D4e5F6g7H8i9J0k1L"
-FP = "AA:BB:CC"
+FP = "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
 ACK = {
     "protocol_version": "boot/1",
     "type": "ack",
@@ -142,7 +142,7 @@ def make_plan(**overrides):
         "port": 8443,
         "group": "home",
         "cert_fingerprint": FP,
-        "p2p_key": "secret",
+        "p2p_key": "0123456789abcdef0123456789abcdef",
         "peer_download_enabled": True,
         "capacity": 7,
         "client_factory": FakeClient,
@@ -664,3 +664,11 @@ def test_bootnode_default_port_matches_the_shared_ssot() -> None:
     from hsync_client.constants import BOOTNODE_DEFAULT_PORT
 
     assert BOOTNODE_DEFAULT_PORT == BOOT_DEFAULT_PORT == 443
+
+
+def test_register_is_skipped_without_a_local_fingerprint() -> None:
+    """No pin-comparable cert_fp means no register, never an invalid frame."""
+    plan, _ = make_plan(cert_fingerprint=None)
+    calls_before = len(plan._client.calls)
+    plan._register(publish_endpoint=False)
+    assert len(plan._client.calls) == calls_before

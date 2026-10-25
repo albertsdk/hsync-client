@@ -27,7 +27,7 @@ HSYNC has two orthogonal axes of operation: **topology** (where files live) and
 | Topology | One-shot example | Continuous example |
 |----------|-----------------|---------------|
 | Server Mode | `hsync server server.example.com -b mybucket -p ~/Sync --once` | `hsync server server.example.com -b mybucket -p ~/Sync` |
-| p2p Mode | `HSYNC_P2P_KEY=secret hsync p2p -b mybucket -p ~/Sync --once` | `HSYNC_P2P_KEY=secret hsync p2p -b mybucket -p ~/Sync` |
+| p2p Mode | `HSYNC_P2P_KEY=YOUR_SHARED_KEY_AT_LEAST_32_CHARACTERS hsync p2p -b mybucket -p ~/Sync --once` | `HSYNC_P2P_KEY=YOUR_SHARED_KEY_AT_LEAST_32_CHARACTERS hsync p2p -b mybucket -p ~/Sync` |
 
 For p2p Mode, the client runs continuously by default. Use `--once` to
 run a single sync cycle and exit in either mode.
