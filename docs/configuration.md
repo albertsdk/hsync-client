@@ -50,7 +50,7 @@ CLI-only (no environment variables).
 
 | Option | Description | Default |
 |---|---|---|
-| `-o, --log-file` | Log file path (enables file logging) | — (stdout only) |
+| `-o, --log-file` | Mirror the log to this file (rotated, see [Log Rotation](#log-rotation)); stdout keeps receiving it | — (no file) |
 | `-q, --quiet` | Suppress non-error output | `false` |
 | `-v, --verbose` | Verbose output | `false` |
 | `--color` | Colorize log output: `auto` (terminal only, honoring `NO_COLOR`), `always`, `never` | `auto` |

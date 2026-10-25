@@ -449,9 +449,14 @@ Enable verbose (debug) output.
 Suppress all output.
 .TP
 .BR \-\-log\-file =\fIFILE\fP
-Write output to
-.I FILE
-instead of the terminal.
+Mirror the log to
+.IR FILE .
+The terminal (or whatever captures the standard output) keeps receiving the
+same records. Rotation, retention and compression are configured with
+.BR HSYNC_LOG_ROTATION ,
+.BR HSYNC_LOG_RETENTION
+and
+.BR HSYNC_LOG_COMPRESSION .
 .TP
 .BR \-\-color =\fIMODE\fP
 Colorize log output. \fIMODE\fP is \fBauto\fP (default: only on a terminal,
@@ -1005,9 +1010,9 @@ Uses KEY=VALUE format.
 .I /var/log/hsync/hsync.log
 Log file written by the systemd service
 .RI ( StandardOutput / StandardError
-append). Interactive runs log to the terminal unless
+append). Interactive runs log to the terminal;
 .B \-\-log\-file
-is given.
+mirrors the same log to a file.
 .TP
 .IR $XDG_STATE_HOME/hsync/device
 (or

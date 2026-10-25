@@ -42,7 +42,7 @@ Flags that make a run non-interactive and safe for schedulers:
 | ---- | ------- |
 | `--allow-deletions` | Accept the deletion-risk confirmation non-interactively (sysAdmins keep warnings on stderr). |
 | `--env-file FILE` | Load `HSYNC_*` secrets from a file instead of the crontab. |
-| `--log-file FILE` | Write the log to a file (or the systemd journal when omitted). |
+| `--log-file FILE` | Mirror the log to a rotating file; stdout keeps receiving it (under systemd that is the journal). |
 | `-n` / `--dry-run` | Validate a new bucket before scheduling it for real. |
 
 ## Exit codes

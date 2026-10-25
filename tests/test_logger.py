@@ -237,6 +237,45 @@ class TestSetupLogging:
         finally:
             os.unlink(logfile)
 
+    def test_setup_with_logfile_keeps_the_console_sink(self, capsys):
+        """``--log-file`` mirrors the log, it does not replace stdout.
+
+        Regression: the file branch used to install the file sink *instead of*
+        the stdout one, so a parent process that drives the client lost the
+        whole log as soon as a log file was configured. hsync-desktop renders
+        exactly those stdout lines in its log panel, which made every logging
+        setting (``-v`` included) look ineffective there.
+        """
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False) as f:
+            logfile = f.name
+
+        try:
+            log = setup_logging(logfile=logfile)
+            log.info("Mirrored message")
+            log.complete()
+
+            assert "Mirrored message" in capsys.readouterr().out
+            with open(logfile) as fh:
+                assert "Mirrored message" in fh.read()
+        finally:
+            os.unlink(logfile)
+
+    def test_setup_quiet_mode_installs_no_sink(self, capsys):
+        """``-q`` stays the only way to silence the console."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False) as f:
+            logfile = f.name
+
+        try:
+            log = setup_logging(quiet=True, logfile=logfile)
+            log.info("Suppressed message")
+            log.complete()
+
+            assert "Suppressed message" not in capsys.readouterr().out
+            with open(logfile) as fh:
+                assert fh.read() == ""
+        finally:
+            os.unlink(logfile)
+
     def test_setup_color_never(self):
         """Test logging setup with colors disabled."""
         from hsync_common.runtime import ColorMode

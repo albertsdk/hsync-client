@@ -190,7 +190,8 @@ def setup_logging(
     Args:
         debug: Enable DEBUG level logging.
         quiet: Suppress all output.
-        logfile: Optional path to log file (enables rotation).
+        logfile: Optional path to log file (enables rotation). The log is
+            mirrored there; stdout keeps receiving the same records.
         color: How to colorize stdout: auto (TTY only, honouring NO_COLOR),
             always (forced, e.g. when the Desktop captures the pipe) or never.
 
@@ -230,21 +231,27 @@ def setup_logging(
             # wait for the queue via ``logger.complete()``.
             enqueue=True,
         )
-    else:
-        # Console handler - colors follow --color (auto = TTY + NO_COLOR rules).
-        use_colors = color_output_enabled(color)
-        format_func = _format_record_colored if use_colors else _format_record_plain
 
-        logger.add(
-            sys.stdout,
-            level=level,
-            format=format_func,
-            colorize=use_colors,  # Enable loguru's color tag processing
-            # Async here too: when stdout is redirected to a file (service /
-            # test harness) every line pays the same write+flush as the file
-            # sink and must not throttle the engine (see above).
-            enqueue=True,
-        )
+    # Console handler - colors follow --color (auto = TTY + NO_COLOR rules).
+    # Installed even when a log file is configured: ``--log-file`` mirrors the
+    # log, it does not replace the console. A parent process that drives the
+    # client has no other way to read the log (hsync-desktop renders exactly
+    # these lines in its log panel, and its Settings document the log file as
+    # "the same output"), so dropping the console sink would leave that parent
+    # blind as soon as a log file is set. ``-q`` remains the only suppressor.
+    use_colors = color_output_enabled(color)
+    format_func = _format_record_colored if use_colors else _format_record_plain
+
+    logger.add(
+        sys.stdout,
+        level=level,
+        format=format_func,
+        colorize=use_colors,  # Enable loguru's color tag processing
+        # Async here too: when stdout is redirected to a file (service /
+        # test harness) every line pays the same write+flush as the file
+        # sink and must not throttle the engine (see above).
+        enqueue=True,
+    )
 
     # Intercept standard logging (for modules using logging.getLogger).
     #

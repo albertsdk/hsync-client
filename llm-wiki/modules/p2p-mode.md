@@ -382,7 +382,10 @@ read-only included, additionally requires `--allow-unauthenticated-p2p`
 (`validate_group_key`, 32 characters) exits 1, as does an
 `HSYNC_P2P_PASSPHRASE` shorter than 12 characters
 (`validate_group_passphrase`), before any network work: the key is the bucket
-token's only entropy.
+token's only entropy. An accepted passphrase logs one INFO line stating that the
+group key was derived and that the *shared password* (not the derived key) is
+what every device must use — a group mixing the two input forms derives
+different keys and fails later with an authentication error.
 
 The mDNS trust refusal is **not fatal** (unlike the bootnode lease loop): the
 discovery loop retries continuously, so `_evaluate_master_pin` dedupes both the

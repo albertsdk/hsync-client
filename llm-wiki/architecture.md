@@ -111,7 +111,10 @@ run on loguru's dedicated thread, so per-event lines (one `[LOCAL CREATE]`
 per file during a burst) never throttle the emitting engine thread — a
 synchronous file sink measured ~2.5× slower event drain on the master's
 watcher thread. Readers that need the file content immediately after a log
-call wait via `logger.complete()`.
+call wait via `logger.complete()`. The stdout sink is always installed: a
+`--log-file` sink is added next to it, never in place of it, because the
+parent that drives the client (`hsync-desktop`) reads those lines and has no
+other view of the log; `-q` is the only suppressor.
 
 **The stdlib root level is the resolved level, not loguru's `level=0`
 recipe** (`logging.basicConfig(..., level=level)`): a NOTSET root answers

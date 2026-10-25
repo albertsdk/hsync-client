@@ -776,7 +776,7 @@ LogFileOpt = Annotated[
     str | None,
     typer.Option(
         "--log-file",
-        help="Write output to FILE.",
+        help="Mirror the log to FILE (rotated); stdout keeps receiving it.",
         metavar="FILE",
         rich_help_panel="Output",
     ),

@@ -938,6 +938,14 @@ def run_sync(
         except WeakGroupPassphrase as exc:
             _fatal_startup(f"HSYNC_P2P_PASSPHRASE is not acceptable: {exc}", log=log)
         resolved_p2p_key = derive_group_key(resolved_p2p_passphrase)
+        # The shared password, not the derived key, is what a group shares: a
+        # group whose devices mix the two input forms ends up with different
+        # keys and only fails later with an authentication error.
+        log.info(
+            "P2P shared password accepted; group key derived "
+            f"({len(resolved_p2p_key)} hex chars). "
+            "Use the same password on every device."
+        )
     # Fail fast on a weak shared key: it is the only entropy behind a bucket
     # token, so a short HSYNC_P2P_KEY would make a protected bucket guessable.
     # Reported here (like the missing-API-key gate below) instead of mid-sync.
