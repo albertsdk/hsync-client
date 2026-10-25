@@ -107,8 +107,13 @@ unpublished it emits only `preview_start`/`preview_end` (unknown, never "out of
 sync"). `P2PInventoryStore.set_change_callback` re-runs the pass on every
 committed inventory change (join, leave, frame), coalesced to one pass per
 `master_status.MIN_INTERVAL_S` and executed off the caller's thread; the local
-listing is reused for `master_status.LOCAL_CACHE_TTL_S`. Cost: see
-[benchmarks.md](benchmarks.md).
+listing is reused for `master_status.LOCAL_CACHE_TTL_S`. A pass **never emits**
+`preview_start`/`preview_end`, not even when the front-end asked (`PREVIEW` on
+stdin): those events are the front-end's own preview-cycle contract, and a
+serving node answering them consumed the desktop's confirmation state — it then
+showed a summary with the classification's counters and never sent the `SYNC`
+that ends its dry run. The window settles the marker-less `file_status` burst
+with a quiet-period timer instead. Cost: see [benchmarks.md](benchmarks.md).
 
 **Combined mDNS + bootnode (`HybridDiscovery`).** With a bootnode configured
 both sources run against one `PeerManager` (built once via

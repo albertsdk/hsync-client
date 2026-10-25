@@ -167,12 +167,13 @@ class TestMasterSyncStatus:
         store = _store(tmp_path, None, session=False)
         status = self._status(store, [])
 
-        status.run_now(requested=True)
+        status.run_now()
 
         status.stop()
         store.close()
-        assert recorder.names() == ["preview_start", "no_peers", "preview_end"]
-        assert recorder.events[1][1]["message"] == NO_DEVICE_MESSAGE
+        # No preview markers: those belong to the window's own preview cycles.
+        assert recorder.names() == ["no_peers"]
+        assert recorder.events[0][1]["message"] == NO_DEVICE_MESSAGE
 
     def test_an_automatic_pass_emits_no_preview_markers(self, tmp_path, recorder, monkeypatch):
         """Inventory-driven passes must not consume the front-end's preview one-shot."""
@@ -187,19 +188,17 @@ class TestMasterSyncStatus:
         assert recorder.names() == ["file_status"]
         assert recorder.states() == [("synced", str(tmp_path / "a.bin"))]
 
-    def test_a_session_without_an_inventory_reports_progress_only(
-        self, tmp_path, recorder, monkeypatch
-    ):
+    def test_a_session_without_an_inventory_reports_nothing(self, tmp_path, recorder, monkeypatch):
         """A device that has not published yet is "unknown", not "out of sync"."""
         monkeypatch.setitem(CONFIG, "LOCAL_BUCKET", str(tmp_path))
         store = _store(tmp_path, None)
         status = self._status(store, [_local(str(tmp_path / "a.bin"), DIGEST_A, 1)])
 
-        status.run_now(requested=True)
+        status.run_now()
 
         status.stop()
         store.close()
-        assert recorder.names() == ["preview_start", "preview_end"]
+        assert recorder.names() == []
 
     def test_it_classifies_against_the_published_inventory(self, tmp_path, recorder, monkeypatch):
         monkeypatch.setitem(CONFIG, "LOCAL_BUCKET", str(tmp_path))
@@ -210,16 +209,11 @@ class TestMasterSyncStatus:
         ]
         status = self._status(store, local)
 
-        status.run_now(requested=True)
+        status.run_now()
 
         status.stop()
         store.close()
-        assert recorder.names() == [
-            "preview_start",
-            "file_status",
-            "file_status",
-            "preview_end",
-        ]
+        assert recorder.names() == ["file_status", "file_status"]
         assert recorder.states() == [
             ("synced", str(tmp_path / "a.bin")),
             ("to_upload", str(tmp_path / "b.bin")),

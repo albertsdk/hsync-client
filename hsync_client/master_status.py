@@ -133,26 +133,24 @@ class MasterSyncStatus:
         self._start_lock = threading.Lock()
         self._worker: threading.Thread | None = None
         self._last_run = float("-inf")
-        self._requested_markers = False
         self._local_files: list[dict] | None = None
         self._local_at = float("-inf")
 
     # ── triggers ─────────────────────────────────────────────────────────
 
-    def request(self, *, requested: bool = False) -> None:
+    def request(self) -> None:
         """Schedule a classification (coalesced, never blocks the caller).
 
-        ``requested`` marks a pass the front-end asked for (``PREVIEW``/``SYNC``
-        on stdin). Only those emit ``preview_start``/``preview_end``: those two
-        events are the front-end's "a requested preview cycle finished"
-        contract, and an automatic inventory-driven pass emitting them would
-        consume the confirmation state of a real preview (the desktop then never
-        sends the ``SYNC`` that ends its dry run).
+        A pass never emits ``preview_start``/``preview_end``, not even when the
+        front-end asked for it: those two events are the front-end's *preview
+        cycle* contract, and a serving device answering them would consume the
+        confirmation state of the preview the window is waiting for (the desktop
+        then shows a summary with the wrong counters and never sends the
+        ``SYNC`` that ends its dry run). The window settles these marker-less
+        ``file_status`` bursts with a quiet-period timer.
         """
         if self._stopped.is_set():
             return
-        if requested:
-            self._requested_markers = True
         self._pending.set()
         with self._start_lock:
             worker = self._worker
@@ -197,24 +195,11 @@ class MasterSyncStatus:
             if not self._pending.is_set():
                 return
 
-    def run_now(self, *, requested: bool | None = None) -> None:
-        """Classify the local share against the devices and emit the events.
-
-        ``requested`` defaults to the flag a queued ``request(requested=True)``
-        set, so the worker honours the caller's intent without a second channel.
-        """
+    def run_now(self) -> None:
+        """Classify the local share against the devices and emit the events."""
         with self._run_lock:
-            if requested is None:
-                requested = self._requested_markers
-            self._requested_markers = False
             self._last_run = self._clock()
-            if requested:
-                emit_event(UiEventName.preview_start)
-            try:
-                self._classify()
-            finally:
-                if requested:
-                    emit_event(UiEventName.preview_end)
+            self._classify()
 
     def _classify(self) -> None:
         store = self._store_provider()
