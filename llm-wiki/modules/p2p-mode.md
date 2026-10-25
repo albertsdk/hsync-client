@@ -274,6 +274,21 @@ Peer-supplied paths on download/delete/rename/upload are validated with
 `validate_remote_relpath` and confined with `resolve_within` (no `startswith`
 prefix checks — sibling directories cannot bypass confinement).
 
+**The serving role reports its own transfers** on the structured UI-event
+channel, so a client that starts first (and is therefore the master) shows the
+same activity the syncing side always showed: `progress` samples while it
+streams a file to a peer (`p2p_server.py::_write_served_chunk`, wire size) or a
+parked delta payload (`p2p_delta.py::handle_delta_data`), samples while it
+receives a peer's upload or delta-apply (`progress.py::ProgressWriter`), and one
+terminal `transfer` per committed file (`progress.py::emit_completed_transfer`,
+file size). `op` follows the local direction — served bytes are an `upload`, a
+push received from a peer is a `download`. Samples use the best-effort
+non-blocking emitter path (`events.py::EventEmitter.emit_progress`), so a slow
+consumer can never stall the server's worker threads; the terminal events keep
+the lossless path. Covered by `tests/test_p2p_server_progress.py`,
+`tests/test_p2p_delta.py` and the black-box
+`tests/test_bb_p2p_master_progress.py`.
+
 The reconcile action `transfer.delete_file_remote` speaks **both transports'
 DELETE contracts**: form fields (`filename`, `cid`) against the central server
 and query params (`path`, `is_dir`, `cid`) against the p2p master

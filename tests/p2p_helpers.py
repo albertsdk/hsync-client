@@ -44,7 +44,10 @@ _P2P_REASON = (
 
 BB_ADMIN_SECRET = "bb0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd"
 BB_API_KEY = f"hs_HsyncAdminBootstrap01_{BB_ADMIN_SECRET}"
-_P2P_KEY = "test-lan-shared-secret"
+# The shared LAN key the P2P black-box pairs use. It must satisfy the client's
+# raw-key floor (``hsync_common.protocol.boot_tokens::MIN_GROUP_KEY_CHARS``):
+# a shorter value is rejected at startup, so the pair would never connect.
+_P2P_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 _HSYNC_COMMON_DIR = str(Path(__file__).resolve().parent.parent.parent / "hsync-common")
 
 
@@ -151,6 +154,7 @@ def _p2p_start(
     p2p_listen_port: int = 0,
     extra_args: tuple[str, ...] = (),
     extra_env: dict[str, str | None] | None = None,
+    events_path: str | None = None,
 ) -> subprocess.Popen:
     """Start a P2P-mode client subprocess with isolated identity and state.
 
@@ -161,6 +165,9 @@ def _p2p_start(
     ``p2p_listen_port`` to force the P2P master listening port.
     ``extra_args``/``extra_env`` are appended to the standard arguments /
     merged into the scrubbed environment (see :func:`_p2p_env`).
+    ``events_path`` attaches the structured UI-event channel
+    (``--events-json-fd``) to a regular file, so a test can assert what a GUI
+    consumer would receive.
     """
     env = _p2p_env(local_path, extra_env)
     args = [
@@ -199,14 +206,25 @@ def _p2p_start(
     # _stderr_text can re-read the file even after the handle is closed.
     log_path = _p2p_log_path(local_path)
     log_fh = open(log_path, "wb")
+    # The structured-event channel takes a descriptor, so it also goes to a
+    # file: a pipe would fill up and stall the peer exactly like stdout would.
+    events_fh = None
+    pass_fds: tuple[int, ...] = ()
+    if events_path:
+        events_fh = open(events_path, "wb")
+        os.set_inheritable(events_fh.fileno(), True)
+        pass_fds = (events_fh.fileno(),)
+        args += ["--events-json-fd", str(events_fh.fileno())]
     proc = subprocess.Popen(
         args,
         env=env,
         stdout=log_fh,
         stderr=subprocess.STDOUT,
+        pass_fds=pass_fds,
     )
     proc._hsync_log_path = log_path  # type: ignore[attr-defined]
     proc._hsync_log_fh = log_fh  # type: ignore[attr-defined]
+    proc._hsync_events_fh = events_fh  # type: ignore[attr-defined]
     return proc
 
 
@@ -223,6 +241,10 @@ def _terminate(proc: subprocess.Popen) -> None:
     if log_fh is not None:
         with contextlib.suppress(OSError, ValueError):
             log_fh.close()
+    events_fh = getattr(proc, "_hsync_events_fh", None)
+    if events_fh is not None:
+        with contextlib.suppress(OSError, ValueError):
+            events_fh.close()
     # Fallback for a PIPE-backed Popen (or an external one): drain and close.
     if proc.stdout:
         proc.stdout.close()

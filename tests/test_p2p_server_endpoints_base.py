@@ -151,7 +151,8 @@ class TestLANRequestHandler:
         test_file.write_text("served content")
         events: list[tuple[str, dict]] = []
         monkeypatch.setattr(
-            "hsync_client.p2p_server.emit_event",
+            # The terminal event is published by the shared progress helpers.
+            "hsync_client.progress.emit_event",
             lambda event, **payload: events.append((str(event), payload)),
         )
 

@@ -442,6 +442,10 @@ class TestDownloadDelta:
         monkeypatch.setattr(
             progress_mod, "emit_event", lambda name, **kw: events.append((name, kw))
         )
+        # In-flight samples travel on the best-effort progress path.
+        monkeypatch.setattr(
+            progress_mod, "emit_progress", lambda name, **kw: events.append((name, kw))
+        )
         download_file_delta(f, ctx)
 
         assert Path(abs_path).read_bytes() == bytes(new)

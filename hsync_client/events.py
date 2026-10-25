@@ -24,7 +24,19 @@ from typing import Any, TextIO
 
 from hsync_common.protocol.events import UiEventName, build_event, serialize_event
 
-__all__ = ["EventEmitter", "UiEventName", "emit_event", "get_emitter", "init_emitter"]
+__all__ = [
+    "EventEmitter",
+    "UiEventName",
+    "emit_event",
+    "emit_progress",
+    "get_emitter",
+    "init_emitter",
+]
+
+# Atomicity unit of a pipe write (POSIX ``PIPE_BUF``): a line no longer than
+# this is written all-or-nothing, so concurrent threads never interleave two
+# lines without needing a lock.
+_PIPE_ATOMIC_WRITE = 4096
 
 
 class EventEmitter:
@@ -33,7 +45,17 @@ class EventEmitter:
     def __init__(self, fd: int | None = None) -> None:
         self._lock = threading.Lock()
         self._fobj: TextIO | None = None
+        # Second handle on the same pipe for the high-frequency ``progress``
+        # samples: non-blocking and lock-free (see ``emit_progress``), so a
+        # reader that falls behind can never block the threads that serve or
+        # move the bytes. Structured events keep the blocking handle below.
+        self._progress_fd: int | None = None
         if fd is not None:
+            try:
+                self._progress_fd = os.dup(fd)
+                os.set_blocking(self._progress_fd, False)
+            except OSError:
+                self._progress_fd = None
             try:
                 self._fobj = os.fdopen(fd, "w", encoding="utf-8")
             except OSError:
@@ -63,9 +85,46 @@ class EventEmitter:
                 # event silently — it must never interrupt the sync itself.
                 pass
 
+    def emit_progress(self, event: UiEventName | str, **payload: Any) -> None:
+        """Write one best-effort event line without blocking or locking.
+
+        Progress is a *sample* stream, not a state transition: the consumer
+        derives rate and ETA from consecutive samples, and the terminal
+        ``transfer`` event carries the outcome, so dropping a sample while the
+        reader is behind is harmless. The line goes out as a single
+        ``os.write`` on the non-blocking handle — atomic for lines up to
+        ``PIPE_BUF``, so concurrent threads cannot interleave — which means a
+        stalled GUI can never block the threads serving or transferring the
+        bytes. Use :meth:`emit` for everything the consumer must never lose.
+        """
+        fd = self._progress_fd
+        if fd is None:
+            return
+        try:
+            line = serialize_event(build_event(event, **payload))
+            data = (line + "\n").encode("utf-8")
+        except (TypeError, ValueError):
+            return
+        if len(data) > _PIPE_ATOMIC_WRITE:
+            # Splitting the line would tear it for the reader and blocking is
+            # exactly what this path must never do: drop the oversized sample.
+            return
+        try:
+            os.write(fd, data)
+        except (BlockingIOError, OSError, ValueError):
+            # Full pipe (reader behind), closed fd or broken pipe: this sample
+            # is expendable and must never interrupt the transfer.
+            pass
+
     def close(self) -> None:
-        """Close the underlying fd (idempotent)."""
+        """Close the underlying fds (idempotent)."""
         with self._lock:
+            if self._progress_fd is not None:
+                try:
+                    os.close(self._progress_fd)
+                except OSError:
+                    pass
+                self._progress_fd = None
             if self._fobj is not None:
                 try:
                     self._fobj.close()
@@ -103,6 +162,13 @@ def emit_event(event: UiEventName | str, **payload: Any) -> None:
     em = _emitter
     if em is not None:
         em.emit(event, **payload)
+
+
+def emit_progress(event: UiEventName | str, **payload: Any) -> None:
+    """Publish a best-effort sample (see :meth:`EventEmitter.emit_progress`)."""
+    em = _emitter
+    if em is not None:
+        em.emit_progress(event, **payload)
 
 
 def get_link_status() -> str | None:

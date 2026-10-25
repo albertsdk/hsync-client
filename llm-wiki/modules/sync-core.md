@@ -96,15 +96,40 @@ any other failure stays a generic `UiEventName.error`.
 
 In-flight transfers emit throttled `UiEventName.progress` events
 (`progress.py::ProgressReporter`, coalesced to at most one per 0.25 s plus a
-final update at completion) from the full-file download loops
-(`transfer.py::_download_from_source_attempt`), the delta download payload stream
-(`delta_transfer.py::download_file_delta`, measured against the peer-declared
-literal size) and the upload stream (`transfer.py::_build_multipart_streaming`, throttled via
-`utils/throttle.py::get_throttle_delay`), so the desktop file panel can show transfer
-progress and ETA. Every event carries `op` (`download`/`upload`): a received file
-has no local row yet, so the desktop needs the direction to create one. The delta
-*upload* posts its payload as a single in-memory body, so it emits no intermediate
-progress.
+final update at completion) from **both roles**:
+
+- the data mover: the full-file download loops
+  (`transfer.py::_download_from_source_attempt`), the delta download payload
+  stream (`delta_transfer.py::download_file_delta`, measured against the
+  peer-declared literal size) and the upload stream
+  (`transfer.py::_build_multipart_streaming`, throttled via
+  `utils/throttle.py::get_throttle_delay`);
+- the P2P server: serving a full file (`p2p_server.py::_write_served_chunk`,
+  against the wire size — the zstd frame when compressed), serving a parked
+  delta payload (`p2p_delta.py::handle_delta_data`) and receiving a peer's
+  upload or delta-apply (`progress.py::ProgressWriter`).
+
+`op` is the *local* direction: bytes that arrived are a `download` (a received
+file has no local row yet, so the desktop needs the direction to create one),
+bytes that left are an `upload`. A master serving a peer therefore reports
+`upload`, and a master receiving a peer's push reports `download`.
+
+Every committed transfer then ends with exactly one terminal
+`UiEventName.transfer` carrying the **file** size
+(`progress.py::emit_completed_transfer`): the desktop closes the row and counts
+the file and its bytes only from that event, so a progress stream without it
+would leave the row open. Engine sentinels (`.hsynckeep`) are skipped at the
+source (`progress.py::progress_reporter`).
+
+`progress` samples travel on a non-blocking, lock-free path
+(`events.py::EventEmitter.emit_progress`: one `os.write` on a duplicated
+non-blocking fd, atomic up to `PIPE_BUF`, sample dropped on `EAGAIN`), so a
+stalled consumer can never block the thread moving the bytes — a serving master
+holds up to `p2p_server.py::P2P_SERVER_MAX_THREADS` transfers in flight, and a
+blocking write under the emitter lock would stall the whole data plane.
+Structured events keep the lossless blocking path. On the sending side the delta
+*upload* posts its payload as a single in-memory body, so it emits no
+intermediate progress; the receiving master still reports the incoming literal.
 
 Bandwidth caps (`MAX_BANDWIDTH_UPLOAD`/`MAX_BANDWIDTH_DOWNLOAD`) are applied by
 `get_throttle_delay` (`utils/throttle.py::get_throttle_delay`) from

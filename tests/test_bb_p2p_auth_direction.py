@@ -55,7 +55,11 @@ class TestP2PKeyAuth:
                 p2p_slave_dir,
                 p2p_bucket,
                 never_master=True,
-                extra_env={"HSYNC_P2P_KEY": "wrong-key-xxxxxxxx"},
+                extra_env={
+                    # Wrong but *valid* length: the rejection must come from
+                    # authentication, not from the raw-key floor.
+                    "HSYNC_P2P_KEY": "f" * 64
+                },
             )
             try:
                 # Then the connection is refused (the master answers 401; the

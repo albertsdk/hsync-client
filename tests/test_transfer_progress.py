@@ -18,7 +18,7 @@ class TestProgressReporter:
     def captured(self, monkeypatch):
         calls: list[tuple[str, dict]] = []
         clock = [0.0]
-        monkeypatch.setattr(progress, "emit_event", lambda name, **kw: calls.append((name, kw)))
+        monkeypatch.setattr(progress, "emit_progress", lambda name, **kw: calls.append((name, kw)))
         monkeypatch.setattr(progress, "monotonic", lambda: clock[0])
         return calls, clock
 

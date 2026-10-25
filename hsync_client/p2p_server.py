@@ -40,7 +40,7 @@ from contextlib import contextmanager
 from enum import StrEnum
 from http import HTTPStatus
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, overload
+from typing import IO, TYPE_CHECKING, Any, overload
 from urllib.parse import parse_qs, urlparse
 
 import zstandard as zstd
@@ -92,11 +92,16 @@ from hsync_client.compression import (
 )
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNCKEEP_FILENAME, MTIME_MAX_FUTURE_SKEW_SECONDS, ActionLabel
-from hsync_client.events import UiEventName, emit_event
 from hsync_client.multipart import (
     _MULTIPART_BOUNDARY_RE,
     _CappedBytesWriter,
     _StreamingMultipartParser,
+)
+from hsync_client.progress import (
+    ProgressReporter,
+    ProgressWriter,
+    emit_completed_transfer,
+    progress_reporter,
 )
 from hsync_client.utils import (
     cid_suffix,
@@ -200,6 +205,24 @@ def _throttle_upload(nbytes: int) -> None:
     delay = get_throttle_delay(nbytes, limit, "upload")
     if delay > 0:
         time.sleep(delay)
+
+
+def _write_served_chunk(
+    wfile: Any, chunk: bytes, reporter: ProgressReporter | None, sent: int
+) -> int:
+    """Write one served chunk and report the cumulative bytes to the peer.
+
+    Shared by the three serve loops (range resume, identity, zstd) so the
+    progress accounting cannot drift between them. ``sent`` starts at the
+    resume offset for a partial request, so the percentage always refers to the
+    whole file; ``reporter`` is ``None`` for engine sentinels and when no events
+    channel is attached (the reporter itself is a no-op then).
+    """
+    wfile.write(chunk)
+    sent += len(chunk)
+    if reporter is not None:
+        reporter.update(sent)
+    return sent
 
 
 class P2PServerMode(StrEnum):
@@ -1760,6 +1783,11 @@ class P2PEndpointMixin(_HTTPTransportBase):
                     self.end_headers()
                     response_started = True
                     remaining = range_len
+                    # A resumed request serves only the tail: the reporter
+                    # starts at the resume offset so the percentage still
+                    # refers to the whole file.
+                    range_reporter = progress_reporter(display_path, file_size, "upload")
+                    sent = start
                     while remaining > 0:
                         chunk = stream.read(min(_P2P_UPLOAD_CHUNK_SIZE, remaining))
                         if not chunk:
@@ -1768,9 +1796,10 @@ class P2PEndpointMixin(_HTTPTransportBase):
                         if not _same_open_file(opened, os.fstat(stream.fileno())):
                             self.close_connection = True
                             return
-                        self.wfile.write(chunk)
+                        sent = _write_served_chunk(self.wfile, chunk, range_reporter, sent)
                         _throttle_upload(len(chunk))
                         remaining -= len(chunk)
+                    emit_completed_transfer("upload", display_path, file_size)
                     return
 
                 accept_encoding = self.headers.get("Accept-Encoding", "").lower()
@@ -1806,20 +1835,24 @@ class P2PEndpointMixin(_HTTPTransportBase):
                             self.end_headers()
                             response_started = True
                             remaining = compressed_size
+                            compressed_reporter = progress_reporter(
+                                display_path, compressed_size, "upload"
+                            )
+                            sent = 0
                             while remaining:
                                 chunk = compressed_body.read(min(_P2P_UPLOAD_CHUNK_SIZE, remaining))
                                 if not chunk:
                                     self.close_connection = True
                                     return
-                                self.wfile.write(chunk)
+                                sent = _write_served_chunk(
+                                    self.wfile, chunk, compressed_reporter, sent
+                                )
                                 _throttle_upload(len(chunk))
                                 remaining -= len(chunk)
                         # One completed serve = one outgoing content transfer:
                         # report it so the serving side's Sent counter (files and
                         # bytes) updates, as the upload path already does.
-                        emit_event(
-                            UiEventName.transfer, op="upload", file=display_path, size=file_size
-                        )
+                        emit_completed_transfer("upload", display_path, file_size)
                         return
                     if not _same_open_file(opened, os.fstat(stream.fileno())):
                         self._send_error_response(HTTP_CONFLICT, "File changed while reading")
@@ -1833,6 +1866,8 @@ class P2PEndpointMixin(_HTTPTransportBase):
                 self.send_header("X-Permissions", permissions)
                 self.end_headers()
                 response_started = True
+                identity_reporter = progress_reporter(display_path, file_size, "upload")
+                sent = 0
                 while True:
                     chunk = stream.read(_P2P_UPLOAD_CHUNK_SIZE)
                     if not chunk:
@@ -1840,14 +1875,14 @@ class P2PEndpointMixin(_HTTPTransportBase):
                     if not _same_open_file(opened, os.fstat(stream.fileno())):
                         self.close_connection = True
                         return
-                    self.wfile.write(chunk)
+                    sent = _write_served_chunk(self.wfile, chunk, identity_reporter, sent)
                     _throttle_upload(len(chunk))
                 if not _same_open_file(opened, os.fstat(stream.fileno())):
                     self.close_connection = True
                 else:
                     # Completed identity serve: report the outgoing transfer so
                     # the serving side's Sent counter (files and bytes) updates.
-                    emit_event(UiEventName.transfer, op="upload", file=display_path, size=file_size)
+                    emit_completed_transfer("upload", display_path, file_size)
                 return
         except FileNotFoundError:
             self._send_error_response(HTTP_NOT_FOUND, "File not found")
@@ -2076,7 +2111,17 @@ class P2PEndpointMixin(_HTTPTransportBase):
                 declared_size if declared_size > 0 else None,
                 CONFIG.get("MAX_INBOUND_SIZE", 0),
             )
-            capped = _CappedBytesWriter(raw.write, cap) if cap is not None else raw
+            # Report the bytes landing on disk (decompressed when the peer sent
+            # zstd, which is what the file ends up with). A resumed upload starts
+            # from the offset already on disk, so the percentage covers the whole
+            # file; an undeclared size throttles by time only.
+            reporter = progress_reporter(
+                dest_path_local,
+                declared_size if declared_size > 0 else 0,
+                "download",
+            )
+            counted = ProgressWriter(raw.write, reporter, start=offset_val if is_resumable else 0)
+            capped = _CappedBytesWriter(counted.write, cap) if cap is not None else counted
             if is_compressed_local:
                 import zstandard as zstd
 
@@ -2299,6 +2344,16 @@ class P2PEndpointMixin(_HTTPTransportBase):
             if permissions:
                 set_permissions(dest_path, permissions)
 
+            # The incoming bytes are committed: publish the terminal transfer so
+            # the Desktop closes the row and counts the file as received. Emitted
+            # after the metadata is applied, so the re-stat sees the final size
+            # and mtime.
+            try:
+                committed_size = Path(dest_path).stat().st_size
+            except OSError:
+                committed_size = 0
+            emit_completed_transfer("download", dest_path, committed_size)
+
             self._send_json_response(
                 HTTP_CREATED,
                 {"info": "File uploaded successfully", "file": dest_path},
@@ -2379,7 +2434,18 @@ class P2PEndpointMixin(_HTTPTransportBase):
             fd, literal_path = tempfile.mkstemp(prefix="hsync-delta-lit-")
             raw = os.fdopen(fd, "wb")
             raw_file = raw
-            capped = _CappedBytesWriter(raw.write, DELTA_MAX_LITERAL_SIZE)
+            # The form fields precede the file part, so the destination is
+            # already known: report the incoming payload against it. The literal
+            # size is not declared up front (it depends on the diff), so the
+            # reporter throttles by time and the Desktop keeps the row's own
+            # size as the total.
+            rel = form_fields.get("path", "")
+            dest_for_progress = resolve_within(CONFIG.get("LOCAL_BUCKET", ""), rel) if rel else None
+            reporter = (
+                progress_reporter(dest_for_progress, 0, "download") if dest_for_progress else None
+            )
+            counted = ProgressWriter(raw.write, reporter)
+            capped = _CappedBytesWriter(counted.write, DELTA_MAX_LITERAL_SIZE)
             return capped.write
 
         try:

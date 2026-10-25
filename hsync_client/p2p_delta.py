@@ -78,6 +78,10 @@ from hsync_client.compression import (
 )
 from hsync_client.config import CONFIG
 from hsync_client.constants import MTIME_MAX_FUTURE_SKEW_SECONDS
+from hsync_client.progress import (
+    emit_completed_transfer,
+    progress_reporter,
+)
 
 # HTTP status codes used here (kept local to avoid a p2p_server import cycle).
 _HTTP_OK = 200
@@ -493,6 +497,11 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
 
             set_permissions(filepath, permissions)
 
+        # The rebuilt file is committed: publish the terminal transfer (the file
+        # the peer reports as an upload, received here as a download) so the
+        # Desktop closes the row and counts it as received.
+        emit_completed_transfer("download", filepath, new_size)
+
         handler._send_json_response(_HTTP_OK, {"status": "ok", "sha256": rebuilt, "size": new_size})
     finally:
         for leftover in (cleanup_path, decompressed_path):
@@ -530,6 +539,13 @@ def handle_delta_data(handler, bucket: str, token: str) -> None:
 
     try:
         payload_size = Path(payload_file).stat().st_size
+        # The token carries the file it was issued for: the payload is that
+        # file's wire representation, so the serving side can show it as the
+        # file's upload progress. An unresolvable relpath (or a sentinel) just
+        # streams without reporting.
+        relpath = str(entry.meta.get("relpath", "") or "")
+        served_path = str(Path(CONFIG.get("LOCAL_BUCKET", "")) / relpath) if relpath else ""
+        reporter = progress_reporter(served_path, payload_size, "upload") if served_path else None
         handler.send_response(_HTTP_OK)
         handler.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
         handler.send_header("Content-Length", str(payload_size))
@@ -537,9 +553,22 @@ def handle_delta_data(handler, bucket: str, token: str) -> None:
         if entry.compressed:
             handler.send_header("Content-Encoding", CONTENT_ENCODING_ZSTD)
         handler.end_headers()
+        sent = 0
         with open(payload_file, "rb") as f:
             while chunk := f.read(64 * 1024):
                 handler.wfile.write(chunk)
+                sent += len(chunk)
+                if reporter is not None:
+                    reporter.update(sent)
+        # Payload fully served: the peer can rebuild the file, so publish the
+        # logical transfer — the file size, like the full-file serve — which is
+        # what closes the Desktop row and counts the file as sent.
+        if served_path:
+            try:
+                served_size = Path(served_path).stat().st_size
+            except OSError:
+                served_size = 0
+            emit_completed_transfer("upload", served_path, served_size)
     finally:
         try:
             os.remove(payload_file)

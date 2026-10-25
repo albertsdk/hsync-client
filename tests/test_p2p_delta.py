@@ -31,6 +31,7 @@ from hsync_common.constants import PARTIAL_DELTA_SUFFIX
 from hsync_common.delta import DeltaTokenStore, compute_signatures, find_matches
 
 from hsync_client import p2p_delta as ld
+from hsync_client import progress as progress_mod
 
 BLOCK = 4096  # DELTA_BLOCK_SIZE_SMALL
 
@@ -754,3 +755,83 @@ class TestTokenStore:
         ]
 
         assert offenders == [], f"process-scoped temp dirs without cleanup: {offenders}"
+
+
+# ---------------------------------------------------------------------------
+# UI-event reporting on the master's delta paths
+# ---------------------------------------------------------------------------
+
+
+def _captured_events(monkeypatch) -> list[dict]:
+    """Capture the emitted UI events at the progress sink boundary."""
+    events: list[dict] = []
+
+    def _record(event, **payload):
+        events.append({"event": str(event), **payload})
+
+    monkeypatch.setattr(progress_mod, "emit_progress", _record)
+    monkeypatch.setattr(progress_mod, "emit_event", _record)
+    return events
+
+
+class TestDeltaServingReports:
+    """Serving a parked payload is the file's upload: progress + one transfer."""
+
+    def test_serving_the_payload_reports_progress_and_the_file(self, p2p_config, monkeypatch):
+        master_file = _master_file(p2p_config, "big.bin", b"master-content")
+        events = _captured_events(monkeypatch)
+        token = _issue(relpath="big.bin", payload=b"literal-payload")
+        assert token is not None
+        handler = _FakeHandler()
+
+        ld.handle_delta_data(handler, "bucket1", token)
+
+        assert handler.response_status == 200
+        assert handler.wfile.getvalue() == b"literal-payload"
+        progress = [e for e in events if e["event"] == "progress"]
+        assert progress, "a served delta payload must report progress"
+        assert all(e["op"] == "upload" for e in progress)
+        assert progress[-1]["file"] == str(master_file)
+        assert progress[-1]["transferred"] == len(b"literal-payload")
+        assert progress[-1]["total"] == len(b"literal-payload")
+        transfers = [e for e in events if e["event"] == "transfer"]
+        assert transfers == [
+            {
+                "event": "transfer",
+                "op": "upload",
+                "file": str(master_file),
+                "size": len(b"master-content"),
+            }
+        ]
+
+
+class TestDeltaApplyReports:
+    """Applying a peer's delta commits a file: one terminal download event."""
+
+    def test_applied_delta_reports_the_committed_file(
+        self, p2p_config, apply_handler, tmp_path, monkeypatch
+    ):
+        base = _base_bytes()
+        new = bytearray(base)
+        new[100:200] = b"B" * 100
+        target = _master_file(p2p_config, data=base)
+        events = _captured_events(monkeypatch)
+
+        client_base = tmp_path / "client-base.bin"
+        client_base.write_bytes(base)
+        sigs = compute_signatures(str(client_base), BLOCK)
+        ops, literals = find_matches(bytes(new), sigs, BLOCK)
+        meta = _valid_metadata(base, bytes(new), ops=[op.to_dict() for op in ops])
+
+        _apply(apply_handler, meta, literals)
+
+        assert apply_handler.sent[0][0] == 200
+        transfers = [e for e in events if e["event"] == "transfer"]
+        assert transfers == [
+            {
+                "event": "transfer",
+                "op": "download",
+                "file": str(target),
+                "size": len(new),
+            }
+        ]

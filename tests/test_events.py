@@ -22,6 +22,7 @@ from hsync_client import events
 from hsync_client.events import (
     EventEmitter,
     emit_event,
+    emit_progress,
     get_emitter,
     get_link_status,
     init_emitter,
@@ -152,6 +153,98 @@ class TestModuleSingleton:
         second = init_emitter(None)
         assert first is not second
         assert events.get_emitter() is second
+
+
+class TestProgressChannel:
+    """``progress`` samples never block the emitter, even on a full pipe.
+
+    They are samples, not state transitions: the consumer needs the terminal
+    ``transfer`` event for the outcome, so dropping samples while a slow reader
+    (the Desktop's UI thread) catches up is safe — and is the only way a
+    serving master can avoid stalling its own data plane on the events pipe.
+    """
+
+    def teardown_method(self):
+        init_emitter(None)
+
+    @staticmethod
+    def _capture() -> tuple[int, int]:
+        read_fd, write_fd = os.pipe()
+        init_emitter(write_fd)
+        return read_fd, write_fd
+
+    def test_progress_reaches_the_channel(self):
+        read_fd, _write_fd = self._capture()
+
+        emit_progress(UiEventName.progress, file="/b/f.bin", transferred=10, total=10, op="upload")
+        get_emitter().close()
+
+        parsed = [parse_event_line(line) for line in _read_lines(read_fd)]
+        os.close(read_fd)
+
+        assert parsed and parsed[0] is not None
+        assert parsed[0]["event"] == "progress"
+        assert parsed[0]["transferred"] == 10
+        assert parsed[0]["op"] == "upload"
+
+    def test_progress_does_not_block_on_a_full_pipe(self):
+        import time
+
+        read_fd, write_fd = self._capture()
+        # Fill the pipe through a private non-blocking handle: the reader is not
+        # draining, exactly like a stalled GUI event loop.
+        fill_fd = os.dup(write_fd)
+        os.set_blocking(fill_fd, False)
+        try:
+            while True:
+                os.write(fill_fd, b"x" * 4096)
+        except BlockingIOError:
+            pass
+        finally:
+            os.close(fill_fd)
+
+        started = time.monotonic()
+        emit_progress(UiEventName.progress, file="/b/f.bin", transferred=1, total=2, op="upload")
+        elapsed = time.monotonic() - started
+
+        assert elapsed < 0.1, f"progress blocked for {elapsed:.3f}s on a full pipe"
+        os.close(read_fd)
+
+    def test_an_oversized_progress_line_is_dropped(self):
+        """A line above PIPE_BUF would be torn: it is dropped, never split."""
+        read_fd, _write_fd = self._capture()
+
+        emit_progress(
+            UiEventName.progress,
+            file="/b/" + "x" * 5000,
+            transferred=1,
+            total=2,
+            op="upload",
+        )
+        get_emitter().close()
+
+        assert _read_lines(read_fd) == []
+        os.close(read_fd)
+
+    def test_structural_events_keep_the_lossless_path(self):
+        read_fd, _write_fd = self._capture()
+
+        emit_progress(UiEventName.progress, file="/b/f.bin", transferred=1, total=2, op="upload")
+        emit_event(UiEventName.transfer, op="upload", file="/b/f.bin", size=2)
+        get_emitter().close()
+
+        parsed = [parse_event_line(line) for line in _read_lines(read_fd)]
+        os.close(read_fd)
+
+        assert [entry["event"] for entry in parsed if entry is not None] == [
+            "progress",
+            "transfer",
+        ]
+
+    def test_progress_is_a_noop_without_a_channel(self):
+        init_emitter(None)
+
+        emit_progress(UiEventName.progress, file="/b/f.bin", transferred=1, total=2, op="upload")
 
 
 class TestLinkStatus:
