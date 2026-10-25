@@ -36,6 +36,12 @@ from hsync_client.constants import (
 from hsync_client.exceptions import WatcherStartError
 from hsync_client.watcher import WatcherLimit, WatcherManager, watcher_oserror_class
 
+
+@pytest.fixture(autouse=True)
+def _no_real_inventory_store(mock_inventory_store: MagicMock) -> None:
+    """Mock servers never close a real store (see ``mock_inventory_store``)."""
+
+
 # The kernel strings watchdog surfaces on Linux (inotify_init / inotify_add_watch)
 # plus the generic descriptor-exhaustion failures.
 _INSTANCE_ERRNO = OSError(errno.EMFILE, "inotify instance limit reached")

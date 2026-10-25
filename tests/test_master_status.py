@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,23 @@ DIGEST_B = "b" * 64
 BUCKET = "share"
 LOG = logging.getLogger("test-master-status")
 
+# Every store built by ``_store``; the autouse fixture below closes them.
+_OPEN_STORES: list[P2PInventoryStore] = []
+
+
+@pytest.fixture(autouse=True)
+def _close_inventory_stores() -> Generator[None]:
+    """Close the stores built by ``_store`` so no handle outlives the test.
+
+    ``P2PInventoryStore`` opens a SQLite connection on construction; leaking it
+    surfaces as ``ResourceWarning: unclosed database`` in whichever later test
+    happens to trigger a GC pass.
+    """
+    yield
+    for store in _OPEN_STORES:
+        store.close()
+    _OPEN_STORES.clear()
+
 
 def _local(path: str, digest: str, size: int) -> dict:
     return {"filepath": path, "sha256sum": digest, "size": size}
@@ -31,6 +49,7 @@ def _local(path: str, digest: str, size: int) -> dict:
 def _store(tmp_path: Path, entries: list[dict] | None, *, session: bool = True):
     """A store with one publisher session holding *entries* (when given)."""
     store = P2PInventoryStore(tmp_path / "inventory.sqlite3", BUCKET)
+    _OPEN_STORES.append(store)
     store.activate()
     if not session:
         return store

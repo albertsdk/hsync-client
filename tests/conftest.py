@@ -11,6 +11,7 @@ import sys
 from collections.abc import Generator
 from dataclasses import dataclass
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -147,6 +148,22 @@ def reset_sync_state_stores() -> None:
     tombstones._stores.clear()
     reset_bucket_folder_cache()
     reset_state_db_cache()
+
+
+@pytest.fixture
+def mock_inventory_store(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Replace the per-bucket P2P inventory store with a mock.
+
+    Unit tests that drive ``_run_as_master``/``run_p2p_mode`` with mock servers
+    never reach ``_stop_p2p_serving`` — the production path that closes the
+    real store — so a real ``P2PInventoryStore`` would leak its SQLite
+    connection into whichever later test triggers a GC pass.
+    """
+    from hsync_client.p2p_inventory import P2PInventoryStore
+
+    store = MagicMock()
+    monkeypatch.setattr(P2PInventoryStore, "for_bucket", lambda *_args, **_kwargs: store)
+    return store
 
 
 @pytest.fixture(autouse=True)

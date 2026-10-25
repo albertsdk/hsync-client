@@ -31,33 +31,57 @@ def _db_path(folder_id: str = FOLDER_ID) -> Path:
     return client_state_db_path(folder_id, Path(default_device_dir()))
 
 
+@pytest.fixture
+def direct_state_db():
+    """Open directly-created ``StateDb`` handles closed after the test.
+
+    Only handles obtained through ``get_state_db`` live in the module cache the
+    conftest fixture resets; a ``StateDb(...)`` built here is not cached, so it
+    must be closed explicitly or its connection is collected (and reported as
+    ``ResourceWarning: unclosed database``) during a later test.
+    """
+    opened: list[StateDb] = []
+
+    def _open(path: Path) -> StateDb:
+        db = StateDb(path)
+        opened.append(db)
+        return db
+
+    yield _open
+    for db in opened:
+        db.close()
+
+
 def _seed_db(folder_id: str = FOLDER_ID, *, versions: int = 2, tombstones: int = 1) -> Path:
     """Create the per-folder DB with *versions* bases and *tombstones* markers."""
     db_path = _db_path(folder_id)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     db = StateDb(db_path)
-    db.ensure_folder(folder_id, f"/bucket-{folder_id}")
-    for index in range(versions):
-        db.upsert_version(
-            folder_id,
-            f"k{index}",
-            base_hash="h",
-            version_id="v",
-            origin_cid=None,
-            ts=1.0,
-            vclock="{}",
-            corrected_mtime=0.0,
-        )
-    for index in range(tombstones):
-        db.upsert_tombstone(
-            folder_id,
-            f"gone{index}",
-            sha256sum="h",
-            version_id="v",
-            origin_cid=None,
-            ts=1.0,
-            vclock="{}",
-        )
+    try:
+        db.ensure_folder(folder_id, f"/bucket-{folder_id}")
+        for index in range(versions):
+            db.upsert_version(
+                folder_id,
+                f"k{index}",
+                base_hash="h",
+                version_id="v",
+                origin_cid=None,
+                ts=1.0,
+                vclock="{}",
+                corrected_mtime=0.0,
+            )
+        for index in range(tombstones):
+            db.upsert_tombstone(
+                folder_id,
+                f"gone{index}",
+                sha256sum="h",
+                version_id="v",
+                origin_cid=None,
+                ts=1.0,
+                vclock="{}",
+            )
+    finally:
+        db.close()
     return db_path
 
 
@@ -113,7 +137,7 @@ class TestResolveStateDb:
 
 
 class TestResetFolderState:
-    def test_clears_versions_and_tombstones_only_for_that_folder(self, tmp_path):
+    def test_clears_versions_and_tombstones_only_for_that_folder(self, tmp_path, direct_state_db):
         folder = tmp_path / "bucket"
         _write_marker(folder)
         _seed_db(versions=3, tombstones=2)
@@ -129,25 +153,27 @@ class TestResetFolderState:
         assert report.db_path == str(_db_path())
         assert report.quarantined == ""
 
-        db = StateDb(_db_path())
+        db = direct_state_db(_db_path())
         assert db.count_versions(FOLDER_ID) == 0
         assert db.iter_tombstones(FOLDER_ID) == []
         # The folder row survives so the next cycle re-opens the same DB.
         assert db.folder_canonical_path(FOLDER_ID) is not None
         # The other folder's own DB is untouched.
-        other = StateDb(other_db)
+        other = direct_state_db(other_db)
         assert other.count_versions(OTHER_FOLDER_ID) == 1
         assert len(other.iter_tombstones(OTHER_FOLDER_ID)) == 1
         # No synced file and no marker is touched.
         assert user_file.read_text(encoding="utf-8") == "payload"
         assert (folder / ".hsyncfolder").read_text(encoding="utf-8").strip() == FOLDER_ID
 
-    def test_shared_state_db_only_drops_the_target_folder(self, tmp_path, monkeypatch):
+    def test_shared_state_db_only_drops_the_target_folder(
+        self, tmp_path, monkeypatch, direct_state_db
+    ):
         shared = tmp_path / "shared.db"
         monkeypatch.setenv("HSYNC_STATE_DB", str(shared))
         folder = tmp_path / "bucket"
         _write_marker(folder)
-        db = StateDb(shared)
+        db = direct_state_db(shared)
         for folder_id in (FOLDER_ID, OTHER_FOLDER_ID):
             db.ensure_folder(folder_id, f"/bucket-{folder_id}")
             db.upsert_version(
@@ -168,13 +194,15 @@ class TestResetFolderState:
         assert db.count_versions(FOLDER_ID) == 0
         assert db.count_versions(OTHER_FOLDER_ID) == 1
 
-    def test_marker_less_folder_reanchors_through_the_shared_state_db(self, tmp_path, monkeypatch):
+    def test_marker_less_folder_reanchors_through_the_shared_state_db(
+        self, tmp_path, monkeypatch, direct_state_db
+    ):
         """With HSYNC_STATE_DB the engine resolves folders from that one file."""
         shared = tmp_path / "shared.db"
         monkeypatch.setenv("HSYNC_STATE_DB", str(shared))
         folder = tmp_path / "bucket"
         folder.mkdir()
-        db = StateDb(shared)
+        db = direct_state_db(shared)
         db.ensure_folder(FOLDER_ID, os.path.realpath(folder))
         db.upsert_version(
             FOLDER_ID,
@@ -214,7 +242,9 @@ class TestResetFolderState:
         assert report.db_path == ""
         assert not (folder / ".hsyncfolder").exists()
 
-    def test_refuses_when_another_process_holds_the_lock(self, tmp_path, monkeypatch):
+    def test_refuses_when_another_process_holds_the_lock(
+        self, tmp_path, monkeypatch, direct_state_db
+    ):
         folder = tmp_path / "bucket"
         _write_marker(folder)
         _seed_db()
@@ -227,7 +257,7 @@ class TestResetFolderState:
         with pytest.raises(InstanceLockError):
             reset_folder_state(folder)
         # Nothing was deleted before the lock check.
-        assert StateDb(_db_path()).count_versions(FOLDER_ID) == 2
+        assert direct_state_db(_db_path()).count_versions(FOLDER_ID) == 2
 
     def test_unreadable_db_fails_without_quarantine(self, tmp_path):
         folder = tmp_path / "bucket"

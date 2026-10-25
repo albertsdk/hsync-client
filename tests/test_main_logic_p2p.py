@@ -7,10 +7,17 @@ Contains TestRunLanMode class.
 from typing import cast
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from hsync_client.config import HsyncConfig
 from hsync_client.events import UiEventName
 from hsync_client.identity import DeviceIdentity
 from hsync_client.p2p_handler import run_p2p_mode
+
+
+@pytest.fixture(autouse=True)
+def _no_real_inventory_store(mock_inventory_store: MagicMock) -> None:
+    """Mock servers never close a real store (see ``mock_inventory_store``)."""
 
 
 def _make_p2p_config(tmp_path: object, **overrides: object) -> HsyncConfig:
