@@ -826,7 +826,7 @@ def _run_as_master(
         )
 
         if config["P2P_KEY"]:
-            log.info("Authentication enabled (HSYNC_P2P_KEY)")
+            log.info("Authentication enabled (shared secret)")
         else:
             log.info("No authentication (trust P2P mode)")
 

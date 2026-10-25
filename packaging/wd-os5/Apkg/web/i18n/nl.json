@@ -51,7 +51,8 @@
     "field.mass_delete_percent": "Maximaal verwijderingspercentage (0 = uit)",
     "field.allow_deletions": "Het verwijderrisico zonder bevestiging accepteren",
     "field.p2p_group": "p2p-groepsnaam",
-    "field.p2p_key": "Gedeeld wachtwoord (optioneel)",
+    "field.p2p_password": "Gedeeld wachtwoord (minimaal 12 tekens, optioneel)",
+    "note.p2p_password": "Gebruik hetzelfde wachtwoord op elk apparaat van de groep. Het wordt afgeleid tot de groepsleutel en autoriseert schrijfacties.",
     "field.p2p_port": "Poort (0 = automatisch)",
     "field.p2p_peer_download": "Van andere apparaten downloaden",
     "field.p2p_peer_read_cap": "Maximale gelijktijdige leesacties van andere apparaten",
@@ -95,8 +96,8 @@
     "action.log": "Logboek bekijken",
     "action.copy": "Kopiëren",
     "action.copy_done": "Gekopieerd",
-    "action.reveal_key": "Sleutel tonen",
-    "action.hide_key": "Sleutel verbergen",
+    "action.reveal_key": "Wachtwoord tonen",
+    "action.hide_key": "Wachtwoord verbergen",
     "action.edit_ignore": "Uitsluitingsregels…",
     "action.test_bootnode": "Discovery-server testen",
     "action.test_server": "Verbinding testen",
@@ -138,5 +139,6 @@
     "trust.kind_bootnode": "Discovery-server",
     "trust.kind_server": "Server",
     "trust.kind_peer": "Apparaat",
-    "footer.version": "Versie"
+    "footer.version": "Versie",
+    "toast.password_too_short": "Het gedeelde wachtwoord moet minimaal 12 tekens lang zijn."
 }

@@ -188,7 +188,8 @@ systemd unit's `ExecStart`; the rest are consumed directly by the hsync binary.
 | `HSYNC_PATH` † | `/var/lib/hsync` | Local directory to synchronise |
 | `HSYNC_P2P_HTTPS` | `true` | Use HTTPS for p2p peer communication (always on, not configurable) |
 | `HSYNC_P2P_GROUP` | *(empty)* | Restrict discovery to a group |
-| `HSYNC_P2P_KEY` | *(empty)* | Shared secret for peer authentication (also the bootnode group key for protected/private bootnodes) |
+| `HSYNC_P2P_PASSPHRASE` | *(empty)* | Shared password for peer authentication (at least 12 characters; derived to the group key). Mutually exclusive with `HSYNC_P2P_KEY` |
+| `HSYNC_P2P_KEY` | *(empty)* | Full raw group key (at least 32 characters) for peer authentication (also the bootnode group key for protected/private bootnodes) |
 | `HSYNC_DEVICE_DIR` | `/var/lib/hsync/device` | Directory for the persistent device identity (device ID + p2p keypair) and the per-folder sync-state DBs (`syncstate/<uuid>.db`, `syncstate/index.db`) |
 | `HSYNC_STATE_DIR` | `/var/lib/hsync/state` | Installation state directory: the server's per-bucket state and the default parent of the device identity, trust stores and p2p pins when their own override is unset |
 | `HSYNC_LOCKS_DIR` | `/var/lib/hsync/locks` | Directory for the per-directory instance locks (`<sha256>.lock` per synced directory) |

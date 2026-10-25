@@ -71,8 +71,8 @@ indefinitely) for one-shot runs.
 | Symptom | Likely cause |
 |---|---|
 | No peers discovered | Devices on different networks/VLANs, or mDNS blocked (some guest Wi-Fi and container networks) → use the [bootnode plan](p2p-bootnode.md) across networks. |
-| Peers seen, no sync | Different `HSYNC_P2P_KEY`, bucket or `--group`. |
-| Writes refused | No key on one side: set the same `HSYNC_P2P_KEY`, or use `--sync-direction download-only`. |
+| Peers seen, no sync | Different `HSYNC_P2P_PASSPHRASE`/`HSYNC_P2P_KEY`, bucket or `--group`. |
+| Writes refused | No shared secret on one side: set the same password or raw key, or use `--sync-direction download-only`. |
 
 More: [Troubleshooting](troubleshooting.md) and [FAQ — p2p Mode](faq-p2p.md).
 Protocol internals: [p2p Internals](internal/p2p-internals.md).

@@ -51,7 +51,8 @@
     "field.mass_delete_percent": "Maximaler Löschanteil in Prozent (0 = aus)",
     "field.allow_deletions": "Löschrisiko ohne Bestätigung akzeptieren",
     "field.p2p_group": "p2p-Gruppenname",
-    "field.p2p_key": "Gemeinsames Passwort (optional)",
+    "field.p2p_password": "Gemeinsames Passwort (mindestens 12 Zeichen, optional)",
+    "note.p2p_password": "Verwende dasselbe Passwort auf jedem Gerät der Gruppe. Es wird zum Gruppenschlüssel abgeleitet und autorisiert Schreibzugriffe.",
     "field.p2p_port": "Port (0 = automatisch)",
     "field.p2p_peer_download": "Von anderen Geräten herunterladen",
     "field.p2p_peer_read_cap": "Maximale gleichzeitige Lesezugriffe anderer Geräte",
@@ -95,8 +96,8 @@
     "action.log": "Protokoll ansehen",
     "action.copy": "Kopieren",
     "action.copy_done": "Kopiert",
-    "action.reveal_key": "Schlüssel zeigen",
-    "action.hide_key": "Schlüssel verbergen",
+    "action.reveal_key": "Passwort anzeigen",
+    "action.hide_key": "Passwort verbergen",
     "action.edit_ignore": "Ausschlussregeln…",
     "action.test_bootnode": "Discovery-Server testen",
     "action.test_server": "Verbindung testen",
@@ -138,5 +139,6 @@
     "trust.kind_bootnode": "Discovery-Server",
     "trust.kind_server": "Server",
     "trust.kind_peer": "Gerät",
-    "footer.version": "Version"
+    "footer.version": "Version",
+    "toast.password_too_short": "Das gemeinsame Passwort muss mindestens 12 Zeichen lang sein."
 }

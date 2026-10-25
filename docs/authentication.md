@@ -58,6 +58,9 @@ HSYNC Client                        HSYNC Server
 
 ## 2. p2p with `P2P_KEY` — Authenticated Master/Slave
 
+> `P2P_KEY` below denotes the resolved shared secret: the raw `HSYNC_P2P_KEY`, or
+> the 64-hex key the client derives from `HSYNC_P2P_PASSPHRASE`.
+
 When a shared secret (`P2P_KEY`) is configured, the master authenticates every
 incoming slave connection. The slave must present the correct key and its CID.
 

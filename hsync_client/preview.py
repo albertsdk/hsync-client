@@ -70,7 +70,11 @@ def _p2p_write_allowed(direction: str, log) -> bool:
         direction,
         allow_unauthenticated_writes=CONFIG.get("P2P_ALLOW_UNAUTHENTICATED_WRITES", False),
         log=log,
-        hint="Set HSYNC_P2P_KEY, use download-only, or explicitly allow unauthenticated writes.",
+        hint=(
+            "Set a shared password (HSYNC_P2P_PASSPHRASE) or raw key "
+            "(HSYNC_P2P_KEY), use download-only, or explicitly allow "
+            "unauthenticated writes."
+        ),
     )
 
 

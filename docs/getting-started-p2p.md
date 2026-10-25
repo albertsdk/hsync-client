@@ -86,20 +86,22 @@ This is intentional — it lets deletions made on the master reach offline peers
 See [p2p Mode → Deletion Risk Warning](p2p-mode.md#deletion-risk-warning) for
 the full explanation.
 
-## Authentication (shared key)
+## Authentication (shared password)
 
-The shared key is what authorizes **writes**: set the same `HSYNC_P2P_KEY` on
-every device that may modify the shared folder.
+The shared secret is what authorizes **writes**: set the same
+`HSYNC_P2P_PASSPHRASE` (at least 12 characters; the client derives the group key)
+or the same raw `HSYNC_P2P_KEY` (at least 32 characters) on every device that may
+modify the shared folder.
 
 ```bash
 export HSYNC_P2P_PASSPHRASE="your-shared-password"
 ```
 
-With a `P2P_KEY`:
+With a shared secret:
 - The master authenticates every slave connection and accepts mutations
 - The CID is cryptographically verified — used for echo suppression and log attribution
 
-Without a `P2P_KEY` the group is **read-only**: discovery, listings, downloads
+Without a shared secret the group is **read-only**: discovery, listings, downloads
 and read-only deltas keep working (a lightweight **hello handshake** lets the
 master log each slave's CID with an `(unauthenticated)` qualifier), but any
 write-capable sync is refused with `[AUTH REQUIRED]`. The only exceptions are

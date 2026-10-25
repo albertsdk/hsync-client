@@ -68,7 +68,7 @@ function hsync_data_path(): string {
 function hsync_run(array $args): array {
     $env = hsync_parse_env(HSYNC_ENV_FILE);
     $command = 'HSYNC_STATE_DIR=' . escapeshellarg(HSYNC_STATE_DIR)
-        . ' HSYNC_P2P_KEY=' . escapeshellarg((string)($env['HSYNC_P2P_KEY'] ?? ''))
+        . ' HSYNC_P2P_PASSPHRASE=' . escapeshellarg((string)($env['HSYNC_P2P_PASSPHRASE'] ?? ''))
         . ' ' . escapeshellarg(HSYNC_BINARY);
     foreach ($args as $arg) {
         $command .= ' ' . escapeshellarg((string)$arg);

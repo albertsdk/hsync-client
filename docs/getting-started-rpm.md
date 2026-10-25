@@ -47,7 +47,8 @@ sudo systemctl status hsync.service
 sudo tail -f /var/log/hsync/hsync.log
 ```
 
-> ⚠️ `HSYNC_P2P_KEY` must be set in `/etc/hsync/hsync.conf` before enabling the
+> ⚠️ A shared secret (`HSYNC_P2P_PASSPHRASE` or the raw `HSYNC_P2P_KEY`) must be
+> set in `/etc/hsync/hsync.conf` before enabling the
 > service, exactly as documented for the
 > [Debian package](getting-started-deb.md#run-as-a-boot-service-systemd).
 

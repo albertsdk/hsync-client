@@ -112,3 +112,30 @@ def test_every_option_is_documented_in_the_user_docs() -> None:
     docs = _user_docs_text()
     missing = sorted(flag for flag in _cli_flags() if not _mentioned(flag, docs))
     assert not missing, f"options missing from docs/: {missing}"
+
+
+# The passphrase env var and the key-derivation command are not CLI options, so
+# the option contract above cannot see them. They are the only way a terminal
+# user can avoid the 32-character raw key, so pin their presence in every
+# offline reference (and in the p2p help epilog).
+_P2P_PASSPHRASE_ENV = "HSYNC_P2P_PASSPHRASE"
+_DERIVE_KEY_COMMAND = "derive-group-key"
+
+
+def test_passphrase_and_derivation_helper_are_documented() -> None:
+    man = _man_text().replace("\\-", "-")
+    docs = _user_docs_text()
+
+    assert _P2P_PASSPHRASE_ENV in man
+    assert _DERIVE_KEY_COMMAND in man
+    assert _P2P_PASSPHRASE_ENV in docs
+    assert _DERIVE_KEY_COMMAND in docs
+
+
+def test_cli_help_mentions_the_passphrase() -> None:
+    from typer.testing import CliRunner
+
+    result = CliRunner().invoke(app, ["p2p", "--help"])
+
+    assert result.exit_code == 0
+    assert _P2P_PASSPHRASE_ENV in result.output

@@ -1061,7 +1061,8 @@ AllowUnauthenticatedWritesOpt = Annotated[
         "--allow-unauthenticated-writes",
         help=(
             "Dangerous: allow P2P uploads, deletes, and other mutations without "
-            "HSYNC_P2P_KEY. Reads remain available without this option."
+            "a shared secret (HSYNC_P2P_PASSPHRASE/HSYNC_P2P_KEY). Reads remain "
+            "available without this option."
         ),
         rich_help_panel="P2P Mode",
     ),
@@ -1264,7 +1265,10 @@ def p2p(
         [dim]# Prefer this peer as the master[/dim]
         $ hsync p2p -b shared --prefer-master
 
-        [dim]# Isolate a sync group and authenticate it[/dim]
+        [dim]# Isolate a sync group and authenticate it (shared password, 12+ chars)[/dim]
+        $ HSYNC_P2P_PASSPHRASE=a-long-shared-password hsync p2p -b shared --group home
+
+        [dim]# Advanced: a full raw group key instead of a password (32+ chars)[/dim]
         $ HSYNC_P2P_KEY=YOUR_SHARED_KEY_AT_LEAST_32_CHARACTERS hsync p2p -b shared --group home
 
         [dim]# Discover peers across networks through a bootnode[/dim]
@@ -1272,6 +1276,11 @@ def p2p(
 
         [dim]# Bootnode extra ports when your egress firewall blocks UDP 443[/dim]
         $ HSYNC_BOOTNODE_PORTS=53 hsync p2p boot.example.net -b shared
+
+    [bold]Environment Variables:[/bold]
+
+        HSYNC_P2P_PASSPHRASE  Shared password (>=12 chars, derived to the group key)
+        HSYNC_P2P_KEY         Raw shared key (>=32 chars), used as-is
     """
     (
         parsed_bw_upload,

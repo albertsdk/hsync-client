@@ -2205,7 +2205,7 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
         log.debug(f"Upload file: {file.filepath}")
         log.debug(f"        URI: {uri}")
         # safe_json_for_log escapes loguru markup but does NOT redact secrets:
-        # the Authorization header (API key / HSYNC_P2P_KEY) must be masked.
+        # the Authorization header (API key / P2P key) must be masked.
         from hsync_client.utils import redact_headers
 
         log.debug(f"     Header: {safe_json_for_log(redact_headers(CONFIG['REQUEST_HEADERS']))}")

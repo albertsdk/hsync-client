@@ -199,7 +199,7 @@ HSYNC Client focuses on reliable, fast transfers.
 * **Zero-config discovery:** mDNS (Bonjour/Avahi) finds peers on the same network automatically.
 * **Automatic coordinator:** the client picks the master based on capabilities and reachability.
 * **Trust on first use (TOFU):** a self-signed identity pinned by certificate fingerprint.
-* **Network isolation:** `HSYNC_P2P_KEY` and `--group` keep distinct clusters apart on one network.
+* **Network isolation:** a shared password (`HSYNC_P2P_PASSPHRASE`) or raw key (`HSYNC_P2P_KEY`), plus `--group`, keep distinct clusters apart on one network.
 * **NAT traversal:** optional UPnP port mapping and the bootnode's STUN-style echo for cross-network reachability — no manual port forwarding in the common case.
 * **Stable device identity:** a persistent device ID and keypair keep pins across restarts; a rotated key shows up as a changed fingerprint.
 

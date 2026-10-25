@@ -52,7 +52,7 @@
 
     // Fields whose values are interpolated into the generated connect command;
     // editing any of them must re-render the section.
-    const CONNECT_FIELDS = ['HSYNC_BUCKET', 'HSYNC_P2P_GROUP', 'HSYNC_P2P_KEY', 'HSYNC_BOOTNODE', 'HSYNC_BOOTNODE_FINGERPRINT', 'HSYNC_BOOTNODE_TOFU', 'HSYNC_BOOTNODE_TRUST', 'HSYNC_BOOTNODE_PORTS'];
+    const CONNECT_FIELDS = ['HSYNC_BUCKET', 'HSYNC_P2P_GROUP', 'HSYNC_P2P_PASSPHRASE', 'HSYNC_BOOTNODE', 'HSYNC_BOOTNODE_FINGERPRINT', 'HSYNC_BOOTNODE_TOFU', 'HSYNC_BOOTNODE_TRUST', 'HSYNC_BOOTNODE_PORTS'];
 
     function isConnectField(id) {
         return CONNECT_FIELDS.includes(id);
@@ -207,9 +207,10 @@
             || (bucketEl && bucketEl.placeholder)
             || '<bucket>';
         const groupEl = $('#HSYNC_P2P_GROUP');
-        const keyEl = $('#HSYNC_P2P_KEY');
+        const passEl = $('#HSYNC_P2P_PASSPHRASE');
         const group = groupEl ? groupEl.value.trim() : '';
-        const key = keyEl ? keyEl.value : '';
+        // The user-typed shared password; the client derives the group key.
+        const passphrase = passEl ? passEl.value.trim() : '';
 
         // POSIX single-quote every interpolated value so the generated command
         // is safe to paste into a shell regardless of its contents (no $ /
@@ -239,9 +240,9 @@
         if (ports) envPrefix += 'HSYNC_BOOTNODE_PORTS=' + shellQuote(ports) + ' ';
         if (envPrefix) cmd = envPrefix + cmd;
 
-        const showKey = key.length > 0;
-        const masked = showKey ? ('HSYNC_P2P_KEY=' + shellQuote(KEY_MASK) + ' ' + cmd) : cmd;
-        const unmasked = showKey ? ('HSYNC_P2P_KEY=' + shellQuote(key) + ' ' + cmd) : cmd;
+        const showKey = passphrase.length > 0;
+        const masked = showKey ? ('HSYNC_P2P_PASSPHRASE=' + shellQuote(KEY_MASK) + ' ' + cmd) : cmd;
+        const unmasked = showKey ? ('HSYNC_P2P_PASSPHRASE=' + shellQuote(passphrase) + ' ' + cmd) : cmd;
         return { masked, unmasked, showKey };
     }
 
@@ -288,8 +289,8 @@
         if (revealBtn) {
             revealBtn.hidden = !isP2p || !showKey;
             revealBtn.textContent = keyRevealed
-                ? t('action.hide_key', 'Hide key')
-                : t('action.reveal_key', 'Show key');
+                ? t('action.hide_key', 'Hide password')
+                : t('action.reveal_key', 'Show password');
         }
     }
 
@@ -637,7 +638,14 @@
                 return;
             }
             try {
-                await saveConfig(collectConfig());
+                const cfg = collectConfig();
+                const passphrase = (cfg.HSYNC_P2P_PASSPHRASE || '').trim();
+                if (passphrase && Array.from(passphrase).length < 12) {
+                    toast(t('toast.password_too_short',
+                        'The shared password must be at least 12 characters.'), 'error');
+                    return;
+                }
+                await saveConfig(cfg);
                 toast(t('toast.saved', 'Configuration saved'), 'ok');
                 // Re-sync the connect command with what config_set.php actually
                 // persisted: the backend normalizes values (bucket fallback,

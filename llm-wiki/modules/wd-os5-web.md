@@ -55,9 +55,12 @@ second device to join the sync group coordinated by the NAS. The command is
 shown in a readonly `#hsync-connect-command` textarea (not `<code>`: the WD
 dashboard / remotewd injector can strip or hide `code` contents). It is
 recomputed live from the form fields (`#HSYNC_BUCKET`, `#HSYNC_P2P_GROUP`,
-`#HSYNC_P2P_KEY`, bootnode fields) on `input`/`change`/`keyup` — delegated on
+`#HSYNC_P2P_PASSPHRASE`, bootnode fields) on `input`/`change`/`keyup` — delegated on
 `document` so they survive dashboard node replacement (`app.js::boot`) — and on
-mode switches (`syncModeVisibility`). After a successful **Save** the command is
+mode switches (`syncModeVisibility`). The shared password is emitted as
+`HSYNC_P2P_PASSPHRASE` (the client derives the group key); the storage field is
+`HSYNC_P2P_PASSPHRASE` in `hsync.env`, matching the desktop/Android clients.
+After a successful **Save** the command is
 rebuilt from the persisted configuration (`applyConfig(await loadConfig())`), so
 the section always reflects what `hsync.env` actually contains.
 

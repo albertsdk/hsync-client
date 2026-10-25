@@ -401,8 +401,9 @@ def _check_p2p_write_policy(
     """Require authorization for every write-capable P2P sync.
 
     A self-signed P2P transport hides traffic but does not prove the master's
-    identity, so a client that uploads data must authenticate with
-    ``HSYNC_P2P_KEY`` unless the dangerous explicit opt-in is enabled. The policy lives in
+    identity, so a client that uploads data must authenticate with a shared secret
+    (``HSYNC_P2P_PASSPHRASE`` or a raw ``HSYNC_P2P_KEY``) unless the dangerous
+    explicit opt-in is enabled. The policy lives in
     :func:`hsync_common.protocol.pairing.p2p_write_requires_key`; here we apply it.
 
     Raises SystemExit when the policy is violated.
@@ -420,8 +421,9 @@ def _check_p2p_write_policy(
         allow_unauthenticated_writes=allow_unauthenticated_writes,
         log=logger,
         hint=(
-            "Set HSYNC_P2P_KEY, use --sync-direction download-only, or explicitly accept "
-            "the risk with --allow-unauthenticated-writes."
+            "Set a shared password (HSYNC_P2P_PASSPHRASE) or raw key "
+            "(HSYNC_P2P_KEY), use --sync-direction download-only, or explicitly "
+            "accept the risk with --allow-unauthenticated-writes."
         ),
     ):
         raise SystemExit(1)
@@ -450,7 +452,7 @@ def _check_p2p_keyless_policy(
         return
 
     warnings = [
-        "P2P mode is running without a shared key (HSYNC_P2P_KEY).",
+        "P2P mode is running without a shared secret (HSYNC_P2P_PASSPHRASE/HSYNC_P2P_KEY).",
         "Consequence: peers are not authenticated and reads are open to anyone",
         "who can reach this node.",
     ]
@@ -461,7 +463,8 @@ def _check_p2p_keyless_policy(
     if not is_tty_interactive():
         error = (
             "Keyless P2P confirmation required but no interactive terminal is "
-            "available. Set HSYNC_P2P_KEY or re-run with --allow-unauthenticated-p2p "
+            "available. Set a shared password (HSYNC_P2P_PASSPHRASE) or raw key "
+            "(HSYNC_P2P_KEY), or re-run with --allow-unauthenticated-p2p "
             "(env HSYNC_P2P_ALLOW_UNAUTHENTICATED) to accept the risk."
         )
         logger.error(error)

@@ -49,20 +49,21 @@ ln -sf "$REPO_ROOT/.venv/bin/hsync" /tmp/demo-bin/hsync
 # Top pane: Device A (master). HSYNC_READY_FILE makes it write its PID to
 # $READY_A once its HTTP+WSS servers and filesystem watcher are up (see
 # hsync_client/p2p_handler.py).
-# HSYNC_P2P_KEY is exported in BOTH panes: a shared p2p key authorizes writes
-# (a keyless LAN is read-only since ADR-0029), so the recording mirrors the
-# documented quickstart without typing the key on screen.
+# HSYNC_P2P_PASSPHRASE is typed inline on camera by the tape, so the recording
+# shows the documented shared-password form (12+ characters, derived to the
+# group key). No secret is exported here: a keyless LAN is read-only, and the
+# shared password is what authorizes writes.
 # Each pane gets its own installation state — HSYNC_STATE_DIR plus
 # HSYNC_P2P_PIN_FILE, because the pin store does not follow HSYNC_STATE_DIR (see
 # hsync_client/pinning.py) — so the two simulated devices never share a
 # syncstate.db or a trust store, and nothing lands in ~/.local/state/hsync.
 tmux -S "$SOCKET" new-session -d -s "$SESSION" -x 200 -y 50 \
-  "export PS1='user@host-a $ '; export PATH=/tmp/demo-bin:\$PATH; export HSYNC_READY_FILE=$READY_A; export HSYNC_P2P_KEY=YOUR_SHARED_KEY_AT_LEAST_32_CHARACTERS; export HSYNC_STATE_DIR=/tmp/hsync-demo-state-a; export HSYNC_P2P_PIN_FILE=/tmp/hsync-demo-state-a/p2p_known_peers.json; export HSYNC_DEVICE_DIR=/tmp/hsync-a-device; bash --norc"
+  "export PS1='user@host-a $ '; export PATH=/tmp/demo-bin:\$PATH; export HSYNC_READY_FILE=$READY_A; export HSYNC_STATE_DIR=/tmp/hsync-demo-state-a; export HSYNC_P2P_PIN_FILE=/tmp/hsync-demo-state-a/p2p_known_peers.json; export HSYNC_DEVICE_DIR=/tmp/hsync-a-device; bash --norc"
 
 # Bottom pane: Device B (client) - clean prompt; the tape launches hsync later.
 # HSYNC_READY_FILE=$READY_B is exported by the tape when Device B is launched.
 tmux -S "$SOCKET" split-window -v -t "$SESSION" \
-  "export PS1='user@host-b $ '; export PATH=/tmp/demo-bin:\$PATH; export HSYNC_P2P_KEY=YOUR_SHARED_KEY_AT_LEAST_32_CHARACTERS; export HSYNC_STATE_DIR=/tmp/hsync-demo-state-b; export HSYNC_P2P_PIN_FILE=/tmp/hsync-demo-state-b/p2p_known_peers.json; bash --norc"
+  "export PS1='user@host-b $ '; export PATH=/tmp/demo-bin:\$PATH; export HSYNC_STATE_DIR=/tmp/hsync-demo-state-b; export HSYNC_P2P_PIN_FILE=/tmp/hsync-demo-state-b/p2p_known_peers.json; bash --norc"
 
 # Disable the status bar, pin the tmux prefix to the default (so the tape's
 # Ctrl+B pane navigation is deterministic even on a host with a custom

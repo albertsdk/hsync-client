@@ -70,7 +70,7 @@ fi
 : "${HSYNC_FILTER_PATH:=}"
 : "${HSYNC_IGNORE_PATTERNS:=}"
 : "${HSYNC_P2P_GROUP:=my-group}"
-: "${HSYNC_P2P_KEY:=}"
+: "${HSYNC_P2P_PASSPHRASE:=}"
 : "${HSYNC_P2P_PORT:=0}"
 : "${HSYNC_PREFER_MASTER:=false}"
 : "${HSYNC_NEVER_MASTER:=false}"
@@ -252,7 +252,7 @@ fi
 
 # ---------------------------------------------------------------------------
 # Launch under nohup. Secrets are exported (not passed as flags) so the binary
-# picks them up via HSYNC_API_KEY / HSYNC_P2P_KEY without leaking them through
+# picks them up via HSYNC_API_KEY / HSYNC_P2P_PASSPHRASE without leaking them through
 # ``ps``. HSYNC_NTP_HOSTS is exported too because it is read from the process
 # environment (never a CLI flag) by the client's SNTP probe (ADR-0023).
 #
@@ -262,7 +262,7 @@ fi
 # invisible to the nohup'd binary.
 # ---------------------------------------------------------------------------
 export HSYNC_API_KEY
-export HSYNC_P2P_KEY
+export HSYNC_P2P_PASSPHRASE
 export HSYNC_P2P_PEER_DOWNLOAD
 export HSYNC_P2P_PEER_READ_CAP
 export HSYNC_P2P_PEER_SOURCES_MAX

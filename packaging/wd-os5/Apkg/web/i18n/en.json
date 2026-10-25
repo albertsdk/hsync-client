@@ -51,7 +51,8 @@
     "field.mass_delete_percent": "Max deletions percent (0 = off)",
     "field.allow_deletions": "Accept the deletion risk without confirmation",
     "field.p2p_group": "p2p Group Name",
-    "field.p2p_key": "Shared password (optional)",
+    "field.p2p_password": "Shared password (at least 12 characters, optional)",
+    "note.p2p_password": "Use the same password on every device of the group. It is derived into the group key and authorizes writes.",
     "field.p2p_port": "Port (0 = Auto)",
     "field.p2p_peer_download": "Download from other devices",
     "field.p2p_peer_read_cap": "Max simultaneous reads from other devices",
@@ -95,8 +96,8 @@
     "action.log": "View log",
     "action.copy": "Copy",
     "action.copy_done": "Copied",
-    "action.reveal_key": "Show key",
-    "action.hide_key": "Hide key",
+    "action.reveal_key": "Show password",
+    "action.hide_key": "Hide password",
     "action.edit_ignore": "Ignore rules…",
     "action.test_bootnode": "Test discovery server",
     "action.test_server": "Test Connection",
@@ -138,5 +139,6 @@
     "trust.kind_bootnode": "Discovery server",
     "trust.kind_server": "Server",
     "trust.kind_peer": "Device",
-    "footer.version": "Version"
+    "footer.version": "Version",
+    "toast.password_too_short": "The shared password must be at least 12 characters."
 }

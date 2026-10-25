@@ -81,7 +81,8 @@ and caveats to watch for.
      an HSYNC Server
      and connect all devices to it.
    - **p2p Mode** (equivalent to Syncthing's P2P): run `hsync p2p` on
-     each device, with the same `HSYNC_P2P_KEY` on every device — the shared key
+     each device, with the same `HSYNC_P2P_PASSPHRASE` (or raw `HSYNC_P2P_KEY`) on
+     every device — the shared secret
      authorizes writes (a keyless p2p is read-only, and a keyless bidirectional
      run is refused). Devices on the same network discover each other over mDNS;
      if they are spread across networks, point them at a bootstrap node (see

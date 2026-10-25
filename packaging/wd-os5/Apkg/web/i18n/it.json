@@ -51,7 +51,8 @@
     "field.mass_delete_percent": "Percentuale massima di cancellazioni (0 = disattivato)",
     "field.allow_deletions": "Accetta il rischio di cancellazione senza conferma",
     "field.p2p_group": "Nome del gruppo p2p",
-    "field.p2p_key": "Password condivisa (opzionale)",
+    "field.p2p_password": "Password condivisa (almeno 12 caratteri, opzionale)",
+    "note.p2p_password": "Usa la stessa password su ogni dispositivo del gruppo. Viene derivata nella chiave del gruppo e autorizza le scritture.",
     "field.p2p_port": "Porta (0 = auto)",
     "field.p2p_peer_download": "Scarica dagli altri dispositivi",
     "field.p2p_peer_read_cap": "Letture simultanee massime dagli altri dispositivi",
@@ -95,8 +96,8 @@
     "action.log": "Vedi log",
     "action.copy": "Copia",
     "action.copy_done": "Copiato",
-    "action.reveal_key": "Mostra chiave",
-    "action.hide_key": "Nascondi chiave",
+    "action.reveal_key": "Mostra password",
+    "action.hide_key": "Nascondi password",
     "action.edit_ignore": "Regole di esclusione…",
     "action.test_bootnode": "Verifica server di discovery",
     "action.test_server": "Verifica connessione",
@@ -138,5 +139,6 @@
     "trust.kind_bootnode": "Server di discovery",
     "trust.kind_server": "Server",
     "trust.kind_peer": "Dispositivo",
-    "footer.version": "Versione"
+    "footer.version": "Versione",
+    "toast.password_too_short": "La password condivisa deve avere almeno 12 caratteri."
 }

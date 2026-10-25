@@ -20,8 +20,9 @@ HSYNC runs in one of two mutually exclusive operating modes:
 hsync server HOSTNAME[:PORT] [--port PORT] -b BUCKET_NAME [OPTIONS]
 
 # p2p Mode — peer-to-peer, no server (implicit continuous mode).
-# Write-capable runs need a shared key: a keyless p2p is read-only.
-HSYNC_P2P_KEY=SHARED_SECRET hsync p2p -b BUCKET_NAME [OPTIONS]
+# Write-capable runs need a shared secret (password >=12 chars, or a raw key):
+# a keyless p2p is read-only.
+HSYNC_P2P_PASSPHRASE=a-long-shared-password hsync p2p -b BUCKET_NAME [OPTIONS]
 
 # p2p Mode across networks — discover peers through a boot/1 bootstrap node
 # instead of mDNS (see "Sync across networks").
@@ -41,8 +42,9 @@ Options are grouped into **Required**, **Connection**, **Sync**, **p2p Mode**
 and **Output** panels (run `hsync --help` to see them in your terminal).
 
 > For the **complete option reference** (descriptions, defaults and accepted
-> values) see [Configuration](configuration.md). `HSYNC_P2P_KEY` is set via
-> environment variable only, and it is what authorizes writes: a keyless p2p is
+> values) see [Configuration](configuration.md). The shared secret
+> (`HSYNC_P2P_PASSPHRASE` or the raw `HSYNC_P2P_KEY`) is set via environment
+> variable only, and it is what authorizes writes: a keyless p2p is
 > read-only, and a write-capable run without a key is refused with
 > `[AUTH REQUIRED]`.
 

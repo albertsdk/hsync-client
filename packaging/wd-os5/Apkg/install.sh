@@ -71,9 +71,12 @@ chmod 0750 "${HSYNC_CONFIG_DIR}"
 # Seed a default configuration on a fresh install. Existing user config is
 # preserved (postinst.sh restores from the preinst backup if present).
 if [ ! -f "${HSYNC_ENV_FILE}" ]; then
-    P2P_KEY=$(dd if=/dev/urandom bs=24 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')
-    if [ "${#P2P_KEY}" -ne 48 ]; then
-        echo "cannot generate a secure p2p key" >> "$LOG"
+    # 24 characters from the desktop client's unambiguous alphabet: a shared
+    # password the user can type on another device (12+ is required; 24 gives
+    # ~139 bits). The client derives the 32-byte group key with scrypt.
+    P2P_PASSPHRASE=$(LC_ALL=C tr -dc 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789' < /dev/urandom | dd bs=1 count=24 2>/dev/null)
+    if [ "${#P2P_PASSPHRASE}" -ne 24 ]; then
+        echo "cannot generate a secure p2p password" >> "$LOG"
         exit 1
     fi
     cat > "${HSYNC_ENV_FILE}" <<EOF
@@ -106,8 +109,9 @@ HSYNC_IGNORE_PATTERNS=""
 # p2p mode. The transport is HTTPS/WSS-only (protocol p2p/1): the master keeps
 # a persistent identity and slaves pin its fingerprint (TOFU).
 HSYNC_P2P_GROUP="my-group"
-# Random shared secret generated at install time; required for p2p writes.
-HSYNC_P2P_KEY="${P2P_KEY}"
+# Random shared password generated at install time (at least 12 characters);
+# required for p2p writes. Use the same value on every device of the group.
+HSYNC_P2P_PASSPHRASE="${P2P_PASSPHRASE}"
 # Master TCP listen port (0 = auto-assign).
 HSYNC_P2P_PORT="0"
 # Role: an equal peer unless one of the two overrides below is set.

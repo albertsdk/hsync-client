@@ -51,7 +51,8 @@
     "field.mass_delete_percent": "Maksymalny procent usunięć (0 = wyłączone)",
     "field.allow_deletions": "Akceptuj ryzyko usunięcia bez potwierdzenia",
     "field.p2p_group": "Nazwa grupy p2p",
-    "field.p2p_key": "Wspólne hasło (opcjonalne)",
+    "field.p2p_password": "Wspólne hasło (co najmniej 12 znaków, opcjonalnie)",
+    "note.p2p_password": "Użyj tego samego hasła na każdym urządzeniu w grupie. Jest ono przekształcane w klucz grupy i autoryzuje zapisy.",
     "field.p2p_port": "Port (0 = auto)",
     "field.p2p_peer_download": "Pobieraj z innych urządzeń",
     "field.p2p_peer_read_cap": "Maksymalna liczba równoczesnych odczytów z innych urządzeń",
@@ -95,8 +96,8 @@
     "action.log": "Pokaż dziennik",
     "action.copy": "Kopiuj",
     "action.copy_done": "Skopiowano",
-    "action.reveal_key": "Pokaż klucz",
-    "action.hide_key": "Ukryj klucz",
+    "action.reveal_key": "Pokaż hasło",
+    "action.hide_key": "Ukryj hasło",
     "action.edit_ignore": "Reguły wykluczeń…",
     "action.test_bootnode": "Testuj serwer odkrywania",
     "action.test_server": "Testuj połączenie",
@@ -138,5 +139,6 @@
     "trust.kind_bootnode": "Serwer odkrywania",
     "trust.kind_server": "Serwer",
     "trust.kind_peer": "Urządzenie",
-    "footer.version": "Wersja"
+    "footer.version": "Wersja",
+    "toast.password_too_short": "Wspólne hasło musi mieć co najmniej 12 znaków."
 }

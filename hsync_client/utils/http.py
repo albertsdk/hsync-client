@@ -67,7 +67,7 @@ def redact_headers[T: Mapping[str, object]](headers: T) -> T:
 
     ``safe_json_for_log`` escapes loguru markup but does NOT redact secrets:
     every log/data path that serialises request headers must route through
-    here, otherwise the Bearer token (API key or ``HSYNC_P2P_KEY``) lands in
+    here, otherwise the Bearer token (API key or P2P key) lands in
     plaintext in the log file. Used by ``main_logic`` (config dump) and
     ``transfer`` (per-request debug logging). Accepts any string-keyed mapping
     (TypedDicts with optional keys included) and returns the same mapping type.

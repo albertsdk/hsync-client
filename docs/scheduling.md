@@ -146,7 +146,7 @@ the first peer and is what ends the run when no peer shows up (the default
 waits indefinitely, so a one-shot run never exits):
 
 ```cron
-# HSYNC_P2P_KEY lives in /etc/hsync/hsync.env (see the secret handling above)
+# HSYNC_P2P_PASSPHRASE (or HSYNC_P2P_KEY) lives in /etc/hsync/hsync.env (see above)
 0 2 * * * hsyncuser hsync p2p -b shared \
     -p /data/shared --once --discovery-timeout 30 --allow-deletions \
     --env-file /etc/hsync/hsync.env

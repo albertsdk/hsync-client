@@ -378,9 +378,11 @@ sync requires `--allow-unauthenticated-writes` or
 (`main_logic._check_p2p_write_policy`). A keyless (no shared secret) run,
 read-only included, additionally requires `--allow-unauthenticated-p2p`
 (`HSYNC_P2P_ALLOW_UNAUTHENTICATED=true`) or an interactive confirmation
-(`main_logic._check_p2p_keyless_policy`). A key that is present but shorter than
-the shared strength floor (`validate_group_key`, 32 characters) exits 1 before any
-network work: the key is the bucket token's only entropy.
+(`main_logic._check_p2p_keyless_policy`). A raw key present but shorter than the shared strength floor
+(`validate_group_key`, 32 characters) exits 1, as does an
+`HSYNC_P2P_PASSPHRASE` shorter than 12 characters
+(`validate_group_passphrase`), before any network work: the key is the bucket
+token's only entropy.
 
 The mDNS trust refusal is **not fatal** (unlike the bootnode lease loop): the
 discovery loop retries continuously, so `_evaluate_master_pin` dedupes both the

@@ -92,7 +92,8 @@ In plain terms, p2p mode works in three steps:
 
 > **First sync?** → Follow the step-by-step
 > [Getting Started — p2p Mode](getting-started-p2p.md) guide; this page
-> explains how p2p Mode works. Authentication (`HSYNC_P2P_KEY`), specific
+> explains how p2p Mode works. Authentication (`HSYNC_P2P_PASSPHRASE` or the raw
+> `HSYNC_P2P_KEY`), specific
 > ports, and every other p2p option live in
 > [Configuration — p2p Mode](configuration-p2p.md).
 

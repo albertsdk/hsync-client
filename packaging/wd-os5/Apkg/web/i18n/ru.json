@@ -51,7 +51,8 @@
     "field.mass_delete_percent": "Максимальный процент удалений (0 = выкл.)",
     "field.allow_deletions": "Принять риск удаления без подтверждения",
     "field.p2p_group": "Имя группы p2p",
-    "field.p2p_key": "Общий пароль (необязательно)",
+    "field.p2p_password": "Общий пароль (не менее 12 символов, необязательно)",
+    "note.p2p_password": "Используйте один и тот же пароль на всех устройствах группы. Он преобразуется в ключ группы и разрешает запись.",
     "field.p2p_port": "Порт (0 = авто)",
     "field.p2p_peer_download": "Загружать с других устройств",
     "field.p2p_peer_read_cap": "Максимум одновременных чтений с других устройств",
@@ -95,8 +96,8 @@
     "action.log": "Журнал",
     "action.copy": "Копировать",
     "action.copy_done": "Скопировано",
-    "action.reveal_key": "Показать ключ",
-    "action.hide_key": "Скрыть ключ",
+    "action.reveal_key": "Показать пароль",
+    "action.hide_key": "Скрыть пароль",
     "action.edit_ignore": "Правила исключений…",
     "action.test_bootnode": "Проверить сервер обнаружения",
     "action.test_server": "Проверить подключение",
@@ -138,5 +139,6 @@
     "trust.kind_bootnode": "Сервер обнаружения",
     "trust.kind_server": "Сервер",
     "trust.kind_peer": "Устройство",
-    "footer.version": "Версия"
+    "footer.version": "Версия",
+    "toast.password_too_short": "Общий пароль должен содержать не менее 12 символов."
 }

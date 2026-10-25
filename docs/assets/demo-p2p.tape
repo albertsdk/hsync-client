@@ -16,8 +16,9 @@
 # Everything that is not real tool usage (tmux setup, control send-keys,
 # teardown) is wrapped in Hide/Show blocks and never appears in the GIF.
 # The tmux status bar is disabled.
-# Both panes export the same throwaway HSYNC_P2P_KEY (set by demo-p2p-setup.sh):
-# a keyless LAN is read-only, and the shared key is what authorizes writes.
+# Both on-camera commands pass the same throwaway HSYNC_P2P_PASSPHRASE (a simple
+# 12+ demo password): a keyless LAN is read-only, and the shared password is
+# what authorizes writes. The client derives the group key from it.
 #
 # Both `hsync p2p` commands are typed on camera — Device A (master) first, then
 # Device B — and each simulated device owns its own installation state under
@@ -55,11 +56,12 @@ Show
 Sleep 400ms
 
 # --- Device A (top pane): the master startup, typed on camera ----------------
-# The environment is already exported in the pane by demo-p2p-setup.sh, so the typed
-# command matches the documented quickstart. HSYNC_READY_FILE makes the master
-# write its PID to /tmp/hsync-a.ready once its HTTP+WSS servers and filesystem
-# watcher are up, which is what the watcher waits for before creating hello.txt.
-Type "hsync p2p -b mybucket -p /tmp/hsync-a --prefer-master" Enter
+# The command is typed on camera with the shared password inline, matching the
+# documented quickstart. HSYNC_READY_FILE (exported by demo-p2p-setup.sh) makes the
+# master write its PID to /tmp/hsync-a.ready once its HTTP+WSS servers and
+# filesystem watcher are up, which is what the watcher waits for before creating
+# hello.txt.
+Type "HSYNC_P2P_PASSPHRASE=demo-shared-password hsync p2p -b mybucket -p /tmp/hsync-a --prefer-master" Enter
 Sleep 6000ms
 
 # --- Device B (bottom pane): joins, discovers A via mDNS ----------------------
@@ -80,7 +82,7 @@ Set TypingSpeed 150ms
 Ctrl+L
 Sleep 300ms
 Show
-Type "hsync p2p -b mybucket -p /tmp/hsync-b" Enter
+Type "HSYNC_P2P_PASSPHRASE=demo-shared-password hsync p2p -b mybucket -p /tmp/hsync-b" Enter
 Sleep 12000ms
 
 # --- proof on Device B: stop the agent, show the received file ---------------

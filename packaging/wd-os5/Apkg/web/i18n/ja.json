@@ -51,7 +51,8 @@
     "field.mass_delete_percent": "最大削除率（0 = 無効）",
     "field.allow_deletions": "確認なしで削除リスクを受け入れる",
     "field.p2p_group": "p2p グループ名",
-    "field.p2p_key": "共有パスワード（任意）",
+    "field.p2p_password": "共有パスワード（12文字以上、任意）",
+    "note.p2p_password": "グループ内のすべてのデバイスで同じパスワードを使用してください。グループキーに変換され、書き込みを許可します。",
     "field.p2p_port": "ポート（0 = 自動）",
     "field.p2p_peer_download": "他のデバイスからダウンロード",
     "field.p2p_peer_read_cap": "他のデバイスからの最大同時読み取り数",
@@ -95,8 +96,8 @@
     "action.log": "ログを表示",
     "action.copy": "コピー",
     "action.copy_done": "コピーしました",
-    "action.reveal_key": "キーを表示",
-    "action.hide_key": "キーを隠す",
+    "action.reveal_key": "パスワードを表示",
+    "action.hide_key": "パスワードを隠す",
     "action.edit_ignore": "除外ルール…",
     "action.test_bootnode": "検出サーバーをテスト",
     "action.test_server": "接続をテスト",
@@ -138,5 +139,6 @@
     "trust.kind_bootnode": "検出サーバー",
     "trust.kind_server": "サーバー",
     "trust.kind_peer": "デバイス",
-    "footer.version": "バージョン"
+    "footer.version": "バージョン",
+    "toast.password_too_short": "共有パスワードは12文字以上である必要があります。"
 }

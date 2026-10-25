@@ -51,7 +51,8 @@
     "field.mass_delete_percent": "Percentagem máxima de eliminações (0 = desativado)",
     "field.allow_deletions": "Aceitar o risco de eliminação sem confirmação",
     "field.p2p_group": "Nome do grupo p2p",
-    "field.p2p_key": "Palavra-passe partilhada (opcional)",
+    "field.p2p_password": "Palavra-passe partilhada (pelo menos 12 caracteres, opcional)",
+    "note.p2p_password": "Use a mesma palavra-passe em todos os dispositivos do grupo. É derivada na chave do grupo e autoriza as escritas.",
     "field.p2p_port": "Porta (0 = automático)",
     "field.p2p_peer_download": "Transferir de outros dispositivos",
     "field.p2p_peer_read_cap": "Leituras simultâneas máximas de outros dispositivos",
@@ -95,8 +96,8 @@
     "action.log": "Ver registo",
     "action.copy": "Copiar",
     "action.copy_done": "Copiado",
-    "action.reveal_key": "Mostrar chave",
-    "action.hide_key": "Ocultar chave",
+    "action.reveal_key": "Mostrar palavra-passe",
+    "action.hide_key": "Ocultar palavra-passe",
     "action.edit_ignore": "Regras de exclusão…",
     "action.test_bootnode": "Testar servidor de descoberta",
     "action.test_server": "Testar ligação",
@@ -138,5 +139,6 @@
     "trust.kind_bootnode": "Servidor de descoberta",
     "trust.kind_server": "Servidor",
     "trust.kind_peer": "Dispositivo",
-    "footer.version": "Versão"
+    "footer.version": "Versão",
+    "toast.password_too_short": "A palavra-passe partilhada deve ter pelo menos 12 caracteres."
 }

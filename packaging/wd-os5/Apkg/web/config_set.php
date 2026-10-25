@@ -52,7 +52,7 @@ if ($post === [] && $_POST !== []) {
 const KEYS = [
     'HSYNC_MODE', 'HSYNC_PATH', 'HSYNC_BUCKET',
     'HSYNC_SYNC_DIRECTION', 'HSYNC_FILTER_PATH', 'HSYNC_IGNORE_PATTERNS',
-    'HSYNC_P2P_GROUP', 'HSYNC_P2P_KEY', 'HSYNC_P2P_PORT',
+    'HSYNC_P2P_GROUP', 'HSYNC_P2P_PASSPHRASE', 'HSYNC_P2P_PORT',
     'HSYNC_PREFER_MASTER', 'HSYNC_NEVER_MASTER',
     'HSYNC_P2P_REQUIRE_PAIRING', 'HSYNC_P2P_PEER_DOWNLOAD',
     'HSYNC_P2P_PEER_READ_CAP', 'HSYNC_P2P_PEER_SOURCES_MAX',
@@ -239,6 +239,16 @@ foreach (KEYS as $key) {
             break;
         case 'HSYNC_MASS_DELETE_PERCENT':
             $val = clamp_int($val, 0, 100, 50);
+            break;
+        case 'HSYNC_P2P_PASSPHRASE':
+            // User password: the client enforces >=12 characters and derives
+            // the group key. Count code points (not bytes) when mbstring is
+            // available, and drop a shorter value instead of persisting one
+            // the engine would reject at startup.
+            $password_len = function_exists('mb_strlen')
+                ? mb_strlen($val, 'UTF-8')
+                : strlen($val);
+            if ($val !== '' && $password_len < 12) $val = '';
             break;
         case 'HSYNC_P2P_PEER_READ_CAP':
             $val = clamp_int($val, 1, 32, 2);

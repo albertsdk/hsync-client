@@ -51,7 +51,8 @@
     "field.mass_delete_percent": "Pourcentage maximal de suppressions (0 = désactivé)",
     "field.allow_deletions": "Accepter le risque de suppression sans confirmation",
     "field.p2p_group": "Nom du groupe p2p",
-    "field.p2p_key": "Mot de passe partagé (facultatif)",
+    "field.p2p_password": "Mot de passe partagé (au moins 12 caractères, facultatif)",
+    "note.p2p_password": "Utilisez le même mot de passe sur chaque appareil du groupe. Il est dérivé en clé de groupe et autorise les écritures.",
     "field.p2p_port": "Port (0 = auto)",
     "field.p2p_peer_download": "Télécharger depuis les autres appareils",
     "field.p2p_peer_read_cap": "Lectures simultanées maximales depuis les autres appareils",
@@ -95,8 +96,8 @@
     "action.log": "Voir le journal",
     "action.copy": "Copier",
     "action.copy_done": "Copié",
-    "action.reveal_key": "Afficher la clé",
-    "action.hide_key": "Masquer la clé",
+    "action.reveal_key": "Afficher le mot de passe",
+    "action.hide_key": "Masquer le mot de passe",
     "action.edit_ignore": "Règles d'exclusion…",
     "action.test_bootnode": "Tester le serveur de découverte",
     "action.test_server": "Tester la connexion",
@@ -138,5 +139,6 @@
     "trust.kind_bootnode": "Serveur de découverte",
     "trust.kind_server": "Serveur",
     "trust.kind_peer": "Appareil",
-    "footer.version": "Version"
+    "footer.version": "Version",
+    "toast.password_too_short": "Le mot de passe partagé doit contenir au moins 12 caractères."
 }

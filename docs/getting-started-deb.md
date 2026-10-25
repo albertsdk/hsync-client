@@ -30,7 +30,8 @@ by the unit). By default the service runs in **p2p mode** with continuous watch
 as the `_hsync` system user.
 
 > ⚠️ The service runs non-interactively (`--allow-deletions`) with bidirectional
-> sync, so `HSYNC_P2P_KEY` **must be set** in `/etc/hsync/hsync.conf` before
+> sync, so a shared secret (`HSYNC_P2P_PASSPHRASE` or the raw `HSYNC_P2P_KEY`)
+> **must be set** in `/etc/hsync/hsync.conf` before
 > enabling it — otherwise the client aborts with `[AUTH REQUIRED]` (a keyless
 > read-only service must instead set `HSYNC_P2P_ALLOW_UNAUTHENTICATED=true`).
 > All peers in the same p2p

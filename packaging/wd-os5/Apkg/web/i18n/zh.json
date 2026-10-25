@@ -51,7 +51,8 @@
     "field.mass_delete_percent": "最大删除百分比（0 = 关闭）",
     "field.allow_deletions": "无需确认即接受删除风险",
     "field.p2p_group": "p2p 组名",
-    "field.p2p_key": "共享密码（可选）",
+    "field.p2p_password": "共享密码（至少 12 个字符，可选）",
+    "note.p2p_password": "请在组内每台设备上使用相同的密码。它会被派生为组密钥并授权写入。",
     "field.p2p_port": "端口（0 = 自动）",
     "field.p2p_peer_download": "从其他设备下载",
     "field.p2p_peer_read_cap": "来自其他设备的最大并发读取数",
@@ -95,8 +96,8 @@
     "action.log": "查看日志",
     "action.copy": "复制",
     "action.copy_done": "已复制",
-    "action.reveal_key": "显示密钥",
-    "action.hide_key": "隐藏密钥",
+    "action.reveal_key": "显示密码",
+    "action.hide_key": "隐藏密码",
     "action.edit_ignore": "排除规则…",
     "action.test_bootnode": "测试发现服务器",
     "action.test_server": "测试连接",
@@ -138,5 +139,6 @@
     "trust.kind_bootnode": "发现服务器",
     "trust.kind_server": "服务器",
     "trust.kind_peer": "设备",
-    "footer.version": "版本"
+    "footer.version": "版本",
+    "toast.password_too_short": "共享密码必须至少包含 12 个字符。"
 }

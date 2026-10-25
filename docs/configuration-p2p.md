@@ -33,11 +33,12 @@ sync is refused unless the dangerous CLI or environment opt-in is explicit.
 Parent processes (desktop GUI) may pass it on a pipe with the hidden
 `--p2p-passphrase-fd` (password) or `--p2p-key-fd` (raw key) flag.
 
-The key must be **at least 32 characters**: it is the only entropy behind the
-`bucket_token`, so the client refuses to start with a shorter value (the
-bootnode enforces the same floor on its own key source). Generate one with
-`openssl rand -hex 32` and share that exact value between the peers that must
-trust each other.
+The **raw key** (`HSYNC_P2P_KEY`) must be at least 32 characters: it is the only
+entropy behind the `bucket_token`, so the client refuses to start with a shorter
+value (the bootnode enforces the same floor on its own key source). Generate one
+with `openssl rand -hex 32` and share that exact value between the peers that must
+trust each other. A user-typed `HSYNC_P2P_PASSPHRASE` only needs 12 characters
+because the client expands it to that 32-byte key with scrypt.
 
 With a bootnode (see [Sync across networks](p2p-bootnode.md)) the same key is also
 the bootnode credential: the client derives the `bucket_token`

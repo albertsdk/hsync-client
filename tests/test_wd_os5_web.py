@@ -353,3 +353,77 @@ def test_config_set_clamps_ranges(tmp_path: Path) -> None:
     assert all(re.fullmatch(r"HSYNC_[A-Z0-9_]+='.*'", ln) for ln in lines), lines
     group_line = next(ln for ln in lines if ln.startswith("HSYNC_P2P_GROUP="))
     assert "HSYNC_VERBOSE" in group_line and group_line.count("=") == 1
+
+
+# ── shared password (desktop parity) ───────────────────────────────────
+def test_p2p_password_is_wired_end_to_end() -> None:
+    """The NAS manages HSYNC_P2P_PASSPHRASE (12+), not a 32-char raw key."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    match = re.search(r'<input[^>]*id="HSYNC_P2P_PASSPHRASE"[^>]*minlength="(\d+)"', html)
+    assert match is not None, "HSYNC_P2P_PASSPHRASE input not found"
+    assert int(match.group(1)) == 12
+    assert 'name="HSYNC_P2P_PASSPHRASE"' in html
+    assert 'name="HSYNC_P2P_KEY"' not in html
+
+    for name in ("config_get.php", "config_set.php"):
+        text = (WEB / name).read_text(encoding="utf-8")
+        assert "HSYNC_P2P_PASSPHRASE" in text, name
+        assert "HSYNC_P2P_KEY" not in text, name
+
+    start = (PKG / "Apkg" / "start.sh").read_text(encoding="utf-8")
+    assert "export HSYNC_P2P_PASSPHRASE" in start
+    assert "HSYNC_P2P_KEY" not in start
+
+    install = (PKG / "Apkg" / "install.sh").read_text(encoding="utf-8")
+    assert 'HSYNC_P2P_PASSPHRASE="${P2P_PASSPHRASE}"' in install
+    assert "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789" in install
+    assert "HSYNC_P2P_KEY" not in install
+
+    app = APP_JS.read_text(encoding="utf-8")
+    assert "'HSYNC_P2P_PASSPHRASE'" in app
+    assert "HSYNC_P2P_KEY" not in app
+
+    env_lib = (WEB / "env_lib.php").read_text(encoding="utf-8")
+    assert "HSYNC_P2P_PASSPHRASE" in env_lib
+    assert "HSYNC_P2P_KEY" not in env_lib
+
+    import json
+
+    for locale in _supported_locales():
+        data = json.loads((I18N / f"{locale}.json").read_text(encoding="utf-8"))
+        assert data.get("field.p2p_password"), locale
+        assert data.get("note.p2p_password"), locale
+        assert data.get("toast.password_too_short"), locale
+        assert "field.p2p_key" not in data, locale
+
+
+def test_config_set_enforces_the_password_floor(tmp_path: Path) -> None:
+    """An 11-char password is dropped; a 12-char one is persisted."""
+    for value, expected in (("abcdefghijk", ""), ("abcdwxyz1234", "abcdwxyz1234")):
+        env_file = tmp_path / "hsync.env"
+        prepend = tmp_path / "prepend.php"
+        prepend.write_text(
+            "<?php\n"
+            f"define('HSYNC_ENV', '{env_file}');\n"
+            f"define('HSYNC_CONFIG', '{tmp_path}');\n"
+            "$_SERVER['REQUEST_METHOD'] = 'POST';\n"
+            "$_SERVER['CONTENT_TYPE'] = 'application/x-www-form-urlencoded';\n"
+            "$_POST = ['HSYNC_MODE' => 'p2p', 'HSYNC_P2P_PASSPHRASE' => " + repr(value) + "];\n",
+            encoding="utf-8",
+        )
+        subprocess.run(
+            [
+                "php",
+                "-d",
+                f"auto_prepend_file={prepend}",
+                "-d",
+                "display_errors=0",
+                str(WEB / "config_set.php"),
+            ],
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        written = dict(re.findall(r"^(HSYNC_[A-Z0-9_]+)='([^']*)'$", env_file.read_text(), re.M))
+        assert written["HSYNC_P2P_PASSPHRASE"] == expected
+        assert "HSYNC_P2P_KEY" not in written

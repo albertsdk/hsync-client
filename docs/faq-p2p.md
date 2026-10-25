@@ -14,7 +14,8 @@ device is elected **master** and serves files to all other devices (**slaves**).
 **Q: Is the server required for HSYNC to work?**
 No. p2p Mode works without a server. The server is only needed if you
 want to sync devices across different networks. Writes are authorized by a
-shared `HSYNC_P2P_KEY` — see [Security & Safety](#security--safety).
+shared password (`HSYNC_P2P_PASSPHRASE`) or raw key (`HSYNC_P2P_KEY`) — see
+[Security & Safety](#security--safety).
 
 **Q: Can I use both Server Mode and p2p Mode at the same time?**
 No. Each HSYNC instance operates in one mode at a time.
@@ -23,10 +24,11 @@ No. Each HSYNC instance operates in one mode at a time.
 
 **Q: How does HSYNC keep my files safe in p2p mode?**
 - All traffic uses HTTPS/WSS (TLS encrypted).
-- You can set a shared `P2P_KEY` to authenticate peers.
+- You can set a shared secret (`HSYNC_P2P_PASSPHRASE`, or the raw
+  `HSYNC_P2P_KEY`) to authenticate peers.
 - The master's certificate is pinned on first use (TOFU). If the fingerprint
   changes, the connection is refused.
-- Without `P2P_KEY`, the CID is logged as `(unauthenticated)` — you can still
+- Without a shared secret, the CID is logged as `(unauthenticated)` — you can still
   see which device made a change, but there's no cryptographic guarantee.
 
 **Q: How do I confirm a new master when strict pairing (`--require-pairing`) is enabled?**
@@ -192,12 +194,13 @@ A single TLS port, `--listen-port` (default `0` = auto, a free port is picked):
 TLS is used for both HTTPS and WSS. There is no plaintext fallback.
 
 **Q: Can I restrict which devices can write to the master?**
-Yes. Set `HSYNC_P2P_KEY` on all devices. The master will refuse write
+Yes. Set the same shared password (`HSYNC_P2P_PASSPHRASE`, 12+ characters) or raw
+key (`HSYNC_P2P_KEY`, 32+ characters) on all devices. The master will refuse write
 operations from slaves that don't present the correct key. Without a key,
 read-only (download-only) access is always allowed.
 
 **Q: What is the "hello" handshake?**
-When no `P2P_KEY` is configured, the master sends `{"type": "hello"}` and the
+When no shared secret is configured, the master sends `{"type": "hello"}` and the
 slave responds with its CID. This lets the operator see which device is
 connected in the logs, but there is no cryptographic authentication — the
 log carries an explicit `(unauthenticated)` qualifier.

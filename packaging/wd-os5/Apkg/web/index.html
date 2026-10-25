@@ -410,9 +410,10 @@
             <input type="text" name="HSYNC_P2P_GROUP" id="HSYNC_P2P_GROUP" placeholder="my-group">
         </label>
         <label class="hsync-label">
-            <span data-i18n="field.p2p_key">Shared password (optional)</span>
-            <input type="password" name="HSYNC_P2P_KEY" id="HSYNC_P2P_KEY" autocomplete="new-password" minlength="32" maxlength="256">
+            <span data-i18n="field.p2p_password">Shared password (at least 12 characters, optional)</span>
+            <input type="password" name="HSYNC_P2P_PASSPHRASE" id="HSYNC_P2P_PASSPHRASE" autocomplete="new-password" minlength="12" maxlength="256">
         </label>
+        <p class="hsync-note" data-i18n="note.p2p_password">Use the same password on every device of the group. It is derived into the group key and authorizes writes.</p>
         <label class="hsync-label">
             <span data-i18n="field.p2p_port">Port (0 = Auto)</span>
             <input type="number" name="HSYNC_P2P_PORT" id="HSYNC_P2P_PORT" min="0" max="65535">
@@ -710,7 +711,7 @@
         <textarea id="hsync-connect-command" class="hsync-connect-cmd" readonly rows="2" spellcheck="false">hsync p2p -b 'my-bucket' -p '<local-folder>'</textarea>
         <div class="hsync-actions">
             <button type="button" id="hsync-btn-copy" class="hsync-btn" data-i18n="action.copy">Copy</button>
-            <button type="button" id="hsync-btn-reveal-key" class="hsync-btn" data-i18n="action.reveal_key" hidden>Show key</button>
+            <button type="button" id="hsync-btn-reveal-key" class="hsync-btn" data-i18n="action.reveal_key" hidden>Show password</button>
         </div>
     </div>
 

@@ -163,7 +163,7 @@ option to configure.
 | Max deletions percent | `--mass-delete-percent`                      | `50` (`0` = off)                 |
 | Accept deletion risk | `--allow-deletions`                           | off                              |
 | p2p group           | `--group`                                      | `my-group`                       |
-| Shared password     | `HSYNC_P2P_KEY` env var                        | random 192-bit value at install  |
+| Shared password     | `HSYNC_P2P_PASSPHRASE` env var                 | random 24-character value at install |
 | Port                | `--listen-port`                                | `0` (auto)                       |
 | Download from other devices | `--no-peer-download` when disabled     | on                               |
 | Max simultaneous reads | `HSYNC_P2P_PEER_READ_CAP`                   | `2`                              |
@@ -217,19 +217,20 @@ normalizes inputs such as an invalid share name or boolean fields), so the
 command always matches what the NAS runs with:
 
 ```
-HSYNC_P2P_KEY='<masked>' hsync p2p -b '<share>' -p '<local-folder>' [--group '<group>']
+HSYNC_P2P_PASSPHRASE='<masked>' hsync p2p -b '<share>' -p '<local-folder>' [--group '<group>']
 ```
 
 - `<share>` and `--group` mirror the NAS settings so the peer can find the
   group; `<local-folder>` is a placeholder for the folder to sync on the other
   device. Every interpolated value is POSIX single-quoted, so the command is
   safe to paste even if a value contains `$`, `"`, backticks, or spaces.
-- The shared password (when set) is shown **masked** with a *Show key* toggle;
-  the *Copy* button copies the full command including the real value. The field
-  requires **at least 32 characters** (the value is the only entropy behind the
-  bucket token; the client refuses to start with a shorter `HSYNC_P2P_KEY`). The
-  value generated at install is a random 192-bit key, so the default is already
-  compliant.
+- The shared password (when set) is shown **masked** with a *Show password*
+  toggle; the *Copy* button copies the full command including the real value.
+  The field requires **at least 12 characters**: the client derives the 32-byte
+  group key with scrypt, so the same password is all the other device needs (no
+  long key to type). The value generated at install is a random 24-character
+  password from the desktop client's unambiguous alphabet, so the default is
+  already compliant and easy to transfer.
 - Per-device sync behaviour (keep deleted files, compression, delta,
   bandwidth, …) and the NAS role are intentionally omitted: continuous mode
   is the default in both p2p and server mode, and primary election resolves
