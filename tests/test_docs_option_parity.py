@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import click
+import typer.core
 import typer.main
 
 from hsync_client.cli import app
@@ -31,7 +31,7 @@ def _cli_parameters(*, include_hidden: bool = False) -> list[set[str]]:
     parameters: list[set[str]] = []
     visited: set[int] = set()
 
-    def walk(command: click.Command) -> None:
+    def walk(command: typer.core.TyperCommand | typer.core.TyperGroup) -> None:
         if id(command) in visited:
             return
         visited.add(id(command))

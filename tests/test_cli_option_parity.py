@@ -13,8 +13,8 @@ too.
 
 from __future__ import annotations
 
-import click
 import pytest
+import typer.core
 import typer.main
 from hsync_common import defaults
 from typer.testing import CliRunner
@@ -99,17 +99,19 @@ SERVER_ONLY_OPTIONS = frozenset(
 
 
 @pytest.fixture(scope="module")
-def commands() -> dict[str, click.Command]:
+def commands() -> dict[str, typer.core.TyperCommand]:
     """The Typer-built commands, so the assertions read the real CLI definition."""
     group = typer.main.get_command(app)
     return {name: group.commands[name] for name in ("p2p", "server")}
 
 
-def _params(command: click.Command) -> dict[str, click.Parameter]:
+def _params(
+    command: typer.core.TyperCommand,
+) -> dict[str, typer.core.TyperOption | typer.core.TyperArgument]:
     return {param.name: param for param in command.params if getattr(param, "name", None)}
 
 
-def _shape(param: click.Parameter) -> tuple[object, ...]:
+def _shape(param: typer.core.TyperOption | typer.core.TyperArgument) -> tuple[object, ...]:
     """Everything that must match for a *shared* flag (help may legitimately differ)."""
     return (
         param.param_type_name,
