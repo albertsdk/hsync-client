@@ -14,7 +14,7 @@ data plane are the same in both.
 
 ```bash
 # The shared key authorizes writes; without it the group is read-only
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p ~/Sync
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p ~/Sync
 ```
 
 ### How it works
@@ -60,7 +60,7 @@ and reacts to changes (continuous mode is implicit). To run a **single
 sync cycle and exit**, pass `--once` (the universal one-shot selector):
 
 ```bash
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p ~/Sync --once
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p ~/Sync --once
 ```
 
 This compares local and remote files, syncs changes, and shuts down — useful

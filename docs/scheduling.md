@@ -27,7 +27,7 @@ the role, ends a one-shot run. Schedulers run non-interactively, so a
 write-capable p2p run must carry the shared key (a keyless p2p is read-only):
 
 ```bash
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b docs -p ~/Sync --once
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b docs -p ~/Sync --once
 ```
 
 > **Note:** a p2p master that is serving live peers is inherently continuous

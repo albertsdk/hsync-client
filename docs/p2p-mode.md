@@ -145,7 +145,7 @@ suggested moment — a busy peer is never treated as a broken one.
 ### Example Flow
 
 ```console
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b photos -p ~/Pictures
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b photos -p ~/Pictures
 
 [INFO] p2p mode enabled
 [INFO] Continuous mode enabled - will wait indefinitely for peers
@@ -163,7 +163,7 @@ HSYNC_P2P_KEY="shared-secret" hsync p2p -b photos -p ~/Pictures
 
 All p2p command-line options and `HSYNC_*` environment variables — including the
 master-election flags `--prefer-master`/`--never-master`, the discovery/heartbeat
-timeouts, `HSYNC_P2P_KEY`, `HSYNC_DEVICE_DIR` and persistence — are documented
+timeouts, `HSYNC_P2P_PASSPHRASE`/`HSYNC_P2P_KEY`, `HSYNC_DEVICE_DIR` and persistence — are documented
 in the single reference:
 [Configuration — p2p Mode](configuration-p2p.md).
 
@@ -171,10 +171,13 @@ in the single reference:
 > - `--prefer-master` cannot be combined with `--sync-direction upload-only`/`download-only` — the master must stay bidirectional.
 > - `--prefer-master` and `--never-master` are mutually exclusive.
 >
-> The p2p authentication key is only ever supplied via the `HSYNC_P2P_KEY`
-> environment variable, never as a CLI flag. That key is what authorizes writes:
-> a keyless p2p is read-only, and a write-capable run without a key is refused
-> with `[AUTH REQUIRED]`. Only `--sync-direction download-only` needs no key.
+> The p2p shared secret is only ever supplied via the environment, never as a
+> CLI flag. Two forms exist: `HSYNC_P2P_PASSPHRASE` (at least 12 characters, the
+> usual choice; it is expanded to the group key with scrypt) and
+> `HSYNC_P2P_KEY` (a full raw group key, at least 32 characters). That secret is
+> what authorizes writes: a keyless p2p is read-only, and a write-capable run
+> without a key is refused with `[AUTH REQUIRED]`. Only
+> `--sync-direction download-only` needs no key.
 
 ## Security & Pairing
 
@@ -185,20 +188,22 @@ certificate, and peers pin its SHA-256 fingerprint (shared over mDNS) on the ver
 connection that carries the data.
 
 - **No setup required** — encryption is always on; you don't manage certificates.
-- **Optional shared secret** — set the same `HSYNC_P2P_KEY` on every peer to
-  require authentication. It is sent as a Bearer token over the encrypted channel
-  and is configured via environment variable only:
+- **Optional shared secret** — set the same `HSYNC_P2P_PASSPHRASE` on every
+  peer to require authentication. It must be at least 12 characters; the client
+  derives the 32-byte group key with scrypt (fixed, versioned salt) and sends the
+  result as a Bearer token over the encrypted channel. Use a password unique to
+  this group:
 
   ```bash
-  # All peers must use the same key
-  export HSYNC_P2P_KEY="mySecretKey123"
+  # All peers must use the same password
+  export HSYNC_P2P_PASSPHRASE="a-long-shared-password"
   hsync p2p -b photos -p ~/Pictures
   ```
 
 - **No-key mode is read-only by default** — discovery, listings, downloads,
   exact-hash source lookup, and download delta remain available, but any
   write-capable sync is refused and mutating HTTP endpoints return `403`.
-- **Keyless runs are confirmed** — without `HSYNC_P2P_KEY` the client asks for
+- **Keyless runs are confirmed** — without a shared password or key the client asks for
   confirmation on a terminal and fails closed otherwise; proceed only with
   `--allow-unauthenticated-p2p` or `HSYNC_P2P_ALLOW_UNAUTHENTICATED=true`.
 - **Dangerous explicit opt-in** — `--allow-unauthenticated-writes` or
@@ -277,7 +282,7 @@ Consequences:
   identity:
 
   ```bash
-  HSYNC_P2P_KEY="shared-secret" \
+  HSYNC_P2P_PASSPHRASE="a-long-shared-password" \
   HSYNC_DEVICE_DIR=~/.local/state/hsync/device-alt \
     hsync p2p -b photos -p ~/Other
   ```
@@ -317,7 +322,7 @@ peer without a group matches **only** other peers that also run without a group.
 
 ```bash
 # The shared key authorizes writes; every peer in the group needs the same one
-export HSYNC_P2P_KEY="shared-secret"
+export HSYNC_P2P_PASSPHRASE="a-long-shared-password"
 
 # Team A - only sees other Team A peers
 hsync p2p -b project -p ~/Projects --group "team-a"
@@ -416,7 +421,7 @@ When running in p2p mode **without `--prefer-master`** and the shared directory 
 
 ```bash
 # The shared key authorizes writes (a keyless p2p is read-only)
-export HSYNC_P2P_KEY="shared-secret"
+export HSYNC_P2P_PASSPHRASE="a-long-shared-password"
 
 # The client will show a warning and ask for confirmation
 hsync p2p -b photos -p ~/Pictures
@@ -447,7 +452,7 @@ See also: [Architecture > Pre-Sync Safety Check](internal/architecture.md#pre-sy
 
 ### Authentication Failures
 
-1. **Check key**: Ensure all peers use the exact same `HSYNC_P2P_KEY` environment variable
+1. **Check secret**: Ensure all peers use the exact same `HSYNC_P2P_PASSPHRASE` (or `HSYNC_P2P_KEY`) value
 2. **Check logs**: Look for "401 Unauthorized" errors
 
 ### Port Conflicts

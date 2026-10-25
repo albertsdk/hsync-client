@@ -24,9 +24,12 @@ level, so the fast paths `--version` / `--help` / `--help-symbols` do not pay th
 `hashing`→`asyncio` and `models` import chain that only `--capabilities-json`
 needs. Pinned by `tests/test_startup_imports.py`.
 
-Secrets are **not** CLI flags: `HSYNC_API_KEY` / `HSYNC_P2P_KEY`, or hidden
-`--api-key-fd` (server subcommand) / `--p2p-key-fd` (p2p subcommand) for a
-parent process. `--env-file` is the only dotenv path (`main_logic.py` →
+Secrets are **not** CLI flags: `HSYNC_API_KEY` / `HSYNC_P2P_PASSPHRASE` /
+`HSYNC_P2P_KEY`, or hidden `--api-key-fd` (server subcommand) /
+`--p2p-passphrase-fd` / `--p2p-key-fd` (p2p subcommand) for a parent process. A
+passphrase (at least 12 chars) is derived to the group key by
+`derive_group_key`; never set both p2p forms. `--env-file` is the only dotenv
+path (`main_logic.py` →
 `load_env_file`); `./.env` is not auto-loaded. `--env-file` only fills
 `EnvSettings` fields; bucket/path/direction/the `p2p`/`server` subcommand
 selection/`--prefer-master`/the server `HOSTNAME[:PORT]`+`--port` stay CLI-only
@@ -53,7 +56,7 @@ across topologies. Continuous is the default and `--once` is the only run-mode k
 | `run_sync` | `main_logic.py::run_sync` | validate → safety checks → branch mode → watcher loop; logs `hsync_common.runtime.runtime_summary()` (container, mem/cpu cgroup limits, TTY) at startup. Identity: p2p mode resolves the persistent device identity (`identity.load_or_create_device_identity`) and uses its device ID as `CID` (logged as `Device ID`); remote mode keeps a per-session random `get_cid()`. Before the mode branch it acquires the per-directory `InstanceLock` for `local_path` (released in `finally`; refusal exits 1) |
 | `_check_deletion_risk` | `main_logic.py::_check_deletion_risk` | warn/prompt on risky delete settings (`--allow-deletions` bypass; fails fast with exit 1 when no interactive TTY) |
 | `_check_p2p_write_policy` | `main_logic.py` | default-deny every write-capable no-key p2p run, independent of TTY; only `--allow-unauthenticated-writes` or `HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES=true` opts in |
-| `_check_p2p_keyless_policy` | `main_logic.py` | confirm keyless p2p (no `HSYNC_P2P_KEY`); `--allow-unauthenticated-p2p` or the writes opt-in acknowledges; fails closed without a TTY |
+| `_check_p2p_keyless_policy` | `main_logic.py` | confirm keyless p2p (no shared secret); `--allow-unauthenticated-p2p` or the writes opt-in acknowledges; fails closed without a TTY |
 | `_warn_if_p2p_in_container` | `main_logic.py::_warn_if_p2p_in_container` | warn that mDNS discovery cannot cross container bridge/NAT networking (suggests `--network host`) |
 | `_check_disk_space` | `main_logic.py::_check_disk_space` | min-free-disk guard |
 | `_check_server_connectivity` | `main_logic.py::_check_server_connectivity` | startup health gate; one-shot mode fails fast on an unreachable server, continuous mode (default) logs a warning and lets `remote_connect` retry forever (p2p parity) |

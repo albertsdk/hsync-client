@@ -375,7 +375,7 @@ availability/source hints but cannot authorize a filesystem mutation.
 HTTPS/WSS is mandatory in p2p mode (no plaintext fallback). Write-capable no-key
 sync requires `--allow-unauthenticated-writes` or
 `HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES=true`; TTY state never authorizes it
-(`main_logic._check_p2p_write_policy`). A keyless (no `HSYNC_P2P_KEY`) run,
+(`main_logic._check_p2p_write_policy`). A keyless (no shared secret) run,
 read-only included, additionally requires `--allow-unauthenticated-p2p`
 (`HSYNC_P2P_ALLOW_UNAUTHENTICATED=true`) or an interactive confirmation
 (`main_logic._check_p2p_keyless_policy`). A key that is present but shorter than
@@ -527,10 +527,11 @@ node). `DEFAULT_QUIC_IDLE_TIMEOUT = 30.0`. Config surface: `HSYNC_BOOTNODE`
 
 Token authentication: a **protected bucket** or a **private node** gates
 `register`/`refresh`/`query` (and `leave` in private mode) on a `bucket_token`
-the client derives from the **p2p shared key** — `derive_bucket_token(P2P_KEY,
+the client derives from the **p2p group key** — `derive_bucket_token(P2P_KEY,
 REMOTE_BUCKET)` (SSOT `hsync_common.protocol.bootnode`), fed from
-`config["P2P_KEY"]` (`main_logic.py`, env `HSYNC_P2P_KEY` or the hidden
-`--p2p-key-fd` pipe) into `p2p_discovery.py::build_discovery_plan` → `BootnodeDiscovery`
+`config["P2P_KEY"]` (`main_logic.py`; a `HSYNC_P2P_PASSPHRASE` is derived to the
+key first, a raw `HSYNC_P2P_KEY` is used as-is; hidden `--p2p-passphrase-fd` /
+`--p2p-key-fd` pipes for a parent) into `p2p_discovery.py::build_discovery_plan` → `BootnodeDiscovery`
 (`p2p_discovery_bootnode.py::BootnodeDiscovery`), so a token exists only when a key is set. The
 same key is the p2p data-plane credential (`Authorization: Bearer`): one key per
 client, which authenticates to any protected bucket whose group key equals it.

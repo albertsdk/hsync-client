@@ -1087,6 +1087,19 @@ P2PKeyFdOpt = Annotated[
         rich_help_panel="P2P Mode",
     ),
 ]
+P2PPassphraseFdOpt = Annotated[
+    int | None,
+    typer.Option(
+        "--p2p-passphrase-fd",
+        help=(
+            "Read the P2P shared password (>=12 chars) from the given file descriptor; "
+            "it is derived to the group key. For secure passing from a parent process."
+        ),
+        metavar="FD",
+        hidden=True,
+        rich_help_panel="P2P Mode",
+    ),
+]
 
 
 # =============================================================================
@@ -1162,14 +1175,15 @@ def main(
         [dim]# P2P mode (no central server, peer-to-peer)[/dim]
         $ hsync p2p -b shared
 
-        [dim]# P2P mode with authentication[/dim]
-        $ HSYNC_P2P_KEY=YOUR_SHARED_KEY_AT_LEAST_32_CHARACTERS hsync p2p -b shared
+        [dim]# P2P mode with authentication (user password)[/dim]
+        $ HSYNC_P2P_PASSPHRASE=YOUR_SHARED_PASSWORD_AT_LEAST_12_CHARACTERS hsync p2p -b shared
 
     [bold]Environment Variables:[/bold]
 
-        HSYNC_SERVER    Full server URL (alternative to the HOSTNAME argument)
-        HSYNC_API_KEY   API key for authentication
-        HSYNC_P2P_KEY   Shared secret for P2P mode authentication
+        HSYNC_SERVER          Full server URL (alternative to the HOSTNAME argument)
+        HSYNC_API_KEY         API key for authentication
+        HSYNC_P2P_PASSPHRASE  Shared password (>=12 chars, derived to the group key)
+        HSYNC_P2P_KEY         Raw shared key (>=32 chars), used as-is
 
     [bold]Project:[/bold]
 
@@ -1195,6 +1209,7 @@ def p2p(
     allow_unauthenticated_writes: AllowUnauthenticatedWritesOpt = False,
     allow_unauthenticated_p2p: AllowUnauthenticatedP2POpt = False,
     p2p_key_fd: P2PKeyFdOpt = None,
+    p2p_passphrase_fd: P2PPassphraseFdOpt = None,
     port: BootnodePortOpt = None,
     upnp: UpnpOpt = False,
     insecure: InsecureOpt = False,
@@ -1330,6 +1345,7 @@ def p2p(
         server_url=None,
         api_key_fd=None,
         p2p_key_fd=p2p_key_fd,
+        p2p_passphrase_fd=p2p_passphrase_fd,
         p2p_mode=True,
         p2p_listen_port=p2p_listen_port,
         p2p_bootnode=bootnode_host,
@@ -1349,10 +1365,53 @@ def p2p(
     )
 
 
+@app.command("derive-group-key")
+def derive_group_key_command(
+    passphrase_fd: Annotated[
+        int | None,
+        typer.Option(
+            "--passphrase-fd",
+            help="Read the shared password from the given file descriptor.",
+            metavar="FD",
+            hidden=True,
+        ),
+    ] = None,
+) -> None:
+    """Print the P2P group key (64 hex) derived from a shared password.
+
+    Use the output to populate a bootnode key file. Treat it as a secret: it is
+    the raw group key the bootnode derives bucket tokens from.
+    """
+    import os
+
+    from hsync_common.protocol.boot_tokens import (
+        WeakGroupPassphrase,
+        derive_group_key,
+        validate_group_passphrase,
+    )
+
+    if passphrase_fd is not None:
+        with os.fdopen(passphrase_fd, "r") as handle:
+            passphrase = handle.read()
+    else:
+        passphrase = typer.prompt("Shared password", hide_input=True)
+
+    try:
+        validate_group_passphrase(passphrase)
+    except WeakGroupPassphrase as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from None
+
+    typer.echo(derive_group_key(passphrase))
+    typer.echo(
+        "The value above is the group key secret: store it where only the service can read it.",
+        err=True,
+    )
+
+
 # =============================================================================
 # trust management (P2P peers, bootnode, server) — one ``hsync trust`` namespace
 # =============================================================================
-
 # ``hsync trust …`` mirrors OpenSSH's known-hosts workflow so an operator can
 # inspect, pre-pin and forget fingerprints without editing the JSON stores by
 # hand. One namespace covers the three certificate-pinning transports: the P2P

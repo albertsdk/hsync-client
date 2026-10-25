@@ -236,7 +236,7 @@ second instance with the same bucket is ignored as "self" during discovery
 device directory:
 
 ```bash
-HSYNC_P2P_KEY="shared-secret" HSYNC_DEVICE_DIR=~/.local/state/hsync/device-alt \
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" HSYNC_DEVICE_DIR=~/.local/state/hsync/device-alt \
   hsync p2p -b photos -p ~/Other
 ```
 
@@ -253,11 +253,11 @@ copied device directory (hsync regenerates it on the next run) or point the
 machine at a fresh location:
 
 ```bash
-HSYNC_P2P_KEY="shared-secret" HSYNC_DEVICE_DIR=~/.local/state/hsync/device-this-machine \
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" HSYNC_DEVICE_DIR=~/.local/state/hsync/device-this-machine \
   hsync p2p -b photos -p ~/Photos
 ```
 
-> **Trusted-network note (no `HSYNC_P2P_KEY`):** on an unauthenticated network the device
+> **Trusted-network note (no shared secret):** on an unauthenticated network the device
 > ID a peer declares is not verified, so a malicious peer could squat another
 > peer's ID and get it refused while it holds the connection. This is a marginal
 > availability risk in a mode where reads are open but writes are refused by
@@ -328,6 +328,6 @@ client default). Edit
 ```ini
 HSYNC_BUCKET="mybucket"
 HSYNC_PATH="/path/to/sync"
-HSYNC_P2P_KEY="shared-secret"    # required for writes (a keyless p2p is read-only)
+HSYNC_P2P_PASSPHRASE="a-long-shared-password"    # required for writes (a keyless p2p is read-only)
 ```
 `HSYNC_P2P_MODE` is ignored; do not add it. Then `systemctl restart hsync`.

@@ -10,7 +10,7 @@ active) and, across networks, through a bootnode — with no server needed.
 ```bash
 # Peers discover each other via mDNS; continuous mode is implicit.
 # Write-capable runs need a shared key (see Authentication below).
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p /path/to/dir
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p /path/to/dir
 ```
 
 See [p2p Mode](p2p-mode.md) for the P2P architecture and master election.
@@ -37,13 +37,13 @@ echo "hello hsync p2p" > /tmp/hsync-p2p-a/hello.txt
 #    distinct devices, or discovery would ignore them as "self".
 #    Both terminals share the same p2p key: it authorizes writes, and a
 #    write-capable run without a key is refused with [AUTH REQUIRED].
-HSYNC_P2P_KEY="demo-p2p-secret" \
+HSYNC_P2P_PASSPHRASE="demo-shared-password" \
 HSYNC_DEVICE_DIR=/tmp/hsync-p2p-a-device \
   hsync p2p -b demo-p2p -p /tmp/hsync-p2p-a --prefer-master
 
 # 4. Terminal 2 — start a second peer with its own device identity; it
 #    discovers the master via mDNS and downloads hello.txt
-HSYNC_P2P_KEY="demo-p2p-secret" \
+HSYNC_P2P_PASSPHRASE="demo-shared-password" \
 HSYNC_DEVICE_DIR=/tmp/hsync-p2p-b-device \
   hsync p2p -b demo-p2p -p /tmp/hsync-p2p-b
 
@@ -92,7 +92,7 @@ The shared key is what authorizes **writes**: set the same `HSYNC_P2P_KEY` on
 every device that may modify the shared folder.
 
 ```bash
-export HSYNC_P2P_KEY="your-shared-secret"
+export HSYNC_P2P_PASSPHRASE="your-shared-password"
 ```
 
 With a `P2P_KEY`:
@@ -116,7 +116,7 @@ Set the shared secret in the shell (required for writes) and enable p2p mode on
 the CLI. `HSYNC_P2P_MODE` is not read.
 
 ```bash
-export HSYNC_P2P_KEY="shared-secret"   # required for writes (read-only without it)
+export HSYNC_P2P_PASSPHRASE="a-long-shared-password"   # required for writes (read-only without it)
 hsync p2p -b documents -p ~/Documents --group mygroup  # --group is optional
 ```
 

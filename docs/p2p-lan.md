@@ -13,14 +13,14 @@ this page covers running without a bootnode configured.
 
 - Both devices are on the **same local network** (mDNS does not cross routers).
 - For a write-capable run both sides share the same key:
-  `HSYNC_P2P_KEY="shared-secret"`.
+  `HSYNC_P2P_PASSPHRASE="a-long-shared-password"`.
 - A read-only peer (`--sync-direction download-only`) needs no key.
 
 ## Run the plan
 
 ```bash
 # Continuous p2p sync with mDNS discovery (no bootnode configured).
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p /srv/hsync
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p /srv/hsync
 ```
 
 Nothing else is required: with no `BOOTNODE` hostname and no `HSYNC_BOOTNODE`,
@@ -42,7 +42,7 @@ unset `HSYNC_BOOTNODE` (or drop the positional) to go back to mDNS.
 The bucket isolates the sync set; `--group` adds a label peers must share:
 
 ```bash
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p /srv/hsync --group home
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p /srv/hsync --group home
 ```
 
 See [Configuration — p2p Mode](configuration-p2p.md#p2p-mode-options) for the
@@ -52,8 +52,8 @@ full option and environment-variable reference.
 
 ```bash
 # Always/never become the sync coordinator for this bucket.
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p /srv/hsync --prefer-master
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p /srv/hsync --never-master
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p /srv/hsync --prefer-master
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p /srv/hsync --never-master
 ```
 
 The mDNS plan also exposes `--discovery-timeout SECONDS` (default `0` = wait

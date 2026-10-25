@@ -157,6 +157,13 @@ class EnvSettings(BaseSettings):
 
     # P2P Mode Settings
     p2p_key: SecretStr | None = Field(default=None, description="P2P shared secret key")
+    p2p_passphrase: SecretStr | None = Field(
+        default=None,
+        description=(
+            "P2P shared password (at least 12 characters); derived to the group key "
+            "with scrypt. Mutually exclusive with HSYNC_P2P_KEY."
+        ),
+    )
     p2p_group: str | None = Field(default=None, description="P2P group name for peer filtering")
     p2p_listen_port: int | None = Field(
         default=None, ge=1, le=65535, description="P2P master TCP listen port"
@@ -439,6 +446,12 @@ def get_p2p_key() -> str | None:
     """Get P2P shared secret key from environment."""
     key = get_env_settings().p2p_key
     return key.get_secret_value() if key is not None else None
+
+
+def get_p2p_passphrase() -> str | None:
+    """Get the P2P shared password from the environment (derived to the key)."""
+    passphrase = get_env_settings().p2p_passphrase
+    return passphrase.get_secret_value() if passphrase is not None else None
 
 
 def get_p2p_group() -> str | None:

@@ -37,7 +37,7 @@ see [Server Mode](server-mode.md) and [p2p Mode](p2p-mode.md).
 
 - [Configuration](configuration.md) — shared options: sync, compression, delta, logging, auto-tuning.
 - [Configuration — Server Mode](configuration-server.md) — server URL, API key, SSL/TLS, env vars.
-- [Configuration — p2p Mode](configuration-p2p.md) — discovery, master election, `HSYNC_P2P_KEY`, stability.
+- [Configuration — p2p Mode](configuration-p2p.md) — discovery, master election, `HSYNC_P2P_PASSPHRASE`/`HSYNC_P2P_KEY`, stability.
 - [Sync Modes](sync-modes.md) — server vs p2p topologies and how to combine flags.
 
 ### 4. Choose the p2p discovery scope

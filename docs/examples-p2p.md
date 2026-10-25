@@ -17,7 +17,7 @@ registering with a bootnode for a group spread across networks (see
 > a shared key, so the examples below assume:
 >
 > ```bash
-> export HSYNC_P2P_KEY="shared-secret"   # same value on every device
+> export HSYNC_P2P_PASSPHRASE="a-long-shared-password"   # same value on every device
 > ```
 >
 > `--sync-direction download-only` needs no key; the deliberate, dangerous
@@ -32,7 +32,7 @@ registering with a bootnode for a group spread across networks (see
 > directory, e.g.:
 >
 > ```bash
-> HSYNC_P2P_KEY="shared-secret" \
+> HSYNC_P2P_PASSPHRASE="a-long-shared-password" \
 HSYNC_DEVICE_DIR=~/.local/state/hsync/device-alt \
   hsync p2p -b shared -p ~/Other
 > ```
@@ -44,12 +44,12 @@ HSYNC_DEVICE_DIR=~/.local/state/hsync/device-alt \
 
 On device A (the master):
 ```bash
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b shared -p ~/Shared
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b shared -p ~/Shared
 ```
 
 On device B (the slave):
 ```bash
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b shared -p ~/Shared
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b shared -p ~/Shared
 ```
 
 Continuous mode is implicit in p2p Mode: changes appear in real time.
@@ -57,7 +57,7 @@ Continuous mode is implicit in p2p Mode: changes appear in real time.
 ## 2.2 Sync photo library across devices without internet
 
 ```bash
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b photos -p ~/Pictures
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b photos -p ~/Pictures
 ```
 
 All devices on the same LAN with the same bucket name will sync photos directly.
@@ -66,12 +66,12 @@ All devices on the same LAN with the same bucket name will sync photos directly.
 
 On the NAS (prefer it as master):
 ```bash
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b backup -p /mnt/data/backup --prefer-master
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b backup -p /mnt/data/backup --prefer-master
 ```
 
 On the laptop (slave):
 ```bash
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b backup -p ~/Backup \
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b backup -p ~/Backup \
   --sync-direction upload-only --ignore-delete
 ```
 
@@ -82,7 +82,7 @@ the laptop stays on the backup.
 ## 2.4 Keep a peer in sync but never let it become master
 
 ```bash
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b shared -p ~/Shared --never-master
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b shared -p ~/Shared --never-master
 ```
 
 Useful for devices that are intermittently connected or have low resources.
@@ -90,7 +90,7 @@ Useful for devices that are intermittently connected or have low resources.
 ## 2.5 One-shot p2p sync (no continuous listening)
 
 ```bash
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b shared -p ~/Shared --once
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b shared -p ~/Shared --once
 ```
 
 `--once` runs a single slave sync cycle and exits; the master role is
@@ -103,18 +103,18 @@ hsync p2p -b shared -p ~/Shared --sync-direction download-only
 ```
 
 This peer receives changes but never uploads. Useful for read-only mirrors.
-Because it never writes, it needs no `HSYNC_P2P_KEY`.
+Because it never writes, it needs no shared secret.
 
 ## 2.7 Multiple isolated groups on the same LAN
 
 Group A:
 ```bash
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b shared -p ~/Shared --group team-a
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b shared -p ~/Shared --group team-a
 ```
 
 Group B:
 ```bash
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b shared -p ~/Shared --group team-b
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b shared -p ~/Shared --group team-b
 ```
 
 Devices in different groups are invisible to each other, even on the same Wi-Fi.
@@ -122,7 +122,7 @@ Devices in different groups are invisible to each other, even on the same Wi-Fi.
 ## 2.8 p2p with a fixed port (firewalled environments)
 
 ```bash
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b shared -p ~/Shared --listen-port 8080
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b shared -p ~/Shared --listen-port 8080
 ```
 
 The client serves the REST API (HTTPS) and the real-time event stream (WSS) on
@@ -137,7 +137,7 @@ serves:
 
 ```bash
 # Same command on every device of the group.
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p ~/Sync \
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p ~/Sync \
   --upnp boot.example.net
 ```
 
@@ -150,7 +150,7 @@ A run with no terminal (cron, systemd, CI) cannot answer the prompt, so it must
 state the trust decision explicitly. Accept the first sighting:
 
 ```bash
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p ~/Sync \
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p ~/Sync \
   boot.example.net --bootnode-tofu
 ```
 
@@ -158,7 +158,7 @@ Once the operator has published the stable `sha256:<hex>` fingerprint
 (`hsync-bootnode identity show`), pin it — the hardened form:
 
 ```bash
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b mybucket -p ~/Sync \
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p ~/Sync \
   boot.example.net --bootnode-fingerprint YOUR_BOOTNODE_FINGERPRINT
 ```
 
@@ -176,7 +176,7 @@ and troubleshooting: [Sync across networks](p2p-bootnode.md).
 The key assumed in [Conventions](#conventions) is what authorizes writes:
 
 ```bash
-HSYNC_P2P_KEY="shared-secret" hsync p2p -b shared -p ~/Shared
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b shared -p ~/Shared
 ```
 
 With a `P2P_KEY`, the master validates every slave's identity and accepts

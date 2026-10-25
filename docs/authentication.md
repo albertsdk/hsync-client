@@ -192,15 +192,18 @@ Slave                                Master
 | Variable | Mode | Purpose |
 |---|---|---|
 | `HSYNC_API_KEY` | Server | Account token (`hs_<id>_<secret>`) for central server authentication |
-| `HSYNC_P2P_KEY` | p2p | Shared secret for p2p peer authentication — required by any write-capable run (a keyless p2p is read-only), and **at least 32 characters** (it is the only entropy behind the bucket token). With a bootnode it is also the group key: the client derives the `bucket_token` from it for protected buckets and private nodes |
+| `HSYNC_P2P_PASSPHRASE` | p2p | Shared password typed by users (**at least 12 characters**); the client derives the 64-hex group key with scrypt. Mutually exclusive with `HSYNC_P2P_KEY` |
+| `HSYNC_P2P_KEY` | p2p | Full raw group key (**at least 32 characters**), used as-is. With a bootnode it is also the group key: the client derives the `bucket_token` from it for protected buckets and private nodes |
 
 The `cid` carried in the p2p auth frames is derived from the local **device
 identity** — it is not configurable via environment.
 
-When `HSYNC_P2P_KEY` is set and non-empty:
+When a shared secret (`HSYNC_P2P_PASSPHRASE` or `HSYNC_P2P_KEY`) is set and
+non-empty:
 - The **master** sends `{"type": "auth_required"}` to incoming slaves
-- The **slave** sends `{"type": "auth", "token": "<P2P_KEY>", "cid": "<CID>"}`
+- The **slave** sends `{"type": "auth", "token": "<derived-group-key>", "cid": "<CID>"}`
+  (a passphrase is derived to the 64-hex group key before use)
 
-When `HSYNC_P2P_KEY` is empty or unset:
+When neither is set:
 - The **master** sends `{"type": "hello"}` to incoming slaves
 - The **slave** sends `{"type": "hello", "cid": "<CID>"}`

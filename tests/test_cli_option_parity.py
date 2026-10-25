@@ -79,6 +79,7 @@ P2P_ONLY_OPTIONS = frozenset(
         "never_master",
         "no_peer_download",
         "p2p_group",
+        "p2p_passphrase_fd",
         "p2p_key_fd",
         "p2p_listen_port",
         "prefer_master",

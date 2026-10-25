@@ -11,7 +11,7 @@ This module contains the core synchronization logic extracted from main.py.
 import sys
 from asyncio import run
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn
 from urllib.parse import urlsplit
 
 from hsync_common.defaults import MIN_FREE_DISK_SPACE_DEFAULT
@@ -19,7 +19,12 @@ from hsync_common.disk import check_free_space
 from hsync_common.endpoint import format_authority
 from hsync_common.format import format_bytes
 from hsync_common.ignore import IgnoreMatcher, set_active_matcher
-from hsync_common.protocol.boot_tokens import validate_group_key
+from hsync_common.protocol.boot_tokens import (
+    WeakGroupPassphrase,
+    derive_group_key,
+    validate_group_key,
+    validate_group_passphrase,
+)
 from hsync_common.protocol.handshake import PROTOCOL_VERSION_REST
 from hsync_common.protocol.pairing import fingerprint_matches
 from hsync_common.protocol.tls_trust import (
@@ -60,6 +65,7 @@ from hsync_client.config import (
     get_p2p_group,
     get_p2p_key,
     get_p2p_listen_port,
+    get_p2p_passphrase,
     get_p2p_peer_download,
     get_p2p_peer_read_cap,
     get_p2p_peer_sources_max,
@@ -139,6 +145,22 @@ def _read_secret_from_fd(fd: int | None) -> str | None:
             return value or None
     except Exception:
         return None
+
+
+def _fatal_startup(message: str, *, log: Any | None = None) -> NoReturn:
+    """Report a fatal startup error on the events channel, then exit.
+
+    The Desktop GUI consumes structured events, not log text: without this a
+    startup failure looks like the engine "silently stopped" (a normal exit with
+    a non-zero code is not a crash). *log* is optional because the environment
+    file failure happens before logging is configured.
+    """
+    if log is not None:
+        log.error(message)
+    else:
+        print(f"Error: {message}", file=sys.stderr)
+    emit_event(UiEventName.error, message=message, reason="startup")
+    sys.exit(1)
 
 
 # Provenance of a resolved tuning value; feeds AUTOTUNE_MANAGED_KEYS so the P2P
@@ -761,6 +783,7 @@ def run_sync(
     p2p_require_pairing: bool = False,
     api_key_fd: int | None = None,
     p2p_key_fd: int | None = None,
+    p2p_passphrase_fd: int | None = None,
     events_json_fd: int | None = None,
     allow_deletions: bool = False,
     p2p_allow_unauthenticated: bool = False,
@@ -804,6 +827,7 @@ def run_sync(
     # Read secrets from file descriptors if provided (secure passing from parent)
     api_key_from_fd = _read_secret_from_fd(api_key_fd)
     p2p_key_from_fd = _read_secret_from_fd(p2p_key_fd)
+    p2p_passphrase_from_fd = _read_secret_from_fd(p2p_passphrase_fd)
 
     # Install the structured event emitter. No-op when the parent did
     # not pass --events-json-fd, so a plain CLI run is unaffected.
@@ -813,8 +837,7 @@ def run_sync(
         try:
             load_env_file(env_file)
         except FileNotFoundError as e:
-            print(f"Error: {e}", file=sys.stderr)
-            sys.exit(1)
+            _fatal_startup(str(e))
 
     log = setup_logging(
         debug=debug,
@@ -852,8 +875,7 @@ def run_sync(
         sys.exit(1)
 
     if logfile and not is_valid_logfile(logfile):
-        log.error(f"Invalid output file '{logfile}'")
-        sys.exit(1)
+        _fatal_startup(f"Invalid output file '{logfile}'", log=log)
 
     # Determine server URL (CLI argument takes precedence over env var)
     effective_server_url = server_url or get_server_url()
@@ -864,8 +886,10 @@ def run_sync(
     using_p2p_placeholder = p2p_mode and not effective_server_url
 
     if not effective_server_url and not p2p_mode:
-        log.error("Server URL is required (use 'hsync server HOSTNAME' or set HSYNC_SERVER)")
-        sys.exit(1)
+        _fatal_startup(
+            "Server URL is required (use 'hsync server HOSTNAME' or set HSYNC_SERVER)",
+            log=log,
+        )
 
     if p2p_mode and not effective_server_url:
         effective_server_url = "http://localhost:9753"
@@ -899,7 +923,18 @@ def run_sync(
 
     # Resolve API key once: FD-pipe value takes precedence over env var
     resolved_api_key = api_key_from_fd or get_api_key()
-    resolved_p2p_key = p2p_key_from_fd or get_p2p_key()
+    resolved_p2p_key = p2p_key_from_fd or get_p2p_key() or None
+    resolved_p2p_passphrase = p2p_passphrase_from_fd or get_p2p_passphrase() or None
+    # Two input forms for the same secret: a raw key (>=32 chars, used as-is) or a
+    # user-typed password (>=12 chars, derived to a 64-hex key). Never both.
+    if resolved_p2p_key and resolved_p2p_passphrase:
+        _fatal_startup("Set either HSYNC_P2P_KEY or HSYNC_P2P_PASSPHRASE, not both.", log=log)
+    if resolved_p2p_passphrase:
+        try:
+            validate_group_passphrase(resolved_p2p_passphrase)
+        except WeakGroupPassphrase as exc:
+            _fatal_startup(f"HSYNC_P2P_PASSPHRASE is not acceptable: {exc}", log=log)
+        resolved_p2p_key = derive_group_key(resolved_p2p_passphrase)
     # Fail fast on a weak shared key: it is the only entropy behind a bucket
     # token, so a short HSYNC_P2P_KEY would make a protected bucket guessable.
     # Reported here (like the missing-API-key gate below) instead of mid-sync.
@@ -907,8 +942,7 @@ def run_sync(
         try:
             validate_group_key(resolved_p2p_key)
         except ValueError as exc:
-            log.error(f"HSYNC_P2P_KEY is not acceptable: {exc}")
-            sys.exit(1)
+            _fatal_startup(f"HSYNC_P2P_KEY is not acceptable: {exc}", log=log)
     allow_unauthenticated_p2p_writes = (
         p2p_allow_unauthenticated_writes or get_p2p_allow_unauthenticated_writes()
     )
@@ -920,23 +954,29 @@ def run_sync(
     # avoids a late, opaque "Invalid API key" failure mid-sync. P2P mode has
     # its own shared-key policy and is exempt.
     if not p2p_mode and not resolved_api_key:
-        log.error(
+        _fatal_startup(
             "No API key configured. Set HSYNC_API_KEY (or pass it via "
-            "--api-key-fd) to authenticate with the server."
+            "--api-key-fd) to authenticate with the server.",
+            log=log,
         )
-        sys.exit(1)
 
     # Security gate: never transmit the API key over an unencrypted channel.
     # The rule keys on the URL scheme the client connects to, so an HTTPS
     # reverse proxy in front of an HTTP backend is fully supported (the
     # client uses an https:// URL; the backend stays HTTP behind the proxy).
     if not p2p_mode and not effective_server_url.lower().startswith("https://"):
-        log.error(
+        _fatal_startup(
             f"API key provided but server URL is not HTTPS ('{effective_server_url}'). "
             "Refusing to send credentials over an unencrypted connection. "
-            "Use an https:// URL (a reverse proxy terminating TLS is supported)."
+            "Use an https:// URL (a reverse proxy terminating TLS is supported).",
+            log=log,
         )
-        sys.exit(1)
+
+    # All fatal startup validation is behind us. The Desktop treats an exit
+    # before this event as a startup failure (its safety net) and uses it as the
+    # explicit "the engine is running" marker, so it must stay after every
+    # startup ``sys.exit`` above and before the run loop.
+    emit_event(UiEventName.ready)
 
     # Populate global configuration dictionary
 

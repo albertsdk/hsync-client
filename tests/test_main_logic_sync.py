@@ -9,6 +9,7 @@ from typing import Unpack, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
+from hsync_common.protocol.events import parse_event_line
 from hsync_common.runtime import ColorMode, ContainerInfo
 from typing_extensions import TypedDict
 
@@ -22,6 +23,7 @@ from hsync_client.constants import (
     HSYNC_VERSION,
     RESYNC_DEFAULT,
 )
+from hsync_client.events import get_emitter, init_emitter
 from hsync_client.main_logic import (
     _check_server_connectivity,
     _get_discovery_timeout_value,
@@ -437,6 +439,7 @@ class _RunSyncKwargs(TypedDict, total=False):
     api_key_fd: int | None
     p2p_key_fd: int | None
     p2p_allow_unauthenticated: bool
+    events_json_fd: int | None
 
 
 def _default_run_sync_kwargs(
@@ -473,6 +476,7 @@ def _default_run_sync_kwargs(
         "quiet": False,
         "logfile": None,
         "color": ColorMode.NEVER,
+        "events_json_fd": None,
     }
     defaults.update(overrides)
     return defaults
@@ -846,6 +850,88 @@ class TestRunSync:
                 for c in mock_logger.error.call_args_list
             )
 
+    def test_short_p2p_passphrase_aborts(self, tmp_path):
+        """A shared password below the 12-char floor fails fast."""
+        kwargs = _default_run_sync_kwargs(tmp_path, server_url="https://localhost:8000")
+
+        with (
+            patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
+            patch("hsync_client.main_logic.get_api_key", return_value="api-key"),
+            patch("hsync_client.main_logic.get_p2p_key", return_value=None),
+            patch("hsync_client.main_logic.get_p2p_passphrase", return_value="short"),
+            patch("hsync_client.main_logic._check_server_connectivity") as mock_check,
+            patch("hsync_client.main_logic.set_config") as mock_set_cfg,
+            patch("hsync_client.main_logic.set_debug"),
+        ):
+            mock_logger = MagicMock()
+            mock_log_setup.return_value = mock_logger
+            with pytest.raises(SystemExit) as exc_info:
+                run_sync(**kwargs)
+            assert exc_info.value.code != 0
+            mock_set_cfg.assert_not_called()
+            mock_check.assert_not_called()
+            assert any(
+                "HSYNC_P2P_PASSPHRASE is not acceptable" in str(c)
+                for c in mock_logger.error.call_args_list
+            )
+
+    def test_p2p_key_and_passphrase_are_mutually_exclusive(self, tmp_path):
+        """The raw key and the passphrase are two forms of the same secret."""
+        kwargs = _default_run_sync_kwargs(tmp_path, server_url="https://localhost:8000")
+
+        with (
+            patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
+            patch("hsync_client.main_logic.get_api_key", return_value="api-key"),
+            patch("hsync_client.main_logic.get_p2p_key", return_value="k" * 32),
+            patch(
+                "hsync_client.main_logic.get_p2p_passphrase",
+                return_value="abcdwxyz1234",
+            ),
+            patch("hsync_client.main_logic._check_server_connectivity") as mock_check,
+            patch("hsync_client.main_logic.set_config") as mock_set_cfg,
+            patch("hsync_client.main_logic.set_debug"),
+        ):
+            mock_logger = MagicMock()
+            mock_log_setup.return_value = mock_logger
+            with pytest.raises(SystemExit) as exc_info:
+                run_sync(**kwargs)
+            assert exc_info.value.code != 0
+            mock_set_cfg.assert_not_called()
+            mock_check.assert_not_called()
+            assert any("not both" in str(c) for c in mock_logger.error.call_args_list)
+
+    def test_p2p_passphrase_is_derived_into_the_config(self, tmp_path):
+        """A valid password is scrypt-derived to the 64-hex group key."""
+        from hsync_common.protocol.boot_tokens import derive_group_key
+
+        kwargs = _default_run_sync_kwargs(tmp_path, server_url="https://localhost:8000")
+
+        with (
+            patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
+            patch("hsync_client.main_logic.get_api_key", return_value="api-key"),
+            patch("hsync_client.main_logic.get_p2p_key", return_value=None),
+            patch(
+                "hsync_client.main_logic.get_p2p_passphrase",
+                return_value="abcdwxyz1234",
+            ),
+            patch("hsync_client.main_logic._check_server_connectivity", return_value=True),
+            patch("hsync_client.main_logic.set_config") as mock_set_cfg,
+            patch("hsync_client.main_logic.set_debug"),
+            patch("hsync_client.main_logic.sync", new=MagicMock()),
+            patch(
+                "hsync_client.main_logic.run",
+                return_value=SyncCycleResult(
+                    completed=True, transfers=0, failed=0, conflicts=0, guard_tripped=False
+                ),
+            ),
+        ):
+            mock_log_setup.return_value = MagicMock()
+            with pytest.raises(SystemExit) as exc_info:
+                run_sync(**kwargs)
+            assert exc_info.value.code == 0
+            config_arg = mock_set_cfg.call_args[0][0]
+            assert config_arg["P2P_KEY"] == derive_group_key("abcdwxyz1234")
+
     def test_env_file_loading_failure(self, tmp_path):
         """run_sync exits when env file is not found."""
         kwargs = _default_run_sync_kwargs(tmp_path, env_file="/nonexistent/.env")
@@ -1087,3 +1173,119 @@ class TestEvaluateServerTrust:
             ml._evaluate_server_trust(
                 self._config(TrustPolicy.strict, fingerprints=("b" * 64,)), MagicMock(), "h", 443
             )
+
+
+class TestStartupErrorVisibility:
+    """Startup failures must reach the Desktop as structured events.
+
+    A config error exits *normally* with code 1; the Desktop cannot tell that
+    apart from a clean stop by the exit status alone, so it relies on an
+    ``error`` event with ``reason="startup"`` (and on a ``ready`` marker for the
+    successful path).
+    """
+
+    @staticmethod
+    def _drain(read_fd: int) -> list[dict]:
+        data = b""
+        while True:
+            chunk = os.read(read_fd, 65536)
+            if not chunk:
+                break
+            data += chunk
+        return [
+            event
+            for event in (parse_event_line(line) for line in data.decode().splitlines())
+            if event is not None
+        ]
+
+    @staticmethod
+    def _close(read_fd: int, write_fd: int) -> None:
+        os.close(read_fd)
+        init_emitter(None)
+        try:
+            os.close(write_fd)
+        except OSError:
+            pass
+
+    def test_missing_server_url_emits_startup_error(self, tmp_path):
+        """A missing server URL is reported as an ``error(reason=startup)`` event."""
+        read_fd, write_fd = os.pipe()
+        kwargs = _default_run_sync_kwargs(tmp_path, server_url=None, events_json_fd=write_fd)
+        try:
+            with (
+                patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
+                patch("hsync_client.main_logic.get_server_url", return_value=None),
+            ):
+                mock_log_setup.return_value = MagicMock()
+                with pytest.raises(SystemExit) as exc_info:
+                    run_sync(**kwargs)
+            get_emitter().close()
+            captured = self._drain(read_fd)
+        finally:
+            self._close(read_fd, write_fd)
+
+        assert exc_info.value.code == 1
+        errors = [event for event in captured if event["event"] == "error"]
+        assert errors and errors[-1]["reason"] == "startup"
+        assert "Server URL is required" in errors[-1]["message"]
+        assert not any(event["event"] == "ready" for event in captured)
+
+    def test_missing_api_key_emits_startup_error(self, tmp_path):
+        """A missing API key in server mode is reported as a startup error."""
+        read_fd, write_fd = os.pipe()
+        kwargs = _default_run_sync_kwargs(
+            tmp_path, server_url="https://sync.example.test", events_json_fd=write_fd
+        )
+        try:
+            with (
+                patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
+                patch("hsync_client.main_logic.get_api_key", return_value=""),
+            ):
+                mock_log_setup.return_value = MagicMock()
+                with pytest.raises(SystemExit) as exc_info:
+                    run_sync(**kwargs)
+            get_emitter().close()
+            captured = self._drain(read_fd)
+        finally:
+            self._close(read_fd, write_fd)
+
+        assert exc_info.value.code == 1
+        errors = [event for event in captured if event["event"] == "error"]
+        assert errors and errors[-1]["reason"] == "startup"
+        assert "No API key configured" in errors[-1]["message"]
+
+    def test_ready_is_emitted_on_a_successful_startup(self, tmp_path):
+        """The explicit readiness marker is emitted once validation passes."""
+        read_fd, write_fd = os.pipe()
+        kwargs = _default_run_sync_kwargs(
+            tmp_path,
+            server_url=None,
+            p2p_mode=True,
+            p2p_allow_unauthenticated=True,
+            discovery_timeout=None,
+            sync_direction="download-only",
+            events_json_fd=write_fd,
+        )
+        try:
+            with (
+                patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
+                patch("hsync_client.main_logic.get_server_url", return_value=None),
+                patch("hsync_client.main_logic.get_discovery_timeout", return_value=None),
+                patch("hsync_client.p2p_handler.run_p2p_mode") as mock_p2p,
+                patch("hsync_client.main_logic.set_config"),
+                patch("hsync_client.main_logic.set_debug"),
+                patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
+            ):
+                mock_p2p.return_value = 0
+                mock_log_setup.return_value = MagicMock()
+                with pytest.raises(SystemExit) as exc_info:
+                    run_sync(**kwargs)
+            get_emitter().close()
+            captured = self._drain(read_fd)
+        finally:
+            self._close(read_fd, write_fd)
+
+        assert exc_info.value.code == 0
+        names = [event["event"] for event in captured]
+        assert "ready" in names
+        assert not any(event.get("reason") == "startup" for event in captured)

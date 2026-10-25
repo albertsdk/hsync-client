@@ -22,14 +22,16 @@ p2p configuration for peer-to-peer synchronization without a central server.
 | `--never-master` | Prevent this device from ever becoming master | `false` |
 | `--require-pairing` | Require out-of-band confirmation before trusting a new master | `false` |
 | `--no-peer-download` | Disable peer-assisted downloads for this run; overrides an enabled environment setting | `false` |
-| `--allow-unauthenticated-writes` | Dangerously allow write-capable sync without `HSYNC_P2P_KEY` | `false` |
+| `--allow-unauthenticated-writes` | Dangerously allow write-capable sync without a shared secret | `false` |
 | `--discovery-timeout` | Seconds to wait for p2p peer discovery (`0` = wait indefinitely) | `0` (indefinite) |
 
-The shared secret is read from the `HSYNC_P2P_KEY` environment variable. With
-no key, reads and download-only operation remain available, but write-capable
+The shared secret comes from `HSYNC_P2P_PASSPHRASE` (at least 12 characters;
+the client derives the 64-hex group key with scrypt) or from `HSYNC_P2P_KEY`
+(a full key of at least 32 characters, used as-is). Never set both. With no
+secret, reads and download-only operation remain available, but write-capable
 sync is refused unless the dangerous CLI or environment opt-in is explicit.
 Parent processes (desktop GUI) may pass it on a pipe with the hidden
-`--p2p-key-fd` flag.
+`--p2p-passphrase-fd` (password) or `--p2p-key-fd` (raw key) flag.
 
 The key must be **at least 32 characters**: it is the only entropy behind the
 `bucket_token`, so the client refuses to start with a shorter value (the
@@ -87,7 +89,8 @@ Both must be explicit: a TTY or `--allow-deletions` never grants them.
 | Variable | Description | Default |
 |---|---|---|
 | `HSYNC_P2P_GROUP` | p2p group name (alternative to `--group`) | — |
-| `HSYNC_P2P_KEY` | Shared secret for p2p peer authentication; with a bootnode, also the group key the `bucket_token` is derived from (must match the bootnode's key for protected/private buckets). **At least 32 characters** — it is the token's only entropy, so a shorter value is refused at startup | — (reads only unless explicitly opted into unauthenticated writes) |
+| `HSYNC_P2P_PASSPHRASE` | Shared password (**at least 12 characters**); derived to the 64-hex group key with scrypt. The usual choice for end users. Mutually exclusive with `HSYNC_P2P_KEY` | — |
+| `HSYNC_P2P_KEY` | Full raw group key (**at least 32 characters**), used as-is; with a bootnode, also the key the `bucket_token` is derived from (must match the bootnode's key for protected/private buckets) | — (reads only unless explicitly opted into unauthenticated writes) |
 | `HSYNC_P2P_PEER_DOWNLOAD` | Ask the master for exact-hash sources and try eligible peers before master full-download fallback | `true` |
 | `HSYNC_P2P_PEER_READ_CAP` | Maximum concurrent response bodies served by each continuous slave seeder (announced on the handshake so requesters stay within it) | `2` |
 | `HSYNC_P2P_PEER_SOURCES_MAX` | Maximum unique peer devices attempted per file before master fallback | `3` |
@@ -126,7 +129,10 @@ slaves serve only exact-hash `GET` downloads; all mutating routes are disabled.
 The client does **not** load `./.env` by itself. Example:
 
 ```bash
-export HSYNC_P2P_KEY="$(openssl rand -hex 32)"    # required for writes (a keyless p2p is read-only)
+# Usual choice: a shared password, identical on every peer (>=12 characters).
+export HSYNC_P2P_PASSPHRASE="a-long-shared-password"
+# Advanced: a full raw key (>=32 characters); bootnodes also use this form.
+# export HSYNC_P2P_KEY="$(openssl rand -hex 32)"
 hsync p2p --env-file ./hsync.env -b documents -p "$HOME/Documents"
 ```
 

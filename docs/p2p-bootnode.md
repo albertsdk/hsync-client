@@ -21,10 +21,13 @@ network without a round trip through the node.
   disables verification and is meant for loopback/tests only.
 - The **same bootnode** configured on every device of the group.
 - A **group key** if the bootnode is private (`--private`) or the bucket is
-  protected: the client authenticates with the token derived from
-  `HSYNC_P2P_KEY` (`HMAC-SHA256(key, "boot/1" || bucket)[:32]`), so set it to the
-  same value the operator wrote in the bootnode's `bucket=<key>` line. An open
-  node with no protected buckets needs no key to discover peers.
+  protected: the client derives the token with
+  `HMAC-SHA256(key, "boot/1" || bucket)[:32]`. Supply the secret as
+  `HSYNC_P2P_PASSPHRASE` (at least 12 characters; derived with scrypt) or as
+  `HSYNC_P2P_KEY` (a full key of at least 32 characters). The bootnode always
+  holds the **raw derived key** in its `bucket=<key>` line: for a passphrase
+  group, obtain it once with `hsync derive-group-key` and paste the 64-hex
+  output. An open node with no protected buckets needs no key to discover peers.
 
 The bootnode operator prints the fingerprint with `hsync-bootnode identity show`
 and distributes it out of band (it is never sent on the wire), for the devices
@@ -39,15 +42,19 @@ asks you to confirm it (like `ssh`); answer `yes` once and it is remembered (the
 client reports where the pin was saved):
 
 ```bash
-HSYNC_P2P_KEY="shared-secret" hsync p2p boot.example.net \
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p boot.example.net \
   -b mybucket -p /srv/hsync
 ```
+
+> For a protected bucket, the bootnode's `bucket=` line must contain the same
+> **derived** key: run `hsync derive-group-key` once, store its 64-hex output
+> where only the service can read it, and use it on the node.
 
 Non-interactive first contact — accept the first sighting explicitly (the
 operator prints the fingerprint with `hsync-bootnode identity show`):
 
 ```bash
-HSYNC_P2P_KEY="shared-secret" hsync p2p boot.example.net \
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p boot.example.net \
   -b mybucket -p /srv/hsync --bootnode-tofu
 ```
 
@@ -55,7 +62,7 @@ Pinned — the hardened form, once the fingerprint is known. Replace
 `YOUR_BOOTNODE_FINGERPRINT` with the operator's `sha256:<hex>` value:
 
 ```bash
-HSYNC_P2P_KEY="shared-secret" hsync p2p boot.example.net \
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p boot.example.net \
   -b mybucket -p /srv/hsync \
   --bootnode-fingerprint YOUR_BOOTNODE_FINGERPRINT
 ```
@@ -137,7 +144,7 @@ configure; the full priority order is in
 
 ```bash
 # The other device should list this peer after a query round.
-HSYNC_P2P_KEY="shared-secret" hsync p2p boot.example.net \
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p boot.example.net \
   -b mybucket -p /srv/hsync
 ```
 
