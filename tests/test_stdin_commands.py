@@ -411,3 +411,52 @@ class TestRunDispatch:
             await handler.run()
 
         assert any("stdin reader error" in str(c) for c in log.error.call_args_list)
+
+
+class TestThreadReader:
+    """The thread reader (p2p serving role) shares the async line contract."""
+
+    def test_parse_rejects_malformed_lines(self):
+        log = MagicMock()
+        handler = StdinCommandHandler(log)
+
+        assert handler._parse(b"not json\n") is None
+        assert handler._parse(b'{"nocmd": 1}\n') is None
+        assert handler._parse(b"   \n") is None
+        assert any("Invalid JSON" in str(c) for c in log.warning.call_args_list)
+
+    def test_parse_returns_the_command_and_fields(self):
+        handler = StdinCommandHandler(MagicMock())
+
+        assert handler._parse(b'{"cmd": "PREVIEW", "filter": "docs/"}\n') == (
+            "PREVIEW",
+            {"filter": "docs/"},
+        )
+
+    def test_dispatch_runs_sync_and_async_handlers(self):
+        calls: list[str] = []
+        handler = StdinCommandHandler(MagicMock())
+        handler.register("SYNC", lambda **_kw: calls.append("sync"))
+
+        async def _preview(**_kw) -> None:
+            calls.append("preview")
+
+        handler.register("PREVIEW", _preview)
+
+        handler._dispatch_in_thread(b'{"cmd": "SYNC"}\n')
+        handler._dispatch_in_thread(b'{"cmd": "PREVIEW"}\n')
+
+        assert calls == ["sync", "preview"]
+
+    def test_an_unknown_command_is_only_warned(self):
+        log = MagicMock()
+        handler = StdinCommandHandler(log)
+
+        handler._dispatch_in_thread(b'{"cmd": "NOPE"}\n')
+
+        assert any("Unknown stdin command" in str(c) for c in log.warning.call_args_list)
+
+    def test_stop_thread_is_safe_without_a_reader(self):
+        handler = StdinCommandHandler(MagicMock())
+
+        handler.stop_thread()  # must not raise

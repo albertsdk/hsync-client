@@ -11,6 +11,7 @@ master election, and WebSocket communication.
 import contextlib
 import os
 import socket
+import threading
 import time
 from typing import TYPE_CHECKING, Any, cast
 
@@ -41,6 +42,7 @@ from hsync_client.exceptions import (
     WatcherStartError,
 )
 from hsync_client.exitcodes import ExitCode, exit_code_for_result
+from hsync_client.master_status import NO_DEVICE_MESSAGE, MasterSyncStatus
 from hsync_client.net_utils import get_local_ip
 from hsync_client.p2p_discovery import (
     DiscoveryFatalError,
@@ -60,6 +62,7 @@ from hsync_client.pinning import default_pin_store
 from hsync_client.presence import record_presence, slave_connected_count
 from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
 from hsync_client.ssl_utils import create_fingerprint_ssl_context, verify_peer_cert_fingerprint
+from hsync_client.stdin_commands import StdinCommandHandler
 from hsync_client.sync import SyncCycleResult, log_initial_sync_start, sync
 from hsync_client.trust_messages import (
     known_peer_added_message,
@@ -80,7 +83,7 @@ NO_MASTER_WARNING_TIMEOUT = 60.0
 
 # Message carried by the ``no_peers`` event when a p2p one-shot aborts because no
 # peer was discovered (exit code ``P2P_NO_PEER``).
-NO_PEERS_MESSAGE = "No other device was found on the network"
+NO_PEERS_MESSAGE = NO_DEVICE_MESSAGE
 
 
 def _p2p_status(connected_clients: int) -> str:
@@ -104,6 +107,97 @@ def _emit_master_presence(count: int, peer_manager: "PeerManager") -> None:
     """
     total = max(1 + len(peer_manager.get_alive_peers()), 1 + count)
     record_presence(min(1 + count, total), total)
+
+
+class _MasterChannel:
+    """Stdin commands + sync-status classification for the serving role.
+
+    The serving role runs outside any asyncio loop (``_run_as_master`` yields
+    with a plain sleep), so the slave-side readers in ``preview.py`` never see
+    its commands: without this channel a front-end's ``PREVIEW``/``SYNC`` are
+    silently dropped while the node is the master, leaving its file table stuck
+    on the pre-connect state (all rows "Local") even though the status bar says
+    "connected". ``MasterSyncStatus`` answers with a classification of the
+    local share against the inventories the devices published.
+    """
+
+    def __init__(
+        self,
+        p2p_server: P2PServer,
+        p2p_ws_server: P2PWebSocketServer,
+        peer_manager: "PeerManager",
+        log,
+    ) -> None:
+        self._p2p_server = p2p_server
+        self._p2p_ws_server = p2p_ws_server
+        self._peer_manager = peer_manager
+        self._log = log
+        self._status = MasterSyncStatus(lambda: self._p2p_server.inventory_store, log)
+        self._reader: StdinCommandHandler | None = None
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        """Start the command reader and classify once (idempotent).
+
+        Called on every discovery iteration while the node stays master, so a
+        running channel must be left alone: the inventory callback — not the
+        loop — drives the re-classification.
+        """
+        if self._thread is not None:
+            return
+        reader = StdinCommandHandler(self._log)
+        # Requested passes answer with the preview_start/preview_end pair: the
+        # front-end's confirmation flow keys off it.
+        reader.register("PREVIEW", lambda **_kw: self._status.request(requested=True))
+        # A master is the source of the share: there is nothing to pull, but the
+        # command must still acknowledge by refreshing the reported status.
+        reader.register("SYNC", lambda **_kw: self._status.request(requested=True))
+        reader.register(
+            "PEERS",
+            lambda **_kw: _emit_master_presence(
+                self._p2p_ws_server.connected_clients, self._peer_manager
+            ),
+        )
+        self._reader = reader
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=reader.run_in_thread,
+            args=(self._stop,),
+            name="hsync-stdin-master",
+            daemon=True,
+        )
+        self._thread.start()
+        self.refresh()
+
+    def refresh(self) -> None:
+        """(Re)wire the inventory hook and ask for a classification."""
+        store = self._p2p_server.inventory_store
+        if store is not None:
+            store.set_change_callback(self._status.request)
+        self._status.request()
+
+    def stop(self) -> None:
+        """Stop reading commands and detach from the inventory (idempotent)."""
+        store = self._p2p_server.inventory_store
+        if store is not None:
+            store.set_change_callback(None)
+        reader, self._reader = self._reader, None
+        self._stop.set()
+        if reader is not None:
+            reader.stop_thread()
+        thread, self._thread = self._thread, None
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=5.0)
+
+    def close(self) -> None:
+        """Full shutdown: stop the reader and the classification worker."""
+        self.stop()
+        self._status.stop()
+
+    def invalidate_local(self) -> None:
+        """The share changed on disk: do not reuse the cached listing."""
+        self._status.invalidate_local()
 
 
 def _emit_slave_presence(peer_manager: "PeerManager") -> None:
@@ -403,6 +497,7 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
     seeder_attempted = False
     master_serving = False
     inventory_publisher: P2PInventoryPublisher | None = None
+    master_channel: _MasterChannel | None = None
 
     last_exit = int(ExitCode.OK)
     discovery_deadline = (
@@ -515,6 +610,12 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
                 # A watcher-failure return leaves the control plane not running:
                 # the flag must reflect whether the master is actually serving.
                 master_serving = p2p_ws_server.running
+                # The serving role answers the front-end's PREVIEW/SYNC through
+                # its own channel (no asyncio loop runs here) and re-classifies
+                # whenever a device publishes a new inventory.
+                if master_channel is None:
+                    master_channel = _MasterChannel(p2p_server, p2p_ws_server, peer_manager, log)
+                master_channel.start()
                 # Check if we're still master after _run_as_master returns
                 if not peer_manager.is_master():
                     # We lost mastership: retire the serving role, then revoke our
@@ -525,6 +626,8 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
                     _stop_p2p_serving(p2p_ws_server, p2p_server)
                     master_serving = False
                     inventory_publisher = None
+                    if master_channel is not None:
+                        master_channel.stop()
                     p2p_sync.set_connected_clients_provider(None)
                     p2p_ws_server.set_clients_changed_callback(None)
                     p2p_sync.update_server_not_ready()
@@ -547,6 +650,8 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
                 if master_serving:
                     _stop_p2p_serving(p2p_ws_server, p2p_server)
                     master_serving = False
+                    if master_channel is not None:
+                        master_channel.stop()
                     p2p_sync.set_connected_clients_provider(None)
                     p2p_sync.update_server_not_ready()
                 # Warn (once) if no master has been elected for a while: this
@@ -599,6 +704,8 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
     except KeyboardInterrupt:
         log.info("Shutting down P2P mode...")
     finally:
+        if master_channel is not None:
+            master_channel.close()
         _stop_p2p_serving(p2p_ws_server, p2p_server)
         _stop_slave_seeder(p2p_sync, inventory_publisher)
         p2p_server.stop()

@@ -23,10 +23,12 @@ keyword arguments to the handler.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import json
 import os
 import stat
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -91,6 +93,9 @@ class StdinCommandHandler:
         self._log = log
         self._handlers: dict[str, Callable[..., Any]] = {}
         self._should_stop = False
+        # Duplicate of stdin owned by the thread reader (see run_in_thread).
+        self._thread_fd: int | None = None
+        self._thread_lock = threading.Lock()
 
     # ── public API ────────────────────────────────────────────────────
 
@@ -106,6 +111,109 @@ class StdinCommandHandler:
         coroutine.
         """
         self._handlers[cmd] = handler
+
+    # ── line contract (shared by both readers) ────────────────────────
+
+    def _parse(self, line: bytes) -> tuple[str, dict] | None:
+        """Decode and validate one command line; ``None`` when it is unusable."""
+        text = line.decode("utf-8", errors="replace").strip()
+        if not text:
+            return None
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            self._log.warning(f"Invalid JSON on stdin: {exc}")
+            return None
+        if not isinstance(data, dict):
+            self._log.warning("stdin command must be a JSON object")
+            return None
+        cmd = data.pop("cmd", None)
+        if cmd is None:
+            self._log.warning("stdin command missing 'cmd' field")
+            return None
+        return str(cmd), data
+
+    def run_in_thread(self, stop: threading.Event) -> None:
+        """Blocking reader for callers that have no event loop.
+
+        The p2p serving role runs outside any asyncio loop for most of its life,
+        so it needs the same command channel as the slave paths. Closing the
+        duplicate of stdin in :meth:`stop_thread` unblocks both this read and a
+        pending blocking call.
+        """
+        try:
+            dup_fd = os.dup(0)
+        except OSError as exc:
+            self._log.debug(f"stdin command reader unavailable: {exc}")
+            return
+        # Same fd-type guard as ``run``: epoll cannot register /dev/null or a
+        # regular file, and the channel contract is a parent pipe or a terminal.
+        mode = os.fstat(dup_fd).st_mode
+        if not (
+            stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode) or (stat.S_ISCHR(mode) and os.isatty(dup_fd))
+        ):
+            self._log.debug("stdin command reader unavailable: stdin is not a pipe or terminal")
+            os.close(dup_fd)
+            return
+        with self._thread_lock:
+            if self._thread_fd is not None:
+                os.close(dup_fd)
+                raise RuntimeError("a stdin thread reader is already active")
+            self._thread_fd = dup_fd
+        self._log.debug("stdin command reader started (thread)")
+        buf = bytearray()
+        try:
+            while not stop.is_set():
+                try:
+                    chunk = os.read(dup_fd, _BoundedLineReader._READ_CHUNK)
+                except OSError:
+                    break  # fd closed by stop_thread
+                if not chunk:
+                    break  # EOF: the parent process closed the pipe
+                buf.extend(chunk)
+                while True:
+                    newline = buf.find(b"\n")
+                    if newline == -1:
+                        if len(buf) > _MAX_STDIN_LINE_BYTES:
+                            buf.clear()  # drop an over-cap line, keep reading
+                        break
+                    line = bytes(buf[: newline + 1])
+                    del buf[: newline + 1]
+                    if len(line) > _MAX_STDIN_LINE_BYTES:
+                        continue
+                    self._dispatch_in_thread(line)
+        finally:
+            with self._thread_lock:
+                self._thread_fd = None
+            with contextlib.suppress(OSError):
+                os.close(dup_fd)
+            self._log.debug("stdin command reader stopped")
+
+    def stop_thread(self) -> None:
+        """Unblock :meth:`run_in_thread` by closing its duplicate of stdin."""
+        with self._thread_lock:
+            fd = self._thread_fd
+        if fd is not None:
+            with contextlib.suppress(OSError):
+                os.close(fd)
+
+    def _dispatch_in_thread(self, line: bytes) -> None:
+        parsed = self._parse(line)
+        if parsed is None:
+            return
+        cmd, data = parsed
+        handler = self._handlers.get(cmd)
+        if handler is None:
+            self._log.warning(f"Unknown stdin command: {cmd}")
+            return
+        try:
+            if inspect.iscoroutinefunction(handler):
+                # No loop on this thread: drive the coroutine to completion.
+                asyncio.run(handler(**data))
+            else:
+                handler(**data)
+        except Exception as exc:
+            self._log.error(f"stdin command '{cmd}' failed: {exc}")
 
     async def run(self) -> None:
         """Read lines from stdin and dispatch commands until EOF."""
@@ -156,20 +264,10 @@ class StdinCommandHandler:
                 if not line:  # EOF
                     break
 
-                text = line.decode("utf-8", errors="replace").strip()
-                if not text:
+                parsed = self._parse(line)
+                if parsed is None:
                     continue
-
-                try:
-                    data: dict = json.loads(text)
-                except json.JSONDecodeError as exc:
-                    self._log.warning(f"Invalid JSON on stdin: {exc}")
-                    continue
-
-                cmd = data.pop("cmd", None)
-                if cmd is None:
-                    self._log.warning("stdin command missing 'cmd' field")
-                    continue
+                cmd, data = parsed
 
                 handler = self._handlers.get(cmd)
                 if handler is None:

@@ -87,6 +87,29 @@ picks a reachable node.
 
 Protocol-mismatched peers are ignored.
 
+**Serving role: command channel and sync status.**
+`p2p_handler.py::_run_as_master` runs outside any asyncio loop (it yields with a
+plain sleep), so the slave-side readers in `preview.py` never see its commands: a
+front-end's `PREVIEW`/`SYNC` would be silently dropped and its file table would
+stay on the pre-connect state while the status bar already said "connected".
+`p2p_handler.py::_MasterChannel` therefore runs
+`stdin_commands.py::StdinCommandHandler.run_in_thread` (a plain thread on a
+duplicate of stdin, same line contract as the async reader) for the whole master
+stint and answers `PREVIEW`/`SYNC` through
+`master_status.py::MasterSyncStatus`. The master is the source of the share, so
+`get_files_remote()` (the configured server URL) says nothing: the classification
+compares the local listing with the identities the devices published in
+`p2p_inventory.py::P2PInventoryStore.held_identities` — **one** bulk query, never
+`holders_for` (a JOIN per file). A local file a device holds is `synced`, one
+nobody holds is `to_upload`, a path only the devices hold is `to_download`. With
+no session it emits `no_peers`; with a session whose inventory is still
+unpublished it emits only `preview_start`/`preview_end` (unknown, never "out of
+sync"). `P2PInventoryStore.set_change_callback` re-runs the pass on every
+committed inventory change (join, leave, frame), coalesced to one pass per
+`master_status.MIN_INTERVAL_S` and executed off the caller's thread; the local
+listing is reused for `master_status.LOCAL_CACHE_TTL_S`. Cost: see
+[benchmarks.md](benchmarks.md).
+
 **Combined mDNS + bootnode (`HybridDiscovery`).** With a bootnode configured
 both sources run against one `PeerManager` (built once via
 `DiscoveryPlanState.create_peer_manager` and injected into both plans at

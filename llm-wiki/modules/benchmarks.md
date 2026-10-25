@@ -377,3 +377,27 @@ cd hsync-client
 Lint: `cd hsync-client && .venv/bin/python -m ruff check bench` — the directory
 is covered by the project ruff config, so the Quality Gate applies to `bench/`
 too.
+
+## Serving-role classification (measured 2026-10-25, dev laptop, share on `tmpfs`)
+
+Inputs of `master_status.py::classify`, measured on a share of 3000 × 1 KB files
+plus one 64 MB file (3001 entries, one publisher session with one holder row per
+local file):
+
+| Operation | Measured | Projection at 100k files |
+| --- | --- | --- |
+| Local scan, cold SHA-256 cache | 0.322 s (207 MiB/s) | bound by the bytes hashed |
+| Local scan, warm cache | 0.155 s (52 µs/file) | ~5 s, `stat` only |
+| `P2PInventoryStore.holders_for` (one JOIN per identity) | 0.554 s | ~18.5 s |
+| `P2PInventoryStore.held_identities` (one bulk SELECT) + set | 0.002 s | ~0.1 s |
+
+Findings: the SQL side must be one bulk read — the per-file helper is three
+orders of magnitude worse at scale — and the local side is dominated by the
+content hash, which the shared cache in `hsync_common/models/file.py` already
+avoids on a repeat pass (`File.get` invalidates on `mtime_ns`/`ctime_ns`/`size`).
+`MasterSyncStatus` therefore never clears that cache and reuses its local listing
+for `master_status.LOCAL_CACHE_TTL_S`.
+
+Enforced in `tests/test_master_status.py::TestHeldIdentities`: the statement
+count is asserted (one query at 50 and at 400 holders), which no timing-based
+test could do portably.
