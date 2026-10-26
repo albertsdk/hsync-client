@@ -332,6 +332,27 @@ class TestLANFileEventHandler:
         assert marked == {str(old_dir / "a.txt"), str(old_dir / "b.txt")}
         assert all(call.kwargs["is_directory"] is False for call in marker.call_args_list)
 
+    def test_in_tree_symlink_rename_publishes_the_link(self, handler, tmp_path):
+        """A renamed symlink is replicated as a link, never as its target's bytes."""
+        target = tmp_path / "target.txt"
+        target.write_text("content")
+        src = tmp_path / "link"
+        src.symlink_to(target)
+        dst = tmp_path / "link2"
+        src.rename(dst)
+
+        with (
+            patch.object(handler, "on_deleted") as deleted,
+            patch.object(handler, "_broadcast_symlink") as broadcast,
+            patch("hsync_client.file_event_handler.File") as mock_file,
+        ):
+            handler.on_moved(FileMovedEvent(str(src), str(dst)))
+
+        deleted.assert_called_once()
+        broadcast.assert_called_once_with(str(dst))
+        # The File branch would stat the target and lie about the entry type.
+        mock_file.get.assert_not_called()
+
     def test_a_marker_dominates_the_version_a_peer_downloaded(self, tmp_path):
         """The marker must be newer than the clock peers recorded on download.
 

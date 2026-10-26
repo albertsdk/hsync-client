@@ -36,6 +36,27 @@ from hsync_client.main_logic import (
 from hsync_client.sync import SyncCycleResult
 
 
+def _cycle(
+    *,
+    transfers: int = 0,
+    failed: int = 0,
+    conflicts: int = 0,
+    guard: bool = False,
+) -> SyncCycleResult:
+    """A completed cycle result reporting *transfers* downloads."""
+    return SyncCycleResult(
+        completed=True,
+        downloaded=transfers,
+        uploaded=0,
+        deleted=0,
+        renamed=0,
+        skipped=0,
+        failed=failed,
+        conflicts=conflicts,
+        guard_tripped=guard,
+    )
+
+
 class TestGetStabilityDelayValue:
     """Tests for _get_stability_delay_value function."""
 
@@ -732,9 +753,7 @@ class TestRunSync:
         ):
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
-            mock_run.return_value = SyncCycleResult(
-                completed=True, transfers=1, failed=0, conflicts=0, guard_tripped=False
-            )
+            mock_run.return_value = _cycle(transfers=1, failed=0, conflicts=0, guard=False)
             with pytest.raises(SystemExit) as exc_info:
                 run_sync(**kwargs)
             assert exc_info.value.code == 0
@@ -759,9 +778,7 @@ class TestRunSync:
             patch("hsync_client.main_logic.sync", new=MagicMock()),
             patch(
                 "hsync_client.main_logic.run",
-                return_value=SyncCycleResult(
-                    completed=True, transfers=1, failed=0, conflicts=0, guard_tripped=False
-                ),
+                return_value=_cycle(transfers=1, failed=0, conflicts=0, guard=False),
             ),
         ):
             mock_logger = MagicMock()
@@ -920,9 +937,7 @@ class TestRunSync:
             patch("hsync_client.main_logic.sync", new=MagicMock()),
             patch(
                 "hsync_client.main_logic.run",
-                return_value=SyncCycleResult(
-                    completed=True, transfers=0, failed=0, conflicts=0, guard_tripped=False
-                ),
+                return_value=_cycle(transfers=0, failed=0, conflicts=0, guard=False),
             ),
         ):
             mock_log_setup.return_value = MagicMock()

@@ -19,6 +19,7 @@ from .p2p_helpers import (
     _terminate,
     _wait_for_client_ready,
     _wait_for_file,
+    _wait_for_file_gone,
     _wait_for_master,
     _wait_for_slave_events,
     _wait_for_text_in_stderr,
@@ -225,6 +226,48 @@ class TestP2PResilience:
                     "Slave did not catch up after reconnect"
                 )
                 assert (Path(p2p_slave_dir) / "catch_up.txt").read_bytes() == content
+            finally:
+                _terminate(slave2)
+        finally:
+            _terminate(master)
+
+    @pytest.mark.flaky(reruns=3, reruns_delay=5)
+    def test_a_rename_on_the_master_reaches_a_slave_that_was_offline(
+        self, p2p_master_dir, p2p_slave_dir, p2p_bucket
+    ):
+        """A rename performed while the slave is offline converges to one file.
+
+        The offline slave used to see the old path merely missing from the
+        listing, re-upload it and leave both names on both sides.
+        """
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
+        try:
+            _wait_for_master(master, p2p_slave_dir, p2p_bucket)
+
+            slave1 = _p2p_start(p2p_slave_dir, p2p_bucket, never_master=True)
+            try:
+                assert _wait_for_text_in_stderr(slave1, "Initial sync complete", timeout=30)
+                (Path(p2p_master_dir) / "x.jpg").write_bytes(b"rename-me\n")
+                assert _wait_for_file(str(Path(p2p_slave_dir) / "x.jpg"), timeout=30), (
+                    "The file did not sync before the slave went offline"
+                )
+            finally:
+                _terminate(slave1)
+
+            # Renamed on the master while the slave is offline.
+            (Path(p2p_master_dir) / "x.jpg").rename(Path(p2p_master_dir) / "x_2.jpg")
+
+            slave2 = _p2p_start(p2p_slave_dir, p2p_bucket, never_master=True)
+            try:
+                assert _wait_for_file(str(Path(p2p_slave_dir) / "x_2.jpg"), timeout=30), (
+                    "The renamed file did not reach the reconnected slave"
+                )
+                assert _wait_for_file_gone(str(Path(p2p_slave_dir) / "x.jpg"), timeout=30), (
+                    "The old path was resurrected on the slave"
+                )
+                assert _wait_for_file_gone(str(Path(p2p_master_dir) / "x.jpg"), timeout=30), (
+                    "The slave re-uploaded the old path to the master"
+                )
             finally:
                 _terminate(slave2)
         finally:

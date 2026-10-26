@@ -885,6 +885,13 @@ class BaseFileEventHandler(FileSystemEventHandler):
             )
             invalidate_sha256_cache(src_path)
             invalidate_sha256_cache(dest_path)
+            if Path(dest_path).is_symlink():
+                # A symlink is replicated structurally, never as its target's
+                # bytes: publish the new link and drop the old path instead of
+                # building a File (which would stat the target).
+                self.on_deleted(FileDeletedEvent(src_path))
+                self._broadcast_symlink(dest_path)
+                return
             dst = File.get(dest_path)
             if dst:
                 src = deepcopy(dst)

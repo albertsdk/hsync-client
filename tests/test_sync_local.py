@@ -1439,6 +1439,134 @@ class TestGetSyncActionsRemoteOnlyTombstones:
         assert result[0].name == SyncActionName.download
 
 
+class TestCycleResultCounters:
+    """The cycle result reports every applied action, not only transferred bytes."""
+
+    def test_applied_sums_transfers_renames_and_deletes(self):
+        from hsync_client.sync import SyncCycleResult
+
+        result = SyncCycleResult(
+            completed=True,
+            downloaded=1,
+            uploaded=2,
+            deleted=3,
+            renamed=4,
+            skipped=5,
+            failed=1,
+            conflicts=0,
+            guard_tripped=False,
+        )
+
+        assert result.applied == 10
+        # Skipped and failed are not applied actions.
+        assert result.skipped == 5 and result.failed == 1
+
+    def test_a_rename_only_cycle_applies_one_action(self):
+        from hsync_client.sync import SyncCycleResult
+
+        result = SyncCycleResult(
+            completed=True,
+            downloaded=0,
+            uploaded=0,
+            deleted=0,
+            renamed=1,
+            skipped=0,
+            failed=0,
+            conflicts=0,
+            guard_tripped=False,
+        )
+
+        assert result.applied == 1
+
+
+class TestRenameShortcut:
+    """A remote rename moves the local file instead of re-transferring it."""
+
+    def test_a_delete_and_a_download_of_the_same_content_pair_up(self):
+        from hsync_client.sync import _split_rename_pairs
+
+        digest = "a" * 64
+        old = File(filepath="/bucket/x.jpg", size=10, sha256sum=digest)
+        new = File(filepath="/bucket/x_2.jpg", size=10, sha256sum=digest)
+        other = File(filepath="/bucket/y.jpg", size=10, sha256sum="b" * 64)
+
+        pairs, downloads, deletes = _split_rename_pairs([new, other], [old])
+
+        assert pairs == [(old, new)]
+        assert downloads == [other]
+        assert deletes == []
+
+    def test_different_content_keeps_the_plain_actions(self):
+        from hsync_client.sync import _split_rename_pairs
+
+        old = File(filepath="/bucket/x.jpg", size=10, sha256sum="a" * 64)
+        new = File(filepath="/bucket/x_2.jpg", size=10, sha256sum="b" * 64)
+
+        pairs, downloads, deletes = _split_rename_pairs([new], [old])
+
+        assert pairs == []
+        assert downloads == [new]
+        assert deletes == [old]
+
+    def test_empty_files_never_pair(self):
+        """Every empty file shares a SHA-256: pair on content would be a guess."""
+        from hsync_client.sync import _split_rename_pairs
+
+        old = File(filepath="/bucket/a", size=0, sha256sum="e" * 64)
+        new = File(filepath="/bucket/b", size=0, sha256sum="e" * 64)
+
+        assert _split_rename_pairs([new], [old]) == ([], [new], [old])
+
+    def test_a_file_without_a_hash_never_pairs(self):
+        from hsync_client.sync import _split_rename_pairs
+
+        old = File(filepath="/bucket/x.jpg", size=10, sha256sum=None)
+        new = File(filepath="/bucket/x_2.jpg", size=10, sha256sum=None)
+
+        assert _split_rename_pairs([new], [old]) == ([], [new], [old])
+
+    def test_applying_the_rename_moves_the_file_and_records_the_new_path(self, tmp_path):
+        from unittest.mock import patch
+
+        from hsync_client.sync import _apply_local_rename
+
+        digest = "a" * 64
+        old_path = tmp_path / "x.jpg"
+        old_path.write_bytes(b"content")
+        new_path = tmp_path / "sub" / "x_2.jpg"
+        old = File(filepath=str(old_path), size=7, sha256sum=digest)
+        new = File(
+            filepath=str(new_path),
+            size=7,
+            sha256sum=digest,
+            version={"vclock": {_peer_cid("R"): 1}, "corrected_mtime": 0},
+        )
+
+        with (
+            patch("hsync_client.sync.sync_state") as state,
+            patch("hsync_client.sync.emit_event") as emitted,
+        ):
+            assert _apply_local_rename(old, new) is True
+
+        assert not old_path.exists()
+        assert new_path.read_bytes() == b"content"
+        state.clear_base.assert_called_once_with(str(old_path))
+        state.merge_and_record.assert_called_once_with(
+            str(new_path), digest, {_peer_cid("R"): 1}, 0
+        )
+        assert emitted.call_args.kwargs["src"] == str(old_path)
+        assert emitted.call_args.kwargs["dst"] == str(new_path)
+
+    def test_a_failed_move_reports_false_so_the_caller_falls_back(self, tmp_path):
+        from hsync_client.sync import _apply_local_rename
+
+        missing = tmp_path / "missing.jpg"
+        old = File(filepath=str(missing), size=1, sha256sum="a" * 64)
+        new = File(filepath=str(tmp_path / "new.jpg"), size=1, sha256sum="a" * 64)
+
+        assert _apply_local_rename(old, new) is False
+
+
 class TestClientTombstonesModule:
     """Tests for the per-peer tombstone store (hsync_client.tombstones)."""
 

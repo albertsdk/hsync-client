@@ -143,29 +143,34 @@ class TestOneShotExitCodeMapping:
                 run_sync(**kwargs)
             return int(exc_info.value.code)
 
+    @staticmethod
+    def _result(**overrides) -> SyncCycleResult:
+        """A completed cycle with every counter at zero unless overridden."""
+        base = {
+            "completed": True,
+            "downloaded": 0,
+            "uploaded": 0,
+            "deleted": 0,
+            "renamed": 0,
+            "skipped": 0,
+            "failed": 0,
+            "conflicts": 0,
+            "guard_tripped": False,
+        }
+        base.update(overrides)
+        return SyncCycleResult(**base)  # type: ignore[arg-type]
+
     def test_clean_cycle_exits_zero(self, tmp_path):
-        result = SyncCycleResult(
-            completed=True, transfers=1, failed=0, conflicts=0, guard_tripped=False
-        )
-        assert self._run_oneshot(tmp_path, result) == 0
+        assert self._run_oneshot(tmp_path, self._result(downloaded=1)) == 0
 
     def test_transfer_errors_exit_two(self, tmp_path):
-        result = SyncCycleResult(
-            completed=True, transfers=3, failed=1, conflicts=0, guard_tripped=False
-        )
-        assert self._run_oneshot(tmp_path, result) == 2
+        assert self._run_oneshot(tmp_path, self._result(downloaded=3, failed=1)) == 2
 
     def test_guard_tripped_exits_three(self, tmp_path):
-        result = SyncCycleResult(
-            completed=True, transfers=0, failed=0, conflicts=0, guard_tripped=True
-        )
-        assert self._run_oneshot(tmp_path, result) == 3
+        assert self._run_oneshot(tmp_path, self._result(guard_tripped=True)) == 3
 
     def test_conflicts_exit_four(self, tmp_path):
-        result = SyncCycleResult(
-            completed=True, transfers=2, failed=0, conflicts=1, guard_tripped=False
-        )
-        assert self._run_oneshot(tmp_path, result) == 4
+        assert self._run_oneshot(tmp_path, self._result(downloaded=2, conflicts=1)) == 4
 
 
 class TestSyncFatalMapsToExitOne:

@@ -311,19 +311,29 @@ def _mass_deletion_blocked(
 
 @dataclass(frozen=True)
 class SyncCycleResult:
-    """Outcome of a single sync cycle, for exit-status derivation.
+    """Outcome of a single sync cycle — the single source of truth for it.
 
-    Populated by :func:`sync` on the one-shot path and mapped to a process
-    exit code by :func:`hsync_client.exitcodes.exit_code_for_result`. The
-    continuous paths (watcher and periodic-resync loops) call ``sync()``
-    too but ignore the result, which keeps the API backward compatible.
+    Populated by :func:`sync` and mapped to a process exit code by
+    :func:`hsync_client.exitcodes.exit_code_for_result`; the same counters
+    travel on the ``sync_complete`` UI event so a front-end reports what the
+    engine did instead of reconstructing it from the event stream (which never
+    sees deletes, renames or metadata-only actions).
     """
 
     completed: bool
-    transfers: int
+    downloaded: int
+    uploaded: int
+    deleted: int
+    renamed: int
+    skipped: int
     failed: int
     conflicts: int
     guard_tripped: bool
+
+    @property
+    def applied(self) -> int:
+        """Actions applied this cycle: transfers, renames and deletions."""
+        return self.downloaded + self.uploaded + self.deleted + self.renamed
 
 
 def log_initial_sync_start() -> None:
@@ -454,7 +464,15 @@ async def sync(
     if not Path(CONFIG["LOCAL_BUCKET"]).exists():
         log.error(f"Local directory '{CONFIG['LOCAL_BUCKET']}' does not exist. Sync aborted.")
         return SyncCycleResult(
-            completed=False, transfers=0, failed=0, conflicts=0, guard_tripped=False
+            completed=False,
+            downloaded=0,
+            uploaded=0,
+            deleted=0,
+            renamed=0,
+            skipped=0,
+            failed=0,
+            conflicts=0,
+            guard_tripped=False,
         )
 
     with _cycle_bookkeeping_lock:
@@ -643,6 +661,21 @@ async def sync(
         # real-time event re-queuing it while the full sync is running).
         downloads = [f for f in downloads if not _is_permanently_failed(f)]
 
+        # A rename performed elsewhere arrives as a tombstone-confirmed delete
+        # of the old path plus a download of the new one: move the file instead
+        # of deleting and re-transferring identical bytes. A failed move puts
+        # both halves back on the ordinary path.
+        rename_pairs, downloads, tombstone_deletes = _split_rename_pairs(
+            downloads, tombstone_deletes
+        )
+        renamed = 0
+        for old_file, new_file in rename_pairs:
+            if _apply_local_rename(old_file, new_file):
+                renamed += 1
+            else:
+                tombstone_deletes.append(old_file)
+                downloads.append(new_file)
+
         # Log files that are already in sync (no I/O needed)
         for file in nothing:
             nothing_to_do(file)
@@ -685,10 +718,12 @@ async def sync(
             deletes = []
 
         # Handle deletions (files that exist only locally in P2P mode)
+        deleted = 0
         for file in deletes:
             if file.filepath and Path(file.filepath).exists():
                 try:
                     remove(file.filepath)
+                    deleted += 1
                     inventory_observer.remove_file(file.filepath)
                     sync_state.clear_base(file.filepath)
                     log.info(f'{ActionLabel.DELETE} "{file.filepath}" (not on master)')
@@ -743,7 +778,11 @@ async def sync(
                     log.error(f'Error downloading symlink "{link.filepath}": {e}')
 
         # Execute transfers in parallel using thread pool
-        transfer_counters: dict[str, int] = {"failed": 0}
+        transfer_counters: dict[str, int] = {
+            "failed": 0,
+            "downloaded": 0,
+            "uploaded": 0,
+        }
         if downloads or uploads or permission_uploads:
             # Re-derive concurrency from the live transfer queue profile
             _refresh_concurrency_from_queue(downloads, uploads + permission_uploads)
@@ -794,13 +833,27 @@ async def sync(
             log.warning(f"Sync completed with {failed} failed transfer(s)")
         else:
             log.info("Sync completed successfully")
-        emit_event(UiEventName.sync_complete)
+        skipped = len(nothing)
+        emit_event(
+            UiEventName.sync_complete,
+            downloaded=transfer_counters["downloaded"],
+            uploaded=transfer_counters["uploaded"],
+            deleted=deleted,
+            renamed=renamed,
+            skipped=skipped,
+            failed=failed,
+            conflicts=conflicts,
+        )
         from hsync_client.utils import _write_ready_file as _signal_ready
 
         _signal_ready()
         return SyncCycleResult(
             completed=True,
-            transfers=len(downloads) + len(uploads),
+            downloaded=transfer_counters["downloaded"],
+            uploaded=transfer_counters["uploaded"],
+            deleted=deleted,
+            renamed=renamed,
+            skipped=skipped,
             failed=failed,
             conflicts=conflicts,
             guard_tripped=guard_tripped,
@@ -956,6 +1009,10 @@ async def _execute_parallel_transfers(
     from hsync_client.constants import MAX_CONCURRENT_TRANSFERS_DEFAULT
     from hsync_client.transfer import download_file, upload_file
 
+    # Success counters live in a non-optional view (callers that only track
+    # failures pass ``None``).
+    stats: dict[str, int] = counters if counters is not None else {}
+
     max_concurrent = CONFIG.get("MAX_CONCURRENT_TRANSFERS", MAX_CONCURRENT_TRANSFERS_DEFAULT)
 
     # Semaphore to limit concurrent transfers
@@ -994,6 +1051,8 @@ async def _execute_parallel_transfers(
                 _count_transfer_failure(counters)
                 log.error(f"Transfer error for {file.filepath}: {e}")
             else:
+                counters_key = "downloaded" if is_download else "uploaded"
+                stats[counters_key] = stats.get(counters_key, 0) + 1
                 file_size = file.size or 0
                 if file_size > 0:
                     elapsed = monotonic() - t0
@@ -1525,6 +1584,77 @@ def _tombstone_clock_dominates(entry: dict, other_vclock: dict[str, int] | None)
         # ancestry — never delete data on its say-so.
         return False
     return compare_vclocks(tomb_vclock, other_vclock) is VClockOrder.dominates
+
+
+def _split_rename_pairs(
+    downloads: list[File], tombstone_deletes: list[File]
+) -> tuple[list[tuple[File, File]], list[File], list[File]]:
+    """Pair a tombstone-confirmed delete with a download of the same content.
+
+    A rename performed elsewhere arrives as "delete the old path" (backed by a
+    deletion marker) plus "download the new one". When both carry the same
+    content hash and size, moving the local file yields exactly the same result
+    without transferring the bytes again — which the preview already reports as
+    one rename. Returns ``(pairs, downloads, deletes)`` with the paired entries
+    removed; anything unpaired keeps the plain delete/download path.
+    """
+
+    # Zero-byte files are never paired: every empty file shares the same SHA-256,
+    # so two unrelated empty paths would be indistinguishable (and moving an
+    # empty file saves nothing over recreating it).
+    by_content: dict[tuple[str, int], list[File]] = {}
+    for file in downloads:
+        if not file.sha256sum or int(file.size or 0) <= 0:
+            continue
+        by_content.setdefault((file.sha256sum, int(file.size or 0)), []).append(file)
+
+    pairs: list[tuple[File, File]] = []
+    paired: set[int] = set()
+    remaining_deletes: list[File] = []
+    for old_file in tombstone_deletes:
+        candidates = by_content.get((old_file.sha256sum or "", int(old_file.size or 0)))
+        if not old_file.sha256sum or int(old_file.size or 0) <= 0 or not candidates:
+            remaining_deletes.append(old_file)
+            continue
+        new_file = candidates.pop(0)
+        paired.add(id(new_file))
+        pairs.append((old_file, new_file))
+
+    remaining_downloads = [file for file in downloads if id(file) not in paired]
+    return pairs, remaining_downloads, remaining_deletes
+
+
+def _apply_local_rename(old_file: File, new_file: File) -> bool:
+    """Move the local copy of a renamed file and record the new state.
+
+    The content is identical on both sides (the pair is built on hash + size),
+    so a rename is the whole operation: the destination directory is created if
+    the rename also moved the file, the old path's base is dropped (its deletion
+    marker stays) and the new path is recorded with the advertised version.
+    Returns False when the move fails, so the caller can fall back to the plain
+    delete + download pair.
+    """
+
+    old_path = old_file.filepath or ""
+    new_path = new_file.filepath or ""
+    if not old_path or not new_path:
+        return False
+    try:
+        Path(new_path).parent.mkdir(parents=True, exist_ok=True)
+        os.replace(old_path, new_path)
+    except OSError as exc:
+        log.warning(
+            f'{ActionLabel.RENAME} Could not move "{old_path}" to "{new_path}" ({exc}); '
+            "falling back to delete + download"
+        )
+        return False
+
+    sync_state.clear_base(old_path)
+    vclock, corrected_mtime = _parse_advertised_version(getattr(new_file, "version", None))
+    sync_state.merge_and_record(new_path, new_file.sha256sum or "", vclock, corrected_mtime)
+    log.info(f'{ActionLabel.RENAME} "{old_path}" -> "{new_path}"')
+    emit_event(UiEventName.rename, src=old_path, dst=new_path)
+    return True
 
 
 def _tombstone_deletes_local(entry: dict, local_vclock: dict[str, int] | None) -> bool:
