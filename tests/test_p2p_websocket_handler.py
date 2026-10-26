@@ -292,6 +292,71 @@ class TestLANFileEventHandler:
             # Should broadcast the event
             ws_server.broadcast_sync.assert_called_once()
 
+    def test_in_tree_file_rename_records_a_deletion_marker(self, handler, tmp_path):
+        """A rename vacates the source path: an offline peer needs the marker."""
+        src = tmp_path / "x.jpg"
+        src.write_text("content")
+        dst = tmp_path / "x_2.jpg"
+        src.rename(dst)
+
+        with (
+            patch.object(handler, "_on_deleted") as marker,
+            patch.object(handler, "_make_event", return_value=MagicMock()),
+            patch.object(handler, "_broadcast_event"),
+            patch("hsync_client.file_event_handler.File") as mock_file,
+        ):
+            mock_file.get.return_value = MagicMock()
+            handler.on_moved(FileMovedEvent(str(src), str(dst)))
+
+        marker.assert_called_once_with(str(src), is_directory=False)
+
+    def test_in_tree_directory_rename_marks_every_vacated_file(self, handler, tmp_path):
+        """Directories carry no tombstones: each vacated child needs one."""
+        old_dir = tmp_path / "old"
+        old_dir.mkdir()
+        (old_dir / "a.txt").write_text("a")
+        (old_dir / "b.txt").write_text("b")
+        new_dir = tmp_path / "new"
+        old_dir.rename(new_dir)
+
+        with (
+            patch.object(handler, "_on_deleted") as marker,
+            patch.object(handler, "_make_event", return_value=MagicMock()),
+            patch.object(handler, "_broadcast_event"),
+            patch("hsync_client.file_event_handler.Dir") as mock_dir,
+        ):
+            mock_dir.get.return_value = MagicMock()
+            handler.on_moved(DirMovedEvent(str(old_dir), str(new_dir)))
+
+        marked = {call.args[0] for call in marker.call_args_list}
+        assert marked == {str(old_dir / "a.txt"), str(old_dir / "b.txt")}
+        assert all(call.kwargs["is_directory"] is False for call in marker.call_args_list)
+
+    def test_a_marker_dominates_the_version_a_peer_downloaded(self, tmp_path):
+        """The marker must be newer than the clock peers recorded on download.
+
+        A master only serves the files it owns, so it never stored their clock:
+        without the first-tick fallback the marker would tie with the version a
+        peer downloaded and the resurrection guard would not fire.
+        """
+        from hsync_common.models.tombstone import tombstone_key
+
+        from hsync_client import tombstones as ts_mod
+        from hsync_client.p2p_websocket import _record_deletion_marker
+        from hsync_client.sync import _tombstone_clock_dominates
+
+        cid = "TestMaster12345678901"
+        config = {"LOCAL_BUCKET": str(tmp_path), "CID": cid}
+        with (
+            patch("hsync_client.p2p_websocket.CONFIG", config),
+            patch("hsync_client.state_backend.CONFIG", config),
+        ):
+            _record_deletion_marker(str(tmp_path / "x.jpg"))
+            entry = ts_mod.get_payload()[tombstone_key("x.jpg")]
+
+        assert entry["vclock"] == {cid: 2}
+        assert _tombstone_clock_dominates(entry, {cid: 1}) is True
+
     def test_peek_inbound_origin(self):
         """Test peek_inbound_origin returns the CID without consuming it."""
         from hsync_client.p2p_websocket import (

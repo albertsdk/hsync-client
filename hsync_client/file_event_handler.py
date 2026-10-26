@@ -847,6 +847,10 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 src = deepcopy(dst)
                 src.path = src_path
                 message = self._make_event(EventName.renamed, src, dst)
+                # Directories carry no tombstones: mark every file the rename
+                # vacated under the old prefix, or a peer that was offline sees
+                # the old paths merely missing and re-uploads the whole subtree.
+                self._mark_dir_rename_vacated(src_path, dest_path)
         else:
             if not src_path:
                 # Move-in from outside the tree: the file arrives already
@@ -886,6 +890,10 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 src = deepcopy(dst)
                 src.filepath = src_path
                 message = self._make_event(EventName.renamed, src, dst)
+                # A rename vacates the source path exactly like a delete: record
+                # the causal marker, or a peer that was offline sees the old
+                # path merely missing and re-uploads it (resurrection).
+                self._on_deleted(src_path, is_directory=False)
                 # The source path no longer exists; drop its dedup cache so a
                 # file later re-created at the same path with identical stat
                 # and/or hash is re-evaluated (not skipped as "unchanged").
@@ -902,6 +910,21 @@ class BaseFileEventHandler(FileSystemEventHandler):
             if message.name == EventName.renamed:
                 emit_event(UiEventName.rename, src=src_path, dst=dest_path)
             self._broadcast_event(message, src_abs_path=src_path, dst_abs_path=dest_path)
+
+    def _mark_dir_rename_vacated(self, src_path: str, dest_path: str) -> None:
+        """Record a deletion marker for each file a directory rename vacated.
+
+        Directories never carry tombstones, so without one marker per vacated
+        file an offline peer would treat the old paths as newly missing and
+        re-upload them, resurrecting the renamed subtree. One walk of the new
+        tree costs what a directory delete already pays.
+        """
+        for dirpath, _dirnames, filenames in os.walk(dest_path):
+            for name in filenames:
+                old_path = os.path.join(
+                    src_path, os.path.relpath(os.path.join(dirpath, name), dest_path)
+                )
+                self._on_deleted(old_path, is_directory=False)
 
     def _flush_pending_deletes(self) -> None:
         """Flush the coalesced delete buffer at most once per window.

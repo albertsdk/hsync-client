@@ -89,6 +89,17 @@ Tombstone semantics (causal merge, TTL storage GC, hashed keys) are SSOT in
 `hsync_common.models.tombstone` — see ADR 0003. The store cache (`_stores`)
 is keyed by folder UUID, matching `sync_state`.
 
+A marker is minted by every path that removes a name from the tree
+(`file_event_handler.py::BaseFileEventHandler`): a delete (including the files
+folded under a deleted directory), a move out of the tree, an in-tree **file
+rename**, and every file vacated by an in-tree **directory rename**
+(`file_event_handler.py::BaseFileEventHandler._mark_dir_rename_vacated` —
+directories themselves never carry tombstones). The marker's clock starts from
+the path's stored version, or from this node's first tick when it only ever
+served the path (`p2p_websocket.py::_record_deletion_marker`), and is ticked
+once, so a peer that downloaded the advertised version gets a dominating marker
+and removes the old path instead of re-uploading it.
+
 ## Runtime config models
 
 `HsyncConfig` / `ApiEndpoints` TypedDicts and the global `CONFIG`

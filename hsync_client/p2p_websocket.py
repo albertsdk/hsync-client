@@ -1055,14 +1055,24 @@ def _record_deletion_marker(src_path: str) -> None:
         from hsync_client.sync_state import clear_base, flush, get_base_hash, get_vclock
         from hsync_client.tombstones import record_deletion
 
+        cid = str(CONFIG.get("CID") or "") or None
+        prev_vclock = get_vclock(src_path)
+        if prev_vclock is None and cid:
+            # This node may only ever serve a path it owns, so it never recorded
+            # a clock for it. Peers pinned the version it advertised, which for
+            # an unrecorded path is this node's first tick; start from that so
+            # the marker (ticked below) dominates what they stored, instead of
+            # colliding with it and letting them resurrect the file.
+            prev_vclock = {cid: 1}
+
         # Causal provenance (ADR-0003): the marker inherits the path's recorded
         # clock and content hash and is ticked by this peer BEFORE the
         # merge-base entry is cleared below.
         record_deletion(
             src_path,
             sha256sum=get_base_hash(src_path),
-            origin_cid=str(CONFIG.get("CID") or "") or None,
-            prev_vclock=get_vclock(src_path),
+            origin_cid=cid,
+            prev_vclock=prev_vclock,
         )
         clear_base(src_path)
         flush()
