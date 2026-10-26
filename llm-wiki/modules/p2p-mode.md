@@ -372,8 +372,9 @@ echo-suppression `cid` on upload/delete/rename is honoured only when it passes
 
 | Concern | Code | Notes |
 | ------- | ---- | ----- |
-| Pin store | `pinning.py` (`PinStore`) | disk-backed `0o600` JSON keyed by `(CID, bucket)`, each value a record `{fingerprint, first_seen}` (the pinned fingerprint and the time the peer was first trusted, so the store is auditable like the known-hosts stores; a repin preserves `first_seen`). Every read-modify-write holds a sibling `.lock` file with POSIX `flock` or Windows `msvcrt.locking`, reloads inside the lock, writes a unique same-directory temp, fsyncs file + parent directory, and atomically replaces. `get`/`set`/`check_and_record`/`remove`/`entries` (sorted `(cid, bucket)`, with `first_seen`, for the CLI). Master and each selected seeder use independent persistent TOFU entries; `--require-pairing` applies to the master only |
-| Pin decision | common `protocol/pairing.py` | `evaluate_pin`; refuse on changed fingerprint, emit `fingerprint_changed`/`pairing_needed` |
+| Pin store | `pinning.py` (`PinStore`) | disk-backed `0o600` JSON keyed by `(CID, bucket)`, each value a record `{fingerprint, first_seen}` (the pinned fingerprint and the time the peer was first trusted, so the store is auditable like the known-hosts stores; a repin preserves `first_seen`). Every read-modify-write holds a sibling `.lock` file with POSIX `flock` or Windows `msvcrt.locking`, reloads inside the lock, writes a unique same-directory temp, fsyncs file + parent directory, and atomically replaces. `get`/`set`/`check_and_record`/`remove`/`entries` (sorted `(cid, bucket)`, with `first_seen`, for the CLI). Master and each selected seeder use independent persistent pins; `--p2p-trust` applies to the master only |
+| Master trust | common `protocol/tls_trust.py` | `evaluate_tls_trust` under the `P2P_TRUST` policy (ADR-0040), resolved by `resolve_self_signed_policy` from `--p2p-trust` > `HSYNC_P2P_TRUST` > `ask`; `ask` prompts on a TTY, otherwise `pairing_needed` |
+| Pin decision | common `protocol/pairing.py` | `evaluate_pin`; refuse on changed fingerprint, emit `fingerprint_changed` |
 | Trust messages | `trust_messages.py` | shared SSH-style prose for all stores: `known_hosts_added_message`/`mismatch_guidance` (bootnode), `known_server_added_message`/`server_mismatch_guidance`/`server_pairing_needed_guidance` (server) and `known_peer_added_message`/`peer_mismatch_guidance`/`peer_pairing_needed_guidance`/`peer_source_changed_line` (mDNS). The peer/host blocks carry the normalized fingerprint and the exact `hsync trust …` commands |
 | Trust CLI | `cli.py` (`hsync trust {peer,bootnode,server} {list,show,add,remove,fingerprint}` + `list --json`) | one namespace for the three pinning transports; `list --json` uses `entries()` |
 | Device identity | `identity.py` (`load_or_create_device_identity`) | Syncthing-style: one identity per installation — stable device ID (`device_id` file, CID_PATTERN-valid) + keypair under `HSYNC_DEVICE_DIR` (`default_device_dir`, default `<HSYNC_STATE_DIR>/device`); cached process-wide. The device ID **is** the p2p `cid` (resolved in `main_logic.run_sync`), so pins survive restarts and cert rotation (delete `*.pem`, keep `device_id`) is detected as `[FINGERPRINT CHANGED]`. Keypair itself: `ssl_utils.load_or_create_master_cert` (dir delegates to `identity.default_device_dir`) |
@@ -415,7 +416,8 @@ log block and the structured event through `_mark_trust_notice` /
 `_run_as_slave`). The entry is cleared once the connection proceeds, so a later
 flip re-notifies. TOFU logs
 `trust_messages.known_peer_added_message`; a changed pin logs
-`peer_mismatch_guidance` (`[FINGERPRINT CHANGED]`); strict pairing logs
+`peer_mismatch_guidance` (`[FINGERPRINT CHANGED]`); an unconfirmed first sighting
+(`ask` without a terminal, or `strict`) logs
 `peer_pairing_needed_guidance` (`[PAIRING NEEDED]`); a changed seeder source logs
 `peer_source_changed_line` in `p2p_sources.authorize` (per-session CID disabling
 already dedupes that one).

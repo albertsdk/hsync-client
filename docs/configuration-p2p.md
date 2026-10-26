@@ -20,7 +20,7 @@ p2p configuration for peer-to-peer synchronization without a central server.
 | `--listen-port` | Port when acting as p2p master; `0` = pick a free port | `0` (auto) |
 | `--prefer-master` | Prefer this device as the master | `false` (CLI only) |
 | `--never-master` | Prevent this device from ever becoming master | `false` |
-| `--require-pairing` | Require out-of-band confirmation before trusting a new master | `false` |
+| `--p2p-trust` | P2P master trust policy: `ask` (confirm an unknown master on a terminal, fail closed without one), `accept-new` (pin the first sighting silently) or `strict` (require an explicit pin) | `ask` |
 | `--no-peer-download` | Disable peer-assisted downloads for this run; overrides an enabled environment setting | `false` |
 | `--allow-unauthenticated-writes` | Dangerously allow write-capable sync without a shared secret | `false` |
 | `--discovery-timeout` | Seconds to wait for p2p peer discovery (`0` = wait indefinitely) | `0` (indefinite) |
@@ -55,10 +55,12 @@ The `p2p` subcommand and `--prefer-master` have no environment-variable equivale
 | `--prefer-master` | This device is preferred in the election; a primary that is already serving keeps the role. When several peers prefer the role, the deterministic election algorithm breaks the tie. |
 | `--never-master` | This device always stays a slave. If all peers are never-master, no master is elected and syncing stops. |
 
-`--require-pairing` applies to the elected master only: a first-seen master
-certificate is refused until its fingerprint is confirmed out of band and pinned
-(see [FAQ — p2p Mode](faq-p2p.md#security--safety) for the steps). Peer
-seeders are selected through that master and receive their own persistent
+`--p2p-trust` applies to the elected master only (ADR-0040): `ask` (the
+default) confirms a first-seen master certificate on a terminal and fails closed
+without one, `accept-new` pins it silently, and `strict` requires an explicit pin
+before any connection. An unknown master is therefore never trusted implicitly;
+see [FAQ — p2p Mode](faq-p2p.md#security--safety) for the out-of-band steps.
+Peer seeders are selected through that master and receive their own persistent
 `(device ID, bucket)` TOFU pin before the requester opens a connection.
 
 ## File Stability & Upload
@@ -109,7 +111,7 @@ Both must be explicit: a TTY or `--allow-deletions` never grants them.
 | `HSYNC_LOCKS_DIR` | Instance-lock dir (`<sha256>.lock` per synced directory) | `$XDG_RUNTIME_DIR/hsync/locks`, else `<device-dir>/locks` |
 | `HSYNC_P2P_PIN_FILE` | Pinned fingerprints of known p2p peers (TOFU) | `$HSYNC_STATE_DIR/p2p_known_peers.json`; `$XDG_STATE_HOME/hsync/…` or `~/.local/state/hsync/…` when the state dir is unset |
 | `HSYNC_BOOTNODE_TRUST_FILE` | Trusted bootnode fingerprints (known-hosts store) | `$HSYNC_STATE_DIR/bootnode_known_hosts.json`; the XDG/local-state path when the state dir is unset |
-| `HSYNC_P2P_REQUIRE_PAIRING` | Require pairing confirmation | `false` |
+| `HSYNC_P2P_TRUST` | P2P master trust policy: `ask`, `accept-new` or `strict` | `ask` |
 | `HSYNC_DISCOVERY_TIMEOUT` | p2p peer discovery timeout in seconds (`0` = indefinitely) | `0` |
 | `HSYNC_HEARTBEAT_INTERVAL` | LAN mDNS re-announce / liveness-evaluation cadence in seconds (`1`–`60`) | `5` |
 | `HSYNC_BOOTNODE_REFRESH_INTERVAL` | `boot/1` lease/query cadence in seconds (`1`–`300`): how often the client registers, refreshes and queries the bootnode. Sized against the node's rate limits (spec refresh: 30 s) | `30` |

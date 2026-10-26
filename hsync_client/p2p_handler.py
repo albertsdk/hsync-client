@@ -21,7 +21,11 @@ from hsync_common.protocol.pairing import (
     PinDecision,
     evaluate_pin,
     normalize_fingerprint,
-    requires_pairing_confirmation,
+)
+from hsync_common.protocol.tls_trust import (
+    DEFAULT_SELF_SIGNED_POLICY,
+    TrustAction,
+    evaluate_tls_trust,
 )
 from hsync_common.text import safe_json_for_log
 from loguru import logger as module_log
@@ -69,6 +73,7 @@ from hsync_client.trust_messages import (
     peer_mismatch_guidance,
     peer_pairing_needed_guidance,
 )
+from hsync_client.trust_prompt import build_peer_trust_prompt
 from hsync_client.utils import http_to_ws
 
 if TYPE_CHECKING:
@@ -942,27 +947,73 @@ def _clear_trust_notice(
     notified.pop(("fingerprint_changed", cid), None)
 
 
+def _refuse_pairing_needed(
+    master,
+    log,
+    bucket: str,
+    fingerprint: str,
+    notified: dict[tuple[str, str], str] | None,
+) -> bool:
+    """Refuse an unconfirmed first-seen master and surface ``pairing_needed``."""
+    if not _mark_trust_notice(notified, "pairing_needed", master.cid, fingerprint):
+        log.error(peer_pairing_needed_guidance(master.cid, bucket, master.address, fingerprint))
+        emit_event(
+            UiEventName.pairing_needed,
+            scope="master",
+            peer_cid=master.cid,
+            peer_address=master.address,
+            fingerprint=fingerprint,
+            message="P2P master requires explicit pairing confirmation",
+        )
+    return False
+
+
+def _refuse_changed_fingerprint(
+    master,
+    log,
+    store,
+    bucket: str,
+    fingerprint: str,
+    notified: dict[tuple[str, str], str] | None,
+) -> bool:
+    """Refuse a master whose pinned fingerprint no longer matches."""
+    if not _mark_trust_notice(notified, "fingerprint_changed", master.cid, fingerprint):
+        log.error(
+            peer_mismatch_guidance(master.cid, bucket, master.address, fingerprint, store.path)
+        )
+        emit_event(
+            UiEventName.fingerprint_changed,
+            scope="master",
+            peer_cid=master.cid,
+            peer_address=master.address,
+            fingerprint=fingerprint,
+            message="P2P master certificate fingerprint changed",
+        )
+    return False
+
+
 def _evaluate_master_pin(
     config: "HsyncConfig",
     master,
     log,
     notified: dict[tuple[str, str], str] | None = None,
 ) -> bool:
-    """TOFU-pin the master's certificate; return whether the connection may proceed.
+    """Apply the P2P master trust policy; return whether the connection may proceed.
 
-    The trust decisions are the shared ones in
-    :mod:`hsync_common.protocol.pairing`; here we only persist the pin and surface
-    structured security events so a front-end can prompt the user instead of
-    silently trusting a certificate.
+    The decision is the shared one in :mod:`hsync_common.protocol.tls_trust`
+    (:func:`evaluate_tls_trust`); here we supply its confirmation channel, persist
+    the pin and surface structured security events so a front-end without a
+    terminal (desktop, Android) can prompt instead.
 
-    Two cases refuse the connection (return ``False``):
+    Three outcomes refuse the connection (return ``False``):
 
-    * **Strict pairing** (``P2P_REQUIRE_PAIRING``): a first-seen certificate is
-      not auto-pinned. We emit ``pairing_needed`` and refuse until the operator
-      confirms the peer out of band (by pinning it or disabling strict pairing).
-    * **Fingerprint changed**: the certificate no longer matches the pin. We log
-      a parsable ``[FINGERPRINT CHANGED]`` block, emit ``fingerprint_changed`` and
-      refuse (possible man-in-the-middle).
+    * **First sighting under ``ask``** — an SSH-style prompt is rendered when a
+      terminal is available. Without one the client fails closed and emits
+      ``pairing_needed``; the operator pins the peer out of band.
+    * **First sighting under ``strict``** — refused without a prompt until the
+      fingerprint is pinned out of band.
+    * **Fingerprint changed** — the certificate no longer matches the pin. Every
+      policy refuses it (possible man-in-the-middle).
 
     ``notified`` (see :func:`_mark_trust_notice`) dedupes the refusal blocks and
     their events: the discovery loop retries continuously, so without it the
@@ -989,24 +1040,22 @@ def _evaluate_master_pin(
         return False
 
     try:
-        if config.get("P2P_REQUIRE_PAIRING", False):
-            first_seen = evaluate_pin(store.get(master.cid, bucket), fingerprint)
-            if requires_pairing_confirmation(first_seen, require_pairing=True):
-                if not _mark_trust_notice(notified, "pairing_needed", master.cid, fingerprint):
-                    log.error(
-                        peer_pairing_needed_guidance(
-                            master.cid, bucket, master.address, fingerprint
-                        )
-                    )
-                    emit_event(
-                        UiEventName.pairing_needed,
-                        scope="master",
-                        peer_cid=master.cid,
-                        peer_address=master.address,
-                        fingerprint=fingerprint,
-                        message="P2P master requires explicit pairing confirmation",
-                    )
-                return False
+        stored = store.get(master.cid, bucket)
+        # ``run_sync`` always sets the key; a hand-built config without it falls
+        # back to the SSOT default (fail closed on an unknown master), never to
+        # silent auto-trust.
+        policy = config.get("P2P_TRUST", DEFAULT_SELF_SIGNED_POLICY)
+        action = evaluate_tls_trust(policy, stored, fingerprint)
+        if action is TrustAction.prompt:
+            prompt = build_peer_trust_prompt(config)
+            if prompt is not None and prompt(master.cid, master.address, fingerprint):
+                action = TrustAction.pin_and_proceed
+        if action is TrustAction.refuse:
+            if evaluate_pin(stored, fingerprint) is PinDecision.changed:
+                return _refuse_changed_fingerprint(
+                    master, log, store, bucket, fingerprint, notified
+                )
+            return _refuse_pairing_needed(master, log, bucket, fingerprint, notified)
 
         decision = store.check_and_record(master.cid, bucket, fingerprint)
     except PinStoreError as exc:
@@ -1016,19 +1065,9 @@ def _evaluate_master_pin(
         )
         return False
     if decision is PinDecision.changed:
-        if not _mark_trust_notice(notified, "fingerprint_changed", master.cid, fingerprint):
-            log.error(
-                peer_mismatch_guidance(master.cid, bucket, master.address, fingerprint, store.path)
-            )
-            emit_event(
-                UiEventName.fingerprint_changed,
-                scope="master",
-                peer_cid=master.cid,
-                peer_address=master.address,
-                fingerprint=fingerprint,
-                message="P2P master certificate fingerprint changed",
-            )
-        return False
+        # A concurrent run repinned the peer between the policy check and the
+        # locked read-modify-write: honour the pin that won.
+        return _refuse_changed_fingerprint(master, log, store, bucket, fingerprint, notified)
     _clear_trust_notice(notified, master.cid)
     if decision is PinDecision.trusted:
         log.info(known_peer_added_message(master.cid, bucket, store.path))

@@ -15,6 +15,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from hsync_common.protocol.tls_trust import TrustPolicy
 
 from hsync_client.config import HsyncConfig
 from hsync_client.constants import HEARTBEAT_INTERVAL
@@ -46,6 +47,7 @@ def _make_p2p_config(tmp_path, **overrides: Any) -> HsyncConfig:
         "SERVER_COMPRESSION_ENABLED": False,
         "HTTP_TIMEOUT": 30,
         "MASTER_CERT_FINGERPRINT": None,
+        "P2P_TRUST": TrustPolicy.accept_new,
     }
     defaults.update(overrides)
     return cast(HsyncConfig, defaults)
@@ -802,7 +804,7 @@ class TestRunAsSlave:
 
         assert (
             _evaluate_master_pin(
-                {"REMOTE_BUCKET": "test-bucket", "P2P_REQUIRE_PAIRING": False},  # type: ignore[arg-type]
+                {"REMOTE_BUCKET": "test-bucket", "P2P_TRUST": TrustPolicy.accept_new},  # type: ignore[arg-type]
                 master,
                 log,
             )
@@ -852,7 +854,7 @@ class TestRunAsSlave:
         pin_file = tmp_path / "pins.json"
         monkeypatch.setenv("HSYNC_P2P_PIN_FILE", str(pin_file))
 
-        config = _make_p2p_config(tmp_path, P2P_KEY="secret", P2P_REQUIRE_PAIRING=True)
+        config = _make_p2p_config(tmp_path, P2P_KEY="secret", P2P_TRUST=TrustPolicy.strict)
         master = _make_master(
             use_https=True,
             cert_fingerprint="a" * 64,
@@ -1456,7 +1458,7 @@ class TestMasterPinMessaging:
 
     @staticmethod
     def _config(tmp_path: Any, **overrides: Any) -> dict[str, Any]:
-        return {"REMOTE_BUCKET": "test-bucket", "P2P_REQUIRE_PAIRING": False, **overrides}
+        return {"REMOTE_BUCKET": "test-bucket", "P2P_TRUST": TrustPolicy.accept_new, **overrides}
 
     def test_tofu_announcement_names_the_store_path(self, tmp_path, monkeypatch):
         """The first-sighting pin reports the effective known-peers store."""
@@ -1505,7 +1507,7 @@ class TestMasterPinMessaging:
         log = MagicMock()
 
         assert (
-            _evaluate_master_pin(self._config(tmp_path, P2P_REQUIRE_PAIRING=True), master, log)
+            _evaluate_master_pin(self._config(tmp_path, P2P_TRUST=TrustPolicy.strict), master, log)
             is False
         )
 

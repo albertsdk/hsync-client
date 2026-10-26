@@ -456,7 +456,7 @@ cd hsync-common && .venv/bin/python -m ruff check .
    cadence and message sizes; a keyed namespace hides bucket names but not the
    traffic pattern. This must be stated in the user docs.
 4. **First-contact trust.** With no node to pin, security rests on signed records
-   plus the existing `(cid, bucket)` TOFU pin. `--require-pairing` becomes close
+   plus the existing `(cid, bucket)` TOFU pin. `--p2p-trust strict` becomes close
    to mandatory for sensitive groups.
 5. **Bandwidth shape.** A random-sample query is O(1); a pub/sub bus delivers
    every peer, i.e. O(N) per refresh. Fine for small groups, must be documented.

@@ -164,6 +164,7 @@ option to configure.
 | Accept deletion risk | `--allow-deletions`                           | off                              |
 | p2p group           | `--group`                                      | `my-group`                       |
 | Shared password     | `HSYNC_P2P_PASSPHRASE` env var                 | random 24-character value at install |
+| Primary device trust | `--p2p-trust`                                 | `accept-new` (no interactive prompter on the NAS; `strict` requires a pin first) |
 | Port                | `--listen-port`                                | `0` (auto)                       |
 | Download from other devices | `--no-peer-download` when disabled     | on                               |
 | Max simultaneous reads | `HSYNC_P2P_PEER_READ_CAP`                   | `2`                              |

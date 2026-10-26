@@ -230,17 +230,17 @@ class TestP2PResilience:
         finally:
             _terminate(master)
 
-    def test_require_pairing_accepts_pinned_master(
+    def test_p2p_trust_strict_accepts_pinned_master(
         self, p2p_master_dir, p2p_slave_dir, p2p_bucket, bb_sample
     ):
-        """--require-pairing accepts a master whose cert was TOFU-pinned in a
+        """--p2p-trust strict accepts a master whose cert was TOFU-pinned in a
         prior connection (the positive counterpart of the rejection test)."""
         # Given a serving master
         master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
-            # And a slave that has already TOFU-pinned the master (no --require-pairing)
+            # And a slave that has already TOFU-pinned the master (trust policy accept-new)
             slave1 = _p2p_start(p2p_slave_dir, p2p_bucket, never_master=True)
             try:
                 assert _wait_for_text_in_stderr(slave1, "Permanently added", timeout=30), (
@@ -249,17 +249,17 @@ class TestP2PResilience:
             finally:
                 _terminate(slave1)
 
-            # When the slave is restarted with --require-pairing
+            # When the slave is restarted with --p2p-trust strict
             slave2 = _p2p_start(
                 p2p_slave_dir,
                 p2p_bucket,
                 never_master=True,
-                extra_args=("--require-pairing",),
+                extra_args=("--p2p-trust", "strict"),
             )
             try:
                 # Then the pinned master is accepted (no pairing rejection)
                 assert _wait_for_client_ready(slave2, _p2p_ready_path(p2p_slave_dir), timeout=60), (
-                    "Slave with --require-pairing did not accept the pinned master"
+                    "Slave with --p2p-trust strict did not accept the pinned master"
                 )
 
                 # Wait for the slave's watcher to be live before creating files
@@ -303,27 +303,27 @@ class TestP2PNeverMaster:
 
 
 class TestP2PStrictPairing:
-    def test_require_pairing_rejects_unpinned_master(
+    def test_p2p_trust_strict_rejects_unpinned_master(
         self, p2p_master_dir, p2p_slave_dir, p2p_bucket
     ):
-        """--require-pairing without a pre-existing pin rejects the master."""
+        """--p2p-trust strict without a pre-existing pin rejects the master."""
         # Given a serving master the slave has not yet pinned
         master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
 
-            # When the slave starts with --require-pairing (no prior pin exists)
+            # When the slave starts with --p2p-trust strict (no prior pin exists)
             slave = _p2p_start(
                 p2p_slave_dir,
                 p2p_bucket,
                 never_master=True,
-                extra_args=("--require-pairing",),
+                extra_args=("--p2p-trust", "strict"),
             )
             try:
                 # Then it refuses the unpinned master with a pairing rejection
                 refused = _wait_for_text_in_stderr(slave, "pairing", timeout=30)
                 assert refused, (
-                    "Slave should have refused the unpinned master with --require-pairing"
+                    "Slave should have refused the unpinned master with --p2p-trust strict"
                 )
             finally:
                 _terminate(slave)

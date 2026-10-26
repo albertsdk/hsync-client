@@ -267,7 +267,7 @@ user-facing summary is in [p2p Mode → Security & Pairing](../p2p-mode.md#secur
 The pin store serializes the complete read-modify-write transaction with a
 sibling lock file, reloads while locked, writes a unique same-directory temp,
 fsyncs the file and parent directory, then atomically replaces the JSON store.
-`--require-pairing` applies to a new master only; source seeders use persistent
+`--p2p-trust` applies to a new master only; source seeders use persistent
 TOFU after source selection.
 
 ```

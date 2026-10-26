@@ -74,7 +74,7 @@ fi
 : "${HSYNC_P2P_PORT:=0}"
 : "${HSYNC_PREFER_MASTER:=false}"
 : "${HSYNC_NEVER_MASTER:=false}"
-: "${HSYNC_P2P_REQUIRE_PAIRING:=false}"
+: "${HSYNC_P2P_TRUST:=accept-new}"
 : "${HSYNC_P2P_PEER_DOWNLOAD:=true}"
 : "${HSYNC_P2P_PEER_READ_CAP:=2}"
 : "${HSYNC_P2P_PEER_SOURCES_MAX:=3}"
@@ -167,7 +167,7 @@ case "${HSYNC_MODE}" in
         # serves over TLS with a persistent self-signed identity and advertises
         # its certificate fingerprint, which slaves pin (TOFU). There is no
         # plain-HTTP option.
-        [ "${HSYNC_P2P_REQUIRE_PAIRING}" = "true" ]   && set -- "$@" --require-pairing
+        [ -n "${HSYNC_P2P_TRUST}" ]                    && set -- "$@" --p2p-trust "${HSYNC_P2P_TRUST}"
         [ "${HSYNC_P2P_PEER_DOWNLOAD}" = "false" ]    && set -- "$@" --no-peer-download
         [ "${HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES}" = "true" ] && set -- "$@" --allow-unauthenticated-writes
         [ "${HSYNC_P2P_ALLOW_UNAUTHENTICATED}" = "true" ] && set -- "$@" --allow-unauthenticated-p2p

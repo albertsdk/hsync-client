@@ -31,13 +31,15 @@ No. Each HSYNC instance operates in one mode at a time.
 - Without a shared secret, the CID is logged as `(unauthenticated)` — you can still
   see which device made a change, but there's no cryptographic guarantee.
 
-**Q: How do I confirm a new master when strict pairing (`--require-pairing`) is enabled?**
+**Q: How do I confirm a new master?**
 
-Strict pairing disables trust-on-first-use for the elected master: the first
-time a master is seen, the client refuses it (the log shows a
-`[PAIRING NEEDED]` line) instead of silently trusting its certificate. To trust
-it, you confirm the master's certificate fingerprint through a channel you
-control ("out of band") and record that fingerprint as a pin. Two ways:
+An unknown elected master is never trusted implicitly. With the default `ask`
+policy the client prompts on a terminal and pins the fingerprint when you answer
+yes; with no terminal (service, container, desktop, mobile) it refuses the master
+and logs a `[PAIRING NEEDED]` line — the desktop and mobile apps raise a
+confirmation dialog instead. To trust it, confirm the master's certificate
+fingerprint through a channel you control ("out of band") and record it as a pin.
+Two ways:
 
 **Verify the fingerprint out of band, then pin it (most secure).**
 
@@ -52,7 +54,8 @@ control ("out of band") and record that fingerprint as a pin. Two ways:
 
    If you set `HSYNC_DEVICE_DIR`, use `"$HSYNC_DEVICE_DIR/p2p_master_cert.pem"`.
 
-2. On the slave, start with `--require-pairing`. The master is refused; the log
+2. On the slave, start with `--p2p-trust strict` (the default `ask` refuses the
+   master the same way when there is no terminal). The log
    names the master's device ID (its CID) and address, and the desktop/mobile
    app raises a pairing notification that also shows the fingerprint the slave
    observed.
@@ -77,8 +80,8 @@ control ("out of band") and record that fingerprint as a pin. Two ways:
 
 **Bootstrap on a network you already trust (simpler).**
 
-Run the slave once *without* `--require-pairing`: it pins the master on first
-use. Then restart it *with* `--require-pairing` — the already-pinned master is
+Run the slave once with `--p2p-trust accept-new`: it pins the master on first
+use. Then restart it with `--p2p-trust strict` — the already-pinned master is
 accepted, and from then on only a changed fingerprint is refused.
 
 **Q: The master's certificate fingerprint changed (`[FINGERPRINT CHANGED]`) — what do I do?**

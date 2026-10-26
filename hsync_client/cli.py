@@ -24,7 +24,7 @@ import typer
 import typer.main
 from hsync_common.endpoint import HostPort, build_https_url, format_authority, parse_host_port
 from hsync_common.protocol.pairing import parse_fingerprint
-from hsync_common.protocol.tls_trust import TrustPolicy
+from hsync_common.protocol.tls_trust import TrustPolicy, resolve_self_signed_policy
 from hsync_common.runtime import ColorMode
 
 from hsync_client.bootnode_trust import BootnodeTrustStore
@@ -1044,14 +1044,17 @@ NeverMasterOpt = Annotated[
         rich_help_panel="P2P Mode",
     ),
 ]
-RequirePairingOpt = Annotated[
-    bool,
+P2PTrustOpt = Annotated[
+    str | None,
     typer.Option(
-        "--require-pairing",
+        "--p2p-trust",
         help=(
-            "Strict pairing: refuse a first-seen P2P master certificate until it is "
-            "confirmed out of band (disables Trust-On-First-Use auto-pinning)."
+            "P2P master trust policy: 'ask' (default: confirm an unknown master "
+            "fingerprint on a terminal, fail closed without one), 'accept-new' "
+            "(pin the first sighting silently) or 'strict' (require an explicit pin)."
         ),
+        metavar="POLICY",
+        show_default=False,
         rich_help_panel="P2P Mode",
     ),
 ]
@@ -1206,7 +1209,7 @@ def p2p(
     p2p_group: GroupOpt = None,
     prefer_master: PreferMasterOpt = False,
     never_master: NeverMasterOpt = False,
-    require_pairing: RequirePairingOpt = False,
+    p2p_trust: P2PTrustOpt = None,
     allow_unauthenticated_writes: AllowUnauthenticatedWritesOpt = False,
     allow_unauthenticated_p2p: AllowUnauthenticatedP2POpt = False,
     p2p_key_fd: P2PKeyFdOpt = None,
@@ -1281,6 +1284,7 @@ def p2p(
 
         HSYNC_P2P_PASSPHRASE  Shared password (>=12 chars, derived to the group key)
         HSYNC_P2P_KEY         Raw shared key (>=32 chars), used as-is
+        HSYNC_P2P_TRUST       P2P master trust policy: ask | accept-new | strict
     """
     (
         parsed_bw_upload,
@@ -1347,6 +1351,12 @@ def p2p(
     if (fingerprints or bootnode_tofu) and not bootnode_host:
         raise typer.BadParameter("--bootnode-fingerprint/--bootnode-tofu require a bootnode host.")
 
+    if p2p_trust is not None:
+        try:
+            resolve_self_signed_policy(p2p_trust)
+        except ValueError as exc:
+            raise typer.BadParameter(f"invalid --p2p-trust value: {exc}") from exc
+
     from hsync_client.main_logic import run_sync
 
     run_sync(
@@ -1367,7 +1377,7 @@ def p2p(
         p2p_group=p2p_group,
         prefer_master=prefer_master,
         never_master=never_master,
-        p2p_require_pairing=require_pairing,
+        p2p_trust=p2p_trust,
         p2p_peer_download_enabled=not no_peer_download,
         p2p_allow_unauthenticated_writes=allow_unauthenticated_writes,
         p2p_allow_unauthenticated=allow_unauthenticated_p2p,
@@ -1795,7 +1805,7 @@ def server(
         p2p_group=None,
         prefer_master=False,
         never_master=False,
-        p2p_require_pairing=False,
+        p2p_trust=None,
         p2p_peer_download_enabled=False,
         p2p_allow_unauthenticated_writes=False,
     )

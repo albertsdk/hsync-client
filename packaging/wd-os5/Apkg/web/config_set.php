@@ -54,7 +54,7 @@ const KEYS = [
     'HSYNC_SYNC_DIRECTION', 'HSYNC_FILTER_PATH', 'HSYNC_IGNORE_PATTERNS',
     'HSYNC_P2P_GROUP', 'HSYNC_P2P_PASSPHRASE', 'HSYNC_P2P_PORT',
     'HSYNC_PREFER_MASTER', 'HSYNC_NEVER_MASTER',
-    'HSYNC_P2P_REQUIRE_PAIRING', 'HSYNC_P2P_PEER_DOWNLOAD',
+    'HSYNC_P2P_TRUST', 'HSYNC_P2P_PEER_DOWNLOAD',
     'HSYNC_P2P_PEER_READ_CAP', 'HSYNC_P2P_PEER_SOURCES_MAX',
     'HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES', 'HSYNC_P2P_ALLOW_UNAUTHENTICATED',
     'HSYNC_ALLOW_DELETIONS', 'HSYNC_DISCOVERY_TIMEOUT',
@@ -282,6 +282,9 @@ foreach (KEYS as $key) {
         case 'HSYNC_TRANSFER_RETRY_MAX_WAIT':
             if (!preg_match('/^[0-9]*\.?[0-9]*$/', $val)) $val = '';
             break;
+        case 'HSYNC_P2P_TRUST':
+            if (!in_array($val, ['accept-new', 'strict'], true)) $val = 'accept-new';
+            break;
         case 'HSYNC_PREFER_MASTER':
         case 'HSYNC_NEVER_MASTER':
         case 'HSYNC_INSECURE':
@@ -292,7 +295,6 @@ foreach (KEYS as $key) {
         case 'HSYNC_BOOTNODE_TOFU':
         case 'HSYNC_SERVER_TOFU':
         case 'HSYNC_AUTOTUNE':
-        case 'HSYNC_P2P_REQUIRE_PAIRING':
         case 'HSYNC_P2P_PEER_DOWNLOAD':
         case 'HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES':
         case 'HSYNC_P2P_ALLOW_UNAUTHENTICATED':

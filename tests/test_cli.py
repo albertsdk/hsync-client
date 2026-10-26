@@ -429,20 +429,26 @@ class TestTyperCli:
         assert call_kwargs["p2p_mode"] is True
 
     @patch("hsync_client.main_logic.run_sync")
-    def test_require_pairing_default_false(self, mock_run_sync):
-        """Without --require-pairing, p2p_require_pairing defaults to False."""
+    def test_p2p_trust_default_omitted(self, mock_run_sync):
+        """Without --p2p-trust nothing is forwarded (the client default applies)."""
         result = runner.invoke(app, ["p2p", "-b", "test"])
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["p2p_require_pairing"] is False
+        assert call_kwargs["p2p_trust"] is None
 
     @patch("hsync_client.main_logic.run_sync")
-    def test_require_pairing_option(self, mock_run_sync):
-        """CLI accepts --require-pairing and forwards p2p_require_pairing=True."""
-        result = runner.invoke(app, ["p2p", "-b", "test", "--require-pairing"])
+    def test_p2p_trust_option(self, mock_run_sync):
+        """CLI accepts --p2p-trust POLICY and forwards it unchanged."""
+        result = runner.invoke(app, ["p2p", "-b", "test", "--p2p-trust", "strict"])
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["p2p_require_pairing"] is True
+        assert call_kwargs["p2p_trust"] == "strict"
+
+    def test_p2p_trust_rejects_non_pinning_policy(self):
+        """chain/none never pin, so they are rejected as a usage error."""
+        result = runner.invoke(app, ["p2p", "-b", "test", "--p2p-trust", "none"])
+        assert result.exit_code != 0
+        assert "invalid --p2p-trust" in result.output
 
     @patch("hsync_client.main_logic.run_sync")
     def test_peer_download_default_and_opt_out(self, mock_run_sync):
@@ -810,7 +816,7 @@ class TestCapabilitiesJson:
         for flag in (
             "--never-master",
             "--prefer-master",
-            "--require-pairing",
+            "--p2p-trust",
             "--no-peer-download",
             "--allow-unauthenticated-writes",
         ):

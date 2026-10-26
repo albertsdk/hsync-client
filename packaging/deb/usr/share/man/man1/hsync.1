@@ -1,7 +1,7 @@
 .\" Man page for HSYNC - file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-10-26" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-10-27" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -419,9 +419,26 @@ election algorithm breaks the tie.
 .B \-\-never\-master
 Never become master in p2p mode (always remain a slave).
 .TP
-.B \-\-require\-pairing
-Strict pairing: refuse a first-seen p2p master certificate until it is
-confirmed out of band (disables Trust-On-First-Use auto-pinning).
+.BI \-\-p2p\-trust\fP= POLICY
+Trust policy for the elected p2p master. One of:
+.RS
+.TP
+.I ask
+(default) Prompt on a terminal to accept a master seen for the first time, then
+pin its fingerprint; refuse a changed one. Without a terminal the client fails
+closed and emits a pairing request.
+.TP
+.I accept-new
+Pin the first sighting silently (trust\-on\-first\-use).
+.TP
+.I strict
+Require an explicit pin before connecting to a new master.
+.RE
+.IP
+A changed fingerprint is refused under every policy. The pin is stored in
+.BR HSYNC_P2P_PIN_FILE ;
+manage it with
+.BR "hsync trust peer" .
 .TP
 .B \-\-no\-peer\-download
 Disable peer-assisted p2p downloads for this run. By default, large full-file
@@ -824,10 +841,10 @@ unreachable server forever).
 Never become master in p2p mode (default:
 .BR false ).
 .TP
-.B HSYNC_P2P_REQUIRE_PAIRING
-Strict pairing: require out-of-band confirmation for first-seen master
-certificates (default:
-.BR false ).
+.B HSYNC_P2P_TRUST
+Trust policy for the elected p2p master: ask (default), accept-new or strict
+(see
+.BR \-\-p2p\-trust ).
 .TP
 .B HSYNC_P2P_PEER_DOWNLOAD
 Enable exact-hash peer-assisted LAN full downloads (default:

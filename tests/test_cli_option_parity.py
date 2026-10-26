@@ -83,7 +83,7 @@ P2P_ONLY_OPTIONS = frozenset(
         "p2p_key_fd",
         "p2p_listen_port",
         "prefer_master",
-        "require_pairing",
+        "p2p_trust",
         "upnp",
     }
 )

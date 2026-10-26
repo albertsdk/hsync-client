@@ -257,11 +257,12 @@ class EnvSettings(BaseSettings):
         default=False,
         description="Never become master in P2P mode (always remain a client/slave)",
     )
-    p2p_require_pairing: bool = Field(
-        default=False,
+    p2p_trust: Literal["ask", "accept-new", "strict"] = Field(
+        default="ask",
         description=(
-            "Strict pairing: refuse a first-seen P2P master certificate until it is "
-            "confirmed out of band (disables Trust-On-First-Use auto-pinning)"
+            "P2P master trust policy: 'ask' (default: confirm an unknown master "
+            "fingerprint on a terminal, fail closed without one), 'accept-new' "
+            "(pin the first sighting silently) or 'strict' (require an explicit pin)"
         ),
     )
     p2p_peer_download: bool = Field(
@@ -560,9 +561,9 @@ def get_never_master() -> bool:
     return get_env_settings().never_master
 
 
-def get_p2p_require_pairing() -> bool:
-    """Get strict-pairing mode (out-of-band cert confirmation) from environment."""
-    return get_env_settings().p2p_require_pairing
+def get_p2p_trust() -> str:
+    """Get the P2P master trust policy from the environment (default ``ask``)."""
+    return get_env_settings().p2p_trust
 
 
 def get_p2p_peer_download() -> bool:
@@ -779,8 +780,8 @@ class HsyncConfig(TypedDict):
     P2P_PREFER_MASTER: bool
     # Never let this client become master in P2P mode (always client/slave)
     P2P_NEVER_MASTER: bool
-    # Strict pairing: refuse a first-seen master cert until confirmed out of band
-    P2P_REQUIRE_PAIRING: bool
+    # P2P master trust policy (ADR-0040; default ask)
+    P2P_TRUST: TrustPolicy
     # Peer-assisted download requester/seeder controls
     P2P_PEER_DOWNLOAD: bool
     P2P_PEER_READ_CAP: int

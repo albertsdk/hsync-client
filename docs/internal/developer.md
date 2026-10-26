@@ -290,13 +290,14 @@ unset). On every subsequent connection, the presented certificate's fingerprint 
 checked against the pinned value. If it doesn't match, the connection is
 refused — this prevents man-in-the-middle attacks on the LAN.
 
-### Strict pairing (`--require-pairing`)
+### Master trust policy (`--p2p-trust`)
 
-When strict pairing is enabled, a first-seen master certificate is **not**
-automatically trusted. Instead, the fingerprint must be confirmed out-of-band
-(e.g., compared manually or via a QR code). Until confirmed, all connections to
-that peer are refused. This is the most secure mode and is recommended when
-multiple untrusted devices share the same network.
+The elected master follows the `TrustPolicy` of the self-signed transports
+(ADR-0040): `ask` (default) prompts on a terminal and fails closed without one,
+`accept-new` pins the first sighting silently, and `strict` refuses an unknown
+master until its fingerprint is pinned out of band. `chain` and `none` never pin
+and are rejected for this transport. When a first sighting is refused, all
+connections to that peer are refused until it is confirmed.
 
 ### see also
 

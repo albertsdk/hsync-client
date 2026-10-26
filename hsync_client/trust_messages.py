@@ -245,12 +245,13 @@ def peer_pairing_needed_guidance(
     address: str,
     observed: str,
 ) -> str:
-    """SSH-style recovery block for a P2P peer under strict pairing.
+    """SSH-style recovery block for a P2P peer the trust policy refuses.
 
     Consumers: ``hsync-client`` (``p2p_handler._evaluate_master_pin``), tests.
     """
     lines = [
-        f"{ActionLabel.PAIRING_NEEDED} peer '{cid}|{bucket}' (at {address}) is not pinned and strict pairing is enabled.",
+        f"{ActionLabel.PAIRING_NEEDED} peer '{cid}|{bucket}' (at {address}) is not pinned "
+        "and the trust policy requires an explicit confirmation.",
         *_presented_fingerprint_lines("peer", observed),
         "Verify it out of band and pin it with:",
         f"  hsync trust peer add {cid} sha256:{observed} --bucket {bucket}",

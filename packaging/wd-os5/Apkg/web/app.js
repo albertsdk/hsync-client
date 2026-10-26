@@ -33,7 +33,6 @@
         ja: '日本語',
     };
     const CHECKBOX_KEYS = [
-        'HSYNC_P2P_REQUIRE_PAIRING',
         'HSYNC_PREFER_MASTER',
         'HSYNC_NEVER_MASTER',
         'HSYNC_UPNP_ENABLED',

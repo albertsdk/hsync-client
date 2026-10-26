@@ -211,12 +211,15 @@ connection that carries the data.
   `HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES=true` permits no-key mutations on a
   fully trusted network. A TTY does not grant this permission.
 - **Per-source trust** — each selected seeder is pinned independently by device
-  ID and bucket before connecting. `--require-pairing` remains specific to the
-  elected master; seeder trust uses persistent TOFU.
-- **Strict pairing (`--require-pairing`)** — disables TOFU for the elected
-  master: a first-seen certificate is refused (logged as `[PAIRING NEEDED]`)
-  instead of being silently trusted. To accept it you confirm its fingerprint
-  through a channel you control ("out of band") and pin it with
+  ID and bucket before connecting. The master trust policy remains specific to
+  the elected master; seeder trust uses persistent TOFU.
+- **Master trust policy (`--p2p-trust`)** — decides what happens the first time
+  the elected master is seen: `ask` (default) confirms its fingerprint on a
+  terminal and refuses it when there is none, `accept-new` pins it silently
+  (trust-on-first-use) and `strict` refuses it until it is pinned. A first-seen
+  certificate refused this way is logged as `[PAIRING NEEDED]`; to accept it you
+  confirm its fingerprint through a channel you control ("out of band") and pin
+  it with
   `hsync trust peer add MASTER_DEVICE_ID sha256:FINGERPRINT --bucket BUCKET_NAME`.
   The exact steps are in
   [FAQ — p2p Mode → Security & Safety](faq-p2p.md#security--safety).

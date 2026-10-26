@@ -119,7 +119,10 @@ HSYNC_PREFER_MASTER="false"
 HSYNC_NEVER_MASTER="false"
 # Strict pairing: refuse a first-seen master fingerprint until confirmed
 # out of band (disables Trust-On-First-Use auto-pinning).
-HSYNC_P2P_REQUIRE_PAIRING="false"
+# The appliance has no interactive prompter: ask cannot be answered here, so
+# the shipped default pins a first-seen primary (accept-new) and the web UI
+# offers strict for operators who pin fingerprints first.
+HSYNC_P2P_TRUST="accept-new"
 # Peer-assisted reads and the caps that bound them.
 HSYNC_P2P_PEER_DOWNLOAD="true"
 HSYNC_P2P_PEER_READ_CAP="2"

@@ -489,9 +489,12 @@
             <input type="checkbox" name="HSYNC_NEVER_MASTER" id="HSYNC_NEVER_MASTER">
             <span data-i18n="field.never_master">Never become primary</span>
         </label>
-        <label class="hsync-label hsync-check">
-            <input type="checkbox" name="HSYNC_P2P_REQUIRE_PAIRING" id="HSYNC_P2P_REQUIRE_PAIRING">
-            <span data-i18n="field.p2p_require_pairing">Ask before trusting new devices</span>
+        <label class="hsync-label">
+            <span data-i18n="field.p2p_trust">New primary device</span>
+            <select name="HSYNC_P2P_TRUST" id="HSYNC_P2P_TRUST">
+                <option value="accept-new" data-i18n="trust_option.accept_new">Accept automatically</option>
+                <option value="strict" data-i18n="trust_option.p2p_strict">Require an explicit confirmation (pin it first)</option>
+            </select>
         </label>
         <label class="hsync-label hsync-check">
             <input type="checkbox" name="HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES" id="HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES">
