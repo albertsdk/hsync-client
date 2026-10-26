@@ -60,9 +60,11 @@ yet still resolves its role (a lone `--prefer-master` node serves immediately,
 which is what lets a joining slave connect) — the election otherwise runs only on
 peer add/remove, a local readiness change and the stale sweep. TXT
 records advertise `protocol`, `cert_fp`, `sync_direction`, and `peer_download`.
-`peer_download` means the node implements the contract; whether its HTTPS seeder
-is reachable *now* is not a discovery fact at all — it is carried by the
-authenticated WSS session and its capacity advertisement (ADR-0030).
+`peer_download` means the node serves blocks; every node also advertises `index`
+and publishes a read-only inventory, so a peer that does not serve still lets the
+master classify its share. Whether a node's HTTPS seeder is reachable *now* is not
+a discovery fact: it is carried by the authenticated WSS session and its capacity
+advertisement (ADR-0030).
 
 The local node's candidacy can also be dropped at runtime
 (`p2p_peers.py::PeerManager.set_master_candidacy`): a client parked in
@@ -106,10 +108,13 @@ and `SIGKILL`. The master is the source of the share, so
 compares the local listing with the identities the devices published in
 `p2p_inventory.py::P2PInventoryStore.held_identities` — **one** bulk query, never
 `holders_for` (a JOIN per file). A local file a device holds is `synced`, one
-nobody holds is `to_upload`, a path only the devices hold is `to_download`. With
-no session it emits `no_peers`; with a session whose inventory is still
-unpublished it emits only `preview_start`/`preview_end` (unknown, never "out of
-sync"). `P2PInventoryStore.set_change_callback` re-runs the pass on every
+nobody holds is `to_upload`, a path only the devices hold is `to_download`. The
+inventory store exists for every master (it is the classification input), even
+when the master serves no blocks. When it cannot classify yet it emits
+`sync_pending`: `reason="no_device"` with no connected device and
+`reason="awaiting_inventory"` when a device is connected but has not published
+(or opened a session yet) — never "out of sync", never a file verdict.
+`P2PInventoryStore.set_change_callback` re-runs the pass on every
 committed inventory change (join, leave, frame), coalesced to one pass per
 `master_status.MIN_INTERVAL_S` and executed off the caller's thread; the local
 listing is reused for `master_status.LOCAL_CACHE_TTL_S`. A pass **never emits**
@@ -341,8 +346,8 @@ echo-suppression `cid` on upload/delete/rename is honoured only when it passes
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
 | `p2p_websocket_client` | `p2p_websocket.py::p2p_websocket_client` | connect to master WSS, verify cert fp, **`p2p/1` handshake**: hard-fail on greeting protocol mismatch, auth/hello frames carry `protocol_version` + `capabilities`; `local_capabilities()` is announced, `adopt_remote_capabilities()` applies the auth reply as the authoritative capability source (compression/delta gates). **Readiness threshold**: the local watcher starts before the WS connect, but `[READY]` (`p2p_websocket.py::p2p_websocket_client`) fires only after the handshake completed — a failed auth never reaches it. **Inbound file downloads are fanned out** (`event_dispatch._spawn_file_download`): the receive loop never awaits a download — events for the same path are chained (order preserved, plus `path_lock` inside `download_file`), distinct paths run concurrently under a semaphore sized by `MAX_CONCURRENT_TRANSFERS`; the bounded tasks are drained (`drain_file_downloads`) in the connection teardown before the discovery loop's full sync. The fan-out exists so a burst is not capped by a serial `await update_file` per event (~60 files/s) while the master serves 200+ req/s |
-| `P2PInventoryPublisher` | `p2p_inventory.py` | continuous-slave WSS publisher: immutable snapshot + bounded pending journal, chunked snapshot/delta frames, one in-flight generation, ACK timeout/retry, and resnapshot fallback on overflow/reject/reconnect. **ACK timeouts never close the WSS**: publishing is disabled for the connection (the master-side session expires via its staging TTL) while the event channel on the same socket keeps flowing — closing it would tear the channel down and force a full resync on both peers under burst backpressure |
-| slave seeder lifecycle | `p2p_handler.py` | starts only for continuous non-dry-run slaves after the read-only HTTPS port binds; advertises its endpoint readiness (`https`/`cert_fp`) and its `serve_slots` capacity on the master WSS handshake only while its seeder is bound; stops accepting, withdraws that readiness, and drops role-owned publisher/resolver state before becoming master or exiting. Bind/readiness failure degrades to requester-only |
+| `P2PInventoryPublisher` | `p2p_inventory.py` | slave WSS publisher (started for every slave, including dry-run and one-shot): immutable snapshot + bounded pending journal, chunked snapshot/delta frames, one in-flight generation, ACK timeout/retry, and resnapshot fallback on overflow/reject/reconnect. **ACK timeouts never close the WSS**: publishing is disabled for the connection (the master-side session expires via its staging TTL) while the event channel on the same socket keeps flowing — closing it would tear the channel down and force a full resync on both peers under burst backpressure |
+| slave inventory lifecycle | `p2p_handler.py` | the read-only inventory publisher starts for **every** slave (`_start_slave_inventory`), independent of the dry-run preview phase and of block serving; the read-only HTTPS seeder role binds and advertises endpoint readiness (`https`/`cert_fp`) and its `serve_slots` capacity on the master WSS handshake only when `P2P_PEER_DOWNLOAD` is enabled. Stops accepting, withdraws that readiness when it served, and drops role-owned publisher/resolver state before becoming master or exiting. Bind/readiness failure degrades to requester-only |
 | `P2PSourceResolver` / `P2PSourceTelemetry` | `p2p_sources.py` | count- and byte-bounded master wantlists plus one fresh single-file lookup for realtime events (measured on the LAN burst: the whole peer-offload block costs ~4.3 ms CPU/file and ~47 % throughput when disabled — see `hsync-client/docs/internal/testing.md`. The per-file lookup is one POST, ~1.0-1.1 ms, because `candidates_for(refresh=True)` calls `resolve([file])` even though `resolve` batches up to `P2P_SOURCES_MAX_FILES` identities; micro-batching those lookups (3 ms collection window) produces no resolvable gain at the default 5-way concurrency); immutable candidate maps are passed explicitly. Invalid/auth/pin-rotated CIDs stay disabled for the role session, while transient failures use deterministic cooldown. **Admission control (ADR-0030)**: `acquire_slot`/`release_slot` bound in-flight reads per CID to the candidate's advertised `serve_slots`, waiting up to `P2P_PEER_SLOT_WAIT_S` (2 s) before selecting the master — an expired wait is never a refused attempt. **Ranking (ADR-0030)**: `rank(sources, size=…)` orders by failures, then by `_SourceMetrics.predicted_cost_s` = `rtt_ema + size/throughput_ema` — a predicted transfer time, not a raw rate, so a peer that served a large file cannot outrank a lower-latency one for a small file (with no size the setup term decides). A `busy` (503 + `Retry-After`) is a scheduling signal: it defers the source for exactly that interval (`BUSY_DEFAULT_BACKOFF_S` fallback) without incrementing its failure count or dropping it from ranking; candidate URLs are bucket-bound before TOFU and pinned HTTPS uses fingerprint-only verification |
 | `_handle_p2p_event` | `p2p_websocket.py::_handle_p2p_event` | apply inbound master events locally; the `p2p_websocket_client` loop builds **one `EventDispatchContext` per connection** (`_build_p2p_dispatch_ctx`, `p2p_websocket.py::_handle_p2p_event`) and passes it to every call so the inbound directory dedup cache survives across events (a per-event context would reset the cache and re-log every duplicate `added`/`modified` directory burst as a fresh `[REMOTE CREATE]`/`[REMOTE MODIFY]`) |
 | `P2PSlaveFileEventHandler` | `p2p_websocket.py::P2PSlaveFileEventHandler` | slave-local FS changes → upload to master. Realtime operations (uploads, inbound event downloads, deletes, renames) run on a process-wide bounded pool (`_get_realtime_executor:109`, `REALTIME_MAX_WORKERS=8`; lazy singleton from the shared `hsync_client.pools.get_singleton_executor`) instead of one thread per event: long-lived workers reuse their keep-alive HTTP sessions to the master (no TCP+TLS handshake per file) and the parallelism stays predictable; `_start_operation` tracks `Future`s so `wait_pending` can still wait them out gracefully |
@@ -360,7 +365,7 @@ echo-suppression `cid` on upload/delete/rename is honoured only when it passes
 
 | Symbol | Purpose |
 | ------ | ------- |
-| `local_capabilities` | runtime-derived capability set advertised on every handshake (always `vector_clocks` + `tombstones`; `compression`/`delta` when enabled; `peer_download` only when the runtime feature is enabled) — shared by remote and p2p transports |
+| `local_capabilities` | runtime-derived capability set advertised on every handshake (always `vector_clocks`, `tombstones` and `index`; `compression`/`delta` when enabled; `peer_download` only when the runtime feature is enabled) — shared by remote and p2p transports |
 | `adopt_remote_capabilities` | adopts the authenticated peer's capabilities as the session transfer gates (`SERVER_COMPRESSION_ENABLED`/`SERVER_DELTA_ENABLED`) |
 
 ## Security: TOFU pinning + persistent identity

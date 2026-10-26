@@ -358,7 +358,7 @@ async def test_master_wss_routes_inventory_to_store_and_returns_ack(tmp_path: Pa
                     await ws.send_str(
                         json.dumps(
                             build_p2p_hello(
-                                capabilities=["peer_download"],
+                                capabilities=["index", "peer_download"],
                                 cid=CID_A,
                                 serve_slots=2,
                             )
@@ -394,6 +394,7 @@ async def test_wss_reconnect_installs_new_inventory_owner_before_closing_old(
         address,
         old_websocket,
         authenticated=True,
+        publishes_index=True,
         serve_slots=2,
     )
     assert admitted and old_token is not None
@@ -411,6 +412,7 @@ async def test_wss_reconnect_installs_new_inventory_owner_before_closing_old(
         address,
         new_websocket,
         authenticated=True,
+        publishes_index=True,
         serve_slots=2,
     )
     assert admitted and new_token is not None and new_token != old_token

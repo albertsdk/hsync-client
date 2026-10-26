@@ -547,6 +547,7 @@ class P2PWebSocketServer:
         websocket,
         *,
         authenticated: bool,
+        publishes_index: bool,
         serve_slots: int | None,
     ) -> tuple[bool, str | None, str | None]:
         """Reserve the slave's CID and admit the connection, or reject it.
@@ -558,9 +559,11 @@ class P2PWebSocketServer:
         the stale connection is closed, mirroring the central server's
         ``_register_client`` eviction.
 
-        ``serve_slots`` is the capacity the slave advertised: a publisher session
-        exists exactly when it is present, so a source candidate can never be
-        built from a session with no live capacity advertisement (ADR-0030).
+        ``publishes_index`` opens an inventory session regardless of whether the
+        slave serves blocks, so the master can classify its share against every
+        connected device. ``serve_slots`` is the advertised block-serving
+        capacity (``None`` for an inventory-only publisher); a source candidate
+        is built only from a session with a non-zero capacity (ADR-0030).
 
         Returns the admission result, inventory owner token, and any reason
         inventory publication is unavailable. On success the CID is already
@@ -581,7 +584,7 @@ class P2PWebSocketServer:
 
         inventory_token: str | None = None
         inventory_rejection: str | None = None
-        if serve_slots is not None and self._inventory_store is not None:
+        if publishes_index and self._inventory_store is not None:
             try:
                 # Install the replacement owner before closing a superseded
                 # same-address WSS. Its later teardown is then an old-owner no-op.
@@ -590,7 +593,7 @@ class P2PWebSocketServer:
                 inventory_token = await asyncio.to_thread(
                     self._inventory_store.begin_session,
                     client_cid,
-                    serve_slots=serve_slots,
+                    serve_slots=serve_slots or 0,
                     remote_address=peer_ip,
                 )
             except InventorySessionLimitError:
@@ -739,6 +742,7 @@ class P2PWebSocketServer:
                     client_addr,
                     websocket,
                     authenticated=True,
+                    publishes_index=Capability.index in slave_caps,
                     serve_slots=serve_slots,
                 )
                 if not admitted:
@@ -800,6 +804,7 @@ class P2PWebSocketServer:
                         client_addr,
                         websocket,
                         authenticated=False,
+                        publishes_index=Capability.index in slave_caps,
                         serve_slots=serve_slots,
                     )
                     if not admitted:
@@ -1314,11 +1319,11 @@ async def p2p_websocket_client(
     # A node that serves peer downloads announces its capacity on the handshake:
     # the master records it with the publisher session and echoes it to
     # requesters, which use it as their per-seeder admission limit (ADR-0030).
-    # No publisher means no seeder bound, so nothing is advertised at all.
+    # An inventory-only publisher (no block serving) advertises nothing, but it
+    # still opens the session so the master can classify its share.
+    serves_blocks = inventory_publisher is not None and bool(CONFIG.get("P2P_PEER_DOWNLOAD", True))
     serving_slots = (
-        int(CONFIG.get("P2P_PEER_READ_CAP", P2P_PEER_READ_CAP_DEFAULT))
-        if inventory_publisher is not None
-        else None
+        int(CONFIG.get("P2P_PEER_READ_CAP", P2P_PEER_READ_CAP_DEFAULT)) if serves_blocks else None
     )
 
     log.info(f"Connecting to master WebSocket: {uri}")
@@ -1493,8 +1498,8 @@ async def p2p_websocket_client(
 
             if (
                 inventory_publisher is not None
-                and Capability.peer_download in master_caps
-                and Capability.peer_download in local_capabilities()
+                and Capability.index in master_caps
+                and Capability.index in local_capabilities()
             ):
                 inventory_publisher.start(websocket)
 

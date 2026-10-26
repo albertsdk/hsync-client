@@ -1265,11 +1265,11 @@ class TestStdinCommands:
         handler.stop.assert_not_called()
 
 
-class TestSlaveSeederLifecycle:
-    """The read-only seeder is owned strictly by a continuous slave role."""
+class TestSlaveInventoryLifecycle:
+    """A slave always publishes its inventory; block serving is optional."""
 
     def test_continuous_slave_configures_seeder_role_then_publishes_endpoint_ready(self, tmp_path):
-        from hsync_client.p2p_handler import _start_slave_seeder
+        from hsync_client.p2p_handler import _start_slave_inventory
         from hsync_client.p2p_server import P2PServerMode
 
         config = _make_p2p_config(
@@ -1288,7 +1288,7 @@ class TestSlaveSeederLifecycle:
             ) as publisher_cls,
             patch("hsync_client.p2p_handler.set_active_inventory_publisher") as set_active,
         ):
-            result = _start_slave_seeder(config, p2p_sync, MagicMock(), server)
+            result = _start_slave_inventory(config, p2p_sync, MagicMock(), server)
 
         # The seeder reuses the process-wide listener: it only installs the role.
         assert result == publisher
@@ -1304,25 +1304,53 @@ class TestSlaveSeederLifecycle:
         publisher_cls.assert_called_once_with(str(tmp_path))
         set_active.assert_called_once_with(publisher)
 
-    def test_one_shot_and_dry_run_never_start_seeder(self, tmp_path):
-        from hsync_client.p2p_handler import _start_slave_seeder
+    def test_inventory_only_slave_publishes_without_serving(self, tmp_path):
+        """Peer download disabled still publishes the read-only inventory."""
+        from hsync_client.p2p_handler import _start_slave_inventory
+
+        config = _make_p2p_config(tmp_path, ONE_SHOT=False, P2P_PEER_DOWNLOAD=False)
+        p2p_sync = MagicMock(port=9443)
+        server = MagicMock()
+        publisher = MagicMock()
+        with (
+            patch("hsync_client.p2p_handler.P2PInventoryPublisher", return_value=publisher),
+            patch("hsync_client.p2p_handler.set_active_inventory_publisher") as set_active,
+        ):
+            assert _start_slave_inventory(config, p2p_sync, MagicMock(), server) is publisher
+
+        server.configure_role.assert_not_called()
+        p2p_sync.update_endpoint_ready.assert_not_called()
+        set_active.assert_called_once_with(publisher)
+
+    def test_dry_run_and_one_shot_still_publish(self, tmp_path):
+        """The dry-run preview phase must not hide the node from the master."""
+        from hsync_client.p2p_handler import _start_slave_inventory
 
         for overrides in ({"ONE_SHOT": True}, {"ONE_SHOT": False, "DRYRUN": True}):
-            config = _make_p2p_config(tmp_path, **overrides)
+            config = _make_p2p_config(
+                tmp_path, P2P_PEER_DOWNLOAD=True, P2P_PEER_READ_CAP=3, **overrides
+            )
+            p2p_sync = MagicMock(port=9443)
             server = MagicMock()
-            assert _start_slave_seeder(config, MagicMock(port=9443), MagicMock(), server) is None
-            server.configure_role.assert_not_called()
+            publisher = MagicMock()
+            with (
+                patch("hsync_client.p2p_handler.P2PInventoryPublisher", return_value=publisher),
+                patch("hsync_client.p2p_handler.set_active_inventory_publisher"),
+            ):
+                assert _start_slave_inventory(config, p2p_sync, MagicMock(), server) is publisher
+            server.configure_role.assert_called_once()
+            p2p_sync.update_endpoint_ready.assert_called_once_with(True)
 
     def test_readiness_publish_failure_yields_role(self, tmp_path):
         """A failed publication withdraws the seeder role before fallback."""
-        from hsync_client.p2p_handler import _start_slave_seeder
+        from hsync_client.p2p_handler import _start_slave_inventory
 
         config = _make_p2p_config(tmp_path, ONE_SHOT=False)
         p2p_sync = MagicMock(port=9443)
         p2p_sync.update_endpoint_ready.side_effect = [RuntimeError("mdns failed"), None]
         server = MagicMock()
 
-        assert _start_slave_seeder(config, p2p_sync, MagicMock(), server) is None
+        assert _start_slave_inventory(config, p2p_sync, MagicMock(), server) is None
 
         server.stop_serving.assert_called_once_with()
         assert [call.args[0] for call in p2p_sync.update_endpoint_ready.call_args_list] == [
@@ -1331,26 +1359,37 @@ class TestSlaveSeederLifecycle:
         ]
 
     def test_stop_withdraws_txt_even_if_withdraw_fails(self):
-        from hsync_client.p2p_handler import _stop_slave_seeder
+        from hsync_client.p2p_handler import _stop_slave_inventory
 
         p2p_sync = MagicMock()
         publisher = MagicMock()
         p2p_sync.update_endpoint_ready.side_effect = RuntimeError("mdns unavailable")
 
         with patch("hsync_client.p2p_handler.set_active_inventory_publisher") as set_active:
-            _stop_slave_seeder(p2p_sync, publisher)
+            _stop_slave_inventory(p2p_sync, publisher, serving=True)
 
         p2p_sync.update_endpoint_ready.assert_called_once_with(False)
+        set_active.assert_called_once_with(None)
+
+    def test_stop_inventory_only_does_not_touch_readiness(self):
+        """An inventory-only publisher never advertised readiness to withdraw."""
+        from hsync_client.p2p_handler import _stop_slave_inventory
+
+        p2p_sync = MagicMock()
+        with patch("hsync_client.p2p_handler.set_active_inventory_publisher") as set_active:
+            _stop_slave_inventory(p2p_sync, MagicMock(), serving=False)
+
+        p2p_sync.update_endpoint_ready.assert_not_called()
         set_active.assert_called_once_with(None)
 
     def test_stop_without_publisher_is_noop(self):
         """The master calls this every iteration; without a seeder it must not
         re-register mDNS and clear the master's own ``server_ready``."""
-        from hsync_client.p2p_handler import _stop_slave_seeder
+        from hsync_client.p2p_handler import _stop_slave_inventory
 
         p2p_sync = MagicMock()
         with patch("hsync_client.p2p_handler.set_active_inventory_publisher") as set_active:
-            _stop_slave_seeder(p2p_sync, None)
+            _stop_slave_inventory(p2p_sync, None)
 
         p2p_sync.update_endpoint_ready.assert_not_called()
         set_active.assert_not_called()

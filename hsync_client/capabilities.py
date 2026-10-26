@@ -24,12 +24,16 @@ def local_capabilities() -> set[Capability]:
     """Capabilities this binary actually supports, derived from its runtime config.
 
     ``vector_clocks`` (causal version metadata, ADR-0022) and ``tombstones``
-    (deletion-marker gossip, ADR-0003) are always implemented by this client;
-    ``compression`` and ``delta`` are feature-toggled. The P2P mDNS/TXT record
-    announces the same set, but the connect-time handshake is the
-    authenticated capability source (ADR-0024).
+    (deletion-marker gossip, ADR-0003) are always implemented by this client, and
+    every node publishes a read-only inventory (``index``) so peers can compute
+    sync status regardless of whether it serves blocks. ``peer_download``,
+    ``compression`` and ``delta`` are feature-toggled.
     """
-    caps: set[Capability] = {Capability.vector_clocks, Capability.tombstones}
+    caps: set[Capability] = {
+        Capability.vector_clocks,
+        Capability.tombstones,
+        Capability.index,
+    }
     if CONFIG.get("P2P_PEER_DOWNLOAD", True):
         caps.add(Capability.peer_download)
     if CONFIG.get("COMPRESSION_ENABLED", False):

@@ -113,7 +113,10 @@ endpoint, and an explicit `--port` overrides a port embedded in the env.
 
 Peer-download settings are `HSYNC_P2P_PEER_DOWNLOAD=true` and
 `HSYNC_P2P_PEER_READ_CAP=2`. `--no-peer-download` is applied as
-`CLI-enabled AND environment-enabled`, so the CLI opt-out is final. The no-key
+`CLI-enabled AND environment-enabled`, so the CLI opt-out is final. It gates
+**block serving** (the seeder role and its `serve_slots` capacity); the node
+still advertises `index` and publishes its read-only inventory with it disabled,
+so peers can classify its share. The no-key
 write opt-in is `CLI-opt-in OR environment-opt-in` and defaults false.
 
 ## Constants & validators

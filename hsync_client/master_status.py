@@ -117,6 +117,7 @@ class MasterSyncStatus:
         log: Any,
         *,
         local_provider: Callable[[], list[dict]] = get_files_local,
+        connected_provider: Callable[[], int] | None = None,
         min_interval_s: float = MIN_INTERVAL_S,
         local_cache_ttl_s: float = LOCAL_CACHE_TTL_S,
         clock: Callable[[], float] = time.monotonic,
@@ -124,6 +125,7 @@ class MasterSyncStatus:
         self._store_provider = store_provider
         self._log = log
         self._local_provider = local_provider
+        self._connected_provider = connected_provider or (lambda: 0)
         self._min_interval_s = min_interval_s
         self._local_cache_ttl_s = local_cache_ttl_s
         self._clock = clock
@@ -204,16 +206,21 @@ class MasterSyncStatus:
     def _classify(self) -> None:
         store = self._store_provider()
         if store is None:
-            emit_event(UiEventName.no_peers, message=NO_DEVICE_MESSAGE)
+            emit_event(UiEventName.sync_pending, reason="no_device")
             return
         sessions, _staged, committed = store.row_counts()
         if sessions == 0:
-            emit_event(UiEventName.no_peers, message=NO_DEVICE_MESSAGE)
+            # Distinguish "nobody is here" from "a device is connected but has
+            # not opened an inventory session": the latter is a waiting state,
+            # never "no device found".
+            reason = "awaiting_inventory" if self._connected_provider() > 0 else "no_device"
+            emit_event(UiEventName.sync_pending, reason=reason)
             return
         if committed == 0:
             # A device is connected but has not published its inventory yet:
             # this is "unknown" (the front-end shows a waiting state), never
             # "out of sync" — the comparison has no data to stand on.
+            emit_event(UiEventName.sync_pending, reason="awaiting_inventory")
             return
         held = store.held_identities()
         local_files = self._local_listing()

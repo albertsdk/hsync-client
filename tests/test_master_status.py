@@ -15,7 +15,7 @@ import pytest
 from hsync_common.protocol.peer_download import build_p2p_inventory_frame
 
 from hsync_client.config import CONFIG
-from hsync_client.master_status import NO_DEVICE_MESSAGE, MasterSyncStatus, classify
+from hsync_client.master_status import MasterSyncStatus, classify
 from hsync_client.p2p_inventory import P2PInventoryStore
 
 CID_A = "A" * 21
@@ -181,7 +181,7 @@ class TestMasterSyncStatus:
             **kwargs,
         )
 
-    def test_no_session_reports_no_devices(self, tmp_path, recorder, monkeypatch):
+    def test_no_session_reports_waiting_for_device(self, tmp_path, recorder, monkeypatch):
         monkeypatch.setitem(CONFIG, "LOCAL_BUCKET", str(tmp_path))
         store = _store(tmp_path, None, session=False)
         status = self._status(store, [])
@@ -191,8 +191,8 @@ class TestMasterSyncStatus:
         status.stop()
         store.close()
         # No preview markers: those belong to the window's own preview cycles.
-        assert recorder.names() == ["no_peers"]
-        assert recorder.events[0][1]["message"] == NO_DEVICE_MESSAGE
+        assert recorder.names() == ["sync_pending"]
+        assert recorder.events[0][1]["reason"] == "no_device"
 
     def test_an_automatic_pass_emits_no_preview_markers(self, tmp_path, recorder, monkeypatch):
         """Inventory-driven passes must not consume the front-end's preview one-shot."""
@@ -207,7 +207,24 @@ class TestMasterSyncStatus:
         assert recorder.names() == ["file_status"]
         assert recorder.states() == [("synced", str(tmp_path / "a.bin"))]
 
-    def test_a_session_without_an_inventory_reports_nothing(self, tmp_path, recorder, monkeypatch):
+    def test_a_connected_device_without_a_session_reports_awaiting_inventory(
+        self, tmp_path, recorder, monkeypatch
+    ):
+        """A connected device that opened no inventory session is a waiting state."""
+        monkeypatch.setitem(CONFIG, "LOCAL_BUCKET", str(tmp_path))
+        store = _store(tmp_path, None, session=False)
+        status = self._status(store, [], connected_provider=lambda: 1)
+
+        status.run_now()
+
+        status.stop()
+        store.close()
+        assert recorder.names() == ["sync_pending"]
+        assert recorder.events[0][1]["reason"] == "awaiting_inventory"
+
+    def test_a_connected_device_without_an_inventory_reports_waiting(
+        self, tmp_path, recorder, monkeypatch
+    ):
         """A device that has not published yet is "unknown", not "out of sync"."""
         monkeypatch.setitem(CONFIG, "LOCAL_BUCKET", str(tmp_path))
         store = _store(tmp_path, None)
@@ -217,7 +234,8 @@ class TestMasterSyncStatus:
 
         status.stop()
         store.close()
-        assert recorder.names() == []
+        assert recorder.names() == ["sync_pending"]
+        assert recorder.events[0][1]["reason"] == "awaiting_inventory"
 
     def test_it_classifies_against_the_published_inventory(self, tmp_path, recorder, monkeypatch):
         monkeypatch.setitem(CONFIG, "LOCAL_BUCKET", str(tmp_path))

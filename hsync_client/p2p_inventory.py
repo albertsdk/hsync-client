@@ -33,6 +33,7 @@ from hsync_common.models.file import File
 from hsync_common.protocol.peer_download import (
     P2P_INVENTORY_MAX_ENTRIES,
     P2P_INVENTORY_MAX_FRAME_BYTES,
+    P2P_SERVE_SLOTS_MAX,
     P2P_WIRE_INT_MAX,
     P2PInventoryAckFrame,
     P2PInventoryDeleteEntry,
@@ -42,7 +43,6 @@ from hsync_common.protocol.peer_download import (
     P2PSourceFile,
     build_p2p_inventory_ack,
     build_p2p_inventory_frame,
-    is_valid_serve_slots,
     validate_p2p_inventory_ack,
     validate_p2p_inventory_frame,
 )
@@ -330,14 +330,19 @@ class P2PInventoryStore:
     ) -> str:
         """Replace *cid*'s publisher owner and return its opaque session token.
 
-        ``serve_slots`` is the capacity the publisher advertised on the
-        authenticated handshake. It is stored with the session because the
-        master echoes it to requesters in a source candidate (ADR-0030), so a
-        candidate can never exist without a live capacity advertisement.
+        ``serve_slots`` is the block-serving capacity the publisher advertised;
+        ``0`` means it shares only its read-only inventory and never serves
+        blocks. The value is stored with the session: the master echoes a
+        non-zero capacity to requesters in a source candidate (ADR-0030), while
+        an inventory-only session is never returned as a source.
         """
         if not is_valid_cid(cid):
             raise ValueError("invalid publisher CID")
-        if not is_valid_serve_slots(serve_slots):
+        if (
+            not isinstance(serve_slots, int)
+            or isinstance(serve_slots, bool)
+            or not 0 <= serve_slots <= P2P_SERVE_SLOTS_MAX
+        ):
             raise ValueError("invalid serve_slots")
         owner_token = token or secrets.token_urlsafe(32)
         if not owner_token:
@@ -408,10 +413,11 @@ class P2PInventoryStore:
             return owner[1] if owner is not None else None
 
     def session_serve_slots(self, cid: str) -> int | None:
-        """Return the capacity the current WSS owner advertised, or ``None``.
+        """Return the block-serving capacity the current owner advertised.
 
-        ``None`` means the CID has no live publisher session, so it cannot be
-        returned as a source candidate (ADR-0030).
+        ``None`` means either no live publisher session, or an inventory-only
+        session (capacity ``0``), so the CID cannot be a source candidate
+        (ADR-0030).
         """
         with self._lock:
             self._ensure_open()
@@ -419,7 +425,10 @@ class P2PInventoryStore:
                 "SELECT serve_slots FROM inventory_sessions WHERE cid = ? AND disabled = 0",
                 (cid,),
             ).fetchone()
-        return int(row["serve_slots"]) if row is not None else None
+        if row is None:
+            return None
+        slots = int(row["serve_slots"])
+        return slots if slots > 0 else None
 
     def has_session(self, cid: str) -> bool:
         """Return whether *cid* owns an admitted, non-rejected publisher session."""

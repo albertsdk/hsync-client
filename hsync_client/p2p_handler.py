@@ -132,7 +132,11 @@ class _MasterChannel:
         self._p2p_ws_server = p2p_ws_server
         self._peer_manager = peer_manager
         self._log = log
-        self._status = MasterSyncStatus(lambda: self._p2p_server.inventory_store, log)
+        self._status = MasterSyncStatus(
+            lambda: self._p2p_server.inventory_store,
+            log,
+            connected_provider=lambda: self._p2p_ws_server.connected_clients,
+        )
         self._reader: StdinCommandHandler | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -257,64 +261,67 @@ def _master_endpoint_reachable(host: str, port: int, timeout: float | None = Non
         return False
 
 
-def _start_slave_seeder(
+def _start_slave_inventory(
     config: "HsyncConfig",
     p2p_sync: DiscoveryPlan,
     log,
     p2p_server: P2PServer | None,
 ) -> P2PInventoryPublisher | None:
-    """Serve this peer's shareable files read-only, degrading cleanly.
+    """Start the read-only inventory publisher; serve blocks only when enabled.
 
-    Reuses the process-wide unified listener: installing the seeder role swaps
-    the serving context in place (no rebind, no port conflict).
+    Every slave publishes its inventory so the master can classify the share
+    against what each device holds, regardless of dry-run previews or block
+    serving. The seeder role (and its readiness advertisement) is installed only
+    when ``P2P_PEER_DOWNLOAD`` is enabled; an inventory-only publisher never
+    advertises block capacity.
     """
-    if (
-        config.get("ONE_SHOT", False)
-        or config.get("DRYRUN", False)
-        or not config.get("P2P_PEER_DOWNLOAD", True)
-        or p2p_server is None
-    ):
+    if p2p_server is None:
         return None
     publisher = P2PInventoryPublisher(config["LOCAL_BUCKET"])
-    p2p_server.configure_role(
-        P2PServerMode.seeder,
-        bucket=config["REMOTE_BUCKET"],
-        cid_guard=None,
-        source_service=None,
-        inventory_store=None,
-        peer_read_cap=config.get("P2P_PEER_READ_CAP", 2),
-    )
-    try:
-        p2p_sync.update_endpoint_ready(True)
-    except Exception as exc:
+    if config.get("P2P_PEER_DOWNLOAD", True):
+        p2p_server.configure_role(
+            P2PServerMode.seeder,
+            bucket=config["REMOTE_BUCKET"],
+            cid_guard=None,
+            source_service=None,
+            inventory_store=None,
+            peer_read_cap=config.get("P2P_PEER_READ_CAP", 2),
+        )
         try:
-            p2p_sync.update_endpoint_ready(False)
-        except Exception as cleanup_exc:
-            log.warning(f"Peer seeder readiness cleanup failed: {cleanup_exc}")
-        p2p_server.stop_serving()
-        log.warning(f"Peer seeder readiness could not be published ({exc}); disabling seeding")
-        return None
+            p2p_sync.update_endpoint_ready(True)
+        except Exception as exc:
+            try:
+                p2p_sync.update_endpoint_ready(False)
+            except Exception as cleanup_exc:
+                log.warning(f"Peer seeder readiness cleanup failed: {cleanup_exc}")
+            p2p_server.stop_serving()
+            log.warning(f"Peer seeder readiness could not be published ({exc}); disabling seeding")
+            return None
     set_active_inventory_publisher(publisher)
     return publisher
 
 
-def _stop_slave_seeder(
+def _stop_slave_inventory(
     p2p_sync: DiscoveryPlan,
     publisher: P2PInventoryPublisher | None = None,
+    *,
+    serving: bool = False,
 ) -> None:
-    """Withdraw read-only serving readiness and detach inventory.
+    """Withdraw read-only serving readiness and detach the inventory publisher.
 
-    Only withdraws when a seeder was actually active (``publisher`` is set):
-    the master loop calls this every iteration, and an unconditional
+    Only runs when a publisher was actually started (``publisher`` is set): the
+    master loop calls this every iteration, and an unconditional
     ``update_endpoint_ready(False)`` would re-register mDNS and clear the
-    master's own ``server_ready`` flag.
+    master's own ``server_ready`` flag. Readiness is withdrawn only when the
+    stopped publisher was actually serving blocks.
     """
     if publisher is None:
         return
-    try:
-        p2p_sync.update_endpoint_ready(False)
-    except Exception as exc:
-        module_log.warning(f"Could not withdraw peer seeder readiness: {exc}")
+    if serving:
+        try:
+            p2p_sync.update_endpoint_ready(False)
+        except Exception as exc:
+            module_log.warning(f"Could not withdraw peer seeder readiness: {exc}")
     set_active_inventory_publisher(None)
 
 
@@ -570,7 +577,11 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
             if peer_manager.is_master():
                 no_master_since = None
                 no_master_warned = False
-                _stop_slave_seeder(p2p_sync, inventory_publisher)
+                _stop_slave_inventory(
+                    p2p_sync,
+                    inventory_publisher,
+                    serving=bool(config.get("P2P_PEER_DOWNLOAD", True)),
+                )
                 inventory_publisher = None
                 seeder_attempted = False
 
@@ -679,8 +690,8 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
                     no_master_since = None
                     no_master_warned = False
 
-                if not seeder_attempted and not one_shot:
-                    inventory_publisher = _start_slave_seeder(config, p2p_sync, log, p2p_server)
+                if not seeder_attempted:
+                    inventory_publisher = _start_slave_inventory(config, p2p_sync, log, p2p_server)
                     seeder_attempted = True
 
                 should_continue, exit_code = _run_as_slave(
@@ -708,7 +719,11 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
         if master_channel is not None:
             master_channel.close()
         _stop_p2p_serving(p2p_ws_server, p2p_server)
-        _stop_slave_seeder(p2p_sync, inventory_publisher)
+        _stop_slave_inventory(
+            p2p_sync,
+            inventory_publisher,
+            serving=bool(config.get("P2P_PEER_DOWNLOAD", True)),
+        )
         p2p_server.stop()
         p2p_sync.stop()
 
@@ -755,10 +770,11 @@ def _run_as_master(
     inventory_store: P2PInventoryStore | None
     source_service: P2PSourceService | None
     if first_activation:
-        inventory_store = None
-        if config.get("P2P_PEER_DOWNLOAD", True):
-            inventory_store = P2PInventoryStore.for_bucket(config["REMOTE_BUCKET"])
-            inventory_store.activate()
+        # The inventory store is the master's classification input, not only its
+        # serving source: every master keeps it so it can report the sync status
+        # of connected devices even when it does not serve blocks.
+        inventory_store = P2PInventoryStore.for_bucket(config["REMOTE_BUCKET"])
+        inventory_store.activate()
         source_service = (
             P2PSourceService(
                 bucket=config["REMOTE_BUCKET"],
@@ -766,7 +782,7 @@ def _run_as_master(
                 inventory_store=inventory_store,
                 peer_snapshot_provider=peer_manager.get_alive_peer_snapshots,
             )
-            if inventory_store is not None
+            if config.get("P2P_PEER_DOWNLOAD", True)
             else None
         )
     else:
