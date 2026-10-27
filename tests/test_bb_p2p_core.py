@@ -363,10 +363,13 @@ class TestP2PStrictPairing:
                 extra_args=("--p2p-trust", "strict"),
             )
             try:
-                # Then it refuses the unpinned master with a pairing rejection
-                refused = _wait_for_text_in_stderr(slave, "pairing", timeout=30)
+                # Then it refuses the unpinned master with the documented label
+                # (the guidance text below it is the SSOT's own wording, so the
+                # stable contract here is the catalogued log label).
+                refused = _wait_for_text_in_stderr(slave, "[PAIRING NEEDED]", timeout=30)
                 assert refused, (
-                    "Slave should have refused the unpinned master with --p2p-trust strict"
+                    "Slave should have refused the unpinned master with --p2p-trust strict\n"
+                    + _stderr_text(slave)[-1500:]
                 )
             finally:
                 _terminate(slave)
