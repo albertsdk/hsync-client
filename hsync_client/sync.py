@@ -1874,7 +1874,9 @@ def sweep_empty_local_dirs(remote_dirs: list[dict]) -> int:
         except OSError:
             # Non-empty (still holds content) or not removable: keep it.
             continue
-        log.debug(f'Removed empty local directory: "{root}"')
+        # Reconciled, not watched: that is why the label carries no origin
+        # prefix. INFO because a folder the user could see is gone.
+        log.info(f'{ActionLabel.DELETE} "{root}" (empty directory not on the peer)')
         removed += 1
     return removed
 
@@ -2233,7 +2235,11 @@ def get_sync_actions(
                 remote_file_info.get("version")
             )
             causal_match = bool(entry and _tombstone_clock_dominates(entry, remote_vclock))
-            if causal_match and _direction != "download-only":
+            # ``keep`` never deletes, on either side: a marker (possibly minted
+            # before the policy was switched) must not remove the copy that
+            # still exists remotely. The additive fallback downloads it here
+            # instead, so the backup converges upward.
+            if causal_match and _direction != "download-only" and not deletions_are_kept(CONFIG):
                 log.info(
                     f'{ActionLabel.TOMBSTONE} "{rel}" was deleted locally while offline; '
                     "deleting stale copy on remote"

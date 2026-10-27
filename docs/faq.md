@@ -47,7 +47,9 @@ nor recorded as deletion markers, remote deletions are not applied here, and an
 emptied folder is left in place. It is independent of `--sync-direction`: use
 `upload-only` as well when you also want to stop taking remote content down.
 No `--allow-deletions` is needed: with `keep` there is no deletion risk to
-confirm, so a backup unit can run unattended.
+confirm, so a backup unit can run unattended. Deletion markers recorded before
+switching also stop deleting anything: a file still present on the other side is
+downloaded here instead of being removed there.
 See [Configuration → Deletions](configuration.md#deletions).
 
 **Q: A file disappeared from the folder — how can that happen?**

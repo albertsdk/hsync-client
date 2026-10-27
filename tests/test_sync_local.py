@@ -1400,6 +1400,31 @@ class TestGetSyncActionsRemoteOnlyTombstones:
         assert len(result) == 1
         assert result[0].name == SyncActionName.delete_remote
 
+    def test_remote_only_causal_proof_downloads_under_keep(self, tmp_path):
+        """`keep` never deletes on either side: a marker (even a causal proof,
+        possibly minted before the policy was switched) must not remove the copy
+        that still exists remotely — it is downloaded instead, so the additive
+        backup converges upward."""
+        remote_hash = _sha("remote-content")
+        cid_local = _peer_cid("L")
+        cid_remote = _peer_cid("R")
+        tombstones = {tombstone_key("gone.txt"): self._tomb_entry(None, {cid_remote: 2})}
+        remote_files = [self._remote_entry(remote_hash, {cid_remote: 1})]
+
+        cfg = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "CID": cid_local,
+            "SYNC_DIRECTION": "bidirectional",
+            "DELETION_POLICY": "keep",
+        }
+        with (
+            patch("hsync_client.sync.CONFIG", cfg),
+            patch("hsync_client.state_backend.CONFIG", cfg),
+        ):
+            result = get_sync_actions(remote_files, [], tombstones=tombstones)
+
+        assert [action.name for action in result] == [SyncActionName.download]
+
     def test_remote_only_concurrent_tombstone_downloads(self, tmp_path):
         """A tombstone concurrent with the remote edit is a delete-vs-edit
         divergence, not a stale ancestor: the remote copy is downloaded."""

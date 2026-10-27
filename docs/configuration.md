@@ -28,8 +28,11 @@ disappears on the other:
   settable as `HSYNC_DELETION_POLICY`. Use `keep` for an additive backup target:
   nothing is removed here, nothing local is sent as a deletion, and no deletion
   marker is recorded. A rename still arrives as a move (the content survives
-  under the new name); only a true removal is skipped. A `keep` device never
-  needs `--allow-deletions`: the deletion-risk confirmation only protects a
+  under the new name); only a true removal is skipped. Nor does it delete on the
+  *other* side: a deletion marker recorded before the policy was switched cannot
+  remove the copy that still exists there — that file is downloaded here
+  instead, so the backup only grows. A `keep` device never needs
+  `--allow-deletions`: the deletion-risk confirmation only protects a
   `download-only` mirror, which cannot remove anything here.
 - **`--sync-direction`** — which way content flows. `upload-only` never applies
   remote deletions here and `download-only` never sends local ones, so a
