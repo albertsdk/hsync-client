@@ -444,6 +444,26 @@ class TestTyperCli:
         call_kwargs = mock_run_sync.call_args.kwargs
         assert call_kwargs["p2p_trust"] == "strict"
 
+    @patch("hsync_client.main_logic.run_sync")
+    def test_deletion_policy_default_omitted(self, mock_run_sync):
+        """Without --deletion-policy nothing is forwarded (the default applies)."""
+        result = runner.invoke(app, ["p2p", "-b", "test"])
+        assert result.exit_code == 0
+        assert mock_run_sync.call_args.kwargs["deletion_policy"] is None
+
+    @patch("hsync_client.main_logic.run_sync")
+    def test_deletion_policy_keep_is_forwarded(self, mock_run_sync):
+        """--deletion-policy keep reaches run_sync unchanged."""
+        result = runner.invoke(app, ["p2p", "-b", "test", "--deletion-policy", "keep"])
+        assert result.exit_code == 0
+        assert mock_run_sync.call_args.kwargs["deletion_policy"] == "keep"
+
+    def test_deletion_policy_rejects_unknown_values(self):
+        """A policy outside the contract is a usage error, not a silent default."""
+        result = runner.invoke(app, ["p2p", "-b", "test", "--deletion-policy", "nope"])
+        assert result.exit_code != 0
+        assert "invalid --deletion-policy" in result.output
+
     def test_p2p_trust_rejects_non_pinning_policy(self):
         """chain/none never pin, so they are rejected as a usage error."""
         result = runner.invoke(app, ["p2p", "-b", "test", "--p2p-trust", "none"])
@@ -1188,7 +1208,7 @@ def test_common_run_sync_kwargs_maps_and_normalizes_shared_options():
         "max_wait_timeout": 120,
         "filter_path": "",
         "dryrun": False,
-        "ignore_delete": False,
+        "deletion_policy": "propagate",
         "sync_direction": "bidirectional",
         "no_compression": False,
         "no_delta": True,

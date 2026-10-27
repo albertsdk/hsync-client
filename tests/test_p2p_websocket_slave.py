@@ -268,8 +268,8 @@ class TestSlaveFileEventHandler:
         # Should not start any operation
         assert len(handler._pending_ops) == 0
 
-    def test_on_deleted_ignore_delete_mode(self, handler, tmp_path):
-        """Test that deletions are ignored in ignore-delete mode."""
+    def test_on_deleted_keep_policy(self, handler, tmp_path):
+        """Deletions are ignored when the policy is keep."""
         test_file = tmp_path / "deleted.txt"
 
         event = FileDeletedEvent(str(test_file))
@@ -277,7 +277,7 @@ class TestSlaveFileEventHandler:
         config = {
             "LOCAL_BUCKET": str(tmp_path),
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": True,
+            "DELETION_POLICY": "keep",
         }
 
         with patch("hsync_client.p2p_websocket.CONFIG", config):
@@ -818,7 +818,7 @@ class TestSlaveFileEventHandler:
         config = {
             "LOCAL_BUCKET": str(tmp_path),
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
         with (
             patch("hsync_client.p2p_websocket.CONFIG", config),
@@ -844,7 +844,7 @@ class TestSlaveFileEventHandler:
         config = {
             "LOCAL_BUCKET": str(tmp_path),
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
         event = FileDeletedEvent(str(live))
 
@@ -974,7 +974,7 @@ class TestSlaveFileEventHandler:
         config = {
             "LOCAL_BUCKET": str(tmp_path),
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
         with (
             patch("hsync_client.p2p_websocket.CONFIG", config),
@@ -983,13 +983,13 @@ class TestSlaveFileEventHandler:
             handler.on_moved(event)
         assert len(handler._pending_ops) >= 1
 
-    def test_on_moved_visible_to_os_cache_ignore_delete(self, handler, tmp_path):
-        """Test on_moved visible->OS-cache skips when ignore-delete."""
+    def test_on_moved_visible_to_os_cache_keep_policy(self, handler, tmp_path):
+        """on_moved visible->OS-cache skips when the policy is keep."""
         event = FileMovedEvent(str(tmp_path / "vis.txt"), str(tmp_path / "Thumbs.db"))
         config = {
             "LOCAL_BUCKET": str(tmp_path),
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": True,
+            "DELETION_POLICY": "keep",
         }
         with patch("hsync_client.p2p_websocket.CONFIG", config):
             handler.on_moved(event)
@@ -1177,7 +1177,7 @@ class TestSlaveFileEventHandler:
         config = {
             "LOCAL_BUCKET": str(tmp_path),
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
         with (
             patch("hsync_client.p2p_websocket.CONFIG", config),
@@ -1268,7 +1268,7 @@ class TestSlaveFileEventHandler:
         config = {
             "LOCAL_BUCKET": str(tmp_path),
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
         with (
             patch("hsync_client.p2p_websocket.CONFIG", config),
@@ -1287,7 +1287,7 @@ class TestSlaveFileEventHandler:
         config = {
             "LOCAL_BUCKET": str(tmp_path),
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
         with (
             patch("hsync_client.p2p_websocket.CONFIG", config),
@@ -1309,7 +1309,7 @@ class TestSlaveFileEventHandler:
         config = {
             "LOCAL_BUCKET": str(tmp_path),
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
         with (
             patch("hsync_client.p2p_websocket.CONFIG", config),
@@ -1335,7 +1335,7 @@ class TestSlaveFileEventHandler:
         config = {
             "LOCAL_BUCKET": str(tmp_path),
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
         with (
             patch("hsync_client.p2p_websocket.CONFIG", config),
@@ -1360,7 +1360,7 @@ class TestSlaveFileEventHandler:
         config = {
             "LOCAL_BUCKET": str(tmp_path),
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
         with (
             patch("hsync_client.p2p_websocket.CONFIG", config),

@@ -43,7 +43,7 @@ from watchdog.events import (
     FileSystemEventHandler,
 )
 
-from hsync_client.config import CONFIG
+from hsync_client.config import CONFIG, deletions_are_kept
 from hsync_client.constants import HSYNCKEEP_FILENAME
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.utils import cid_suffix, ensure_str_path, is_same_paths, path_present
@@ -1020,8 +1020,8 @@ class BaseFileEventHandler(FileSystemEventHandler):
         if not event.is_directory and is_hidden_file(src_path):
             return
 
-        if CONFIG.get("IGNORE_DELETE", False):
-            log.debug(f'{self._label("IGNORE DEL", src_path)} "{src_path}" (ignore-delete mode)')
+        if deletions_are_kept(CONFIG):
+            log.debug(f'{self._label("IGNORE DEL", src_path)} "{src_path}" (deletion policy: keep)')
             return
 
         # Buffer the event instead of broadcasting immediately: the sibling

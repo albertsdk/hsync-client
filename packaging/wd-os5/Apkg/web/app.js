@@ -41,7 +41,6 @@
         'HSYNC_INSECURE',
         'HSYNC_P2P_PEER_DOWNLOAD', 'HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES',
         'HSYNC_P2P_ALLOW_UNAUTHENTICATED',
-        'HSYNC_IGNORE_DELETE',
         'HSYNC_COMPRESSION_ENABLED', 'HSYNC_DELTA_ENABLED', 'HSYNC_VERBOSE',
         'HSYNC_QUIET', 'HSYNC_DRY_RUN',
         'HSYNC_AUTOTUNE',
@@ -69,7 +68,7 @@
     let connectUnmasked = '';
     // Persisted Backup Mode state, used to ask for confirmation before a save
     // that would start propagating deletions.
-    let persistedIgnoreDelete = true;
+    let persistedDeletionPolicy = 'keep';
 
     // ID lookups use getElementById: querySelector can miss nodes while the
     // WD dashboard is still injecting the fragment (jQuery .load / remotewd).
@@ -162,7 +161,7 @@
             }
         });
         if (cfg.__VERSION__) $('#hsync-app-version').textContent = cfg.__VERSION__;
-        persistedIgnoreDelete = (cfg.HSYNC_IGNORE_DELETE === 'true');
+        persistedDeletionPolicy = (cfg.HSYNC_DELETION_POLICY || 'keep');
         syncModeVisibility();
     }
 
@@ -627,13 +626,13 @@
 
         const saveBtn = $('#hsync-btn-save');
         if (saveBtn) saveBtn.addEventListener('click', async () => {
-            // Turning Backup Mode off starts propagating deletions on the NAS.
-            // Ask once, like the desktop dialog, and restore the toggle when the
-            // answer is no.
-            const ignoreEl = $('#HSYNC_IGNORE_DELETE');
-            if (ignoreEl && persistedIgnoreDelete && !ignoreEl.checked
-                && !window.confirm(t('confirm.ignore_delete', 'Turning Backup Mode off propagates deletions to this NAS. Continue?'))) {
-                ignoreEl.checked = true;
+            // Switching from "keep" to "propagate" starts applying client
+            // deletions on this NAS. Ask once, like the desktop dialog, and put
+            // the previous policy back when the answer is no.
+            const policyEl = $('#HSYNC_DELETION_POLICY');
+            if (policyEl && persistedDeletionPolicy === 'keep' && policyEl.value === 'propagate'
+                && !window.confirm(t('confirm.deletion_policy', 'Apply client deletions to this NAS? Files deleted on a client will be deleted here too. Continue?'))) {
+                policyEl.value = 'keep';
                 return;
             }
             try {

@@ -238,7 +238,7 @@ class TestHandleLanEvent:
         config = {
             "LOCAL_BUCKET": str(tmp_path),
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
 
         with patch("hsync_client.event_dispatch.CONFIG", config):
@@ -248,8 +248,8 @@ class TestHandleLanEvent:
         assert not test_file.exists()
 
     @pytest.mark.asyncio
-    async def test_handle_deleted_ignore_delete_mode(self, tmp_path):
-        """Test that deletions are ignored in ignore-delete mode."""
+    async def test_handle_deleted_keep_policy(self, tmp_path):
+        """Deletions are ignored when the policy is keep."""
         # Create file
         test_file = tmp_path / "keepme.txt"
         test_file.write_text("content")
@@ -269,7 +269,7 @@ class TestHandleLanEvent:
         config = {
             "LOCAL_BUCKET": str(tmp_path),
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": True,
+            "DELETION_POLICY": "keep",
         }
 
         with patch("hsync_client.event_dispatch.CONFIG", config):
@@ -453,7 +453,7 @@ class TestHandleLanEvent:
         config = {
             "LOCAL_BUCKET": str(tmp_path),
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
 
         with patch("hsync_client.event_dispatch.CONFIG", config):
@@ -484,7 +484,7 @@ class TestHandleLanEvent:
         config = {
             "LOCAL_BUCKET": str(tmp_path),
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
 
         with patch("hsync_client.event_dispatch.CONFIG", config):
@@ -535,7 +535,7 @@ class TestHandleLanEvent:
         config = {
             "LOCAL_BUCKET": str(tmp_path),
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
 
         with patch("hsync_client.event_dispatch.CONFIG", config):
@@ -580,7 +580,7 @@ class TestHandleLanEvent:
         config = {
             "LOCAL_BUCKET": str(tmp_path),
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
         handler = P2PSlaveFileEventHandler("host", 9753, use_https=False)
         with patch("hsync_client.event_dispatch.CONFIG", config):
@@ -607,7 +607,7 @@ class TestHandleLanEvent:
         config = {
             "LOCAL_BUCKET": str(tmp_path),
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
 
         with patch("hsync_client.event_dispatch.CONFIG", config):
@@ -742,7 +742,7 @@ class TestSlaveRecordsLocalDeletionMarker:
             "LOCAL_BUCKET": str(tmp_path),
             "CID": cid,
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
 
         # A tracked file: the marker must inherit the recorded hash + clock.
@@ -803,7 +803,7 @@ class TestSlaveRecordsLocalDeletionMarker:
             "LOCAL_BUCKET": str(tmp_path),
             "CID": cid,
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
 
         with patch("hsync_client.state_backend.CONFIG", cfg):

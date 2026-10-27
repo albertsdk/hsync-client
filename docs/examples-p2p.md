@@ -72,11 +72,11 @@ HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b backup -p /mnt/data/b
 On the laptop (slave):
 ```bash
 HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b backup -p ~/Backup \
-  --sync-direction upload-only --ignore-delete
+  --sync-direction upload-only --deletion-policy keep
 ```
 
 `--sync-direction upload-only` pushes local changes without pulling remote ones;
-`--ignore-delete` keeps the NAS from following deletions, so a file removed on
+`--deletion-policy keep` keeps the NAS from applying deletions, so a file removed on
 the laptop stays on the backup.
 
 ## 2.4 Keep a peer in sync but never let it become master

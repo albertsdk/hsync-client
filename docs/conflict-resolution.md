@@ -412,6 +412,22 @@ no restore command or API. The default 90-day TTL only garbage-collects the
 marker; after a delete the content is already gone from disk. Keep verified
 backups if undelete is required.
 
+### Directories: sweep, not tombstones
+
+A directory carries no content hash, so it cannot be tombstoned. Instead, after
+a successful directory listing the engine removes a local directory that is
+**empty and no longer present on the other side**, deepest first. The removal is
+fail-closed: without a successful listing (peer unreachable, endpoint missing)
+nothing is removed, a directory that still holds anything is never removed, and
+dot-directories are always skipped. The sweep is suspended when deletions are
+not applied on this device (`--deletion-policy keep`) and when this device is
+the source (`--sync-direction upload-only`), where a local empty folder is user
+intent. A dry run never sweeps either.
+
+This is the observable difference between the two deletion policies for a
+folder whose last file was deleted elsewhere: `propagate` removes the empty
+folder here, `keep` leaves it in place.
+
 ---
 
 ## Boundary cases

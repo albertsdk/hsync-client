@@ -313,6 +313,14 @@ def _common_run_sync_kwargs(values: Mapping[str, Any]) -> dict[str, Any]:
     The p2p and server commands expose the same sync/transfer options; keeping
     the normalization here prevents the two command bodies from drifting.
     """
+    # Imported here: the config module pulls the pydantic models, which the CLI
+    # must not load at import time (see tests/test_startup_imports.py).
+    from hsync_client.config import DELETION_POLICIES
+
+    policy = values["deletion_policy"]
+    if policy is not None and policy not in DELETION_POLICIES:
+        allowed = ", ".join(DELETION_POLICIES)
+        raise typer.BadParameter(f"invalid --deletion-policy value: {policy!r}; use {allowed}")
     return {
         "bucket": values["bucket"],
         "env_file": values["env_file"],
@@ -328,7 +336,7 @@ def _common_run_sync_kwargs(values: Mapping[str, Any]) -> dict[str, Any]:
         "max_wait_timeout": values["max_wait_timeout"],
         "filter_path": values["filter_path"],
         "dryrun": values["dryrun"],
-        "ignore_delete": values["ignore_delete"],
+        "deletion_policy": values["deletion_policy"],
         "sync_direction": values["sync_direction"],
         "compression_enabled": not values["no_compression"],
         "delta_enabled": not values["no_delta"],
@@ -593,11 +601,17 @@ DryRunOpt = Annotated[
         rich_help_panel="Sync",
     ),
 ]
-IgnoreDeleteOpt = Annotated[
-    bool,
+DeletionPolicyOpt = Annotated[
+    str | None,
     typer.Option(
-        "--ignore-delete",
-        help="Do not propagate file deletions (useful for backup scenarios).",
+        "--deletion-policy",
+        help=(
+            "What a deletion does: 'propagate' (default: local deletions are applied "
+            "and propagated) or 'keep' (this device never deletes: local and remote "
+            "deletions are ignored, an additive backup)."
+        ),
+        metavar="POLICY",
+        show_default=False,
         rich_help_panel="Sync",
     ),
 ]
@@ -1230,7 +1244,7 @@ def p2p(
     max_wait_timeout: MaxWaitTimeoutOpt = MAX_WAIT_TIMEOUT_DEFAULT,
     filter_path: SubdirOpt = None,
     dryrun: DryRunOpt = False,
-    ignore_delete: IgnoreDeleteOpt = False,
+    deletion_policy: DeletionPolicyOpt = None,
     sync_direction: SyncDirectionOpt = SYNC_DIRECTION_DEFAULT,
     max_bandwidth_upload: LimitUploadOpt = None,
     max_bandwidth_download: LimitDownloadOpt = None,
@@ -1697,7 +1711,7 @@ def server(
     max_wait_timeout: MaxWaitTimeoutOpt = MAX_WAIT_TIMEOUT_DEFAULT,
     filter_path: SubdirOpt = None,
     dryrun: DryRunOpt = False,
-    ignore_delete: IgnoreDeleteOpt = False,
+    deletion_policy: DeletionPolicyOpt = None,
     sync_direction: SyncDirectionOpt = SYNC_DIRECTION_DEFAULT,
     max_bandwidth_upload: LimitUploadOpt = None,
     max_bandwidth_download: LimitDownloadOpt = None,

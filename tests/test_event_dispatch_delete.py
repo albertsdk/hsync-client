@@ -185,8 +185,8 @@ class TestApplyInboundDeleteEvent:
         assert mock_log.debug.called
         assert not mock_log.warning.called
 
-    async def test_delete_ignore_delete_mode(self, tmp_path):
-        """Skips deletion when ``IGNORE_DELETE`` is true."""
+    async def test_delete_keep_policy(self, tmp_path):
+        """Skips deletion when the policy is keep."""
         file_to_keep = tmp_path / "keep_me.txt"
         file_to_keep.write_text("content")
 
@@ -201,7 +201,7 @@ class TestApplyInboundDeleteEvent:
                 "permissions": "644",
             },
         }
-        config = {"LOCAL_BUCKET": str(tmp_path), "IGNORE_DELETE": True}
+        config = {"LOCAL_BUCKET": str(tmp_path), "DELETION_POLICY": "keep"}
 
         with patch("hsync_client.event_dispatch.CONFIG", config):
             await apply_inbound_event(event, REMOTE_DISPATCH_CTX)
@@ -226,7 +226,7 @@ class TestApplyInboundDeleteEvent:
                 "permissions": "644",
             },
         }
-        config = {"LOCAL_BUCKET": str(tmp_path), "IGNORE_DELETE": False}
+        config = {"LOCAL_BUCKET": str(tmp_path), "DELETION_POLICY": "propagate"}
 
         with patch("hsync_client.event_dispatch.CONFIG", config):
             await apply_inbound_event(event, REMOTE_DISPATCH_CTX)

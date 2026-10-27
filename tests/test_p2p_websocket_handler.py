@@ -163,7 +163,7 @@ class TestLANFileEventHandler:
             "LOCAL_BUCKET": str(tmp_path),
             "REMOTE_BUCKET": "remote",
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
 
         with (
@@ -492,7 +492,7 @@ class TestLANFileEventHandler:
             "LOCAL_BUCKET": str(tmp_path),
             "REMOTE_BUCKET": "remote",
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
 
         with (
@@ -553,7 +553,7 @@ class TestLANFileEventHandler:
             "LOCAL_BUCKET": str(tmp_path),
             "REMOTE_BUCKET": "remote",
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
 
         with (
@@ -567,8 +567,8 @@ class TestLANFileEventHandler:
             # Should broadcast the event
             ws_server.broadcast_sync.assert_called_once()
 
-    def test_on_deleted_ignore_delete_mode(self, handler, ws_server, tmp_path):
-        """Test that deletions are ignored in ignore-delete mode."""
+    def test_on_deleted_keep_policy(self, handler, ws_server, tmp_path):
+        """Deletions are ignored when the policy is keep."""
         test_file = tmp_path / "deleted.txt"
 
         event = FileDeletedEvent(str(test_file))
@@ -577,7 +577,7 @@ class TestLANFileEventHandler:
             "CID": "test-client",
             "LOCAL_BUCKET": str(tmp_path),
             "REMOTE_BUCKET": "remote",
-            "IGNORE_DELETE": True,
+            "DELETION_POLICY": "keep",
         }
 
         with patch("hsync_client.file_event_handler.CONFIG", config):
@@ -847,7 +847,7 @@ class TestLANFileEventHandler:
             "LOCAL_BUCKET": str(tmp_path),
             "REMOTE_BUCKET": "r",
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
         with patch("hsync_client.file_event_handler.CONFIG", config):
             handler.on_moved(event)
@@ -880,7 +880,7 @@ class TestLANFileEventHandler:
             "LOCAL_BUCKET": str(tmp_path),
             "REMOTE_BUCKET": "r",
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
         with (
             patch("hsync_client.file_event_handler.CONFIG", config),
@@ -1003,7 +1003,7 @@ class TestLANFileEventHandler:
             "LOCAL_BUCKET": str(tmp_path),
             "REMOTE_BUCKET": "r",
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
         with (
             patch("hsync_client.file_event_handler.CONFIG", config),

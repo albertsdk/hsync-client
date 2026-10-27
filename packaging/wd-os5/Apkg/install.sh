@@ -85,7 +85,7 @@ if [ ! -f "${HSYNC_ENV_FILE}" ]; then
 #
 # Defaults match the HSYNC desktop application, with one deliberate exception:
 # the NAS is a BACKUP target, so deletions made on the clients are never
-# propagated here (HSYNC_IGNORE_DELETE=true) and the backup cannot lose files
+# applied here (HSYNC_DELETION_POLICY=keep) and the backup cannot lose files
 # because a source host removed them.
 
 # Mode: p2p | server
@@ -170,7 +170,8 @@ HSYNC_SERVER_TOFU="false"
 # Sync behaviour
 # Periodic full check in seconds (0 = disabled).
 HSYNC_INTERVAL="0"
-HSYNC_IGNORE_DELETE="true"
+# The appliance is a backup target: deletions are never applied here.
+HSYNC_DELETION_POLICY="keep"
 HSYNC_COMPRESSION_ENABLED="true"
 HSYNC_DELTA_ENABLED="true"
 # Delta floors in KB; files at least this large use block-level sync.

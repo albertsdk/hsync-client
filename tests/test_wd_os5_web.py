@@ -293,7 +293,7 @@ def test_defaults_match_the_desktop_reference() -> None:
         "HSYNC_MASS_DELETE_PERCENT": "50",
         "HSYNC_MAX_CONCURRENT_TRANSFERS": "0",
         # Deliberate NAS deviation: this device is a backup target.
-        "HSYNC_IGNORE_DELETE": "true",
+        "HSYNC_DELETION_POLICY": "keep",
     }
     for key, value in expected.items():
         assert f'{key}="{value}"' in install, f"install.sh seed for {key}"

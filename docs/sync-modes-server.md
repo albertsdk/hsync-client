@@ -50,7 +50,7 @@ hsync server server.example.com -b mybucket -p ~/Sync
 
 Pass `--once` to run **one full sync cycle** and exit. It compares local and
 remote files, uploads changes, downloads updates, deletes obsolete files
-(unless `--ignore-delete` is set), then shuts down. If the server is
+(unless `--deletion-policy keep` is set), then shuts down. If the server is
 unreachable, it exits non-zero after the startup retries.
 
 This is ideal for:

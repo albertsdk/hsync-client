@@ -39,7 +39,7 @@ COMMON_OPTIONS = frozenset(
         "events_json_fd",
         "filter_path",
         "http_timeout",
-        "ignore_delete",
+        "deletion_policy",
         "ignore_patterns",
         "insecure",
         "local_path",

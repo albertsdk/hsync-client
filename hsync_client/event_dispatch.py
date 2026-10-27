@@ -43,7 +43,7 @@ from hsync_common.path_validation import (
 )
 from loguru import logger as log
 
-from hsync_client.config import CONFIG
+from hsync_client.config import CONFIG, deletions_are_kept
 from hsync_client.constants import HSYNCKEEP_FILENAME
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.p2p_inventory import NOOP_INVENTORY_OBSERVER, InventoryObserver
@@ -577,8 +577,8 @@ async def _rename_path(
 
 async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object = None) -> None:
     """Apply a delete event for either a directory or a file."""
-    if CONFIG.get("IGNORE_DELETE", False):
-        log.debug(f"{_tag('IGNORE DEL')} Deletion ignored (ignore-delete mode)")
+    if deletions_are_kept(CONFIG):
+        log.debug(f"{_tag('IGNORE DEL')} Deletion ignored (deletion policy: keep)")
         return
 
     if "path" in src:

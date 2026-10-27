@@ -571,11 +571,14 @@
                 <option value="download-only" data-i18n="direction.download_only">Receive only (from other devices)</option>
             </select>
         </label>
-        <label class="hsync-label hsync-check">
-            <input type="checkbox" name="HSYNC_IGNORE_DELETE" id="HSYNC_IGNORE_DELETE">
-            <span data-i18n="field.ignore_delete">Keep deleted files (Backup Mode)</span>
+        <label class="hsync-label">
+            <span data-i18n="field.deletion_policy">Deletions</span>
+            <select name="HSYNC_DELETION_POLICY" id="HSYNC_DELETION_POLICY">
+                <option value="keep" data-i18n="deletion_option.keep">Keep deleted files (Backup Mode)</option>
+                <option value="propagate" data-i18n="deletion_option.propagate">Apply deletions (propagate)</option>
+            </select>
         </label>
-        <p class="hsync-note" data-i18n="note.ignore_delete">Backup Mode keeps every file a client deletes. Turning it off propagates deletions, so the save asks for confirmation first.</p>
+        <p class="hsync-note" data-i18n="note.deletion_policy">Backup Mode keeps on this NAS every file a client deletes. Choosing "Apply deletions" starts applying client deletions here; the save asks for confirmation first.</p>
         <label class="hsync-label hsync-check">
             <input type="checkbox" name="HSYNC_COMPRESSION_ENABLED" id="HSYNC_COMPRESSION_ENABLED" checked>
             <span data-i18n="field.compression">Enable compression</span>

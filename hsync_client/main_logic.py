@@ -54,7 +54,6 @@ from hsync_client.config import (
     get_delta_enabled,
     get_discovery_timeout,
     get_heartbeat_interval,
-    get_ignore_delete,
     get_ignore_patterns,
     get_mass_delete_guard,
     get_mass_delete_percent,
@@ -79,6 +78,7 @@ from hsync_client.config import (
     get_server_url,
     get_stability_delay,
     load_env_file,
+    resolve_deletion_policy,
     set_config,
     set_debug,
 )
@@ -769,7 +769,7 @@ def run_sync(
     max_wait_timeout: int,
     filter_path: str | None,
     dryrun: bool,
-    ignore_delete: bool,
+    deletion_policy: str | None,
     sync_direction: str,
     compression_enabled: bool,
     max_bandwidth_upload: int | None,
@@ -1173,7 +1173,7 @@ def run_sync(
         ),
         "SERVER_FINGERPRINT": server_fingerprints or get_server_fingerprints(),
         "SERVER_CERT_FINGERPRINT": None,
-        "IGNORE_DELETE": ignore_delete or get_ignore_delete(),
+        "DELETION_POLICY": resolve_deletion_policy(deletion_policy),
         "COMPRESSION_ENABLED": compression_enabled and get_compression_enabled(),
         "SERVER_COMPRESSION_ENABLED": False,  # Set during WebSocket handshake
         "DELTA_ENABLED": delta_enabled and get_delta_enabled(),

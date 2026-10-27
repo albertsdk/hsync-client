@@ -15,7 +15,7 @@ Shared configuration options that apply to both Server Mode and p2p Mode.
 | `--once` | Run a single sync cycle and exit. Without it the client runs continuously and retries an unreachable server indefinitely (the default). In p2p mode it runs one slave sync cycle and exits (the master role stays continuous) | `false` |
 | `-i, --interval` | Force full sync every N seconds (continuous mode only) | — |
 | `--sync-direction` | Sync direction: `bidirectional`, `upload-only`, `download-only` | `bidirectional` |
-| `--ignore-delete` | Do not propagate file deletions (backup mode) | `false` |
+| `--deletion-policy` | What a deletion does: `propagate` (default: local deletions are applied and propagated) or `keep` (this device never deletes: local deletions are ignored and remote deletions are not applied, an additive backup) | `propagate` |
 | `--dry-run` | Dry run: show what would change without applying | `false` |
 
 ## Mass-Deletion Guard

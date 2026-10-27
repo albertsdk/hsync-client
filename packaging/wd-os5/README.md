@@ -142,7 +142,7 @@ option to configure.
 | Subfolder           | `--subdir`                                     | _empty_ (whole share)            |
 | Extra ignore patterns | `--ignore-pattern` (repeated)                | _empty_                          |
 | Ignore rules editor | `.hsyncignore` at the share root               | _empty file_                     |
-| Keep deleted files  | `--ignore-delete`                              | on (backup target)               |
+| Deletions           | `HSYNC_DELETION_POLICY`                        | `keep` (backup target)           |
 | Compression         | `--no-compression` when disabled               | enabled                          |
 | Delta transfer      | `--no-delta` when disabled                     | enabled                          |
 | Simulation mode     | `--dry-run`                                    | off                              |

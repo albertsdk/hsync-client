@@ -236,7 +236,7 @@ hsync server server.example.com -b mybucket \
   --mass-delete-threshold 10 --mass-delete-percent 10
 ```
 
-> Full decision flowchart and the relationship with `--ignore-delete` and
+> Full decision flowchart and the relationship with `--deletion-policy` and
 > `--sync-direction` are in [Configuration → Mass-Deletion
 > Guard](configuration.md#mass-deletion-guard).
 

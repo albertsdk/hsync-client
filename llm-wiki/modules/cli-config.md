@@ -41,6 +41,8 @@ with neither a `HOSTNAME` nor a resolvable
 starts — so the missing server never reaches the deep, late validation inside
 `run_sync`.
 
+`--deletion-policy {propagate,keep}` (`HSYNC_DELETION_POLICY`) is the only deletion control: it names the outcome instead of negating one, and both subcommands validate it before `run_sync` (see [sync-core.md](sync-core.md)).
+
 Flags map to env keys where `EnvSettings` has a field; capabilities JSON is
 built from `hsync_common.protocol.capabilities.build_capabilities` (schema v2:
 `subcommands` + per-subcommand `cli_options`) so the desktop can gate UI (§8).

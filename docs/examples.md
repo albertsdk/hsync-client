@@ -73,7 +73,7 @@ hsync server server.example.com -b large -p ~/Large
 
 ```bash
 # Never propagate deletions in either direction
-hsync server server.example.com --ignore-delete -b backup -p ~/Backup
+hsync server server.example.com --deletion-policy keep -b backup -p ~/Backup
 ```
 
 For a one-way backup (push only, destination never loses data), combine it with

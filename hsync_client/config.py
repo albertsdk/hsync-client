@@ -8,9 +8,11 @@ This module uses pydantic-settings for type-safe environment variable handling
 and provides typed configuration structures for the application.
 """
 
+from collections.abc import Mapping
 from functools import lru_cache
 from typing import Any, Literal, TypedDict, cast
 
+from hsync_common import defaults as hsync_defaults
 from hsync_common.constants import DELTA_MIN_FILE_SIZE, DELTA_MIN_FILE_SIZE_P2P
 from hsync_common.endpoint import (
     HostPort,
@@ -295,8 +297,13 @@ class EnvSettings(BaseSettings):
     )
 
     # Sync Settings
-    ignore_delete: bool = Field(
-        default=False, description="Ignore file deletion events (backup mode)"
+    deletion_policy: Literal["propagate", "keep"] = Field(
+        default=hsync_defaults.DELETION_POLICY_DEFAULT,
+        description=(
+            "What a deletion does: 'propagate' (default: local deletions are applied "
+            "and propagated) or 'keep' (this device never deletes: local and remote "
+            "deletions are ignored, an additive backup)"
+        ),
     )
     compression_enabled: bool = Field(
         default=True, description="Enable zstd compression for file transfers"
@@ -596,9 +603,42 @@ def get_allow_deletions() -> bool:
     return get_env_settings().allow_deletions
 
 
-def get_ignore_delete() -> bool:
-    """Get ignore delete setting from environment."""
-    return get_env_settings().ignore_delete
+# Values accepted by ``--deletion-policy`` / ``HSYNC_DELETION_POLICY``.
+DELETION_POLICIES: tuple[str, ...] = hsync_defaults.DELETION_POLICIES
+
+
+def deletions_are_kept(config: Mapping[str, object] | None = None) -> bool:
+    """Whether this run must never delete (``DELETION_POLICY=keep``).
+
+    The single read site for the policy: the watcher, the inbound event
+    dispatcher, the p2p master and the reconciliation all ask this question, so
+    the two directions cannot drift apart (``keep`` means *no* deletion on this
+    device; ``propagate`` lets deletions converge both ways).
+    """
+    active = CONFIG if config is None else config
+    return active.get("DELETION_POLICY", "propagate") == "keep"
+
+
+def get_deletion_policy() -> str:
+    """Get the deletion policy from the environment (default ``propagate``)."""
+    return get_env_settings().deletion_policy
+
+
+def resolve_deletion_policy(value: str | None) -> Literal["propagate", "keep"]:
+    """Resolve the effective policy (flag > env > default) and validate it.
+
+    The CLI validates the flag too, for a usage error instead of a traceback;
+    this is the single place that guarantees the resolved value is one the
+    engine understands.
+
+    Raises:
+        ValueError: the value is not one of :data:`DELETION_POLICIES`.
+    """
+    policy = value or get_deletion_policy()
+    if policy not in DELETION_POLICIES:
+        allowed = ", ".join(DELETION_POLICIES)
+        raise ValueError(f"invalid deletion policy {policy!r}; use {allowed}")
+    return cast(Literal["propagate", "keep"], policy)
 
 
 def get_compression_enabled() -> bool:
@@ -811,8 +851,8 @@ class HsyncConfig(TypedDict):
     SERVER_FINGERPRINT: tuple[str, ...]
     # Server certificate fingerprint for HTTPS verification (set at runtime)
     SERVER_CERT_FINGERPRINT: str | None
-    # Ignore file deletion events (backup mode)
-    IGNORE_DELETE: bool
+    # What a deletion does on this device (see deletions_are_kept)
+    DELETION_POLICY: Literal["propagate", "keep"]
     # Enable zstd compression for file transfers
     COMPRESSION_ENABLED: bool
     # Server compression capability (set at runtime after handshake)

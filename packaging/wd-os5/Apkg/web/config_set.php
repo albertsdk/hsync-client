@@ -63,7 +63,7 @@ const KEYS = [
     'HSYNC_NTP_HOSTS',
     'HSYNC_SERVER', 'HSYNC_API_KEY', 'HSYNC_INSECURE', 'HSYNC_CA_CERT',
     'HSYNC_SERVER_TRUST', 'HSYNC_SERVER_FINGERPRINT', 'HSYNC_SERVER_TOFU',
-    'HSYNC_INTERVAL', 'HSYNC_IGNORE_DELETE', 'HSYNC_COMPRESSION_ENABLED',
+    'HSYNC_INTERVAL', 'HSYNC_DELETION_POLICY', 'HSYNC_COMPRESSION_ENABLED',
     'HSYNC_DELTA_ENABLED', 'HSYNC_DELTA_MIN_FILE_SIZE', 'HSYNC_DELTA_MIN_FILE_SIZE_P2P',
     'HSYNC_MAX_BW_UPLOAD', 'HSYNC_MAX_BW_DOWNLOAD', 'HSYNC_MIN_FREE_DISK',
     'HSYNC_MAX_INBOUND_SIZE_MB',
@@ -285,6 +285,9 @@ foreach (KEYS as $key) {
         case 'HSYNC_P2P_TRUST':
             if (!in_array($val, ['accept-new', 'strict'], true)) $val = 'accept-new';
             break;
+        case 'HSYNC_DELETION_POLICY':
+            if (!in_array($val, ['keep', 'propagate'], true)) $val = 'keep';
+            break;
         case 'HSYNC_PREFER_MASTER':
         case 'HSYNC_NEVER_MASTER':
         case 'HSYNC_INSECURE':
@@ -299,7 +302,6 @@ foreach (KEYS as $key) {
         case 'HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES':
         case 'HSYNC_P2P_ALLOW_UNAUTHENTICATED':
         case 'HSYNC_ALLOW_DELETIONS':
-        case 'HSYNC_IGNORE_DELETE':
         case 'HSYNC_COMPRESSION_ENABLED':
         case 'HSYNC_DELTA_ENABLED':
         case 'HSYNC_VERBOSE':

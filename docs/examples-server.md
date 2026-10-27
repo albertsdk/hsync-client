@@ -53,12 +53,12 @@ hsync server server.example.com -b work -p ~/Work
 ```bash
 # One-way push that never deletes on the destination
 hsync server server.example.com -b backup -p ~/Backup \
-  --sync-direction upload-only --ignore-delete
+  --sync-direction upload-only --deletion-policy keep
 ```
 
 `--sync-direction upload-only` sends local changes without pulling remote ones;
-`--ignore-delete` stops deletions from propagating in either direction, so a
-file removed on the source stays on the server. Drop `--ignore-delete` for a
+`--deletion-policy keep` stops deletions in either direction, so a
+file removed on the source stays on the server. Drop `--deletion-policy keep` for a
 strict mirror that follows deletions.
 
 ## 1.4 Read-only mirror from the server

@@ -21,6 +21,44 @@ from hsync_client.config import (
 )
 
 
+class TestDeletionPolicy:
+    """The policy names the outcome: propagate by default, keep for a backup."""
+
+    def test_defaults_to_propagate(self, monkeypatch):
+        from hsync_client.config import get_deletion_policy
+
+        monkeypatch.delenv("HSYNC_DELETION_POLICY", raising=False)
+        get_env_settings.cache_clear()
+        try:
+            assert get_deletion_policy() == "propagate"
+        finally:
+            get_env_settings.cache_clear()
+
+    def test_keep_is_read_from_the_environment(self, monkeypatch):
+        from hsync_client.config import get_deletion_policy
+
+        monkeypatch.setenv("HSYNC_DELETION_POLICY", "keep")
+        get_env_settings.cache_clear()
+        try:
+            assert get_deletion_policy() == "keep"
+        finally:
+            get_env_settings.cache_clear()
+
+    def test_an_unknown_policy_is_rejected(self, monkeypatch):
+        from pydantic import ValidationError
+
+        monkeypatch.setenv("HSYNC_DELETION_POLICY", "nope")
+        with pytest.raises(ValidationError):
+            EnvSettings()
+
+    def test_deletions_are_kept_reads_the_given_config(self):
+        from hsync_client.config import deletions_are_kept
+
+        assert deletions_are_kept({"DELETION_POLICY": "keep"}) is True
+        assert deletions_are_kept({"DELETION_POLICY": "propagate"}) is False
+        assert deletions_are_kept({}) is False
+
+
 class TestSetDebug:
     """Tests for set_debug and is_debug."""
 
@@ -86,7 +124,7 @@ class TestEnvSettings:
         assert settings.p2p_group is None
         assert settings.p2p_listen_port is None
         assert settings.discovery_timeout is None
-        assert settings.ignore_delete is False
+        assert settings.deletion_policy == "propagate"
         assert settings.compression_enabled is True
         assert settings.p2p_peer_download is True
         assert settings.p2p_peer_read_cap == 2

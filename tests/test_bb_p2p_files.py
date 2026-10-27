@@ -127,9 +127,49 @@ class TestP2PFileDeletion:
             _terminate(master)
 
 
+class TestP2POfflineEmptyDir:
+    def test_directory_removed_while_offline_is_swept(
+        self, p2p_master_dir, p2p_slave_dir, p2p_bucket
+    ):
+        """A folder emptied while the slave is offline must not linger as a shell.
+
+        The file deletion travels as a tombstone, but a directory has no
+        tombstone: only the sweep, run on the first cycle against a successful
+        /dirs listing, can remove the empty folder the slave still holds.
+        """
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
+        try:
+            _wait_for_master(master, p2p_slave_dir, p2p_bucket)
+            (Path(p2p_master_dir) / "gone").mkdir()
+            (Path(p2p_master_dir) / "gone" / "file.txt").write_bytes(b"x\n")
+
+            slave = _p2p_start(p2p_slave_dir, p2p_bucket, never_master=True)
+            try:
+                assert _wait_for_file(str(Path(p2p_slave_dir) / "gone" / "file.txt"), timeout=30)
+                assert _wait_for_slave_events(slave), "Slave is not listening"
+            finally:
+                _terminate(slave)
+
+            # The master removes the folder (and its only file) while the slave
+            # is down, so the slave never sees a live deletion event.
+            (Path(p2p_master_dir) / "gone" / "file.txt").unlink()
+            (Path(p2p_master_dir) / "gone").rmdir()
+            assert _wait_for_file_gone(str(Path(p2p_master_dir) / "gone"), timeout=10)
+
+            restarted = _p2p_start(p2p_slave_dir, p2p_bucket, never_master=True)
+            try:
+                assert _wait_for_file_gone(str(Path(p2p_slave_dir) / "gone"), timeout=30), (
+                    "emptied directory still present on the restarted slave"
+                )
+            finally:
+                _terminate(restarted)
+        finally:
+            _terminate(master)
+
+
 class TestP2PIgnoreDelete:
-    def test_ignore_delete_flag_preserves_file(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
-        """--ignore-delete keeps the file on the slave when deleted on the master."""
+    def test_keep_policy_preserves_file(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
+        """--deletion-policy keeps the file on the slave when deleted on the master."""
         # Given a serving master with a synced file
         master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
@@ -140,7 +180,7 @@ class TestP2PIgnoreDelete:
                 p2p_slave_dir,
                 p2p_bucket,
                 never_master=True,
-                extra_args=("--ignore-delete",),
+                extra_args=("--deletion-policy", "keep"),
             )
             try:
                 assert _wait_for_file(str(Path(p2p_slave_dir) / "keep_me.txt"), timeout=30)
@@ -148,7 +188,7 @@ class TestP2PIgnoreDelete:
                 # would make the "file preserved" assertion pass vacuously.
                 assert _wait_for_slave_events(slave), "Slave is not listening for master events"
 
-                # When the file is deleted on the master with --ignore-delete
+                # When the file is deleted on the master with --deletion-policy
                 (Path(p2p_master_dir) / "keep_me.txt").unlink()
                 time.sleep(5)
 

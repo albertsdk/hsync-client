@@ -201,7 +201,7 @@ systemd unit's `ExecStart`; the rest are consumed directly by the hsync binary.
 | `HSYNC_NEVER_MASTER` | `false` | Never become master; always remain a client/slave |
 | `HSYNC_SERVER` | *(empty)* | Server endpoint: `host`/`host:port`/`[IPv6]`/`[IPv6]:port` or full `https://` URL (for server mode) |
 | `HSYNC_API_KEY` | *(empty)* | API key (for server mode) |
-| `HSYNC_IGNORE_DELETE` | `false` | Do not propagate file deletions (backup mode) |
+| `HSYNC_DELETION_POLICY` | `propagate` | What a deletion does: `propagate` or `keep` (never delete on this device) |
 | `HSYNC_COMPRESSION_ENABLED` | `true` | Enable zstd compression for file transfers |
 
 > Variables marked with † are used in the unit's `ExecStart` line and are not

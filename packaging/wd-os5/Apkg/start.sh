@@ -61,7 +61,7 @@ fi
 
 # These values are the defaults the web UI ships and match the desktop
 # application, with one deliberate exception: the NAS is a backup target, so
-# deletions from the clients are never propagated (HSYNC_IGNORE_DELETE=true)
+# deletions from the clients are never applied (HSYNC_DELETION_POLICY=keep)
 # and the backup cannot lose files because a source host removed them.
 : "${HSYNC_MODE:=p2p}"
 : "${HSYNC_PATH:=${HSYNC_DATA_DIR}}"
@@ -96,7 +96,7 @@ fi
 : "${HSYNC_SERVER_FINGERPRINT:=}"
 : "${HSYNC_SERVER_TOFU:=false}"
 : "${HSYNC_INTERVAL:=0}"
-: "${HSYNC_IGNORE_DELETE:=true}"
+: "${HSYNC_DELETION_POLICY:=keep}"
 : "${HSYNC_COMPRESSION_ENABLED:=true}"
 : "${HSYNC_DELTA_ENABLED:=true}"
 : "${HSYNC_DELTA_MIN_FILE_SIZE:=256}"
@@ -202,7 +202,7 @@ if is_uint_gt0 "${HSYNC_INTERVAL}"; then
 else
     export HSYNC_RESYNC=0
 fi
-[ "${HSYNC_IGNORE_DELETE}" = "true" ]  && set -- "$@" --ignore-delete
+[ "${HSYNC_DELETION_POLICY}" = "keep" ] && set -- "$@" --deletion-policy keep
 [ "${HSYNC_COMPRESSION_ENABLED}" = "false" ] && set -- "$@" --no-compression
 [ "${HSYNC_DELTA_ENABLED}" = "false" ] && set -- "$@" --no-delta
 [ "${HSYNC_DRY_RUN}" = "true" ]        && set -- "$@" --dry-run

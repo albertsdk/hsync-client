@@ -540,7 +540,7 @@ class TestRemoteEdgeCases:
 
 
 class TestRemoteSyncIgnoreDelete:
-    def test_ignore_delete_keeps_local_file(
+    def test_keep_policy_keeps_local_file(
         self, live_server, bb_bucket, local_dir, run_sync_once, bb_server_upload
     ):
         # Given a synced local file that is then deleted on the server
@@ -549,8 +549,8 @@ class TestRemoteSyncIgnoreDelete:
         run_sync_once(bb_bucket, local_dir)
         _server_delete(live_server, bb_bucket, "keep.txt")
 
-        # When syncing with --ignore-delete
-        result = run_sync_once(bb_bucket, local_dir, "--ignore-delete")
+        # When syncing with --deletion-policy
+        result = run_sync_once(bb_bucket, local_dir, "--deletion-policy", "keep")
 
         # Then the local copy survives the remote deletion
         assert result.exit_code == 0

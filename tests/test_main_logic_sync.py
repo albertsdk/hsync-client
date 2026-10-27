@@ -442,7 +442,7 @@ class _RunSyncKwargs(TypedDict, total=False):
     max_wait_timeout: int
     filter_path: str | None
     dryrun: bool
-    ignore_delete: bool
+    deletion_policy: str | None
     sync_direction: str
     compression_enabled: bool
     max_bandwidth_upload: int | None
@@ -482,7 +482,7 @@ def _default_run_sync_kwargs(
         "max_wait_timeout": 60,
         "filter_path": None,
         "dryrun": False,
-        "ignore_delete": False,
+        "deletion_policy": "propagate",
         "sync_direction": "bidirectional",
         "compression_enabled": True,
         "max_bandwidth_upload": None,

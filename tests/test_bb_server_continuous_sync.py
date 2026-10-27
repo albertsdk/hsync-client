@@ -412,7 +412,7 @@ class TestContinuousSync:
         finally:
             _terminate(proc)
 
-    def test_ignore_delete_keeps_local_file(
+    def test_keep_policy_keeps_local_file(
         self,
         live_server,
         bb_bucket,
@@ -422,11 +422,11 @@ class TestContinuousSync:
         bb_server_files,
         bb_sample,
     ):
-        """Watch mode with --ignore-delete preserves the server copy when the
+        """Watch mode with --deletion-policy preserves the server copy when the
         local file is deleted."""
-        # Given a watch client with --ignore-delete, ready to receive events
+        # Given a watch client with --deletion-policy, ready to receive events
         log_path = _client_log_path(local_dir)
-        proc = watch_sync(bb_bucket, local_dir, "--log-file", log_path, "--ignore-delete")
+        proc = watch_sync(bb_bucket, local_dir, "--log-file", log_path, "--deletion-policy", "keep")
         try:
             assert _wait_for_ready(local_dir, proc, log_path), (
                 "continuous mode did not become ready\n"
@@ -445,10 +445,10 @@ class TestContinuousSync:
             local_file.unlink()
 
             # Then the server copy is still present after a quiet window
-            # (--ignore-delete must prevent the local deletion from propagating)
+            # (--deletion-policy must prevent the local deletion from propagating)
             time.sleep(5)
             assert filename in bb_server_files(bb_bucket), (
-                f"Server file was deleted despite --ignore-delete. {s.ctx}\n"
+                f"Server file was deleted despite --deletion-policy. {s.ctx}\n"
                 f"--- client log tail ---\n{_watch_client_log_tail(log_path)}"
             )
         finally:

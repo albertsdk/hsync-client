@@ -80,7 +80,7 @@ from watchdog.events import (
 )
 
 from hsync_client.capabilities import adopt_remote_capabilities, local_capabilities
-from hsync_client.config import CONFIG
+from hsync_client.config import CONFIG, deletions_are_kept
 from hsync_client.constants import (
     HSYNCKEEP_FILENAME,
     P2P_PEER_READ_CAP_DEFAULT,
@@ -2600,9 +2600,9 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
         if CONFIG.get("SYNC_DIRECTION") == "download-only":
             return
 
-        # Skip if in ignore-delete mode
-        if CONFIG.get("IGNORE_DELETE", False):
-            log.debug(f"{ActionLabel.LOCAL_IGNORE_DEL} Deletion ignored (ignore-delete mode)")
+        # Skip when the policy keeps deletions
+        if deletions_are_kept(CONFIG):
+            log.debug(f"{ActionLabel.LOCAL_IGNORE_DEL} Deletion ignored (deletion policy: keep)")
             return
 
         # Causal tombstone (ADR-0003): the deletion must survive locally even
@@ -2709,7 +2709,7 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
                 self._inventory_observer.remove_file(src_path)
             if CONFIG.get("SYNC_DIRECTION") == "download-only":
                 return
-            if not CONFIG.get("IGNORE_DELETE", False):
+            if not deletions_are_kept(CONFIG):
                 # Causal tombstone (ADR-0003): a hide/move-away is a local
                 # deletion and must survive locally even when the master is
                 # unreachable (same guarantee as ``on_deleted``).

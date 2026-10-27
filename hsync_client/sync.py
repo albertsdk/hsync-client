@@ -56,7 +56,7 @@ from requests import RequestException
 
 from hsync_client import sync_state
 from hsync_client.autotune import update_bw_ema
-from hsync_client.config import CONFIG, is_debug
+from hsync_client.config import CONFIG, deletions_are_kept, is_debug
 from hsync_client.constants import (
     HSYNCKEEP_FILENAME,
     HTTP_TIMEOUT_DEFAULT,
@@ -708,12 +708,12 @@ async def sync(
         # Merge the surviving deletions back for execution
         deletes = tombstone_deletes + guarded_deletes
 
-        # --ignore-delete skips ALL local deletions (including tombstone
-        # confirmed ones), mirroring the filter in get_sync_actions.
-        if CONFIG.get("IGNORE_DELETE", False):
+        # ``keep`` skips ALL local deletions (including tombstone-confirmed
+        # ones), mirroring the filter in get_sync_actions.
+        if deletions_are_kept(CONFIG):
             log.info(
                 f"{ActionLabel.GUARD} Ignoring {len(deletes)} local deletion(s) "
-                "(ignore-delete mode)"
+                "(deletion policy: keep)"
             )
             deletes = []
 
@@ -812,8 +812,12 @@ async def sync(
         # while the WSS was down during a burst.
         if _dir_converge_enabled(p2p_mode):
             remote_dirs = get_dirs_remote()
-            if reconcile_dirs and remote_dirs is not None:
-                reconcile_directories(remote_dirs, p2p_mode=p2p_mode)
+            if remote_dirs is not None:
+                if reconcile_dirs:
+                    reconcile_directories(remote_dirs, p2p_mode=p2p_mode)
+                # Directories carry no tombstones, so a folder removed on the
+                # other side would leave an empty shell here forever.
+                sweep_empty_local_dirs(remote_dirs)
             converge_directory_permissions(remote_dirs or [])
 
         # Persist refreshed merge bases (in-sync refresh, retain, clear-on-delete,
@@ -1789,6 +1793,78 @@ def converge_directory_permissions(remote_dirs: list[dict]) -> None:
             log.debug('Permission-only converge (remote): "{}" ({})', local_dir.path, sanitized)
         except OSError as e:
             log.warning(f'Could not set directory permissions for "{local_dir.path}": {e}')
+
+
+def _remote_dir_rels(remote_dirs: list[dict]) -> set[str]:
+    """Return the safe, in-scope relative paths of a ``/dirs`` listing."""
+    filter_path = CONFIG.get("FILTER_PATH")
+    rels: set[str] = set()
+    for info in remote_dirs:
+        if not isinstance(info, dict):
+            continue
+        rel = info.get("path")
+        if not isinstance(rel, str):
+            continue
+        rel = rel.replace("\\", "/").strip("/")
+        if not rel or validate_remote_relpath(rel) is None:
+            continue
+        if filter_path and not _in_subdir_rel(rel, filter_path):
+            continue
+        rels.add(rel)
+    return rels
+
+
+def sweep_empty_local_dirs(remote_dirs: list[dict]) -> int:
+    """Remove local directories that are empty and absent from the peer.
+
+    A directory has no tombstone, so a folder whose last file was deleted on
+    another device leaves an empty shell here. The sweep runs only with a
+    *successful* ``/dirs`` listing (fail-closed: an unreachable or older peer
+    never triggers a removal), only removes a directory the OS refuses to keep
+    because it is non-empty (``rmdir`` fails, nothing is touched), and is
+    suspended when deletions are kept (``keep`` policy) or when this node is
+    the source (``upload-only``, where a local empty folder is user intent).
+
+    Consumers: hsync-client's ``sync()`` only (the desktop and Android drive the
+    same engine, so they inherit it).
+
+    Returns:
+        The number of removed directories.
+    """
+    if deletions_are_kept(CONFIG):
+        return 0
+    direction = CONFIG.get("SYNC_DIRECTION", "bidirectional")
+    if direction == "upload-only":
+        return 0
+    if CONFIG.get("DRYRUN"):
+        return 0
+
+    remote_rels = _remote_dir_rels(remote_dirs)
+    local_bucket = CONFIG["LOCAL_BUCKET"]
+    filter_path = CONFIG.get("FILTER_PATH")
+    removed = 0
+    for root, _dirs, _files in os.walk(local_bucket, topdown=False):
+        rel = os.path.relpath(root, local_bucket).replace("\\", "/")
+        if rel == "." or rel in remote_rels:
+            continue
+        if filter_path and not _in_subdir_rel(rel, filter_path):
+            continue
+        if validate_remote_relpath(rel) is None:
+            continue
+        # Fail-safe for a destructive operation: a dot-directory is never swept,
+        # whatever the ignore matcher's root happens to be.
+        if any(part.startswith(".") for part in rel.split("/")):
+            continue
+        if is_hidden_dir(root):
+            continue
+        try:
+            os.rmdir(root)
+        except OSError:
+            # Non-empty (still holds content) or not removable: keep it.
+            continue
+        log.debug(f'Removed empty local directory: "{root}"')
+        removed += 1
+    return removed
 
 
 def reconcile_directories(remote_dirs: list[dict], *, p2p_mode: bool) -> None:

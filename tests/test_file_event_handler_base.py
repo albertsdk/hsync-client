@@ -928,15 +928,15 @@ class TestFileEventHandler:
         assert "/bucket/new.txt" in self.handler._last_broadcast_stat
         assert len(self.handler._last_broadcast_stat) == DEDUP_MAX_ENTRIES
 
-    # -- on_deleted ignore-delete --
+    # -- on_deleted: keep policy --
 
-    def test_on_deleted_ignore_delete_skips_file(self):
-        """on_deleted skips file deletion when IGNORE_DELETE is True."""
+    def test_on_deleted_keep_policy_skips_file(self):
+        """on_deleted skips file deletion when the policy is keep."""
         event = MagicMock()
         event.is_directory = False
         event.src_path = "/bucket/file.txt"
 
-        config = {"IGNORE_DELETE": True}
+        config = {"DELETION_POLICY": "keep"}
 
         with (
             patch("hsync_client.file_event_handler.CONFIG", config),
@@ -946,13 +946,13 @@ class TestFileEventHandler:
             self.handler.on_deleted(event)
             mock_run.assert_not_called()
 
-    def test_on_deleted_ignore_delete_skips_dir(self):
-        """on_deleted skips directory deletion when IGNORE_DELETE is True."""
+    def test_on_deleted_keep_policy_skips_dir(self):
+        """on_deleted skips directory deletion when the policy is keep."""
         event = MagicMock()
         event.is_directory = True
         event.src_path = "/bucket/subdir"
 
-        config = {"IGNORE_DELETE": True}
+        config = {"DELETION_POLICY": "keep"}
 
         with (
             patch("hsync_client.file_event_handler.CONFIG", config),
@@ -972,7 +972,7 @@ class TestFileEventHandler:
             "CID": "testcid",
             "LOCAL_BUCKET": "/bucket",
             "REMOTE_BUCKET": "mybucket",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
 
         with (
@@ -998,7 +998,7 @@ class TestFileEventHandler:
             "CID": "testcid",
             "LOCAL_BUCKET": "/bucket",
             "REMOTE_BUCKET": "mybucket",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
 
         child_file = MagicMock()
@@ -1039,7 +1039,7 @@ class TestFileEventHandler:
             "CID": "testcid",
             "LOCAL_BUCKET": "/bucket",
             "REMOTE_BUCKET": "mybucket",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
 
         file_a = MagicMock()
@@ -1078,7 +1078,7 @@ class TestFileEventHandler:
             "CID": "testcid",
             "LOCAL_BUCKET": str(tmp_path),
             "REMOTE_BUCKET": "mybucket",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
         event = MagicMock()
         event.is_directory = False
@@ -1119,7 +1119,7 @@ class TestFileEventHandler:
             "CID": "testcid",
             "LOCAL_BUCKET": str(tmp_path),
             "REMOTE_BUCKET": "mybucket",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
         gone_event = MagicMock()
         gone_event.is_directory = False
@@ -1155,7 +1155,7 @@ class TestFileEventHandler:
             "CID": "testcid",
             "LOCAL_BUCKET": "/bucket",
             "REMOTE_BUCKET": "mybucket",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
 
         child_file = MagicMock()
@@ -1832,7 +1832,7 @@ class TestFileEventHandler:
             "CID": "testcid",
             "LOCAL_BUCKET": "/bucket",
             "REMOTE_BUCKET": "mybucket",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
 
         with (
@@ -1875,7 +1875,7 @@ class TestFileEventHandler:
             "CID": "testcid",
             "LOCAL_BUCKET": "/bucket",
             "REMOTE_BUCKET": "mybucket",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
 
         with (
@@ -1909,7 +1909,7 @@ class TestFileEventHandler:
             "CID": "testcid",
             "LOCAL_BUCKET": "/bucket",
             "REMOTE_BUCKET": "mybucket",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
 
         with (
@@ -2011,7 +2011,7 @@ class TestFileEventHandler:
             "CID": "testcid",
             "LOCAL_BUCKET": "/bucket",
             "REMOTE_BUCKET": "mybucket",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
 
         with (
@@ -2053,7 +2053,7 @@ class TestFileEventHandler:
             "CID": "testcid",
             "LOCAL_BUCKET": "/bucket",
             "REMOTE_BUCKET": "mybucket",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
 
         with (
@@ -2092,7 +2092,7 @@ class TestFileEventHandler:
             "CID": "testcid",
             "LOCAL_BUCKET": "/bucket",
             "REMOTE_BUCKET": "mybucket",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
 
         mock_stat = MagicMock()
@@ -2178,7 +2178,7 @@ class TestRemoteModeOriginLabels:
             "LOCAL_BUCKET": str(tmp_path),
             "REMOTE_BUCKET": "remote",
             "SYNC_DIRECTION": "bidirectional",
-            "IGNORE_DELETE": False,
+            "DELETION_POLICY": "propagate",
         }
 
         with (

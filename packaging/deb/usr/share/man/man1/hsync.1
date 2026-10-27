@@ -220,9 +220,18 @@ Sync only files within this subdirectory path.
 .BR \-n ", " \-\-dry\-run
 Show what would be done without making any changes.
 .TP
-.B \-\-ignore\-delete
-Do not propagate file deletions. Useful for backup scenarios
-where you never want remote files deleted when they disappear locally.
+.BI \-\-deletion\-policy\fP= POLICY
+What a deletion does. One of:
+.RS
+.TP
+.I propagate
+(default) Local deletions are applied and propagated to the other side.
+.TP
+.I keep
+This device never deletes: local deletions are ignored (no deletion marker is
+recorded) and deletions coming from the other side are not applied, so the
+folder only grows. Use it for an additive backup target.
+.RE
 .TP
 .BR \-\-sync\-direction =\fIDIR\fP
 Sync direction. One of:
@@ -877,9 +886,10 @@ Peers are not authenticated and reads are open to the network.
 Accept the deletion risk without an interactive confirmation (default:
 .BR false ).
 .TP
-.B HSYNC_IGNORE_DELETE
-Do not propagate file deletions (default:
-.BR false ).
+.B HSYNC_DELETION_POLICY
+What a deletion does: propagate (default) or keep (this device never deletes,
+an additive backup). See
+.BR \-\-deletion\-policy .
 .TP
 .B HSYNC_COMPRESSION_ENABLED
 Enable zstd compression for file transfers (default:
@@ -1249,7 +1259,7 @@ hsync state reset \-\-folder ~/Photos \-\-quarantine
 Backup mode (upload only, never delete remote files):
 .RS
 .EX
-hsync server server.example.com \-b backup \-\-sync\-direction upload\-only \-\-ignore\-delete
+hsync server server.example.com \-b backup \-\-sync\-direction upload\-only \-\-deletion\-policy keep
 .EE
 .RE
 .TP

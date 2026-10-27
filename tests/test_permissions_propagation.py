@@ -121,7 +121,7 @@ def _mock_engine(sync_mod, *, direction: str):
                 "REMOTE_BUCKET": "demo",
                 "SYNC_DIRECTION": direction,
                 "CID": "TestClientX1234567890",
-                "IGNORE_DELETE": False,
+                "DELETION_POLICY": "propagate",
             },
         )
     )
