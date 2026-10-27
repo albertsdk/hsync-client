@@ -62,6 +62,54 @@ class TestRunPreview:
             # Should log download action
             assert any("TO DOWNLOAD" in str(call) for call in mock_logger.info.call_args_list)
 
+    def test_preview_hides_deletions_under_the_keep_policy(self, tmp_path):
+        """`keep` never applies a deletion: the preview must not promise one."""
+        from hsync_common.models.file import File
+        from hsync_common.models.sync_action import SyncAction, SyncActionName
+
+        mock_logger = MagicMock()
+        config = {"P2P_MODE": False, "DELETION_POLICY": "keep"}
+        file_obj = File(str(tmp_path / "gone.txt"))
+        file_obj.size = 12
+        delete_action = SyncAction(file_obj, SyncActionName.delete)
+
+        with (
+            patch("hsync_client.preview.CONFIG", config),
+            patch("hsync_client.preview.ensure_hsynckeep_files"),
+            patch("hsync_client.preview.get_files_local", return_value=[]),
+            patch("hsync_client.preview.get_files_remote", return_value=[]),
+            patch("hsync_client.preview.get_tombstones_remote", return_value={}),
+            patch("hsync_client.preview.get_sync_actions", return_value=[delete_action]),
+        ):
+            _run_preview(mock_logger)
+
+        assert not any("TO DELETE" in str(call) for call in mock_logger.info.call_args_list)
+        assert any("0 deletes" in str(call) for call in mock_logger.info.call_args_list), (
+            "the summary must count the skipped deletions as zero"
+        )
+
+    def test_preview_still_shows_deletions_when_propagating(self, tmp_path):
+        from hsync_common.models.file import File
+        from hsync_common.models.sync_action import SyncAction, SyncActionName
+
+        mock_logger = MagicMock()
+        config = {"P2P_MODE": False, "DELETION_POLICY": "propagate"}
+        file_obj = File(str(tmp_path / "gone.txt"))
+        file_obj.size = 12
+        delete_action = SyncAction(file_obj, SyncActionName.delete)
+
+        with (
+            patch("hsync_client.preview.CONFIG", config),
+            patch("hsync_client.preview.ensure_hsynckeep_files"),
+            patch("hsync_client.preview.get_files_local", return_value=[]),
+            patch("hsync_client.preview.get_files_remote", return_value=[]),
+            patch("hsync_client.preview.get_tombstones_remote", return_value={}),
+            patch("hsync_client.preview.get_sync_actions", return_value=[delete_action]),
+        ):
+            _run_preview(mock_logger)
+
+        assert any("TO DELETE" in str(call) for call in mock_logger.info.call_args_list)
+
     def test_preview_with_uploads(self, tmp_path):
         """Test preview showing files to upload."""
         from hsync_common.models.file import File

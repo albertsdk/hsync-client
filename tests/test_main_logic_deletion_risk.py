@@ -46,6 +46,43 @@ class TestCheckDeletionRisk:
         )
         mock_logger.warning.assert_not_called()
 
+    def test_keep_policy_no_warning_and_no_prompt(self, tmp_path):
+        """A `keep` device cannot delete locally, so nothing is confirmed."""
+        (tmp_path / "file.txt").write_text("content")
+        mock_logger = MagicMock()
+        with (
+            patch("hsync_client.main_logic.CONFIG", {"DELETION_POLICY": "keep"}),
+            patch("hsync_client.main_logic.is_tty_interactive", return_value=False),
+        ):
+            _check_deletion_risk(
+                local_path=str(tmp_path),
+                p2p_mode=True,
+                prefer_master=False,
+                sync_direction="download-only",
+                allow_deletions=False,
+                logger=mock_logger,
+            )
+        mock_logger.warning.assert_not_called()
+
+    def test_propagate_still_warns_in_download_only(self, tmp_path):
+        """The mitigation must not silence the real risk."""
+        (tmp_path / "file.txt").write_text("content")
+        mock_logger = MagicMock()
+        with (
+            patch("hsync_client.main_logic.CONFIG", {"DELETION_POLICY": "propagate"}),
+            patch("hsync_client.main_logic.is_tty_interactive", return_value=False),
+            pytest.raises(SystemExit),
+        ):
+            _check_deletion_risk(
+                local_path=str(tmp_path),
+                p2p_mode=True,
+                prefer_master=False,
+                sync_direction="download-only",
+                allow_deletions=False,
+                logger=mock_logger,
+            )
+        assert mock_logger.warning.called
+
     def test_upload_only_no_warning(self, tmp_path):
         """No warning for upload-only mode (never deletes local files)."""
         (tmp_path / "file.txt").write_text("content")

@@ -27,7 +27,10 @@ disappears on the other:
   does, in either direction; `propagate` lets deletions converge). It is also
   settable as `HSYNC_DELETION_POLICY`. Use `keep` for an additive backup target:
   nothing is removed here, nothing local is sent as a deletion, and no deletion
-  marker is recorded.
+  marker is recorded. A rename still arrives as a move (the content survives
+  under the new name); only a true removal is skipped. A `keep` device never
+  needs `--allow-deletions`: the deletion-risk confirmation only protects a
+  `download-only` mirror, which cannot remove anything here.
 - **`--sync-direction`** — which way content flows. `upload-only` never applies
   remote deletions here and `download-only` never sends local ones, so a
   one-way push already protects the destination from local removals.

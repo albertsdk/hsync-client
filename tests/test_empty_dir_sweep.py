@@ -137,6 +137,39 @@ class TestSweepHook:
 
         sweep.assert_not_called()
 
+    def test_sweep_runs_before_the_directory_reconcile(self, tmp_path):
+        """The listing predates the cycle's pushes, so the sweep comes first.
+
+        Otherwise a shell removed here would be re-published to the peer by
+        the create-only reconcile, and a folder the peer no longer has would
+        be re-created on it instead of being swept.
+        """
+        order: list[str] = []
+        with (
+            patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch("hsync_client.sync.get_files_local", return_value=[]),
+            patch("hsync_client.sync.get_files_remote", return_value=[]),
+            patch("hsync_client.sync.get_tombstones_remote", return_value={}),
+            patch("hsync_client.sync.push_tombstones_remote"),
+            patch("hsync_client.sync._cleanup_partial_files"),
+            patch("hsync_client.sync.ensure_hsynckeep_files"),
+            patch("hsync_client.sync.sync_state"),
+            patch("hsync_client.sync._dir_converge_enabled", return_value=True),
+            patch("hsync_client.sync.get_dirs_remote", return_value=[]),
+            patch("hsync_client.sync.converge_directory_permissions"),
+            patch(
+                "hsync_client.sync.sweep_empty_local_dirs",
+                lambda *a, **k: order.append("sweep"),
+            ),
+            patch(
+                "hsync_client.sync.reconcile_directories",
+                lambda *a, **k: order.append("reconcile"),
+            ),
+        ):
+            asyncio.run(sync_module.sync(reconcile_dirs=True))
+
+        assert order == ["sweep", "reconcile"]
+
     def test_cycle_sweeps_with_a_successful_listing(self, tmp_path):
         from unittest.mock import MagicMock
 

@@ -680,6 +680,19 @@ async def sync(
         for file in nothing:
             nothing_to_do(file)
 
+        # ``keep`` drops every local deletion **before** the guard runs: with
+        # the policy on, no deletion is even a candidate, so the guard must
+        # neither pause the cycle, nor report a batch, nor turn a clean run into
+        # the deletion-guard exit code.
+        kept_deletes = len(tombstone_deletes) + len(guarded_deletes)
+        if kept_deletes and deletions_are_kept(CONFIG):
+            log.info(
+                f"{ActionLabel.GUARD} Keeping {kept_deletes} local deletion(s) "
+                "(deletion policy: keep)"
+            )
+            tombstone_deletes = []
+            guarded_deletes = []
+
         # Deletions were already split into tombstone-confirmed (backed by a
         # deletion marker proving the file was removed elsewhere) and
         # unconfirmed in the single partition pass above. The mass-deletion
@@ -707,15 +720,6 @@ async def sync(
 
         # Merge the surviving deletions back for execution
         deletes = tombstone_deletes + guarded_deletes
-
-        # ``keep`` skips ALL local deletions (including tombstone-confirmed
-        # ones), mirroring the filter in get_sync_actions.
-        if deletions_are_kept(CONFIG):
-            log.info(
-                f"{ActionLabel.GUARD} Keeping {len(deletes)} local deletion(s) "
-                "(deletion policy: keep)"
-            )
-            deletes = []
 
         # Handle deletions (files that exist only locally in P2P mode)
         deleted = 0
@@ -813,11 +817,13 @@ async def sync(
         if _dir_converge_enabled(p2p_mode):
             remote_dirs = get_dirs_remote()
             if remote_dirs is not None:
+                # Sweep *before* the reconcile: the listing predates this
+                # cycle's local→remote pushes, so a shell removed here must not
+                # be published to the peer first (and a directory the peer no
+                # longer has must not be re-created on it).
+                sweep_empty_local_dirs(remote_dirs)
                 if reconcile_dirs:
                     reconcile_directories(remote_dirs, p2p_mode=p2p_mode)
-                # Directories carry no tombstones, so a folder removed on the
-                # other side would leave an empty shell here forever.
-                sweep_empty_local_dirs(remote_dirs)
             converge_directory_permissions(remote_dirs or [])
 
         # Persist refreshed merge bases (in-sync refresh, retain, clear-on-delete,
@@ -1818,7 +1824,9 @@ def sweep_empty_local_dirs(remote_dirs: list[dict]) -> int:
     """Remove local directories that are empty and absent from the peer.
 
     A directory has no tombstone, so a folder whose last file was deleted on
-    another device leaves an empty shell here. The sweep runs only with a
+    another device leaves an empty shell here. It runs before the directory
+    reconcile of the same cycle, so the shell is removed rather than published
+    back to the peer as a missing directory. The sweep runs only with a
     *successful* ``/dirs`` listing (fail-closed: an unreachable or older peer
     never triggers a removal), only removes a directory the OS refuses to keep
     because it is non-empty (``rmdir`` fails, nothing is touched), and is

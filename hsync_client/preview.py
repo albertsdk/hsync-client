@@ -17,7 +17,7 @@ from hsync_common.models.file import clear_sha256_cache
 from hsync_common.models.sync_action import SyncActionName
 from hsync_common.protocol.pairing import p2p_write_requires_key
 
-from hsync_client.config import CONFIG
+from hsync_client.config import CONFIG, deletions_are_kept
 from hsync_client.constants import HSYNCKEEP_FILENAME, SYNC_DIRECTIONS, ActionLabel
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.exceptions import AuthenticationError, NetworkError, ServerError
@@ -206,6 +206,12 @@ def _run_preview(log) -> None:
             # Remove matched items so they are not emitted as separate events
             downloads = [a for i, a in enumerate(downloads) if i not in matched_download_idx]
             deletes = [a for a in deletes if id(a) not in matched_delete_ids]
+
+        # A rename still arrives under `keep` (it is a move, the content
+        # survives), but a plain deletion never does: the preview must not
+        # promise a removal the run is configured to skip.
+        if deletes and deletions_are_kept(CONFIG):
+            deletes = []
 
         # Emit structured messages for each file status (text log + event channel)
         for actions, label, state in [

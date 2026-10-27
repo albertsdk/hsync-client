@@ -39,6 +39,7 @@ from hsync_common.runtime import ColorMode, detect_container, is_tty_interactive
 from hsync_client.config import (
     CONFIG,
     HsyncConfig,
+    deletions_are_kept,
     get_allow_deletions,
     get_api_key,
     get_autotune_enabled,
@@ -315,6 +316,12 @@ def _check_deletion_risk(
 
     # upload-only never deletes local files
     if sync_direction == "upload-only":
+        return
+
+    # `keep` never removes a local file either, so there is no risk to confirm.
+    # Without this the non-interactive path would abort a backup setup that
+    # cannot pass --allow-deletions (containers, systemd units, cron, pipes).
+    if deletions_are_kept(CONFIG):
         return
 
     # prefer_master in P2P mode means this peer serves files to slaves — the
