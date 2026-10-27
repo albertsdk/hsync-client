@@ -110,10 +110,10 @@ class TestLabelStyles:
         """Test skip label uses dim tag."""
         assert LABEL_STYLES["[SKIP]"] == ("<dim>", "</dim>")
 
-    def test_ignore_del_label(self):
-        """Test ignore-del labels use yellow tag."""
-        assert LABEL_STYLES["[LOCAL IGNORE DEL]"] == ("<yellow>", "</yellow>")
-        assert LABEL_STYLES["[REMOTE IGNORE DEL]"] == ("<yellow>", "</yellow>")
+    def test_del_kept_label(self):
+        """Test del-kept labels use the dim no-op tag (a policy, not a warning)."""
+        assert LABEL_STYLES["[LOCAL DEL KEPT]"] == ("<dim>", "</dim>")
+        assert LABEL_STYLES["[REMOTE DEL KEPT]"] == ("<dim>", "</dim>")
 
     def test_local_create_label(self):
         """Test local-origin create label uses green tag."""

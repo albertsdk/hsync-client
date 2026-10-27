@@ -2602,7 +2602,7 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
 
         # Skip when the policy keeps deletions
         if deletions_are_kept(CONFIG):
-            log.debug(f"{ActionLabel.LOCAL_IGNORE_DEL} Deletion ignored (deletion policy: keep)")
+            log.debug(f"{ActionLabel.LOCAL_DEL_KEPT} Deletion kept (deletion policy: keep)")
             return
 
         # Causal tombstone (ADR-0003): the deletion must survive locally even

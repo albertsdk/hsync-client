@@ -67,7 +67,9 @@ In plain terms, p2p mode works in three steps:
    the full file from the master. The master remains the source of metadata,
    delta transfer, and final fallback. Afterwards every change
    (create, modify, delete, rename) is propagated in real time, in both
-   directions, over a live WebSocket connection. No peer is authoritative —
+   directions, over a live WebSocket connection (deletions follow
+   `--deletion-policy`, see [Configuration](configuration.md#deletions)). No
+   peer is authoritative —
    concurrent edits are resolved causally (see
    [Conflict Resolution](conflict-resolution.md)).
 

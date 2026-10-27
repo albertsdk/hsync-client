@@ -1021,7 +1021,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
             return
 
         if deletions_are_kept(CONFIG):
-            log.debug(f'{self._label("IGNORE DEL", src_path)} "{src_path}" (deletion policy: keep)')
+            log.debug(f'{self._label("DEL KEPT", src_path)} "{src_path}" (deletion policy: keep)')
             return
 
         # Buffer the event instead of broadcasting immediately: the sibling

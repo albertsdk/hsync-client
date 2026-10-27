@@ -40,7 +40,7 @@ flowchart TB
 | **Delta Transfer** | Rsync-style block sync for large files with small changes |
 | **Compression** | Automatic zstd compression (skips already-compressed formats) |
 | **Bandwidth Limiting** | Token-bucket throttling for upload and download |
-| **Bidirectional Sync** | Any client can create/modify/delete files; changes propagate to all |
+| **Bidirectional Sync** | Any client can create/modify/delete files; changes propagate to all (deletions follow `--deletion-policy`, see [Deletions](configuration.md#deletions)) |
 | **Directional Sync** | Upload-only (backup) or download-only (mirror) via `--sync-direction` |
 | **Periodic Resync** | Configurable interval for full reconciliation as a safety net |
 | **Mass Deletion Guard** | Prevents accidental wipe when the server exposes an empty bucket |

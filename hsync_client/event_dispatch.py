@@ -578,7 +578,7 @@ async def _rename_path(
 async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object = None) -> None:
     """Apply a delete event for either a directory or a file."""
     if deletions_are_kept(CONFIG):
-        log.debug(f"{_tag('IGNORE DEL')} Deletion ignored (deletion policy: keep)")
+        log.debug(f"{_tag('DEL KEPT')} Deletion kept (deletion policy: keep)")
         return
 
     if "path" in src:

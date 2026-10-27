@@ -18,6 +18,30 @@ Shared configuration options that apply to both Server Mode and p2p Mode.
 | `--deletion-policy` | What a deletion does: `propagate` (default: local deletions are applied and propagated) or `keep` (this device never deletes: local deletions are ignored and remote deletions are not applied, an additive backup) | `propagate` |
 | `--dry-run` | Dry run: show what would change without applying | `false` |
 
+## Deletions
+
+Three independent controls decide whether a file that disappeared on one side
+disappears on the other:
+
+- **`--deletion-policy`** — whether this device deletes at all (`keep` never
+  does, in either direction; `propagate` lets deletions converge). It is also
+  settable as `HSYNC_DELETION_POLICY`. Use `keep` for an additive backup target:
+  nothing is removed here, nothing local is sent as a deletion, and no deletion
+  marker is recorded.
+- **`--sync-direction`** — which way content flows. `upload-only` never applies
+  remote deletions here and `download-only` never sends local ones, so a
+  one-way push already protects the destination from local removals.
+- **Mass-deletion guard** — the *size* of a deletion batch a single cycle may
+  apply (see below). It is a safety net against a mass wipe, not a deletion
+  switch: it pauses a batch and the next cycle retries it, and it is never
+  consulted when the policy keeps deletions.
+
+When deletions do apply, they are decided causally, not by timestamp: a
+matching deletion marker proves the local copy is a stale ancestor. A directory
+has no marker, so an emptied folder is removed by the sweep after the peer's
+directory listing confirms it is gone — see
+[Conflict Resolution → Deletions and tombstones](conflict-resolution.md#deletions-and-tombstones-adr-0003).
+
 ## Mass-Deletion Guard
 
 There is no time window. The guard trips on a **single reconciliation

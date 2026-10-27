@@ -712,7 +712,7 @@ async def sync(
         # ones), mirroring the filter in get_sync_actions.
         if deletions_are_kept(CONFIG):
             log.info(
-                f"{ActionLabel.GUARD} Ignoring {len(deletes)} local deletion(s) "
+                f"{ActionLabel.GUARD} Keeping {len(deletes)} local deletion(s) "
                 "(deletion policy: keep)"
             )
             deletes = []

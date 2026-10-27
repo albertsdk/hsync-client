@@ -124,9 +124,11 @@ The web UI exposes the options of the HSYNC desktop application, each mapped
 1:1 to a `hsync` CLI flag (or to the environment variable for the knobs that
 have no flag). The defaults are seeded by `Apkg/install.sh` and mirrored by the
 fallbacks in `Apkg/start.sh`, with one deliberate exception: the NAS is a
-**backup target**, so it ignores client-side deletions and the backup never
-loses files because a source host removed them. Adjust everything from the UI
-for other use cases.
+**backup target**, so it runs with `HSYNC_DELETION_POLICY=keep`: nothing is
+ever deleted on the NAS and deletions coming from the source hosts are not
+applied, so the backup never loses files. Switch **Deletions** to
+*Apply deletions* in the UI if the NAS must mirror removals too (the save asks
+for confirmation). Adjust everything else from the UI for other use cases.
 
 The p2p transport is **HTTPS/WSS-only** (protocol `p2p/1`): the master serves
 over TLS with a persistent self-signed identity and advertises its certificate
