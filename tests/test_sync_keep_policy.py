@@ -86,3 +86,49 @@ def test_the_guard_still_trips_for_the_same_batch(tmp_path):
     assert result.deleted == 0
     assert [name for name, _ in events if name == UiEventName.sync_paused]
     assert all((tmp_path / name).exists() for name in NAMES)
+
+
+def _run_with_a_tracked_missing_file(tmp_path, policy: str):
+    """One merge base whose file is gone: does the scan mint a marker?"""
+    from unittest.mock import MagicMock
+
+    recorded: list[str] = []
+    state = MagicMock()
+    state.iter_merge_bases.return_value = [("deadbeef", "abc123", {"cid-a": 1})]
+    config = {
+        "LOCAL_BUCKET": str(tmp_path),
+        "SYNC_DIRECTION": "bidirectional",
+        "DELETION_POLICY": policy,
+        "MASS_DELETE_THRESHOLD": 0,
+        "MASS_DELETE_PERCENT": 0,
+    }
+
+    with (
+        patch("hsync_client.sync.CONFIG", config),
+        patch("hsync_client.sync.get_files_local", return_value=[]),
+        patch("hsync_client.sync.get_files_remote", return_value=[]),
+        patch("hsync_client.sync.get_sync_actions", return_value=[]),
+        patch("hsync_client.sync.get_tombstones_remote", return_value={}),
+        patch("hsync_client.sync.push_tombstones_remote"),
+        patch("hsync_client.sync.emit_folder_size"),
+        patch("hsync_client.sync.emit_event"),
+        patch("hsync_client.sync._cleanup_partial_files"),
+        patch("hsync_client.sync.ensure_hsynckeep_files"),
+        patch("hsync_client.sync.sync_state", state),
+        patch(
+            "hsync_client.tombstones.record_deletion_by_key",
+            side_effect=lambda key, **kw: recorded.append(key),
+        ),
+        patch("hsync_client.tombstones.flush"),
+    ):
+        asyncio.run(sync_module.sync())
+    return recorded
+
+
+def test_keep_never_mints_a_deletion_marker(tmp_path):
+    """A file the user removed on a `keep` device must not delete it elsewhere."""
+    assert _run_with_a_tracked_missing_file(tmp_path, "keep") == []
+
+
+def test_propagate_still_mints_the_marker(tmp_path):
+    assert _run_with_a_tracked_missing_file(tmp_path, "propagate") == ["deadbeef"]

@@ -571,15 +571,19 @@ async def sync(
 
         from hsync_client.tombstones import record_deletion_by_key
 
-        for key, base_hash, vclock in offline_deletions:
-            record_deletion_by_key(
-                key,
-                sha256sum=base_hash or None,
-                origin_cid=_local_cid_or_none(),
-                prev_vclock=vclock,
-                persist=False,
-            )
-            minted = True
+        # ``keep`` never records a deletion: a file the user removed on this
+        # device must not become a marker that makes the peers delete their
+        # copy (the live watcher already returns before recording one).
+        if not deletions_are_kept(CONFIG):
+            for key, base_hash, vclock in offline_deletions:
+                record_deletion_by_key(
+                    key,
+                    sha256sum=base_hash or None,
+                    origin_cid=_local_cid_or_none(),
+                    prev_vclock=vclock,
+                    persist=False,
+                )
+                minted = True
         # Persist the minted markers once (one SQLite transaction) and push the
         # union once after all offline-deletion markers are recorded: the
         # intermediate per-marker persists/pushes were redundant (the master
