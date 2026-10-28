@@ -27,6 +27,8 @@ from traceback import print_tb
 from typing import Any, cast
 
 from hsync_common.clock import clamp_incoming_corrected_mtime, offset_store, uncorrect_mtime
+from hsync_common.disk import check_free_space
+from hsync_common.format import format_bytes
 from hsync_common.listing import iter_bucket_entries as _iter_bucket_entries
 from hsync_common.models.dir import Dir, is_hidden_dir
 from hsync_common.models.file import (
@@ -66,7 +68,7 @@ from hsync_client.constants import (
     WORKER_MEMORY_BUDGET_BYTES,
     ActionLabel,
 )
-from hsync_client.events import UiEventName, emit_event, set_link_status
+from hsync_client.events import UiEventName, emit_event, emit_warning, set_link_status
 from hsync_client.exceptions import (
     AuthenticationError,
     NetworkError,
@@ -97,6 +99,70 @@ _sync_cycle_active = threading.Event()
 _cycle_bookkeeping_lock = threading.Lock()
 _sync_cycle_started_at: float | None = None
 _last_cycle_ended_at: float | None = None
+
+# Files the local scan could not read (permission/IO errors). A vanished file is
+# a benign race that ``File.get`` hides by returning ``None`` and never reaches
+# this counter, so a nonzero value means the path exists but cannot be synced:
+# a tree restored with the wrong ownership would otherwise stay out of every
+# cycle without a trace. The total is monotonic so concurrent scan batches each
+# report their own delta, and the warning is emitted once per batch (one event
+# per file would be a flood).
+_unreadable_total = 0
+_unreadable_lock = threading.Lock()
+
+
+def _count_unreadable_file() -> None:
+    """Record one file the local scan could not read."""
+    global _unreadable_total
+    with _unreadable_lock:
+        _unreadable_total += 1
+
+
+def _warn_unreadable_files(count: int) -> None:
+    """Report a scan batch's unreadable files once, as a transient warning."""
+    if count <= 0:
+        return
+    emit_warning(
+        "Some files in the shared folder could not be read and stay out of the "
+        "synchronisation: check their permissions or that no program is holding "
+        "them open.",
+        source="scan",
+        reason="transient",
+    )
+
+
+def _warn_missing_bucket(bucket: str) -> None:
+    """Report a shared folder that disappeared at runtime (unmounted, renamed).
+
+    A cycle with an inaccessible bucket still "succeeds" with nothing to do, so
+    without this the user cannot tell a healthy idle share from a dead one.
+    """
+    emit_warning(
+        f"The shared folder '{bucket}' is not accessible: nothing can be "
+        "synchronised until it is back (check the drive or network mount).",
+        source="path",
+        reason="missing",
+    )
+
+
+def _warn_disk_reserve(local_bucket: str) -> None:
+    """Warn once per cycle when free space is below the configured reserve."""
+    reserve = int(CONFIG.get("MIN_FREE_DISK_SPACE", 0) or 0)
+    if reserve <= 0:
+        return
+    space = check_free_space(local_bucket, reserve_bytes=reserve)
+    if space.error is not None or space.ok:
+        return
+    log.warning(
+        f"Free disk space below the reserve: {format_bytes(space.free_bytes)} available, "
+        f"{format_bytes(space.required_bytes)} required; incoming files will be skipped"
+    )
+    emit_warning(
+        "Free disk space is below the configured reserve: incoming files are "
+        "skipped until space is freed.",
+        source="storage",
+        reason="disk_reserve",
+    )
 
 
 def is_sync_cycle_active() -> bool:
@@ -169,6 +235,17 @@ async def periodic_resync(
                         f"{skip_msg} for {age:.0f}s (interval {interval}s): the periodic "
                         "safety net is NOT running, so file-system events missed in the "
                         "meantime are not being recovered"
+                    )
+                    # A stuck cycle disables the only recovery for missed watcher
+                    # events, and nothing else in the UI says so. The age stays in
+                    # the log line: the event message is stable so the client-side
+                    # dedup collapses a long stall into one notification.
+                    emit_warning(
+                        "A sync cycle is still running after the periodic resync "
+                        "interval: changes the file watcher missed are not being "
+                        "recovered until it finishes.",
+                        source="sync",
+                        reason="safety_net_stalled",
                     )
                 else:
                     log.debug(skip_msg)
@@ -463,6 +540,7 @@ async def sync(
     # Check if local directory exists before starting sync
     if not Path(CONFIG["LOCAL_BUCKET"]).exists():
         log.error(f"Local directory '{CONFIG['LOCAL_BUCKET']}' does not exist. Sync aborted.")
+        _warn_missing_bucket(CONFIG["LOCAL_BUCKET"])
         return SyncCycleResult(
             completed=False,
             downloaded=0,
@@ -480,6 +558,12 @@ async def sync(
     _sync_cycle_active.set()
     try:
         offset_store.begin_epoch()
+        # Pre-emptive storage guard: a per-file space check (transfer.py) can only
+        # skip that file, and it reports nothing the user can act on until the
+        # transfer fails. One probe per cycle is a statvfs call, and it is the
+        # only place where "free some space" can reach the user before a batch of
+        # downloads quietly skips.
+        _warn_disk_reserve(CONFIG["LOCAL_BUCKET"])
         # The SHA-256 cache is intentionally NOT cleared per cycle anymore:
         # entries are keyed on the nanosecond stat identity (mtime_ns, ctime_ns,
         # size) validated on every hit, and watchers invalidate single entries
@@ -1222,10 +1306,12 @@ def _get_single_file_metadata(file_path: str) -> dict | None:
                 continue
             # Non-retryable error or max retries reached
             log.warning(f"Error reading file metadata for {file_path}: {e}")
+            _count_unreadable_file()
             return None
         except Exception as e:
             # Unexpected error - log and return None
             log.warning(f"Error reading file metadata for {file_path}: {e}")
+            _count_unreadable_file()
             return None
 
     return None
@@ -1350,6 +1436,7 @@ def get_files_local() -> list[dict]:
         log.warning(
             f"Local directory '{CONFIG['LOCAL_BUCKET']}' does not exist during synchronization"
         )
+        _warn_missing_bucket(CONFIG["LOCAL_BUCKET"])
         return []
 
     # First pass: collect all file paths (no checksum computation)
@@ -1372,6 +1459,9 @@ def get_files_local() -> list[dict]:
 
     file_list = []
 
+    with _unreadable_lock:
+        unreadable_before = _unreadable_total
+
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all file metadata fetches in parallel
         futures = [executor.submit(_get_single_file_metadata, fp) for fp in file_paths]
@@ -1387,6 +1477,10 @@ def get_files_local() -> list[dict]:
 
     # Sort by mtime ascending (oldest first) to prioritize updating older files
     file_list.sort(key=lambda x: x.get("mtime", 0))
+
+    with _unreadable_lock:
+        unreadable = _unreadable_total - unreadable_before
+    _warn_unreadable_files(unreadable)
 
     return file_list
 

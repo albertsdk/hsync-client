@@ -75,7 +75,7 @@ from hsync_client.delta_transfer import (
     prepare_delta_upload,
     upload_file_delta,
 )
-from hsync_client.events import UiEventName, emit_event
+from hsync_client.events import UiEventName, emit_event, emit_warning
 from hsync_client.exceptions import (
     PermanentDownloadError,
     PermanentUploadError,
@@ -784,6 +784,17 @@ def _has_download_space(file: File, full_save_path: str, resume_offset: int) -> 
     log.error(
         f'Insufficient disk space for "{file.filepath}": '
         f"{space.free_mb} MB available, {space.required_mb} MB required"
+    )
+    # A skipped download is a file that will not arrive: the terminal event the
+    # GUI aggregates ("N transfers failed") is the only way it is not silent.
+    emit_event(
+        UiEventName.transfer_failed,
+        op="download",
+        file=file.filepath,
+        message=(
+            f"Insufficient disk space ({space.free_mb} MB available, "
+            f"{space.required_mb} MB required)"
+        ),
     )
     return False
 
@@ -1589,6 +1600,15 @@ def _reschedule_upload(
         log.warning(
             f'File "{file.filepath}" did not stabilize after max reschedules; '
             "skipping (will retry on next file-system event or periodic resync)"
+        )
+        # Self-healing (the next change or resync retries it), so it is a
+        # transient notice rather than a persistent problem: the user usually
+        # just has the file open in a program that keeps writing it.
+        emit_warning(
+            "A file kept changing while it was being sent and was skipped: it is "
+            "retried on its next change or the next full sync.",
+            source="upload",
+            reason="transient",
         )
         return
 

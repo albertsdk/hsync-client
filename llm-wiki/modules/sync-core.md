@@ -125,9 +125,27 @@ failure, and the desktop surfaces it as a warning banner/notification.
 The emitter deduplicates: at most one event per `(source, message)` per
 `events.py::_WARNING_DEDUP_WINDOW_S` (10 min, bounded map, `reset_warning_dedup`
 for a new run). A flapping condition must not become a notification storm — that
-would be worse than the silence it replaces. Call sites: `watcher.py` (both the
-startup downgrade and the runtime swap to `PollingObserver`) and
-`p2p_discovery_bootnode.py` (a `BootnodeError` in the lease loop).
+would be worse than the silence it replaces. `reason="transient"` marks a
+condition that heals itself, which a front-end shows as an ephemeral notice and
+never as a persistent problem.
+
+Sources wired today (`emit_warning` call sites):
+
+| `source` | Condition | `reason` | Level |
+| --- | --- | --- | --- |
+| `watcher` | the file watcher degraded to `PollingObserver` (`watcher.py`, startup downgrade and runtime swap) | `polling_fallback` / the `WatcherLimit` value | persistent |
+| `bootnode` | the bootnode is unreachable in the lease loop (`p2p_discovery_bootnode.py`) | `unreachable` | persistent |
+| `sync` | a cycle outlived the resync interval, so the safety net recovers nothing (`sync.py::periodic_resync`) | `safety_net_stalled` | persistent |
+| `path` | the shared folder is not accessible at runtime — unmounted, renamed (`sync.py`) | `missing` | persistent |
+| `storage` | free space below `MIN_FREE_DISK_SPACE` (`sync.py::_warn_disk_reserve`, once per cycle) | `disk_reserve` | persistent |
+| `scan` | files that exist but cannot be read, aggregated per scan batch (`sync.py::_warn_unreadable_files`) | `transient` | transient |
+| `events` | real-time events dropped by a full queue (`event_queue.py::EventQueue._drop_event`) | `transient` | transient |
+| `upload` | a file never stabilised, so its upload was skipped (`transfer.py::_reschedule_upload`) | `transient` | transient |
+
+A file skipped for insufficient space is *not* a warning: it is a terminal
+`transfer_failed` (`transfer.py::_has_download_space`), because that file will
+not arrive. A refused p2p master without HTTPS/fingerprint is a
+`security_rejected` (`p2p_handler.py`), not a warning: it is a security decision.
 
 In-flight transfers emit throttled `UiEventName.progress` events
 (`progress.py::ProgressReporter`, coalesced to at most one per 0.25 s plus a

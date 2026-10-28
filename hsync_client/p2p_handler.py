@@ -1177,6 +1177,18 @@ def _run_as_slave(
                 f"endpoint with a certificate fingerprint. Refusing to connect "
                 f"(P2P transport is HTTPS-only)."
             )
+            # A refusal, not a failure: without this the user only sees "no
+            # device found" and cannot tell a missing peer from one the client
+            # deliberately refused for security reasons.
+            emit_event(
+                UiEventName.security_rejected,
+                op="connect",
+                path=master.cid,
+                message=(
+                    "A device was refused because it does not serve HTTPS with a "
+                    "certificate fingerprint"
+                ),
+            )
             return (not one_shot) or wait_indefinitely_for_peer, int(ExitCode.OK)
 
         if not _evaluate_master_pin(config, master, log, notified=notified):

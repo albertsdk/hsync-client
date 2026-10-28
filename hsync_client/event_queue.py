@@ -35,6 +35,8 @@ from logging import getLogger
 from time import time
 from typing import Any, Protocol
 
+from hsync_client.events import emit_warning
+
 
 class WebSocketProtocol(Protocol):
     """Protocol for WebSocket-like objects that can send messages."""
@@ -186,6 +188,16 @@ class EventQueue:
                 f"Event queue full ({EVENT_QUEUE_MAXSIZE}); dropped "
                 f"{self.dropped} event(s) so far "
                 f"(latest: {event_data.get('name', 'unknown')})"
+            )
+            # The next full sync reconciles what was dropped, so this is a
+            # transient notice that explains a real-time change arriving late.
+            # The message carries no count: a varying text would defeat the
+            # emitter's per-(source, message) dedup and turn a burst into a storm.
+            emit_warning(
+                "Some real-time changes were queued faster than they could be "
+                "sent: the next full sync recovers them.",
+                source="events",
+                reason="transient",
             )
 
     async def _send_event(self, event: QueuedEvent) -> bool:
