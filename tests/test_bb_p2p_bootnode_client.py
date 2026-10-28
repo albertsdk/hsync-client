@@ -7,7 +7,7 @@ The bootnode is a separate repository. This test spawns its sibling binary on a
 loopback UDP port (with a scrubbed environment and a ready file) and drives the
 public ``boot/1`` wire through the client's QUIC client: register → ack
 (STUN-echo), query → relayed peer, refresh → ack, leave. It asserts only the
-wire contract, so it would pass against a Rust ``hsync-bootnode`` too.
+wire contract, so it would pass against a C ``hsync-bootnode`` too.
 
 Gated by ``HSYNC_BB_P2P=1`` (the client BB gate) and skipped when the sibling
 bootnode is not built.
