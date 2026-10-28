@@ -263,3 +263,8 @@ watched tree approaches this limit; raise it with:
 current=$(cat /proc/sys/fs/inotify/max_user_watches)
 sudo sysctl fs.inotify.max_user_watches=$((current * 4))
 ```
+
+When the tree needs more watches than the per-user limit allows, the client
+detects it at startup and stays in polling mode — the same warning, with both
+numbers — until the limit is raised above the requirement; the probe restores
+inotify without a restart.

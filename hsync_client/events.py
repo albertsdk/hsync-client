@@ -184,7 +184,14 @@ def emit_progress(event: UiEventName | str, **payload: Any) -> None:
         em.emit_progress(event, **payload)
 
 
-def emit_warning(message: str, *, source: str, reason: str = "") -> None:
+def emit_warning(
+    message: str,
+    *,
+    source: str,
+    reason: str = "",
+    needed: int | None = None,
+    limit: int | None = None,
+) -> None:
     """Publish a non-fatal warning on the structured channel, deduplicated.
 
     The engine already logs the same fact (``[WATCHER FALLBACK]``, an
@@ -197,7 +204,10 @@ def emit_warning(message: str, *, source: str, reason: str = "") -> None:
     reaches the channel, so a flapping condition cannot become a notification
     storm; the caller keeps logging every occurrence. ``source`` is a stable
     subsystem identifier (never a user-facing sentence) used by the front-end
-    for its dedup and notification category.
+    for its dedup and notification category, ``reason`` is the case class (or
+    ``"transient"`` for a condition that heals itself), and ``needed``/``limit``
+    quantify a bounded resource (inotify watches, descriptors) so the consumer
+    can localize "needs N, limit M" instead of shipping English prose.
 
     Consumers: hsync-desktop (``warning_occurred`` → banner + notification).
     """
@@ -217,6 +227,8 @@ def emit_warning(message: str, *, source: str, reason: str = "") -> None:
         message=message,
         source=source,
         reason=reason or None,
+        needed=needed,
+        limit=limit,
     )
 
 

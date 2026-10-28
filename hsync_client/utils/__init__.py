@@ -75,6 +75,8 @@ from hsync_client.utils.ready import (
     _write_ready_file,
 )
 from hsync_client.utils.resources import (
+    WatchBudget,
+    inotify_watch_budget,
     warn_if_inotify_watch_limit_low,
     warn_if_open_fds_high,
 )
@@ -142,6 +144,8 @@ __all__ = [
     "_remove_ready_file",
     "_write_ready_file",
     # resources
+    "WatchBudget",
+    "inotify_watch_budget",
     "warn_if_inotify_watch_limit_low",
     "warn_if_open_fds_high",
     # throttle

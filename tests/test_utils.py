@@ -13,18 +13,21 @@ from hsync_common.path_validation import is_valid_filename
 
 from hsync_client.config import CONFIG, set_config
 from hsync_client.utils import (
+    WatchBudget,
     _suppress_insecure_warning,
     ensure_str_path,
     get_cid,
     get_http_session,
     get_permissions,
     get_ssl_verify,
+    inotify_watch_budget,
     is_same_paths,
     is_valid_logfile,
     path_lock,
     path_present,
     set_permissions,
     warn_if_inotify_watch_limit_low,
+    warn_if_open_fds_high,
 )
 
 
@@ -663,20 +666,55 @@ class TestWarnIfInotifyWatchLimitLow:
         mock_warn.assert_not_called()
 
     def test_warns_when_tree_near_limit(self, tmp_path):
-        """A tree exceeding the warn threshold emits a warning."""
+        """A tree past the warn threshold but still affordable logs a warning."""
         # Create a few sub-directories so os.walk yields several entries.
         for i in range(5):
             (tmp_path / f"sub{i}").mkdir()
 
         with (
             patch("hsync_client.utils.resources.Path.exists", return_value=True),
-            # Tiny limit so the threshold (ratio * limit) is crossed quickly.
-            patch("hsync_client.utils.resources.Path.read_text", return_value="2\n"),
+            # Root + 5 sub-directories = 6 watches; a limit of 6 is crossed by
+            # the 0.8 warn ratio without being exceeded.
+            patch("hsync_client.utils.resources.Path.read_text", return_value="6\n"),
             patch("hsync_client.utils.resources.log.warning") as mock_warn,
+            patch("hsync_client.utils.resources.emit_warning") as mock_emit,
         ):
-            warn_if_inotify_watch_limit_low(str(tmp_path))
+            budget = warn_if_inotify_watch_limit_low(str(tmp_path))
         mock_warn.assert_called_once()
         assert "max_user_watches" in mock_warn.call_args[0][0]
+        assert budget is not None and not budget.exhausted
+        assert mock_emit.call_args.kwargs == {
+            "source": "watcher",
+            "reason": "inotify_watches",
+            "needed": 6,
+            "limit": 6,
+        }
+
+    def test_exhausted_tree_reports_numbers_and_remedy(self, tmp_path):
+        """A tree inotify can never fit is an error carrying both numbers."""
+        for i in range(5):
+            (tmp_path / f"sub{i}").mkdir()
+
+        with (
+            patch("hsync_client.utils.resources.Path.exists", return_value=True),
+            patch("hsync_client.utils.resources.Path.read_text", return_value="2\n"),
+            patch("hsync_client.utils.resources.log.warning") as mock_warn,
+            patch("hsync_client.utils.resources.log.error") as mock_err,
+            patch("hsync_client.utils.resources.emit_warning") as mock_emit,
+        ):
+            budget = warn_if_inotify_watch_limit_low(str(tmp_path))
+
+        mock_warn.assert_not_called()
+        mock_err.assert_called_once()
+        # The remedy must be a persistent one, not only a sysctl at runtime.
+        assert "/etc/sysctl.d/" in mock_err.call_args[0][0]
+        assert budget is not None and budget.exhausted
+        assert mock_emit.call_args.kwargs == {
+            "source": "watcher",
+            "reason": "inotify_watches",
+            "needed": 3,  # capped at max_watches + 1, see WatchBudget
+            "limit": 2,
+        }
 
     def test_no_op_when_limit_file_absent(self, tmp_path):
         """When the limit file is absent (non-Linux) nothing happens."""
@@ -694,6 +732,71 @@ class TestWarnIfInotifyWatchLimitLow:
             patch("hsync_client.utils.resources.Path.read_text", return_value="not-a-number"),
         ):
             warn_if_inotify_watch_limit_low(str(tmp_path))  # must not raise
+
+
+class TestInotifyWatchBudget:
+    """Tests for inotify_watch_budget (the numbers behind the warning)."""
+
+    def test_none_when_limit_not_exposed(self, tmp_path):
+        """Non-Linux hosts have no inotify cap and therefore no budget."""
+        with patch("hsync_client.utils.resources.Path.exists", return_value=False):
+            assert inotify_watch_budget(str(tmp_path)) is None
+
+    def test_counts_the_root_and_every_sub_directory(self, tmp_path):
+        for i in range(3):
+            (tmp_path / f"sub{i}").mkdir()
+        (tmp_path / "sub0" / "nested").mkdir()
+        with (
+            patch("hsync_client.utils.resources.Path.exists", return_value=True),
+            patch("hsync_client.utils.resources.Path.read_text", return_value="8192\n"),
+        ):
+            budget = inotify_watch_budget(str(tmp_path))
+        assert budget == WatchBudget(dirs=5, max_watches=8192, capped=False)
+
+    def test_caps_the_count_at_limit_plus_one(self, tmp_path):
+        """Past the limit the exact figure stops mattering: stop walking."""
+        for i in range(5):
+            (tmp_path / f"sub{i}").mkdir()
+        with (
+            patch("hsync_client.utils.resources.Path.exists", return_value=True),
+            patch("hsync_client.utils.resources.Path.read_text", return_value="2\n"),
+        ):
+            budget = inotify_watch_budget(str(tmp_path))
+        assert budget == WatchBudget(dirs=3, max_watches=2, capped=True)
+        assert budget is not None and budget.exhausted
+
+
+class TestWarnIfOpenFdsHigh:
+    """Tests for warn_if_open_fds_high (descriptor headroom)."""
+
+    def test_warns_with_numbers_when_close_to_the_soft_limit(self):
+        import resource
+
+        with (
+            patch.object(resource, "getrlimit", return_value=(1024, 4096)),
+            patch("hsync_client.utils.resources.os.listdir", return_value=["fd"] * 1000),
+            patch("hsync_client.utils.resources.log.warning") as mock_warn,
+            patch("hsync_client.utils.resources.emit_warning") as mock_emit,
+        ):
+            warn_if_open_fds_high()
+        mock_warn.assert_called_once()
+        assert mock_emit.call_args.kwargs == {
+            "source": "watcher",
+            "reason": "fd_exhaustion",
+            "needed": 1000,
+            "limit": 1024,
+        }
+
+    def test_silent_when_there_is_headroom(self):
+        import resource
+
+        with (
+            patch.object(resource, "getrlimit", return_value=(1024, 4096)),
+            patch("hsync_client.utils.resources.os.listdir", return_value=["fd"] * 10),
+            patch("hsync_client.utils.resources.emit_warning") as mock_emit,
+        ):
+            warn_if_open_fds_high()
+        mock_emit.assert_not_called()
 
 
 class TestPathLock:

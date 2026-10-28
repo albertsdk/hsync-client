@@ -54,6 +54,17 @@ which needs no inotify resources. The cost is higher CPU usage and up to ~1 s of
 event latency; periodic resync (`RESYNC`) still covers any event the polling
 watcher might miss.
 
+**Diagnosed before degrading.** At startup the client counts the directories
+under the shared folder and compares the total with
+`fs.inotify.max_user_watches` (one watch per directory when the watch is
+recursive). When the tree alone needs more watches than the per-user maximum, no
+released watch can ever make it fit: the client logs the remedy — including the
+persistent `/etc/sysctl.d/` command — emits the warning with both numbers
+(*needs N watches, limit M*) and starts directly in polling mode instead of
+half-watching the tree. Well before the limit it warns while staying on inotify.
+Raising the limit is enough: the supervisor's next probe restores inotify without
+a restart.
+
 **Automatic recovery.** While degraded, the client periodically probes whether
 inotify is available again. As soon as the limits free up it restores the inotify
 backend and logs:

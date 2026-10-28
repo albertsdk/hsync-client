@@ -127,13 +127,18 @@ The emitter deduplicates: at most one event per `(source, message)` per
 for a new run). A flapping condition must not become a notification storm — that
 would be worse than the silence it replaces. `reason="transient"` marks a
 condition that heals itself, which a front-end shows as an ephemeral notice and
-never as a persistent problem.
+never as a persistent problem. `needed`/`limit` carry the measured size of a
+bounded resource when the caller knows it (inotify watches, open descriptors), so
+the consumer can localize "needs N, limit M" itself instead of receiving English
+prose; they are payload only and never part of the dedup key.
 
 Sources wired today (`emit_warning` call sites):
 
 | `source` | Condition | `reason` | Level |
 | --- | --- | --- | --- |
 | `watcher` | the file watcher degraded to `PollingObserver` (`watcher.py`, startup downgrade and runtime swap) | `polling_fallback` / the `WatcherLimit` value | persistent |
+| `watcher` | the shared folder is at or past the inotify watch limit, or the tree cannot fit it at all (`utils/resources.py::warn_if_inotify_watch_limit_low`, carries `needed`/`limit`) | `inotify_watches` | persistent |
+| `watcher` | the process is close to its soft `RLIMIT_NOFILE` (`utils/resources.py::warn_if_open_fds_high`, carries `needed`/`limit`) | `fd_exhaustion` | persistent |
 | `bootnode` | the bootnode is unreachable in the lease loop (`p2p_discovery_bootnode.py`) | `unreachable` | persistent |
 | `sync` | a cycle outlived the resync interval, so the safety net recovers nothing (`sync.py::periodic_resync`) | `safety_net_stalled` | persistent |
 | `path` | the shared folder is not accessible at runtime — unmounted, renamed (`sync.py`) | `missing` | persistent |
@@ -455,7 +460,13 @@ same value).
 `remote_websocket.py::RemoteFileEventHandler`, `.hsyncignore` hot-reload `main_logic.py::_start_hsyncignore_watcher`) is
 owned by a `WatcherManager` (`watcher.py::WatcherManager`), which records every `(handler,
 path, recursive)` registration so a backend swap can replay the full watch set
-onto a fresh observer. On an inotify-limit `OSError` (`EMFILE` instances /
+onto a fresh observer. Before the first inotify attempt the startup checks size
+the tree against the kernel budget (`utils/resources.py::inotify_watch_budget` →
+`WatchBudget`): when the folder alone needs more watches than
+`fs.inotify.max_user_watches` allows, no released watch can make it fit, so the
+manager starts directly in polling mode and skips the doomed attempt (a partial
+success would leave shadow watches behind) — the supervisor still probes, so
+raising the limit restores inotify. On an inotify-limit `OSError` (`EMFILE` instances /
 `ENOSPC` watches) or a descriptor-exhaustion `EMFILE`/`ENFILE`
 (`watcher.watcher_oserror_class`, `watcher.py::watcher_oserror_class`), the manager logs the
 parsable `[WATCHER FALLBACK]` / `[FD EXHAUSTED]` line and **downgrades to a
@@ -463,7 +474,9 @@ parsable `[WATCHER FALLBACK]` / `[FD EXHAUSTED]` line and **downgrades to a
 instead of blocking realtime sync. A limit hit at runtime (adding a watch for a
 new directory, `WatcherManager.schedule_directory` `watcher.py::WatcherManager.schedule_directory`) is detected inline,
 the single watch is skipped (RESYNC reconciles it) and the downgrade is
-performed at a safe point by a supervisor thread. Swaps are adopted only while
+performed at a safe point by a supervisor thread (the manager remembers the
+triggering `WatcherLimit` in `_last_limit`, so the swap's structured warning names
+the real cause instead of a generic one). Swaps are adopted only while
 the manager is not `stop()`ed: an observer whose build raced a `stop()` is torn
 down instead, so no live watcher can outlive `stop()` (and a swap failure —
 e.g. polling defeated by true descriptor exhaustion — keeps the current backend

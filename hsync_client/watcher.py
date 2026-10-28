@@ -150,6 +150,10 @@ class WatcherManager:
         self._probe_interval = WATCHER_UPGRADE_PROBE_INITIAL_S
         self._supervisor: threading.Timer | None = None
         self._stopped = False
+        # Limit class behind the pending downgrade, so the polling fallback can
+        # report its real cause (the startup path knows its own) instead of a
+        # generic one.
+        self._last_limit: WatcherLimit | None = None
 
     # -- public API ----------------------------------------------------------
 
@@ -169,8 +173,32 @@ class WatcherManager:
         with self._lock:
             self._registrations.append((handler, self._watch_path, self._recursive))
 
-        warn_if_inotify_watch_limit_low(self._watch_path)
         warn_if_open_fds_high()
+        budget = warn_if_inotify_watch_limit_low(self._watch_path)
+        if budget is not None and budget.exhausted:
+            # The tree alone needs more watches than this user may hold, so the
+            # inotify start is guaranteed to fail: it would partial-watch the
+            # tree and then degrade, leaving shadow watches behind. Go straight
+            # to polling (the check above already reported cause and remedy);
+            # the supervisor still probes inotify, which succeeds once the
+            # limit is raised.
+            try:
+                observer = self._build_and_start("polling")
+            except OSError as poll_exc:
+                log.error(
+                    f"{ActionLabel.WATCHER_ERROR} cannot start the file watcher for "
+                    f"'{self._watch_path}': "
+                    f"{_WATCHER_LIMIT_HINTS[WatcherLimit.INOTIFY_WATCHES]}"
+                )
+                raise WatcherStartError(
+                    _WATCHER_LIMIT_HINTS[WatcherLimit.INOTIFY_WATCHES],
+                    original=poll_exc,
+                ) from poll_exc
+            with self._lock:
+                self._observer = observer
+                self._backend = "polling"
+            self._schedule_supervisor(self._probe_interval)
+            return
 
         try:
             observer = self._build_and_start("inotify")
@@ -244,7 +272,7 @@ class WatcherManager:
                 f"{_WATCHER_LIMIT_HINTS[kind]} Periodic resync (RESYNC) will "
                 f"reconcile it. Switching the whole watcher to polling."
             )
-            self._request_downgrade()
+            self._request_downgrade(kind)
 
     def stop(self) -> None:
         """Stop the observer and the supervisor (idempotent)."""
@@ -307,9 +335,10 @@ class WatcherManager:
 
     # -- supervisor ----------------------------------------------------------
 
-    def _request_downgrade(self) -> None:
+    def _request_downgrade(self, kind: WatcherLimit) -> None:
         with self._lock:
             self._pending_downgrade = True
+            self._last_limit = kind
         self._schedule_supervisor(WATCHER_DOWNGRADE_DELAY_S)
 
     def _schedule_supervisor(self, delay: float) -> None:
@@ -377,6 +406,8 @@ class WatcherManager:
             self._backend = "polling"
             self._pending_downgrade = False
             self._probe_interval = WATCHER_UPGRADE_PROBE_INITIAL_S
+            cause = self._last_limit
+            self._last_limit = None
         if old is not None:
             self._safe_stop(old)
         log.warning(
@@ -387,7 +418,7 @@ class WatcherManager:
             f"File watcher degraded to polling for '{self._watch_path}' "
             "(higher CPU usage, up to ~1 s event latency).",
             source="watcher",
-            reason="polling_fallback",
+            reason=cause.value if cause is not None else "polling_fallback",
         )
 
     def _try_upgrade(self) -> None:

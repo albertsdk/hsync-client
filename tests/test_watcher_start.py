@@ -34,6 +34,7 @@ from hsync_client.constants import (
     WATCHER_UPGRADE_PROBE_INITIAL_S,
 )
 from hsync_client.exceptions import WatcherStartError
+from hsync_client.utils.resources import WatchBudget
 from hsync_client.watcher import WatcherLimit, WatcherManager, watcher_oserror_class
 
 
@@ -177,7 +178,7 @@ class TestWatcherManagerStart:
         manager = _manager_with_build(tmp_path)
         handler = MagicMock()
         with (
-            patch("hsync_client.watcher.warn_if_inotify_watch_limit_low"),
+            patch("hsync_client.watcher.warn_if_inotify_watch_limit_low", return_value=None),
             patch("hsync_client.watcher.warn_if_open_fds_high"),
             patch.object(WatcherManager, "_schedule_supervisor") as schedule,
         ):
@@ -190,7 +191,7 @@ class TestWatcherManagerStart:
     def test_inotify_watch_limit_downgrades_to_polling(self, tmp_path):
         manager = _manager_with_build(tmp_path, inotify_exc=_WATCH_ERRNO)
         with (
-            patch("hsync_client.watcher.warn_if_inotify_watch_limit_low"),
+            patch("hsync_client.watcher.warn_if_inotify_watch_limit_low", return_value=None),
             patch("hsync_client.watcher.warn_if_open_fds_high"),
             patch.object(WatcherManager, "_schedule_supervisor") as schedule,
             patch("hsync_client.watcher.log.warning") as warn,
@@ -203,7 +204,7 @@ class TestWatcherManagerStart:
     def test_fd_exhaustion_downgrades_to_polling(self, tmp_path):
         manager = _manager_with_build(tmp_path, inotify_exc=_FD_ERRNO)
         with (
-            patch("hsync_client.watcher.warn_if_inotify_watch_limit_low"),
+            patch("hsync_client.watcher.warn_if_inotify_watch_limit_low", return_value=None),
             patch("hsync_client.watcher.warn_if_open_fds_high"),
             patch.object(WatcherManager, "_schedule_supervisor"),
             patch("hsync_client.watcher.log.warning") as warn,
@@ -215,7 +216,7 @@ class TestWatcherManagerStart:
     def test_polling_also_fails_raises_watcher_start_error(self, tmp_path):
         manager = _manager_with_build(tmp_path, inotify_exc=_WATCH_ERRNO, poll_exc=_FD_ERRNO)
         with (
-            patch("hsync_client.watcher.warn_if_inotify_watch_limit_low"),
+            patch("hsync_client.watcher.warn_if_inotify_watch_limit_low", return_value=None),
             patch("hsync_client.watcher.warn_if_open_fds_high"),
             patch("hsync_client.watcher.log.error") as err,
         ):
@@ -230,12 +231,89 @@ class TestWatcherManagerStart:
             tmp_path, inotify_exc=OSError(errno.EACCES, "Permission denied")
         )
         with (
-            patch("hsync_client.watcher.warn_if_inotify_watch_limit_low"),
+            patch("hsync_client.watcher.warn_if_inotify_watch_limit_low", return_value=None),
             patch("hsync_client.watcher.warn_if_open_fds_high"),
         ):
             with pytest.raises(OSError) as excinfo:
                 manager.start(MagicMock())
         assert excinfo.value.errno == errno.EACCES
+
+
+class TestWatchBudgetStartup:
+    """Pre-degradation check: a tree that cannot fit inotify starts polling."""
+
+    def test_exhausted_budget_skips_the_doomed_inotify_start(self, tmp_path):
+        manager = WatcherManager(str(tmp_path))
+        backends: list[str] = []
+
+        def _build(backend: str) -> MagicMock:
+            backends.append(backend)
+            return MagicMock()
+
+        manager._build_and_start = _build  # type: ignore[method-assign]
+        budget = WatchBudget(dirs=9000, max_watches=8192, capped=False)
+        with (
+            patch(
+                "hsync_client.watcher.warn_if_inotify_watch_limit_low",
+                return_value=budget,
+            ),
+            patch("hsync_client.watcher.warn_if_open_fds_high"),
+            patch.object(WatcherManager, "_schedule_supervisor"),
+        ):
+            manager.start(MagicMock())
+        assert backends == ["polling"]
+        assert manager._backend == "polling"
+
+    def test_affordable_budget_still_uses_inotify(self, tmp_path):
+        manager = WatcherManager(str(tmp_path))
+        backends: list[str] = []
+
+        def _build(backend: str) -> MagicMock:
+            backends.append(backend)
+            return MagicMock()
+
+        manager._build_and_start = _build  # type: ignore[method-assign]
+        budget = WatchBudget(dirs=7000, max_watches=8192, capped=False)
+        with (
+            patch(
+                "hsync_client.watcher.warn_if_inotify_watch_limit_low",
+                return_value=budget,
+            ),
+            patch("hsync_client.watcher.warn_if_open_fds_high"),
+            patch.object(WatcherManager, "_schedule_supervisor"),
+        ):
+            manager.start(MagicMock())
+        assert backends == ["inotify"]
+        assert manager._backend == "inotify"
+
+    def test_exhausted_budget_polling_failure_raises_start_error(self, tmp_path):
+        manager = _manager_with_build(tmp_path, poll_exc=_FD_ERRNO)
+        budget = WatchBudget(dirs=9000, max_watches=8192, capped=False)
+        with (
+            patch(
+                "hsync_client.watcher.warn_if_inotify_watch_limit_low",
+                return_value=budget,
+            ),
+            patch("hsync_client.watcher.warn_if_open_fds_high"),
+        ):
+            with pytest.raises(WatcherStartError):
+                manager.start(MagicMock())
+
+    def test_runtime_downgrade_reports_the_triggering_limit(self, tmp_path):
+        manager = _manager_with_build(tmp_path)
+        manager._observer = MagicMock()
+        with patch("hsync_client.watcher.emit_warning") as warn:
+            manager._request_downgrade(WatcherLimit.INOTIFY_WATCHES)
+            manager._downgrade()
+        assert warn.call_args.kwargs["reason"] == "inotify_watches"
+        assert manager._last_limit is None  # consumed: not stale for the next swap
+
+    def test_runtime_downgrade_without_a_known_cause_stays_generic(self, tmp_path):
+        manager = _manager_with_build(tmp_path)
+        manager._observer = MagicMock()
+        with patch("hsync_client.watcher.emit_warning") as warn:
+            manager._downgrade()
+        assert warn.call_args.kwargs["reason"] == "polling_fallback"
 
 
 class TestWatcherManagerScheduleDirectory:
