@@ -1942,6 +1942,7 @@ def patch_permissions_remote(
     mtime: int = 0,
     vclock_json: str = "",
     version_id: str = "",
+    expected_sha256: str = "",
 ) -> bool:
     """Apply a metadata-only change on the remote WITHOUT sending file bytes.
 
@@ -1951,7 +1952,10 @@ def patch_permissions_remote(
     *corrected* timestamp to apply remotely; ``vclock_json``/``version_id``
     carry this node's effective causal version so the remote records the
     metadata change as a real version (listings and events then advertise it,
-    instead of the peer re-detecting the divergence every sync). Best-effort by
+    instead of the peer re-detecting the divergence every sync).
+    ``expected_sha256`` makes the peer verify that the path still holds the
+    content this node compared against — a concurrent write turns the call into
+    a ``False`` (409) and the caller re-uploads. Best-effort by
     construction: any transport error or non-200 status degrades to ``False``
     and the caller falls back to the regular upload path.
 
@@ -1961,6 +1965,7 @@ def patch_permissions_remote(
         mtime: Corrected modification time to propagate (0 = leave unchanged).
         vclock_json: JSON-encoded effective vector clock ("" = none).
         version_id: Effective version id ("" = none).
+        expected_sha256: Content hash this node compared against ("" = no guard).
 
     Returns:
         True when the remote applied the change, False otherwise.
@@ -1973,6 +1978,8 @@ def patch_permissions_remote(
         params["vclock"] = vclock_json
     if version_id:
         params["version_id"] = version_id
+    if expected_sha256:
+        params["expected_sha256"] = expected_sha256
     own_cid = CONFIG.get("CID")
     if own_cid:
         params["cid"] = own_cid
@@ -2016,6 +2023,7 @@ def _patch_permissions_only(file: File, filename: str) -> bool:
         corrected_mtime,
         vclock_json,
         version_id,
+        file.sha256sum or "",
     ):
         return False
     log.info(f'{ActionLabel.PERMISSION} "{file.filepath}" (metadata updated)')

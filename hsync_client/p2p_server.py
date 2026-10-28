@@ -1153,6 +1153,26 @@ class P2PEndpointMixin(_HTTPTransportBase):
             self._send_error_response(HTTP_NOT_FOUND, "File not found")
             return
 
+        expected_sha256 = _first(query, "expected_sha256") or ""
+        if expected_sha256:
+            # The slave only reached this branch because its content matched the
+            # listing; a path that no longer holds that content was written
+            # concurrently, so the metadata must not be applied and the slave
+            # falls back to the ordinary upload path (same guard as the server).
+            if not is_sha256_hex(expected_sha256):
+                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'expected_sha256' parameter")
+                return
+            current = File.get(full_path)
+            if (
+                current is None
+                or not current.sha256sum
+                or not hmac.compare_digest(expected_sha256, current.sha256sum)
+            ):
+                self._send_error_response(
+                    HTTP_CONFLICT, "File content changed; metadata not applied"
+                )
+                return
+
         origin_cid = self._valid_origin(query)
         try:
             # Attribute the resulting IN_ATTRIB event to the slave that sent it
