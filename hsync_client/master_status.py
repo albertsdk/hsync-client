@@ -144,12 +144,12 @@ class MasterSyncStatus:
         """Schedule a classification (coalesced, never blocks the caller).
 
         A pass never emits ``preview_start``/``preview_end``, not even when the
-        front-end asked for it: those two events are the front-end's *preview
-        cycle* contract, and a serving device answering them would consume the
-        confirmation state of the preview the window is waiting for (the desktop
-        then shows a summary with the wrong counters and never sends the
-        ``SYNC`` that ends its dry run). The window settles these marker-less
-        ``file_status`` bursts with a quiet-period timer.
+        front-end asked for it: that pair is the *preview cycle* a front-end
+        requests and confirms, and a serving device answering it would consume the
+        confirmation of the window's own preview (which would then show a summary
+        with the classification's counters and never send the ``SYNC`` that ends
+        its dry run). The pass reports itself through the serving-side pair
+        instead (see ``run_now``).
         """
         if self._stopped.is_set():
             return
@@ -198,10 +198,21 @@ class MasterSyncStatus:
                 return
 
     def run_now(self) -> None:
-        """Classify the local share against the devices and emit the events."""
+        """Classify the local share against the devices and emit the events.
+
+        The pass is bracketed by ``status_pass_start``/``status_pass_end``, the
+        serving-side counterpart of a requester's ``preview_start``/``preview_end``:
+        a front-end renders the comparison from them and settles its summary, and
+        a pass never confirms a pending sync. The pair wraps every outcome,
+        including the "cannot classify yet" one.
+        """
         with self._run_lock:
             self._last_run = self._clock()
-            self._classify()
+            emit_event(UiEventName.status_pass_start)
+            try:
+                self._classify()
+            finally:
+                emit_event(UiEventName.status_pass_end)
 
     def _classify(self) -> None:
         store = self._store_provider()

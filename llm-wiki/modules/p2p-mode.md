@@ -122,8 +122,13 @@ listing is reused for `master_status.LOCAL_CACHE_TTL_S`. A pass **never emits**
 stdin): those events are the front-end's own preview-cycle contract, and a
 serving node answering them consumed the desktop's confirmation state — it then
 showed a summary with the classification's counters and never sent the `SYNC`
-that ends its dry run. The window settles the marker-less `file_status` burst
-with a quiet-period timer instead. Cost: see [benchmarks.md](benchmarks.md).
+that ends its dry run. Every pass brackets itself with the **serving-side** pair
+instead (`hsync-common/hsync_common/protocol/events.py::UiEventName.status_pass_start`):
+`master_status.py::MasterSyncStatus.run_now` emits `status_pass_start` before the
+classification and `status_pass_end` after it, whatever the outcome, so a
+front-end renders the comparison and settles its summary without inferring the
+end of a burst and without touching the preview confirmation. Cost: see
+[benchmarks.md](benchmarks.md).
 
 **Combined mDNS + bootnode (`HybridDiscovery`).** With a bootnode configured
 both sources run against one `PeerManager` (built once via

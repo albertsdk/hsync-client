@@ -190,11 +190,11 @@ class TestMasterSyncStatus:
 
         status.stop()
         store.close()
-        # No preview markers: those belong to the window's own preview cycles.
-        assert recorder.names() == ["sync_pending"]
-        assert recorder.events[0][1]["reason"] == "no_device"
+        # The serving side brackets its pass and never uses the preview markers.
+        assert recorder.names() == ["status_pass_start", "sync_pending", "status_pass_end"]
+        assert recorder.events[1][1]["reason"] == "no_device"
 
-    def test_an_automatic_pass_emits_no_preview_markers(self, tmp_path, recorder, monkeypatch):
+    def test_a_pass_is_bracketed_without_preview_markers(self, tmp_path, recorder, monkeypatch):
         """Inventory-driven passes must not consume the front-end's preview one-shot."""
         monkeypatch.setitem(CONFIG, "LOCAL_BUCKET", str(tmp_path))
         store = _store(tmp_path, [{"path": "a.bin", "sha256": DIGEST_A, "size": 4}])
@@ -204,7 +204,9 @@ class TestMasterSyncStatus:
 
         status.stop()
         store.close()
-        assert recorder.names() == ["file_status"]
+        names = recorder.names()
+        assert names == ["status_pass_start", "file_status", "status_pass_end"]
+        assert "preview_start" not in names and "preview_end" not in names
         assert recorder.states() == [("synced", str(tmp_path / "a.bin"))]
 
     def test_a_connected_device_without_a_session_reports_awaiting_inventory(
@@ -219,8 +221,8 @@ class TestMasterSyncStatus:
 
         status.stop()
         store.close()
-        assert recorder.names() == ["sync_pending"]
-        assert recorder.events[0][1]["reason"] == "awaiting_inventory"
+        assert recorder.names() == ["status_pass_start", "sync_pending", "status_pass_end"]
+        assert recorder.events[1][1]["reason"] == "awaiting_inventory"
 
     def test_a_connected_device_without_an_inventory_reports_waiting(
         self, tmp_path, recorder, monkeypatch
@@ -234,8 +236,8 @@ class TestMasterSyncStatus:
 
         status.stop()
         store.close()
-        assert recorder.names() == ["sync_pending"]
-        assert recorder.events[0][1]["reason"] == "awaiting_inventory"
+        assert recorder.names() == ["status_pass_start", "sync_pending", "status_pass_end"]
+        assert recorder.events[1][1]["reason"] == "awaiting_inventory"
 
     def test_it_classifies_against_the_published_inventory(self, tmp_path, recorder, monkeypatch):
         monkeypatch.setitem(CONFIG, "LOCAL_BUCKET", str(tmp_path))
@@ -250,7 +252,12 @@ class TestMasterSyncStatus:
 
         status.stop()
         store.close()
-        assert recorder.names() == ["file_status", "file_status"]
+        assert recorder.names() == [
+            "status_pass_start",
+            "file_status",
+            "file_status",
+            "status_pass_end",
+        ]
         assert recorder.states() == [
             ("synced", str(tmp_path / "a.bin")),
             ("to_upload", str(tmp_path / "b.bin")),

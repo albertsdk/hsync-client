@@ -97,7 +97,9 @@ class TestMasterChannel:
 
         reader._dispatch_in_thread(b'{"cmd": "PREVIEW"}\n')
 
-        assert _wait_for(events, "file_status") is True
+        assert _wait_for(events, "status_pass_end") is True
+        assert "status_pass_start" in events
+        assert "file_status" in events
         channel.stop()
         channel.close()
         store.close()
@@ -119,9 +121,10 @@ class TestMasterChannel:
         )
         assert store.apply_frame(CID_A, token, frame)["status"] == "ok"
 
-        # An inventory-driven pass answers with file_status only: the preview
-        # markers belong to the passes the front-end requests.
-        assert _wait_for(events, "file_status") is True
+        # An inventory-driven pass reports itself with the serving-side pair, never
+        # with the preview markers (those belong to the passes a front-end asks for).
+        assert _wait_for(events, "status_pass_end") is True
+        assert "status_pass_start" in events
         assert "preview_end" not in events
         channel.stop()
         channel.close()

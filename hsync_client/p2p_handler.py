@@ -156,9 +156,9 @@ class _MasterChannel:
         if self._thread is not None:
             return
         reader = StdinCommandHandler(self._log)
-        # The answers are marker-less ``file_status`` bursts: preview_start/
-        # preview_end belong to the front-end's own preview cycles (see
-        # MasterSyncStatus.request).
+        # The answers are bracketed by the serving-side pass pair
+        # (status_pass_start/status_pass_end): preview_start/preview_end belong to
+        # the front-end's own preview cycles (see MasterSyncStatus.run_now).
         reader.register("PREVIEW", lambda **_kw: self._status.request())
         # A master is the source of the share: there is nothing to pull, but the
         # command must still acknowledge by refreshing the reported status.
