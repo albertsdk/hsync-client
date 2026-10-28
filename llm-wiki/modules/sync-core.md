@@ -98,6 +98,14 @@ the UI-event channel: an `AuthenticationError` is emitted as
 `UiEventName.auth_error` (so the desktop prompts for the shared password), while
 any other failure stays a generic `UiEventName.error`.
 
+The preview also reports the two plan facts a confirmation cannot derive:
+`UiEventName.preview_skipped` (`reason="deletion_policy"`, `count`, `size`) when
+the configured policy drops the planned deletions, and
+`UiEventName.preview_warning` (`reason="mass_delete_guard"`, `deletes`, `local`)
+when the plan trips the guard that `sync()` applies to unconfirmed deletions
+(`sync.py::_mass_deletion_blocked`, called with the same partition). A front-end
+never infers either from the absence of a `to_delete` row (ADR 0043).
+
 In-flight transfers emit throttled `UiEventName.progress` events
 (`progress.py::ProgressReporter`, coalesced to at most one per 0.25 s plus a
 final update at completion) from **both roles**:

@@ -26,6 +26,7 @@ from hsync_client.p2p_sources import P2PSourceResolver
 from hsync_client.presence import reemit_presence
 from hsync_client.stdin_commands import StdinCommandHandler
 from hsync_client.sync import (
+    _mass_deletion_blocked,
     emit_folder_size,
     ensure_hsynckeep_files,
     get_files_local,
@@ -209,9 +210,33 @@ def _run_preview(log) -> None:
 
         # A rename still arrives under `keep` (it is a move, the content
         # survives), but a plain deletion never does: the preview must not
-        # promise a removal the run is configured to skip.
+        # promise a removal the run is configured to skip. The count is reported
+        # rather than dropped: "nothing to delete" and "deletions kept" are two
+        # different answers for the confirmation a front-end shows.
         if deletes and deletions_are_kept(CONFIG):
+            emit_event(
+                UiEventName.preview_skipped,
+                reason="deletion_policy",
+                count=len(deletes),
+                size=sum(action.file.size or 0 for action in deletes),
+            )
             deletes = []
+        elif deletes:
+            # The guard pauses only *unconfirmed* deletions (a tombstone proves
+            # the removal is intentional), exactly like sync(): the preview
+            # reports the pause the run would apply instead of letting the
+            # confirmation promise a wipe that will be blocked.
+            unconfirmed = [action for action in deletes if not action.tombstone_confirmed]
+            blocked, _reason = _mass_deletion_blocked(
+                len(unconfirmed), len(local_files), len(remote_files)
+            )
+            if blocked:
+                emit_event(
+                    UiEventName.preview_warning,
+                    reason="mass_delete_guard",
+                    deletes=len(unconfirmed),
+                    local=len(local_files),
+                )
 
         # Emit structured messages for each file status (text log + event channel)
         for actions, label, state in [

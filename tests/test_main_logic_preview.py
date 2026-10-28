@@ -73,6 +73,11 @@ class TestRunPreview:
         file_obj.size = 12
         delete_action = SyncAction(file_obj, SyncActionName.delete)
 
+        events: list[tuple[str, dict]] = []
+
+        def _emit(event, **payload) -> None:
+            events.append((str(getattr(event, "value", event)), payload))
+
         with (
             patch("hsync_client.preview.CONFIG", config),
             patch("hsync_client.preview.ensure_hsynckeep_files"),
@@ -80,6 +85,7 @@ class TestRunPreview:
             patch("hsync_client.preview.get_files_remote", return_value=[]),
             patch("hsync_client.preview.get_tombstones_remote", return_value={}),
             patch("hsync_client.preview.get_sync_actions", return_value=[delete_action]),
+            patch("hsync_client.preview.emit_event", _emit),
         ):
             _run_preview(mock_logger)
 
@@ -87,6 +93,76 @@ class TestRunPreview:
         assert any("0 deletes" in str(call) for call in mock_logger.info.call_args_list), (
             "the summary must count the skipped deletions as zero"
         )
+        # The plan dropped them: the front-end is told how many, and why.
+        skipped = [payload for name, payload in events if name == "preview_skipped"]
+        assert skipped == [
+            {"reason": "deletion_policy", "count": 1, "size": 12},
+        ]
+        assert not any(name == "file_status" for name, _payload in events)
+
+    def test_preview_warns_when_the_mass_deletion_guard_would_pause(self, tmp_path):
+        """A plan the guard would block is reported, not promised as a wipe."""
+        from hsync_common.models.file import File
+        from hsync_common.models.sync_action import SyncAction, SyncActionName
+
+        mock_logger = MagicMock()
+        config = {
+            "P2P_MODE": False,
+            "DELETION_POLICY": "propagate",
+            "MASS_DELETE_GUARD": True,
+            "MASS_DELETE_THRESHOLD": 1,
+        }
+        local = [File(str(tmp_path / "kept.txt")), File(str(tmp_path / "gone.txt"))]
+        remote = [File(str(tmp_path / "kept.txt"))]
+        delete_action = SyncAction(local[1], SyncActionName.delete)
+        events: list[tuple[str, dict]] = []
+
+        def _emit(event, **payload) -> None:
+            events.append((str(getattr(event, "value", event)), payload))
+
+        with (
+            patch("hsync_client.preview.CONFIG", config),
+            patch("hsync_client.sync.CONFIG", config),
+            patch("hsync_client.preview.ensure_hsynckeep_files"),
+            patch("hsync_client.preview.get_files_local", return_value=local),
+            patch("hsync_client.preview.get_files_remote", return_value=remote),
+            patch("hsync_client.preview.get_tombstones_remote", return_value={}),
+            patch("hsync_client.preview.get_sync_actions", return_value=[delete_action]),
+            patch("hsync_client.preview.emit_event", _emit),
+        ):
+            _run_preview(mock_logger)
+
+        warnings = [payload for name, payload in events if name == "preview_warning"]
+        assert warnings == [{"reason": "mass_delete_guard", "deletes": 1, "local": 2}]
+
+    def test_preview_stays_quiet_when_the_guard_does_not_trip(self, tmp_path):
+        from hsync_common.models.file import File
+        from hsync_common.models.sync_action import SyncAction, SyncActionName
+
+        mock_logger = MagicMock()
+        config = {"P2P_MODE": False, "DELETION_POLICY": "propagate"}
+        local = [File(str(tmp_path / "kept.txt")), File(str(tmp_path / "gone.txt"))]
+        remote = [File(str(tmp_path / "kept.txt"))]
+        delete_action = SyncAction(local[1], SyncActionName.delete)
+        events: list[tuple[str, dict]] = []
+
+        def _emit(event, **payload) -> None:
+            events.append((str(getattr(event, "value", event)), payload))
+
+        with (
+            patch("hsync_client.preview.CONFIG", config),
+            patch("hsync_client.sync.CONFIG", config),
+            patch("hsync_client.preview.ensure_hsynckeep_files"),
+            patch("hsync_client.preview.get_files_local", return_value=local),
+            patch("hsync_client.preview.get_files_remote", return_value=remote),
+            patch("hsync_client.preview.get_tombstones_remote", return_value={}),
+            patch("hsync_client.preview.get_sync_actions", return_value=[delete_action]),
+            patch("hsync_client.preview.emit_event", _emit),
+        ):
+            _run_preview(mock_logger)
+
+        assert not any(name == "preview_warning" for name, _payload in events)
+        assert any(name == "file_status" for name, _payload in events)
 
     def test_preview_still_shows_deletions_when_propagating(self, tmp_path):
         from hsync_common.models.file import File
