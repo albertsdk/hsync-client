@@ -50,6 +50,7 @@ from hsync_client.constants import (
     HSYNC_VERSION,
     PEER_TIMEOUT,
 )
+from hsync_client.events import emit_warning
 from hsync_client.nat_traversal import candidate_endpoints
 from hsync_client.net_utils import get_local_ip
 from hsync_client.p2p_discovery import DiscoveryFatalError, DiscoveryPlanState
@@ -377,9 +378,15 @@ class BootnodeDiscovery(DiscoveryPlanState):
                 self._log_refusal(exc)
                 backoff = float(exc.retry_after or 0)
             except BootnodeError as exc:
-                log.warning(
-                    f"Bootnode {format_authority(self._bootnode_host, self._bootnode_port)} unreachable: {exc}"
+                message = (
+                    f"Bootnode {format_authority(self._bootnode_host, self._bootnode_port)} "
+                    f"unreachable: {exc}"
                 )
+                log.warning(message)
+                # Structured counterpart: discovery keeps retrying, so this is a
+                # warning (the run continues), not an error. Deduplicated, so a
+                # flapping node cannot flood the front-end.
+                emit_warning(message, source="bootnode", reason="unreachable")
                 first = True  # re-register once the node is reachable again
             except Exception as exc:
                 log.warning(f"Bootnode lease loop error: {exc}")

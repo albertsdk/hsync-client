@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import threading
+from time import monotonic
 from typing import Any, TextIO
 
 from hsync_common.protocol.events import UiEventName, build_event, serialize_event
@@ -29,14 +30,26 @@ __all__ = [
     "UiEventName",
     "emit_event",
     "emit_progress",
+    "emit_warning",
     "get_emitter",
     "init_emitter",
+    "reset_warning_dedup",
 ]
 
 # Atomicity unit of a pipe write (POSIX ``PIPE_BUF``): a line no longer than
 # this is written all-or-nothing, so concurrent threads never interleave two
 # lines without needing a lock.
 _PIPE_ATOMIC_WRITE = 4096
+
+# Warnings are episodic by nature (a bootnode that flaps, a watcher that
+# degrades and recovers): the structured channel carries at most one entry per
+# ``(source, message)`` per window. Without it a flapping condition would turn
+# into a notification storm, which is worse than the silence it replaces. The
+# engine still logs every occurrence.
+_WARNING_DEDUP_WINDOW_S = 600.0
+_WARNING_DEDUP_MAX_ENTRIES = 128
+_warning_seen: dict[tuple[str, str], float] = {}
+_warning_lock = threading.Lock()
 
 
 class EventEmitter:
@@ -169,6 +182,48 @@ def emit_progress(event: UiEventName | str, **payload: Any) -> None:
     em = _emitter
     if em is not None:
         em.emit_progress(event, **payload)
+
+
+def emit_warning(message: str, *, source: str, reason: str = "") -> None:
+    """Publish a non-fatal warning on the structured channel, deduplicated.
+
+    The engine already logs the same fact (``[WATCHER FALLBACK]``, an
+    unreachable bootnode, …): this is its structured counterpart, which a
+    front-end surfaces as an in-app banner and — when the window is not focused
+    — as a system notification. A non-fatal condition must never be reported as
+    ``error``: the run continues.
+
+    One entry per ``(source, message)`` per :data:`_WARNING_DEDUP_WINDOW_S`
+    reaches the channel, so a flapping condition cannot become a notification
+    storm; the caller keeps logging every occurrence. ``source`` is a stable
+    subsystem identifier (never a user-facing sentence) used by the front-end
+    for its dedup and notification category.
+
+    Consumers: hsync-desktop (``warning_occurred`` → banner + notification).
+    """
+    key = (source, message)
+    now = monotonic()
+    with _warning_lock:
+        last = _warning_seen.get(key)
+        if last is not None and now - last < _WARNING_DEDUP_WINDOW_S:
+            return
+        if len(_warning_seen) >= _WARNING_DEDUP_MAX_ENTRIES:
+            expired = [k for k, ts in _warning_seen.items() if now - ts >= _WARNING_DEDUP_WINDOW_S]
+            for stale in expired or [min(_warning_seen, key=_warning_seen.__getitem__)]:
+                _warning_seen.pop(stale, None)
+        _warning_seen[key] = now
+    emit_event(
+        UiEventName.warning,
+        message=message,
+        source=source,
+        reason=reason or None,
+    )
+
+
+def reset_warning_dedup() -> None:
+    """Clear the warning dedup window (tests / a new run in one process)."""
+    with _warning_lock:
+        _warning_seen.clear()
 
 
 def get_link_status() -> str | None:

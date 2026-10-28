@@ -23,6 +23,7 @@ from hsync_client.events import (
     EventEmitter,
     emit_event,
     emit_progress,
+    emit_warning,
     get_emitter,
     get_link_status,
     init_emitter,
@@ -153,6 +154,63 @@ class TestModuleSingleton:
         second = init_emitter(None)
         assert first is not second
         assert events.get_emitter() is second
+
+
+class TestWarningChannel:
+    """``emit_warning`` publishes a structured, deduplicated warning."""
+
+    def teardown_method(self):
+        init_emitter(None)
+        events.reset_warning_dedup()
+
+    def _capture(self) -> int:
+        read_fd, write_fd = os.pipe()
+        init_emitter(write_fd)
+        return read_fd
+
+    def _warnings(self, read_fd: int) -> list[dict]:
+        get_emitter().close()
+        parsed = [parse_event_line(line) for line in _read_lines(read_fd)]
+        os.close(read_fd)
+        return [event for event in parsed if event and event["event"] == "warning"]
+
+    def test_a_warning_carries_its_source(self):
+        read_fd = self._capture()
+
+        emit_warning("Bootnode node:443 unreachable", source="bootnode", reason="unreachable")
+
+        events_out = self._warnings(read_fd)
+        assert len(events_out) == 1
+        assert events_out[0]["message"] == "Bootnode node:443 unreachable"
+        assert events_out[0]["source"] == "bootnode"
+        assert events_out[0]["reason"] == "unreachable"
+
+    def test_the_same_warning_is_reported_once_per_window(self):
+        read_fd = self._capture()
+
+        emit_warning("same", source="bootnode")
+        emit_warning("same", source="bootnode")
+
+        assert len(self._warnings(read_fd)) == 1
+
+    def test_a_different_source_or_message_is_not_deduplicated(self):
+        read_fd = self._capture()
+
+        emit_warning("same", source="bootnode")
+        emit_warning("same", source="watcher")
+        emit_warning("other", source="bootnode")
+
+        assert len(self._warnings(read_fd)) == 3
+
+    def test_a_new_run_can_repeat_a_warning(self):
+        read_fd = self._capture()
+        emit_warning("same", source="watcher")
+        assert len(self._warnings(read_fd)) == 1
+
+        events.reset_warning_dedup()
+        read_fd = self._capture()
+        emit_warning("same", source="watcher")
+        assert len(self._warnings(read_fd)) == 1
 
 
 class TestProgressChannel:

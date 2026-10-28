@@ -111,6 +111,24 @@ pairing is the shared `sync.py::split_rename_pairs`; tombstone-backed
 `delete_remote` rows are listed as `to_delete` too, since the run performs them
 (the keep policy and the mass-deletion guard still never see them).
 
+### Warning channel (`events.py::emit_warning`)
+
+A warning is a condition the engine keeps running through — a watcher that
+degraded to polling because inotify/descriptor limits ran out, a bootnode that
+could not be reached while discovery retried. The engine already logs each
+occurrence (`[WATCHER FALLBACK]`, `[FD EXHAUSTED]`, the bootnode line); the
+structured counterpart is `emit_warning` (`events.py::emit_warning`), which
+publishes `UiEventName.warning` with `message` and a stable `source` identifier
+(`watcher`, `bootnode`). It is **never** an `error`: a consumer must not report a
+failure, and the desktop surfaces it as a warning banner/notification.
+
+The emitter deduplicates: at most one event per `(source, message)` per
+`events.py::_WARNING_DEDUP_WINDOW_S` (10 min, bounded map, `reset_warning_dedup`
+for a new run). A flapping condition must not become a notification storm — that
+would be worse than the silence it replaces. Call sites: `watcher.py` (both the
+startup downgrade and the runtime swap to `PollingObserver`) and
+`p2p_discovery_bootnode.py` (a `BootnodeError` in the lease loop).
+
 In-flight transfers emit throttled `UiEventName.progress` events
 (`progress.py::ProgressReporter`, coalesced to at most one per 0.25 s plus a
 final update at completion) from **both roles**:

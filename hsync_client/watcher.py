@@ -47,6 +47,8 @@ from watchdog.events import (
     FileMovedEvent,
 )
 
+from hsync_client.events import emit_warning
+
 # Per-watch event filter for the inotify backend: every class maps to the
 # kernel mask bits its handler consumes, EXCEPT FileOpenedEvent and
 # FileClosedNoWriteEvent (deliberately omitted). A pure read — the P2P
@@ -381,6 +383,12 @@ class WatcherManager:
             f"{ActionLabel.WATCHER_FALLBACK} file watcher switched to PollingObserver "
             f"for '{self._watch_path}' (higher CPU usage, up to ~1 s event latency)."
         )
+        emit_warning(
+            f"File watcher degraded to polling for '{self._watch_path}' "
+            "(higher CPU usage, up to ~1 s event latency).",
+            source="watcher",
+            reason="polling_fallback",
+        )
 
     def _try_upgrade(self) -> None:
         """Probe whether inotify is available again and, if so, restore it."""
@@ -421,4 +429,12 @@ class WatcherManager:
         log.warning(
             f"{label} {_WATCHER_LIMIT_HINTS[kind]} Switching to PollingObserver for "
             f"'{self._watch_path}' (higher CPU usage, up to ~1 s event latency)."
+        )
+        # The structured counterpart of the log line: a front-end turns it into
+        # a banner/notification, deduplicated per (source, message).
+        emit_warning(
+            f"File watcher degraded to polling for '{self._watch_path}' "
+            "(higher CPU usage, up to ~1 s event latency).",
+            source="watcher",
+            reason=kind.value,
         )
