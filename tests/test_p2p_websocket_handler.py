@@ -40,6 +40,30 @@ class TestLANFileEventHandler:
         assert handler._last_broadcast_stat == {}
         assert handler._last_broadcast_hash == {}
 
+    def test_a_served_change_reports_the_classification_hook(self, handler, ws_server):
+        """The hook fires before the direction guard: download-only still re-classifies.
+
+        A device's upload lands in the served share, so the serving role must
+        re-classify even when the master broadcasts nothing.
+        """
+        config = {"SYNC_DIRECTION": "download-only"}
+        with patch("hsync_client.p2p_websocket.CONFIG", config):
+            handler._broadcast_event(FileCreatedEvent("/share/a.bin"))
+
+        ws_server._notify_local_change.assert_called_once_with()
+
+    def test_the_local_change_hook_is_optional_and_clearable(self):
+        server = P2PWebSocketServer(port=1)
+        server._notify_local_change()  # no callback installed: a no-op
+
+        calls: list[int] = []
+        server.set_local_change_callback(lambda: calls.append(1))
+        server._notify_local_change()
+        server.set_local_change_callback(None)
+        server._notify_local_change()
+
+        assert calls == [1]
+
     def test_on_created_directory(self, handler, ws_server, tmp_path):
         """Test handling directory creation event."""
         test_dir = tmp_path / "newdir"

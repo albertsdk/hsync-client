@@ -123,7 +123,9 @@ class _MasterChannel:
     silently dropped while the node is the master, leaving its file table stuck
     on the pre-connect state (all rows "Local") even though the status bar says
     "connected". ``MasterSyncStatus`` answers with a classification of the
-    local share against the inventories the devices published.
+    local share against the inventories the devices published. The channel also
+    owns the served-share change hook, so a file a device uploads refreshes the
+    classification instead of waiting for an unrelated inventory change.
     """
 
     def __init__(
@@ -181,17 +183,32 @@ class _MasterChannel:
         self.refresh()
 
     def refresh(self) -> None:
-        """(Re)wire the inventory hook and ask for a classification."""
+        """(Re)wire the change hooks and ask for a classification."""
         store = self._p2p_server.inventory_store
         if store is not None:
             store.set_change_callback(self._status.request)
+        self._p2p_ws_server.set_local_change_callback(self.local_change)
+        self._status.request()
+
+    def local_change(self) -> None:
+        """The served share changed on disk: refresh the listing, re-classify.
+
+        Runs from the watchdog thread on every create/modify/delete/rename of
+        the share, the files a device uploads included. Without it the next
+        pass compares the share with a listing up to
+        ``master_status.LOCAL_CACHE_TTL_S`` old (and nothing else wakes the
+        role when only its own folder changed), so a front-end keeps seeing the
+        transfers a completed cycle already applied.
+        """
+        self._status.invalidate_local()
         self._status.request()
 
     def stop(self) -> None:
-        """Stop reading commands and detach from the inventory (idempotent)."""
+        """Stop reading commands and detach from the change hooks (idempotent)."""
         store = self._p2p_server.inventory_store
         if store is not None:
             store.set_change_callback(None)
+        self._p2p_ws_server.set_local_change_callback(None)
         reader, self._reader = self._reader, None
         self._stop.set()
         if reader is not None:

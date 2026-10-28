@@ -436,6 +436,7 @@ class P2PWebSocketServer:
         self._clients_lock = threading.Lock()
         self._on_clients_changed: Callable[[int], None] | None = None
         self._on_peer_connection: Callable[[str, bool], None] | None = None
+        self._on_local_change: Callable[[], None] | None = None
 
     def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Adopt the unified listener's event loop.
@@ -494,6 +495,28 @@ class P2PWebSocketServer:
         falsely expired.
         """
         self._on_peer_connection = callback
+
+    def set_local_change_callback(self, callback: Callable[[], None] | None) -> None:
+        """Install (or clear) the callback invoked after a served-share change.
+
+        Fires from the watchdog thread for every local change the master serves
+        (including the files a device uploads through the HTTP API) and before
+        the broadcast-direction guard, because ``download-only`` suppresses the
+        broadcast, never the local change. The serving role re-classifies from
+        it, so an upload must refresh the reported status; the callback must be
+        non-blocking.
+        """
+        self._on_local_change = callback
+
+    def _notify_local_change(self) -> None:
+        """Invoke the served-share change callback, if installed."""
+        callback = self._on_local_change
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception:
+            log.exception("Local-change callback failed")
 
     def _notify_peer_connection(self, cid: str, connected: bool) -> None:
         """Invoke the per-CID connect/disconnect callback, if installed."""
@@ -1149,11 +1172,16 @@ class P2PMasterFileEventHandler(BaseFileEventHandler):
         Skipped when SYNC_DIRECTION is 'download-only' (master should not
         broadcast local changes to slaves).
 
+        Every change reports itself to the serving role first: the files a
+        device uploads land in the served share, so the status classification
+        has to see them even when nothing is broadcast.
+
         If ``src_abs_path`` (or ``dst_abs_path``) matches a path that was
         recently written/deleted/renamed on behalf of a peer via the P2P
         HTTP API, the originator's CID is substituted into the broadcast
         so the sender can recognise and discard its own echo.
         """
+        self._ws_server._notify_local_change()
         if CONFIG.get("SYNC_DIRECTION") == "download-only":
             log.debug("Download-only mode: master event not broadcast.")
             return

@@ -115,9 +115,17 @@ when the master serves no blocks. When it cannot classify yet it emits
 `reason="awaiting_inventory"` when a device is connected but has not published
 (or opened a session yet) — never "out of sync", never a file verdict.
 `P2PInventoryStore.set_change_callback` re-runs the pass on every
-committed inventory change (join, leave, frame), coalesced to one pass per
-`master_status.MIN_INTERVAL_S` and executed off the caller's thread; the local
-listing is reused for `master_status.LOCAL_CACHE_TTL_S`. A pass **never emits**
+committed inventory change (join, leave, frame) and
+`P2PWebSocketServer.set_local_change_callback` on every change of the served
+share itself — the files a device uploads through the HTTP API included — because
+no peer inventory changes when only the master's folder does. The served-share
+hook drops the cached local listing first (`MasterSyncStatus.invalidate_local`):
+without it the pass would classify a folder up to
+`master_status.LOCAL_CACHE_TTL_S` old and keep reporting the transfers a finished
+cycle already applied, until some unrelated inventory change woke it. Passes are
+coalesced to one per `master_status.MIN_INTERVAL_S` and executed off the caller's
+thread; the local listing is reused for `master_status.LOCAL_CACHE_TTL_S` between
+changes. A pass **never emits**
 `preview_start`/`preview_end`, not even when the front-end asked (`PREVIEW` on
 stdin): those events are the front-end's own preview-cycle contract, and a
 serving node answering them consumed the desktop's confirmation state — it then
