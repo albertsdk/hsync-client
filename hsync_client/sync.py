@@ -638,6 +638,7 @@ async def sync(
         symlink_downloads: list = []
         tombstone_deletes: list = []
         guarded_deletes: list = []
+        delete_remotes: list = []
         for a in sync_actions:
             name = a.name
             if name == SyncActionName.download:
@@ -653,6 +654,8 @@ async def sync(
                     tombstone_deletes.append(a.file)
                 else:
                     guarded_deletes.append(a.file)
+            elif name == SyncActionName.delete_remote:
+                delete_remotes.append(a.file)
             elif name == SyncActionName.nothing:
                 nothing.append(a.file)
             elif name == SyncActionName.upload_symlink:
@@ -669,7 +672,7 @@ async def sync(
         # of the old path plus a download of the new one: move the file instead
         # of deleting and re-transferring identical bytes. A failed move puts
         # both halves back on the ordinary path.
-        rename_pairs, downloads, tombstone_deletes = _split_rename_pairs(
+        rename_pairs, downloads, tombstone_deletes = split_rename_pairs(
             downloads, tombstone_deletes
         )
         renamed = 0
@@ -679,6 +682,19 @@ async def sync(
             else:
                 tombstone_deletes.append(old_file)
                 downloads.append(new_file)
+
+        # The mirror case: a rename performed HERE while this peer was offline
+        # arrives as a tombstone-confirmed delete of the stale remote old path
+        # plus an upload of the new one. Both entries advertise the same
+        # content, so moving the remote copy converges without re-sending the
+        # bytes. A refused move puts both halves back on the ordinary path.
+        remote_rename_pairs, uploads, delete_remotes = split_rename_pairs(uploads, delete_remotes)
+        for old_file, new_file in remote_rename_pairs:
+            if _apply_remote_rename(old_file, new_file):
+                renamed += 1
+            else:
+                delete_remotes.append(old_file)
+                uploads.append(new_file)
 
         # Log files that are already in sync (no I/O needed)
         for file in nothing:
@@ -741,17 +757,17 @@ async def sync(
 
         # Handle remote deletions: files that exist only on the server but carry
         # a matching local tombstone (deleted here while offline). The stale
-        # server copy must be removed, not downloaded back.
+        # server copy must be removed, not downloaded back. Rename pairs were
+        # already executed above and their halves removed from this list.
         from hsync_client.transfer import delete_file_remote
 
-        for action in sync_actions:
-            if action.name == SyncActionName.delete_remote:
-                try:
-                    delete_file_remote(action.file)
-                except Exception as e:
-                    # Best-effort: the tombstone stays in the local store, so
-                    # the next cycle will retry the remote deletion.
-                    log.error(f'Error deleting "{action.file.filepath}" on server: {e}')
+        for file in delete_remotes:
+            try:
+                delete_file_remote(file)
+            except Exception as e:
+                # Best-effort: the tombstone stays in the local store, so
+                # the next cycle will retry the remote deletion.
+                log.error(f'Error deleting "{file.filepath}" on server: {e}')
 
         # Preserve locally-modified files before a conflicting download
         # overwrites them (concurrent clocks lost the causal tie-break —
@@ -1600,42 +1616,48 @@ def _tombstone_clock_dominates(entry: dict, other_vclock: dict[str, int] | None)
     return compare_vclocks(tomb_vclock, other_vclock) is VClockOrder.dominates
 
 
-def _split_rename_pairs(
-    downloads: list[File], tombstone_deletes: list[File]
+def split_rename_pairs(
+    new_entries: list[File], old_entries: list[File]
 ) -> tuple[list[tuple[File, File]], list[File], list[File]]:
-    """Pair a tombstone-confirmed delete with a download of the same content.
+    """Pair each vacated path with the new path carrying the same content.
 
-    A rename performed elsewhere arrives as "delete the old path" (backed by a
-    deletion marker) plus "download the new one". When both carry the same
-    content hash and size, moving the local file yields exactly the same result
-    without transferring the bytes again — which the preview already reports as
-    one rename. Returns ``(pairs, downloads, deletes)`` with the paired entries
-    removed; anything unpaired keeps the plain delete/download path.
+    A rename reaches a reconcile loop as two independent actions — the old path
+    must disappear and the new one must appear — in one of two shapes:
+
+    * the rename happened *elsewhere*: tombstone-confirmed delete + download;
+    * the rename happened *here* while offline: ``delete_remote`` + upload.
+
+    Pairing them on ``(sha256, size)`` collapses the pair into a single move on
+    the side that still holds the bytes, so identical content never crosses the
+    wire in either direction. Returns ``(pairs, new_entries, old_entries)`` with
+    the paired entries removed; anything unpaired keeps its ordinary path.
+    Shared with the preview, so the plan a confirmation shows is the plan the
+    run executes.
     """
 
     # Zero-byte files are never paired: every empty file shares the same SHA-256,
     # so two unrelated empty paths would be indistinguishable (and moving an
     # empty file saves nothing over recreating it).
     by_content: dict[tuple[str, int], list[File]] = {}
-    for file in downloads:
+    for file in new_entries:
         if not file.sha256sum or int(file.size or 0) <= 0:
             continue
         by_content.setdefault((file.sha256sum, int(file.size or 0)), []).append(file)
 
     pairs: list[tuple[File, File]] = []
     paired: set[int] = set()
-    remaining_deletes: list[File] = []
-    for old_file in tombstone_deletes:
+    remaining_old: list[File] = []
+    for old_file in old_entries:
         candidates = by_content.get((old_file.sha256sum or "", int(old_file.size or 0)))
         if not old_file.sha256sum or int(old_file.size or 0) <= 0 or not candidates:
-            remaining_deletes.append(old_file)
+            remaining_old.append(old_file)
             continue
         new_file = candidates.pop(0)
         paired.add(id(new_file))
         pairs.append((old_file, new_file))
 
-    remaining_downloads = [file for file in downloads if id(file) not in paired]
-    return pairs, remaining_downloads, remaining_deletes
+    remaining_new = [file for file in new_entries if id(file) not in paired]
+    return pairs, remaining_new, remaining_old
 
 
 def _apply_local_rename(old_file: File, new_file: File) -> bool:
@@ -1667,6 +1689,48 @@ def _apply_local_rename(old_file: File, new_file: File) -> bool:
     vclock, corrected_mtime = _parse_advertised_version(getattr(new_file, "version", None))
     sync_state.merge_and_record(new_path, new_file.sha256sum or "", vclock, corrected_mtime)
     log.info(f'{ActionLabel.RENAME} "{old_path}" -> "{new_path}"')
+    emit_event(UiEventName.rename, src=old_path, dst=new_path)
+    return True
+
+
+def _apply_remote_rename(old_file: File, new_file: File) -> bool:
+    """Move the remote copy of a file that was renamed locally while offline.
+
+    The pair is built on identical content (hash + size), so the remote move is
+    the whole operation and no bytes leave this host. The local file is re-hashed
+    first: the listing was captured before the transfer phase, and moving the
+    remote copy of a file that changed meanwhile would publish the *old* content
+    at the new path, which the next cycle would then download back over the
+    fresh local edit. Returns False when the move cannot be proven, so the
+    caller falls back to the ordinary delete + upload pair.
+    """
+    from hsync_client.transfer import rename_file_remote
+
+    old_path = old_file.filepath or ""
+    new_path = new_file.filepath or ""
+    if not old_path or not new_path or not new_file.sha256sum:
+        return False
+
+    current = File.get(new_path)
+    if current is None or current.sha256sum != new_file.sha256sum:
+        log.debug(f'[RENAME] "{new_path}" changed since the scan; uploading instead')
+        return False
+
+    try:
+        response = rename_file_remote(old_file, current)
+    except Exception as e:
+        log.warning(
+            f'{ActionLabel.RENAME} Could not move "{old_path}" -> "{new_path}" on the '
+            f"remote ({e}); falling back to delete + upload"
+        )
+        return False
+    if response is None:
+        return False
+
+    sync_state.clear_base(old_path)
+    vclock, corrected_mtime = _parse_advertised_version(response.get("version"))
+    sync_state.merge_and_record(new_path, current.sha256sum or "", vclock, corrected_mtime)
+    log.info(f'{ActionLabel.RENAME} "{old_path}" -> "{new_path}" (on remote)')
     emit_event(UiEventName.rename, src=old_path, dst=new_path)
     return True
 

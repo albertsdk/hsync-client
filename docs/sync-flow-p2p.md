@@ -83,6 +83,16 @@ for echo suppression — the master's own CID is used instead.
 3. **Upload**: File is POSTed to the master with SHA-256 verification.
 4. **Broadcast**: Master distributes metadata to all other slaves.
 
+A **rename** is not an upload in this cycle: the slave announces it with
+`PATCH …/files?src=&dst=` and the master moves its own copy, so the file is
+never re-sent. The same request is used by a periodic resync when the rename
+happened while the slave was not watching (both sides advertise the same
+SHA-256 and size, and the request carries the expected checksum). A peer that
+learns about a rename afterwards as "delete the old path + download the new
+one" applies it as a local move, so no peer downloads the file either. The
+master's watcher records the vacated path's deletion marker and its version
+store carries the clock to the new path — a rename is not a content edit.
+
 ## 6. Periodic Resync
 
 As a safety net against missed inotify events, the slave runs a full resync at

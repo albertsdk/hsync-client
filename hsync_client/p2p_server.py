@@ -83,6 +83,7 @@ from hsync_common.protocol.rest import (
 )
 from hsync_common.ratelimit import TokenBucketLimiter
 from hsync_common.text import compact_json_bytes
+from hsync_common.time_utils import utc_now_epoch
 from loguru import logger as log
 
 from hsync_client.arbitration import conflicted_copy_name
@@ -1184,7 +1185,20 @@ class P2PEndpointMixin(_HTTPTransportBase):
         self._send_json_response(HTTP_OK, {"info": "Metadata updated"})
 
     def _handle_rename(self, query: dict) -> None:
-        """Handle file/directory rename from client."""
+        """Handle a file/directory move without transferring bytes.
+
+        Same contract as the central server's ``PATCH …/files`` (``src``, ``dst``,
+        ``cid``, optional ``expected_sha256``/``mtime``/``permissions``): a slave
+        renames a file locally while the master still holds the old path, and
+        both sides advertise the same content hash, so moving the master's copy
+        converges without re-uploading the bytes.
+
+        A rename vacates the source exactly like a delete and repopulates the
+        destination exactly like a creation: the master's watcher mints the
+        source tombstone (``on_moved`` → ``_on_deleted``), while this handler
+        carries the stored version lineage to the new path and refuses to
+        overwrite an existing destination.
+        """
         if self._reject_duplicate_cid(_first(query, "cid")):
             return
 
@@ -1220,6 +1234,51 @@ class P2PEndpointMixin(_HTTPTransportBase):
             self._send_error_response(HTTP_NOT_FOUND, "Source not found")
             return
 
+        if Path(dst_path).is_symlink() or Path(dst_path).exists():
+            # A concurrently created destination is a conflict, never an
+            # overwrite: the slave falls back to the ordinary upload path.
+            self._send_error_response(HTTP_CONFLICT, "Destination already exists")
+            return
+
+        expected_sha256 = _first(query, "expected_sha256") or ""
+        if expected_sha256:
+            if not is_sha256_hex(expected_sha256):
+                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'expected_sha256' parameter")
+                return
+            if not src.is_symlink() and not src.is_dir():
+                current = File.get(src_path)
+                if (
+                    current is None
+                    or not current.sha256sum
+                    or not hmac.compare_digest(expected_sha256, current.sha256sum)
+                ):
+                    # The listing the slave planned against is stale: never move
+                    # bytes nobody verified — let it fall back to an upload.
+                    self._send_error_response(
+                        HTTP_CONFLICT, "Source content no longer matches the expected checksum"
+                    )
+                    return
+
+        permissions = _first(query, "permissions") or ""
+        if permissions:
+            from hsync_common.permissions import is_valid_octal_permissions
+
+            if not is_valid_octal_permissions(permissions):
+                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'permissions' parameter")
+                return
+
+        mtime = 0
+        mtime_raw = _first(query, "mtime")
+        if mtime_raw is not None:
+            try:
+                mtime = int(mtime_raw)
+            except (TypeError, ValueError, OverflowError):
+                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'mtime' parameter")
+                return
+            if mtime < 0:
+                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'mtime' parameter")
+                return
+
         try:
             # Create parent directory if needed
             dst_parent = str(Path(dst_path).parent)
@@ -1235,7 +1294,39 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
             rename(src_path, dst_path)
 
-            self._send_json_response(HTTP_OK, {"info": "Renamed successfully"})
+            # A rename is not an edit: carry the stored version lineage to the
+            # destination so the master's arbitration view follows the content.
+            from hsync_client.sync_state import move_base
+
+            move_base(src_path, dst_path)
+
+            if permissions:
+                from hsync_client.utils import set_permissions
+
+                set_permissions(dst_path, permissions)
+            if mtime > 0 and not Path(dst_path).is_dir():
+                # Apply the uploader's raw mtime with the same far-future clamp
+                # the central server applies: an absurd value must not win every
+                # tie-break (ADR-0023).
+                max_ts = utc_now_epoch() + MTIME_MAX_FUTURE_SKEW_SECONDS
+                if mtime > max_ts:
+                    mtime = int(max_ts)
+                os.utime(dst_path, (mtime, mtime))
+
+            # The move vacated the source path: keep the empty directory alive
+            # with a sentinel, exactly like a delete does.
+            self._ensure_sentinel_in_parent(src_path)
+
+            content: dict = {"info": "Renamed successfully"}
+            dst_file = File.get(dst_path)
+            if dst_file is not None:
+                from hsync_client.sync_state import version_info_for_path
+
+                content["file"] = file_entry(dst_file, local_bucket)
+                version = version_info_for_path(dst_path)
+                if version is not None:
+                    content["version"] = version
+            self._send_json_response(HTTP_OK, content)
 
         except Exception as e:
             log.error(f"Error renaming {src_path} -> {dst_path}: {e}")
@@ -1303,7 +1394,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
                     self._cleanup_empty_dir(parent)
                 else:
                     # Regular file removed — preserve directory with sentinel
-                    self._ensure_sentinel_after_delete(full_path)
+                    self._ensure_sentinel_in_parent(full_path)
 
             self._send_json_response(HTTP_OK, {"info": "Deleted successfully"})
 
@@ -1312,15 +1403,15 @@ class P2PEndpointMixin(_HTTPTransportBase):
             self._send_error_response(HTTP_INTERNAL_ERROR, f"Delete error: {e}")
 
     @staticmethod
-    def _ensure_sentinel_after_delete(deleted_file: str) -> None:
-        """Create a .hsynckeep sentinel if the parent directory is now empty.
+    def _ensure_sentinel_in_parent(path: str) -> None:
+        """Create a .hsynckeep sentinel if *path*'s parent is now empty.
 
-        After a file is deleted the parent directory may become empty.
-        Placing a sentinel preserves the directory structure during sync.
+        A delete or a move vacates the container; the marker preserves the
+        directory structure during sync.
         """
         from hsync_client.sync import ensure_sentinel
 
-        parent = str(Path(deleted_file).parent)
+        parent = str(Path(path).parent)
         if not parent or not Path(parent).exists() or not Path(parent).is_dir():
             return
         ensure_sentinel(parent)

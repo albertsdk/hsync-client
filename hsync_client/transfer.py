@@ -1608,6 +1608,18 @@ def _reschedule_upload(
     timer.start()
 
 
+def wire_relpath(file: File) -> str:
+    """Return *file*'s bucket-relative path for a peer mutation request.
+
+    A ``File`` reaches the transfer layer either from a remote listing (already
+    bucket-relative) or from a local scan (absolute): both are normalised
+    against ``LOCAL_BUCKET`` so the peer only ever receives a path inside the
+    bucket it is allowed to touch.
+    """
+    prefix = f"{CONFIG['LOCAL_BUCKET']}".rstrip("/")
+    return str(file.filepath or "").removeprefix(prefix).lstrip("/")
+
+
 def delete_file_remote(file: File) -> None:
     """Delete *file* on the server via the REST ``DELETE …/files`` endpoint.
 
@@ -1631,10 +1643,7 @@ def delete_file_remote(file: File) -> None:
     from hsync_client.utils import get_ssl_verify, http_delete
 
     uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files"
-    # file.filepath here is the remote bucket-relative path (the File was built
-    # from the remote listing against LOCAL_BUCKET, so strip the local prefix).
-    prefix = f"{CONFIG['LOCAL_BUCKET']}".rstrip("/")
-    filename = str(file.filepath).removeprefix(prefix).lstrip("/")
+    filename = wire_relpath(file)
 
     p2p_mode = bool(CONFIG.get("P2P_MODE", False))
     response = http_delete(
@@ -1655,6 +1664,79 @@ def delete_file_remote(file: File) -> None:
         )
     log.info(f'{ActionLabel.DELETE} "{filename}" (on server)')
     emit_event(UiEventName.transfer, op="delete_remote", file=filename)
+
+
+def rename_file_remote(old_file: File, new_file: File) -> dict | None:
+    """Move *old_file* to *new_file* on the remote without transferring bytes.
+
+    Invoked for the reconcile-time rename shortcut: a file renamed while this
+    peer was offline arrives as a tombstone-confirmed deletion of the stale
+    remote path plus an upload of the new one, and both sides already advertise
+    the same content hash. Moving the remote copy yields exactly the same
+    result as DELETE + re-upload, and no byte crosses the wire.
+
+    The wire shape is the one the P2P master already exposes
+    (``PATCH …/files?src=&dst=``), now served by the central server too, so one
+    contract covers both transports. ``expected_sha256`` makes the peer verify
+    the content it is about to move: a stale listing must not relocate bytes
+    nobody checked. ``mtime``/``permissions`` carry the local metadata an
+    upload would have applied.
+
+    Args:
+        old_file: The remote-listing entry being vacated.
+        new_file: The local entry holding the same content at the new path.
+
+    Returns:
+        The decoded response body (``file`` and the carried ``version``), or
+        ``None`` when the peer refused the move (destination appeared, source
+        gone, checksum no longer matches, endpoint unavailable). The caller
+        falls back to DELETE + upload in that case.
+
+    Raises:
+        NetworkError: On a connection-level error.
+        ServerError: On any other unexpected response.
+    """
+    uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files"
+    params: dict[str, str] = {
+        "src": wire_relpath(old_file),
+        "dst": wire_relpath(new_file),
+        "cid": CONFIG["CID"],
+    }
+    if old_file.sha256sum:
+        params["expected_sha256"] = old_file.sha256sum
+    if new_file.mtime and int(new_file.mtime) > 0:
+        params["mtime"] = str(int(new_file.mtime))
+    if new_file.permissions:
+        params["permissions"] = new_file.permissions
+
+    response = patch(
+        uri,
+        params=params,
+        headers=dict(CONFIG["REQUEST_HEADERS"]),
+        verify=get_ssl_verify(),
+        timeout=CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT),
+    )
+    if response.status_code == 200:
+        try:
+            return dict(response.json())
+        except ValueError:
+            # A 200 without a decodable body still moved the file: the caller
+            # records the base from the local hash and the next listing
+            # supplies the version.
+            return {}
+    if response.status_code in (404, 405, 409):
+        # 404/405: the peer does not serve the rename contract (or the source
+        # is already gone). 409: the destination appeared or the content no
+        # longer matches. Both converge through the ordinary delete + upload.
+        log.debug(
+            f'Remote rename "{params["src"]}" -> "{params["dst"]}" refused '
+            f"(status {response.status_code}); falling back to delete + upload"
+        )
+        return None
+    raise ServerError(
+        message=f"Remote rename failed for {params['src']}: status {response.status_code}",
+        details={"status_code": response.status_code, "response": response.text},
+    )
 
 
 def upload_file(

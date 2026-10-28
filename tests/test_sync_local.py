@@ -1508,26 +1508,26 @@ class TestRenameShortcut:
     """A remote rename moves the local file instead of re-transferring it."""
 
     def test_a_delete_and_a_download_of_the_same_content_pair_up(self):
-        from hsync_client.sync import _split_rename_pairs
+        from hsync_client.sync import split_rename_pairs
 
         digest = "a" * 64
         old = File(filepath="/bucket/x.jpg", size=10, sha256sum=digest)
         new = File(filepath="/bucket/x_2.jpg", size=10, sha256sum=digest)
         other = File(filepath="/bucket/y.jpg", size=10, sha256sum="b" * 64)
 
-        pairs, downloads, deletes = _split_rename_pairs([new, other], [old])
+        pairs, downloads, deletes = split_rename_pairs([new, other], [old])
 
         assert pairs == [(old, new)]
         assert downloads == [other]
         assert deletes == []
 
     def test_different_content_keeps_the_plain_actions(self):
-        from hsync_client.sync import _split_rename_pairs
+        from hsync_client.sync import split_rename_pairs
 
         old = File(filepath="/bucket/x.jpg", size=10, sha256sum="a" * 64)
         new = File(filepath="/bucket/x_2.jpg", size=10, sha256sum="b" * 64)
 
-        pairs, downloads, deletes = _split_rename_pairs([new], [old])
+        pairs, downloads, deletes = split_rename_pairs([new], [old])
 
         assert pairs == []
         assert downloads == [new]
@@ -1535,20 +1535,20 @@ class TestRenameShortcut:
 
     def test_empty_files_never_pair(self):
         """Every empty file shares a SHA-256: pair on content would be a guess."""
-        from hsync_client.sync import _split_rename_pairs
+        from hsync_client.sync import split_rename_pairs
 
         old = File(filepath="/bucket/a", size=0, sha256sum="e" * 64)
         new = File(filepath="/bucket/b", size=0, sha256sum="e" * 64)
 
-        assert _split_rename_pairs([new], [old]) == ([], [new], [old])
+        assert split_rename_pairs([new], [old]) == ([], [new], [old])
 
     def test_a_file_without_a_hash_never_pairs(self):
-        from hsync_client.sync import _split_rename_pairs
+        from hsync_client.sync import split_rename_pairs
 
         old = File(filepath="/bucket/x.jpg", size=10, sha256sum=None)
         new = File(filepath="/bucket/x_2.jpg", size=10, sha256sum=None)
 
-        assert _split_rename_pairs([new], [old]) == ([], [new], [old])
+        assert split_rename_pairs([new], [old]) == ([], [new], [old])
 
     def test_applying_the_rename_moves_the_file_and_records_the_new_path(self, tmp_path):
         from unittest.mock import patch
@@ -1590,6 +1590,163 @@ class TestRenameShortcut:
         new = File(filepath=str(tmp_path / "new.jpg"), size=1, sha256sum="a" * 64)
 
         assert _apply_local_rename(old, new) is False
+
+    def test_an_upload_and_a_remote_delete_of_the_same_content_pair_up(self):
+        """The mirror case: a rename performed here while the peer was offline."""
+        from hsync_client.sync import split_rename_pairs
+
+        digest = "c" * 64
+        stale_remote = File(filepath="/bucket/old.jpg", size=10, sha256sum=digest)
+        fresh_local = File(filepath="/bucket/new.jpg", size=10, sha256sum=digest)
+
+        pairs, uploads, delete_remotes = split_rename_pairs([fresh_local], [stale_remote])
+
+        assert pairs == [(stale_remote, fresh_local)]
+        assert uploads == []
+        assert delete_remotes == []
+
+    def test_only_as_many_pairs_as_there_are_candidates(self):
+        """Three identical copies cannot all pair with one vacated path."""
+        from hsync_client.sync import split_rename_pairs
+
+        digest = "d" * 64
+        old = File(filepath="/bucket/old.jpg", size=10, sha256sum=digest)
+        first = File(filepath="/bucket/a.jpg", size=10, sha256sum=digest)
+        second = File(filepath="/bucket/b.jpg", size=10, sha256sum=digest)
+
+        pairs, uploads, delete_remotes = split_rename_pairs([first, second], [old])
+
+        assert pairs == [(old, first)]
+        assert uploads == [second]
+        assert delete_remotes == []
+
+    def test_the_remote_rename_records_the_advertised_version(self, tmp_path):
+        from hsync_client.sync import _apply_remote_rename
+
+        content = b"content"
+        digest = hashlib.sha256(content).hexdigest()
+        new_path = tmp_path / "new.jpg"
+        new_path.write_bytes(content)
+        old_path = tmp_path / "old.jpg"
+        old = File(filepath=str(old_path), size=len(content), sha256sum=digest)
+        new = File(filepath=str(new_path), size=len(content), sha256sum=digest)
+        advertised = {"vclock": {_peer_cid("R"): 2}, "corrected_mtime": 5}
+
+        with (
+            patch(
+                "hsync_client.transfer.rename_file_remote",
+                return_value={"version": advertised},
+            ) as move,
+            patch("hsync_client.sync.sync_state") as state,
+            patch("hsync_client.sync.emit_event") as emitted,
+        ):
+            assert _apply_remote_rename(old, new) is True
+
+        assert move.call_args.args[0] is old
+        state.clear_base.assert_called_once_with(str(old_path))
+        state.merge_and_record.assert_called_once_with(
+            str(new_path), digest, {_peer_cid("R"): 2}, 5
+        )
+        assert emitted.call_args.kwargs["src"] == str(old_path)
+        assert emitted.call_args.kwargs["dst"] == str(new_path)
+
+    def test_a_file_edited_since_the_scan_is_not_moved_remotely(self, tmp_path):
+        """Moving stale remote bytes would publish the pre-edit content."""
+        from hsync_client.sync import _apply_remote_rename
+
+        new_path = tmp_path / "new.jpg"
+        new_path.write_bytes(b"edited after the scan")
+        planned = "a" * 64
+        old = File(filepath=str(tmp_path / "old.jpg"), size=1, sha256sum=planned)
+        new = File(filepath=str(new_path), size=1, sha256sum=planned)
+
+        with patch("hsync_client.transfer.rename_file_remote") as move:
+            assert _apply_remote_rename(old, new) is False
+
+        move.assert_not_called()
+
+    def test_a_refused_remote_move_reports_false(self, tmp_path):
+        from hsync_client.sync import _apply_remote_rename
+
+        content = b"content"
+        digest = hashlib.sha256(content).hexdigest()
+        new_path = tmp_path / "new.jpg"
+        new_path.write_bytes(content)
+        old = File(filepath=str(tmp_path / "old.jpg"), size=len(content), sha256sum=digest)
+        new = File(filepath=str(new_path), size=len(content), sha256sum=digest)
+
+        with patch("hsync_client.transfer.rename_file_remote", return_value=None):
+            assert _apply_remote_rename(old, new) is False
+
+
+class TestRemoteRenameInCycle:
+    """A rename performed here while offline moves the remote copy."""
+
+    def test_the_cycle_moves_the_remote_file_and_skips_the_transfer(self, tmp_path):
+        import asyncio
+
+        from hsync_common.models.sync_action import SyncAction
+
+        from hsync_client.sync import sync
+
+        content = b"payload"
+        new_path = tmp_path / "new.txt"
+        new_path.write_bytes(content)
+        digest = hashlib.sha256(content).hexdigest()
+        local_file = File.get(str(new_path))
+        assert local_file is not None
+        stale_remote = File.from_dict(
+            {
+                "filepath": "old.txt",
+                "name": "old.txt",
+                "ctime": 1000,
+                "mtime": 1000,
+                "size": len(content),
+                "sha256sum": digest,
+                "permissions": "644",
+            },
+            str(tmp_path),
+        )
+        cfg = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "CID": "clientcid000000000000",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+        actions = [
+            SyncAction(stale_remote, SyncActionName.delete_remote),
+            SyncAction(local_file, SyncActionName.upload),
+        ]
+
+        async def _run():
+            with (
+                patch("hsync_client.sync.CONFIG", cfg),
+                patch("hsync_client.state_backend.CONFIG", cfg),
+                patch("hsync_client.sync.get_files_remote", return_value=[]),
+                patch("hsync_client.sync.get_tombstones_remote", return_value={}),
+                patch("hsync_client.sync.push_tombstones_remote"),
+                patch("hsync_client.sync.get_dirs_remote", return_value=[]),
+                patch("hsync_client.sync.get_sync_actions", return_value=actions),
+                patch("hsync_client.sync.sync_state.iter_merge_bases", return_value=[]),
+                patch("hsync_client.sync.sync_state.clear_base") as clear_base,
+                patch("hsync_client.sync.sync_state.merge_and_record") as merge,
+                patch("hsync_client.transfer.rename_file_remote", return_value={}) as move,
+                patch("hsync_client.transfer.upload_file") as upload,
+                patch("hsync_client.transfer.delete_file_remote") as delete,
+            ):
+                result = await sync()
+                return result, move, upload, delete, clear_base, merge
+
+        result, move, upload, delete, clear_base, merge = asyncio.run(_run())
+
+        move.assert_called_once()
+        assert move.call_args.args[0].filepath == "old.txt"
+        upload.assert_not_called()
+        delete.assert_not_called()
+        clear_base.assert_called_once_with("old.txt")
+        assert merge.call_args.args[0] == str(new_path)
+        assert result.renamed == 1
+        assert result.uploaded == 0
+        assert result.deleted == 0
 
 
 class TestClientTombstonesModule:

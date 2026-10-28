@@ -34,6 +34,7 @@ from hsync_client.sync import (
     get_sync_actions,
     get_tombstones_remote,
     log_initial_sync_start,
+    split_rename_pairs,
     sync,
 )
 from hsync_client.utils import reset_bandwidth_throttle
@@ -176,37 +177,31 @@ def _run_preview(log) -> None:
         deletes = [
             a for a in sync_actions if a.name == SyncActionName.delete and not _is_sentinel(a)
         ]
+        delete_remotes = [
+            a
+            for a in sync_actions
+            if a.name == SyncActionName.delete_remote and not _is_sentinel(a)
+        ]
         synced = [
             a for a in sync_actions if a.name == SyncActionName.nothing and not _is_sentinel(a)
         ]
 
-        # Detect renames: DELETE + DOWNLOAD pairs with same sha256sum and size.
-        # When a file is renamed on the master, the client sees a delete of
-        # the old path and a download of the new path.  If both share the
-        # same sha256 checksum and size the operation is really just a rename.
-        renames: list[tuple] = []  # (delete_action, download_action)
-        if deletes and downloads:
-            delete_by_hash: dict[tuple, list] = {}
-            for action in deletes:
-                key = (action.file.sha256sum, action.file.size or 0)
-                if key[0]:  # sha256sum must be available
-                    delete_by_hash.setdefault(key, []).append(action)
-
-            matched_download_idx: set[int] = set()
-            matched_delete_ids: set[int] = set()
-            for i, dl_action in enumerate(downloads):
-                key = (dl_action.file.sha256sum, dl_action.file.size or 0)
-                if key[0] and key in delete_by_hash:
-                    for del_action in delete_by_hash[key]:
-                        if id(del_action) not in matched_delete_ids:
-                            renames.append((del_action, dl_action))
-                            matched_download_idx.add(i)
-                            matched_delete_ids.add(id(del_action))
-                            break
-
-            # Remove matched items so they are not emitted as separate events
-            downloads = [a for i, a in enumerate(downloads) if i not in matched_download_idx]
-            deletes = [a for a in deletes if id(a) not in matched_delete_ids]
+        # Detect renames in both directions through the helper the run itself
+        # uses, so the plan a confirmation shows and the plan that executes
+        # cannot disagree: a move arrives either as delete + download (renamed
+        # elsewhere) or as delete_remote + upload (renamed here while offline),
+        # and both halves share the content hash and size.
+        renames: list[tuple] = []
+        for new_actions, old_actions in ((downloads, deletes), (uploads, delete_remotes)):
+            pairs, remaining_new, remaining_old = split_rename_pairs(
+                [action.file for action in new_actions],
+                [action.file for action in old_actions],
+            )
+            renames.extend(pairs)
+            keep_new = {id(file) for file in remaining_new}
+            keep_old = {id(file) for file in remaining_old}
+            new_actions[:] = [a for a in new_actions if id(a.file) in keep_new]
+            old_actions[:] = [a for a in old_actions if id(a.file) in keep_old]
 
         # A rename still arrives under `keep` (it is a move, the content
         # survives), but a plain deletion never does: the preview must not
@@ -243,7 +238,7 @@ def _run_preview(log) -> None:
             (synced, ActionLabel.SYNCED, "synced"),
             (downloads, ActionLabel.TO_DOWNLOAD, "to_download"),
             (uploads, ActionLabel.TO_UPLOAD, "to_upload"),
-            (deletes, ActionLabel.TO_DELETE, "to_delete"),
+            (deletes + delete_remotes, ActionLabel.TO_DELETE, "to_delete"),
         ]:
             for action in actions:
                 size = action.file.size or 0
@@ -251,22 +246,22 @@ def _run_preview(log) -> None:
                 emit_event(
                     UiEventName.file_status, state=state, file=action.file.filepath, size=size
                 )
-        for del_action, dl_action in renames:
-            size = dl_action.file.size or 0
+        for old_file, new_file in renames:
+            size = new_file.size or 0
             log.info(
-                f'{ActionLabel.TO_RENAME} "{del_action.file.filepath}" -> '
-                f'"{dl_action.file.filepath}" ({format_bytes(size)})'
+                f'{ActionLabel.TO_RENAME} "{old_file.filepath}" -> '
+                f'"{new_file.filepath}" ({format_bytes(size)})'
             )
             emit_event(
                 UiEventName.rename_status,
-                src=del_action.file.filepath,
-                dst=dl_action.file.filepath,
+                src=old_file.filepath,
+                dst=new_file.filepath,
                 size=size,
             )
 
         log.info(
             f"Preview: {len(synced)} synced, {len(downloads)} downloads, "
-            f"{len(uploads)} uploads, {len(deletes)} deletes, "
+            f"{len(uploads)} uploads, {len(deletes) + len(delete_remotes)} deletes, "
             f"{len(renames)} renames"
         )
     except Exception as e:

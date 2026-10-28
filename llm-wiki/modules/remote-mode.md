@@ -94,7 +94,11 @@ the WSS event stream pins the live connection via
   (the watcher is stopped during the outage): creations/modifications are
   uploaded, and deletions are detected by the offline-deletion tombstone
   minting in `sync()` (a merge-base entry whose file is no longer on disk →
-  tombstone → `delete_remote`, no resurrection).
+  tombstone → `delete_remote`, no resurrection). **Renames made while
+  disconnected** are paired with the stale remote path by `(sha256, size)` and
+  applied with `PATCH …/files` — the server moves its own copy, so the file is
+  not re-uploaded (ADR-0044; the same pairing runs in p2p mode and in the
+  preview).
 - **Crash-safe merge base**: real-time transfers (watcher uploads / inbound
   downloads) persist the merge base to the state DB immediately
   (`_record_synced_base`, see [sync-core.md](sync-core.md)), so a process kill

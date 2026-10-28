@@ -321,6 +321,64 @@ def resolve_upload_version_fields(file: File) -> tuple[str, str, int]:
     return "{}", "", 0
 
 
+def move_base(abs_src: str, abs_dst: str) -> None:
+    """Move the recorded merge base of a renamed path to its new location.
+
+    A rename is not a content edit: the hash, clock and identity are carried
+    over unchanged (no tick), matching the central server's ``move_version``.
+    Without it the store keeps a base for a path that no longer exists and none
+    for the new one, so the next comparison would treat a moved file as an
+    out-of-band edit and tick a fresh lineage.
+
+    Consumers: the P2P master's rename endpoint (``p2p_server._handle_rename``),
+    which applies a slave's move and must keep its arbitration view coherent.
+    """
+    src_rel = relpath_in_bucket(abs_src, bucket_dir())
+    dst_rel = relpath_in_bucket(abs_dst, bucket_dir())
+    if not src_rel or not dst_rel:
+        return
+    with _lock:
+        store = get_sync_state_store()
+        entry = store.get(src_rel)
+        if entry is None:
+            return
+        store.clear(src_rel)
+        store.record(
+            dst_rel,
+            base_hash=entry["base_hash"],
+            version_id=entry["version_id"],
+            origin_cid=entry["origin_cid"],
+            timestamp=entry["ts"],
+            vclock=entry["vclock"],
+            corrected_mtime=entry.get("corrected_mtime", 0),
+        )
+
+
+def version_info_for_path(abs_path: str) -> dict | None:
+    """Return the wire ``version`` object recorded for *abs_path*, or ``None``.
+
+    Mirrors the server's ``server_version_info`` shape (``vclock``,
+    ``version_id``, ``origin_cid``, ``ts``, ``corrected_mtime``) so a peer's
+    rename response carries the same causal payload from either transport.
+
+    Consumers: the P2P master's rename endpoint (``p2p_server._handle_rename``).
+    """
+    relpath = relpath_in_bucket(abs_path, bucket_dir())
+    if not relpath:
+        return None
+    with _lock:
+        entry = get_sync_state_store().get(relpath)
+    if entry is None:
+        return None
+    return {
+        "vclock": entry["vclock"],
+        "version_id": entry["version_id"],
+        "origin_cid": entry["origin_cid"],
+        "ts": entry["ts"],
+        "corrected_mtime": entry.get("corrected_mtime", 0),
+    }
+
+
 def merge_and_record(
     abs_path: str,
     base_hash: str,

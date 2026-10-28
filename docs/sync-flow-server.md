@@ -31,7 +31,7 @@ Local FS change (watchdog)
   │
   ├── file created/modified → upload to server (HTTP POST)
   ├── file deleted → notify server (HTTP DELETE)
-  └── file renamed → notify server (HTTP PATCH)
+  └── file renamed → notify server ("renamed" WS event; server moves its copy)
 
 Remote WS event (server)
   │
@@ -40,6 +40,28 @@ Remote WS event (server)
   ├── "deleted" → delete local file/dir
   └── "renamed" → rename local file/dir
 ```
+
+### Renames never re-upload the file
+
+A move is propagated as a move, never as "delete the old path and send the file
+again", in both directions:
+
+- **Rename while connected**: the client announces it on the WebSocket and the
+  server renames its own copy. No bytes cross the wire.
+- **Rename while the client was not running** (offline, or a one-shot run): the
+  next sync cycle finds the old path still on the server (with a deletion
+  marker recorded here) and the new path locally. Both sides advertise the same
+  SHA-256 and size, so the client asks the server to move its copy
+  (`PATCH …/files`, see the server's API reference) instead of deleting and
+  re-uploading. The request carries the expected checksum, so a file that
+  changed in the meantime is uploaded normally rather than moved; a destination
+  that appeared concurrently is a conflict and takes the same fallback.
+- **Receiving a rename**: a delete plus a download of identical content is
+  applied as a local move, so a peer that was offline during the rename also
+  converges without downloading the file.
+
+The preview reports these as renames, and the cycle counters show them under
+`renamed` — a rename moves no bytes.
 
 ## 3. Conflict Handling
 
