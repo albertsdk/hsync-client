@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -10,7 +11,21 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 INSTALL_SCRIPT = PROJECT_ROOT / "install.sh"
 
 
-def _write_fake_commands(tmp_path: Path) -> None:
+def _restricted_bin(tmp_path: Path, names: tuple[str, ...]) -> Path:
+    """A PATH dir holding only the given tools, so a real tool on the runner
+    cannot leak into the "tool missing" tests."""
+    bin_dir = tmp_path / "restricted-bin"
+    bin_dir.mkdir(exist_ok=True)
+    for name in names:
+        real = shutil.which(name)
+        if real is not None:
+            (bin_dir / name).symlink_to(real)
+    return bin_dir
+
+
+def _write_fake_commands(tmp_path: Path, *, with_curl: bool = True) -> None:
+    if not with_curl:
+        return
     # Fake curl only answers the latest-release resolution; HSYNC_FAKE_CURL_FAIL
     # simulates a network error, HSYNC_FAKE_LATEST_TAG overrides the tag.
     curl = tmp_path / "curl"
@@ -27,10 +42,15 @@ def _run_installer(
     tmp_path: Path,
     *args: str,
     extra_env: dict[str, str] | None = None,
+    with_curl: bool = True,
+    path_tools: tuple[str, ...] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    _write_fake_commands(tmp_path)
+    _write_fake_commands(tmp_path, with_curl=with_curl)
     env = os.environ.copy()
-    env["PATH"] = f"{tmp_path}{os.pathsep}{env['PATH']}"
+    if path_tools is None:
+        env["PATH"] = f"{tmp_path}{os.pathsep}{env['PATH']}"
+    else:
+        env["PATH"] = f"{tmp_path}{os.pathsep}{_restricted_bin(tmp_path, path_tools)}"
     if extra_env:
         env.update(extra_env)
     return subprocess.run(
@@ -114,3 +134,29 @@ def test_latest_rejects_an_unexpected_tag_format(tmp_path: Path):
     assert result.returncode == 1
     assert "unexpected latest release tag" in result.stderr
     assert not (tmp_path / "installation").exists()
+
+
+# --- Prerequisite guidance ---------------------------------------------------
+#
+# The sha256 tooling branch in sha256_verify is not covered here: reaching it
+# needs successful download/extraction steps that the fake curl cannot emulate,
+# so it is only syntax-checked (``bash -n``).
+
+
+def test_missing_curl_prints_hint(tmp_path: Path):
+    result = _run_installer(tmp_path, with_curl=False, path_tools=("bash", "sh", "uname"))
+
+    assert result.returncode == 1
+    assert "required command not found: curl" in result.stderr
+    assert 'Install "curl"' in result.stderr
+
+
+def test_missing_tar_prints_hint(tmp_path: Path):
+    result = _run_installer(
+        tmp_path,
+        path_tools=("bash", "sh", "uname", "mktemp", "install", "ln", "mkdir"),
+    )
+
+    assert result.returncode == 1
+    assert "required command not found: tar" in result.stderr
+    assert 'Install "tar"' in result.stderr

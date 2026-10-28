@@ -46,7 +46,84 @@ fail() {
 }
 
 require_command() {
-    command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
+    local name="$1"
+    if ! command -v "${name}" >/dev/null 2>&1; then
+        print_tool_hint "${name}"
+        fail "required command not found: ${name}"
+    fi
+}
+
+# --- Prerequisite guidance --------------------------------------------------
+#
+# The installer never installs packages and never runs sudo: when a required tool
+# is missing it prints the commands for the user to run themselves, then fails
+# with the same error line as before. Best-effort per platform.
+
+# linux | macos | windows-shell | unknown
+detect_platform_os() {
+    case "$(uname -s)" in
+        Linux) printf 'linux' ;;
+        Darwin) printf 'macos' ;;
+        MINGW* | MSYS* | CYGWIN* | Windows_NT) printf 'windows-shell' ;;
+        *) printf 'unknown' ;;
+    esac
+}
+
+# debian | rhel | arch | suse | alpine | unknown
+detect_linux_family() {
+    local id="" id_like="" key value
+    if [[ -r /etc/os-release ]]; then
+        while IFS='=' read -r key value; do
+            value="${value%\"}"
+            value="${value#\"}"
+            case "${key}" in
+                ID) id="${value}" ;;
+                ID_LIKE) id_like="${value}" ;;
+            esac
+        done < /etc/os-release
+    fi
+    case " ${id} ${id_like} " in
+        *" debian "* | *" ubuntu "*) printf 'debian' ;;
+        *" rhel "* | *" fedora "* | *" centos "*) printf 'rhel' ;;
+        *" arch "*) printf 'arch' ;;
+        *" suse "* | *" opensuse "*) printf 'suse' ;;
+        *" alpine "*) printf 'alpine' ;;
+        *) printf 'unknown' ;;
+    esac
+}
+
+print_package_hint() {
+    local os family pkg
+    os="$(detect_platform_os)"
+    family="$(detect_linux_family)"
+    pkg="$1"
+    case "${os}" in
+        macos) printf '  brew install %s\n' "${pkg}" >&2 ;;
+        linux)
+            case "${family}" in
+                debian) printf '  sudo apt-get install -y %s\n' "${pkg}" >&2 ;;
+                rhel) printf '  sudo dnf install -y %s\n' "${pkg}" >&2 ;;
+                arch) printf '  sudo pacman -S --needed %s\n' "${pkg}" >&2 ;;
+                suse) printf '  sudo zypper install %s\n' "${pkg}" >&2 ;;
+                alpine) printf '  sudo apk add %s\n' "${pkg}" >&2 ;;
+                *) printf '  Install %s with your package manager.\n' "${pkg}" >&2 ;;
+            esac
+            ;;
+        *) printf '  Install %s with your package manager.\n' "${pkg}" >&2 ;;
+    esac
+}
+
+print_tool_hint() {
+    local tool="$1"
+    case "${tool}" in
+        curl | tar)
+            printf '\nInstall "%s".\n' "${tool}" >&2
+            print_package_hint "${tool}"
+            ;;
+        *)
+            printf '\nInstall "%s" with your package manager.\n' "${tool}" >&2
+            ;;
+    esac
 }
 
 validate_version() {
@@ -127,6 +204,8 @@ sha256_verify() {
     elif command -v shasum >/dev/null 2>&1; then
         shasum -a 256 -c "${sums_file}" --ignore-missing
     else
+        printf '\nInstall coreutils (sha256sum) or Perl shasum.\n' >&2
+        print_package_hint coreutils
         fail "neither sha256sum nor shasum is available"
     fi
 }
