@@ -105,15 +105,28 @@ pipe — closing it instead made `_MasterChannel.stop` burn its whole 5 s
 `thread.join(timeout=…)`, the same budget the desktop allows between `SIGTERM`
 and `SIGKILL`. The master is the source of the share, so
 `get_files_remote()` (the configured server URL) says nothing: the classification
-compares the local listing with the identities the devices published in
-`p2p_inventory.py::P2PInventoryStore.held_identities` — **one** bulk query, never
+compares the local listing with the identities the devices published, read in
+**one** pass by `p2p_inventory.py::P2PInventoryStore.compare_share` (the union,
+the per-identity holder count and the per-device tallies), never by
 `holders_for` (a JOIN per file). A local file a device holds is `synced`, one
-nobody holds is `to_upload`, a path only the devices hold is `to_download`. The
+nobody holds is `to_upload`, a path only the devices hold is `to_download`, and
+every row carries its coverage (`holders` out of `devices`, see ADR 0042). The
 inventory store exists for every master (it is the classification input), even
-when the master serves no blocks. When it cannot classify yet it emits
-`sync_pending`: `reason="no_device"` with no connected device and
-`reason="awaiting_inventory"` when a device is connected but has not published
-(or opened a session yet) — never "out of sync", never a file verdict.
+when the master serves no blocks.
+
+The verdict is **per device**, not a union: `master_status.py::MasterSyncStatus._classify`
+emits one `device_status` row per live device (`pending_here`, `pending_there`,
+`held`), because the union answers "does any device hold this?" while a front-end
+has to answer "is every device converged?". A file only one device holds is in
+sync for that device and still pending for the others.
+
+When it cannot classify yet it emits `sync_pending` with the counts: `devices`
+of `expected` inventories are published. A live session that has not committed
+its snapshot
+(`p2p_inventory.py::P2PInventoryStore.published_session_cids`) is not a device
+view, so a partial group never produces a file verdict — `reason="no_device"`
+only when nobody is there (`expected == 0`) and `reason="awaiting_inventory"`
+otherwise.
 `P2PInventoryStore.set_change_callback` re-runs the pass on every
 committed inventory change (join, leave, frame) and
 `P2PWebSocketServer.set_local_change_callback` on every change of the served

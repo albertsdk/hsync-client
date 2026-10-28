@@ -389,7 +389,7 @@ local file):
 | Local scan, cold SHA-256 cache | 0.322 s (207 MiB/s) | bound by the bytes hashed |
 | Local scan, warm cache | 0.155 s (52 µs/file) | ~5 s, `stat` only |
 | `P2PInventoryStore.holders_for` (one JOIN per identity) | 0.554 s | ~18.5 s |
-| `P2PInventoryStore.held_identities` (one bulk SELECT) + set | 0.002 s | ~0.1 s |
+| `P2PInventoryStore.compare_share` (one bulk SELECT + in-memory fold) | 0.002 s | ~0.1 s |
 
 Findings: the SQL side must be one bulk read — the per-file helper is three
 orders of magnitude worse at scale — and the local side is dominated by the
@@ -398,6 +398,6 @@ avoids on a repeat pass (`File.get` invalidates on `mtime_ns`/`ctime_ns`/`size`)
 `MasterSyncStatus` therefore never clears that cache and reuses its local listing
 for `master_status.LOCAL_CACHE_TTL_S`.
 
-Enforced in `tests/test_master_status.py::TestHeldIdentities`: the statement
-count is asserted (one query at 50 and at 400 holders), which no timing-based
-test could do portably.
+Enforced in `tests/test_master_status.py::TestCompareShare`: the statement count
+is asserted (two statements — the live-session list and the holder rows — at 50
+and at 400 holders), which no timing-based test could do portably.

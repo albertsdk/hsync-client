@@ -154,6 +154,35 @@ class _NoopInventoryObserver:
 NOOP_INVENTORY_OBSERVER: InventoryObserver = _NoopInventoryObserver()
 
 
+@dataclass(frozen=True, slots=True)
+class DeviceShareView:
+    """One live device's backlog against the share it is compared with.
+
+    ``pending_here`` counts the identities the device published and the share
+    lacks; ``pending_there`` the share identities the device does not hold.
+    """
+
+    cid: str
+    held: int
+    pending_here: int
+    pending_there: int
+
+
+@dataclass(frozen=True, slots=True)
+class ShareComparison:
+    """The published inventories, read in one pass for a serving classification.
+
+    ``held`` is the union of every live device's identities with its size,
+    ``holders`` how many live devices hold each identity (per-file coverage) and
+    ``devices`` the per-device backlog. One consistent snapshot: a device joining
+    or republishing mid-read cannot split the union from the tallies.
+    """
+
+    devices: tuple[DeviceShareView, ...]
+    held: dict[tuple[str, str], int]
+    holders: dict[tuple[str, str], int]
+
+
 def default_p2p_inventory_path(bucket: str) -> Path:
     """Return the per-bucket master inventory database path."""
     from hsync_client.identity import default_device_dir
@@ -806,29 +835,104 @@ class P2PInventoryStore:
         )
         return build_p2p_inventory_ack(gen=gen, seq=seq, status="ok")
 
-    def held_identities(self) -> dict[tuple[str, str], int]:
-        """Every ``(path, sha256)`` a live session holds, with its size.
+    def live_session_cids(self) -> tuple[str, ...]:
+        """CIDs with a live inventory session, sorted.
 
-        One query for the whole store. The per-file :meth:`holders_for` runs a
-        JOIN per identity (~185 us/file measured, ~18 s per 100 000 files),
-        which is unusable for a whole-share classification; this bulk read
-        costs ~0.1 s at the same scale.
-
-        Consumers: ``hsync_client.master_status`` (the serving device compares
-        its own share against what the connected devices published).
+        A disabled session keeps its rows but is no longer a device the share can
+        be compared with (a reconnect retires the previous token), so it never
+        counts. A session that opened but has not committed its snapshot is still
+        live: :meth:`published_session_cids` tells the two apart. Consumers:
+        ``hsync_client.master_status`` (the completeness gate against the
+        connected clients).
         """
+        return self._session_cids(published_only=False)
+
+    def published_session_cids(self) -> tuple[str, ...]:
+        """CIDs whose inventory snapshot is committed, sorted.
+
+        The devices a serving classification can stand on: an opened session
+        whose snapshot is still staging says nothing about what the device holds.
+        Consumers: ``hsync_client.master_status``.
+        """
+        return self._session_cids(published_only=True)
+
+    def _session_cids(self, *, published_only: bool) -> tuple[str, ...]:
+        """Sorted CIDs of the live sessions, optionally the published only."""
+        sql = (
+            "SELECT cid FROM inventory_sessions"
+            " WHERE disabled = 0 AND committed_gen IS NOT NULL ORDER BY cid"
+            if published_only
+            else "SELECT cid FROM inventory_sessions WHERE disabled = 0 ORDER BY cid"
+        )
         with self._lock:
             self._ensure_open()
+            rows = self._conn.execute(sql).fetchall()
+        return tuple(str(row["cid"]) for row in rows)
+
+    def compare_share(self, local_identities: Iterable[tuple[str, str]]) -> ShareComparison:
+        """Read every live device's inventory against the local identities.
+
+        One query for the whole store, folded in memory into the union, the
+        per-identity holder count and the per-device tallies. The per-file
+        :meth:`holders_for` runs a JOIN per identity (~185 us/file measured,
+        ~18 s per 100 000 files) and is unusable for a whole-share comparison;
+        this bulk read costs ~0.1 s at the same scale. ``holders`` costs one
+        small int per distinct identity, the only structure that grows with the
+        share.
+
+        Consumers: ``hsync_client.master_status`` (the serving device reports a
+        per-device verdict instead of a union that hides which device lags).
+        """
+        local = set(local_identities)
+        with self._lock:
+            self._ensure_open()
+            cids = [
+                str(row["cid"])
+                for row in self._conn.execute(
+                    """
+                    SELECT cid FROM inventory_sessions
+                    WHERE disabled = 0 AND committed_gen IS NOT NULL
+                    ORDER BY cid
+                    """
+                ).fetchall()
+            ]
+            # held, pending_here, local-held per device.
+            tallies: dict[str, list[int]] = {cid: [0, 0, 0] for cid in cids}
+            held: dict[tuple[str, str], int] = {}
+            holders: dict[tuple[str, str], int] = {}
             rows = self._conn.execute(
                 """
-                SELECT h.path, h.sha256, h.size
+                SELECT h.cid, h.path, h.sha256, h.size
                 FROM inventory_holders AS h
                 JOIN inventory_sessions AS s ON s.cid = h.cid
                 WHERE h.bucket = ? AND s.disabled = 0
                 """,
                 (self._bucket,),
-            ).fetchall()
-        return {(str(row["path"]), str(row["sha256"])): int(row["size"]) for row in rows}
+            )
+            for row in rows:
+                cid = str(row["cid"])
+                tally = tallies.get(cid)
+                if tally is None:  # session retired while the cursor was open
+                    continue
+                identity = (str(row["path"]), str(row["sha256"]))
+                held.setdefault(identity, int(row["size"]))
+                holders[identity] = holders.get(identity, 0) + 1
+                tally[0] += 1
+                if identity in local:
+                    tally[2] += 1
+                else:
+                    tally[1] += 1
+        total_local = len(local)
+        devices = tuple(
+            DeviceShareView(
+                cid=cid,
+                held=int(held_count),
+                pending_here=int(pending_here),
+                pending_there=total_local - int(local_held),
+            )
+            for cid, (held_count, pending_here, local_held) in tallies.items()
+        )
+        return ShareComparison(devices=devices, held=held, holders=holders)
 
     def set_change_callback(self, callback: Callable[[], None] | None) -> None:
         """Notify *callback* whenever the committed inventory set changes.

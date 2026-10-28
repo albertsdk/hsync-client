@@ -11,10 +11,16 @@ its snapshot.
 
 Cost model (see ``llm-wiki/benchmarks.md``): a local scan whose SHA-256 values
 come from the shared content cache (a repeat pass is stat-only) plus **one**
-bulk query over the holder table, then an in-memory set lookup.
-``P2PInventoryStore.holders_for`` is deliberately not used here — it runs a JOIN
-per identity (~185 us/file, ~18 s per 100 000 files) while the bulk read costs
-~0.1 s at the same scale.
+bulk read of the published inventories (``P2PInventoryStore.compare_share``:
+the union, the per-identity holder count and the per-device tallies in a single
+pass), then in-memory lookups. ``P2PInventoryStore.holders_for`` is deliberately
+not used here — it runs a JOIN per identity (~185 us/file, ~18 s per 100 000
+files) while the bulk read costs ~0.1 s at the same scale.
+
+The report is **per device**: the union answers "does any device hold this?",
+which hides which device is behind as soon as two are connected, so the pass
+emits one ``device_status`` row per live device and stamps every ``file_status``
+with its coverage (``holders`` out of ``devices``).
 
 Consumers: ``hsync_client.p2p_handler`` (serving role) emits the events this
 module produces; ``hsync-desktop`` renders them (file table + sync summary).
@@ -33,7 +39,7 @@ from hsync_client.constants import HSYNCKEEP_FILENAME
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.sync import _bucket_key, emit_folder_size, get_files_local
 
-__all__ = ["MasterSyncStatus", "NO_DEVICE_MESSAGE", "classify"]
+__all__ = ["MasterSyncStatus", "NO_DEVICE_MESSAGE", "classify", "local_identities"]
 
 # Same wording the one-shot p2p path uses, so a front-end can show one string
 # for "nothing to synchronise against".
@@ -45,8 +51,12 @@ MIN_INTERVAL_S = 1.0
 # on every inventory change, so the TTL only caps repeated full walks.
 LOCAL_CACHE_TTL_S = 5.0
 
-# (state, absolute path, size) as published through the ``file_status`` event.
-FileState = tuple[str, str, int]
+# (state, absolute path, size, live devices holding it) as published through the
+# ``file_status`` event; ``holders`` is -1 when no per-device view is available.
+FileState = tuple[str, str, int, int]
+
+# ``((bucket-relative path, sha256), absolute path, size)`` for a comparable file.
+LocalIdentity = tuple[tuple[str, str], str, int]
 
 
 def _is_sentinel(path: str) -> bool:
@@ -54,24 +64,14 @@ def _is_sentinel(path: str) -> bool:
     return path.rsplit("/", 1)[-1] == HSYNCKEEP_FILENAME
 
 
-def classify(
-    held: Mapping[tuple[str, str], int],
-    local_files: Iterable[dict],
-    bucket_dir: str,
-) -> tuple[list[FileState], list[dict]]:
-    """Classify the local share against the identities devices published.
+def local_identities(local_files: Iterable[dict], bucket_dir: str) -> list[LocalIdentity]:
+    """Comparable local entries: ``((path, sha256), absolute path, size)``.
 
-    ``held`` maps ``(bucket-relative path, sha256)`` to the size, as returned by
-    ``P2PInventoryStore.held_identities``. Returns the per-file states plus a
-    listing-shaped view of the held set (for ``emit_folder_size``).
-
-    A local file a device already holds is ``synced``; one nobody holds is
-    ``to_upload`` (the content still has to reach the devices). A path only the
-    devices hold is ``to_download``. Symlinks and the empty-directory sentinel
-    are skipped: they carry no content to compare.
+    Symlinks and the empty-directory sentinel are skipped: they carry no content
+    to compare. Single source for the local side of both the union verdict and
+    the per-device tally.
     """
-    states: list[FileState] = []
-    local_paths: set[str] = set()
+    entries: list[LocalIdentity] = []
     for entry in local_files:
         path = str(entry.get("filepath") or "")
         if not path or entry.get("type") == "symlink":
@@ -79,26 +79,58 @@ def classify(
         key = _bucket_key(path, bucket_dir)
         if not key or _is_sentinel(key):
             continue
-        digest = str(entry.get("sha256sum") or "")
-        local_paths.add(key)
-        states.append(
-            (
-                "synced" if (key, digest) in held else "to_upload",
-                path,
-                max(int(entry.get("size", 0) or 0), 0),
-            )
-        )
+        identity = (key, str(entry.get("sha256sum") or ""))
+        entries.append((identity, path, max(int(entry.get("size", 0) or 0), 0)))
+    return entries
+
+
+def classify(
+    held: Mapping[tuple[str, str], int],
+    local_files: Iterable[dict],
+    bucket_dir: str,
+    holders: Mapping[tuple[str, str], int] | None = None,
+) -> tuple[list[FileState], list[dict]]:
+    """Classify the local share against the identities devices published.
+
+    ``held`` maps ``(bucket-relative path, sha256)`` to the size, as returned by
+    ``P2PInventoryStore.compare_share``; ``holders`` counts the live devices
+    holding each identity, so every row carries its coverage. Returns the
+    per-file states plus a listing-shaped view of the held set (for
+    ``emit_folder_size``).
+
+    A local file a device already holds is ``synced``; one nobody holds is
+    ``to_upload`` (the content still has to reach the devices). A path only the
+    devices hold is ``to_download``. These verdicts describe the union: how many
+    devices hold the identity is the row's ``holders``.
+    """
+    return _classify_entries(held, local_identities(local_files, bucket_dir), bucket_dir, holders)
+
+
+def _classify_entries(
+    held: Mapping[tuple[str, str], int],
+    local: Iterable[LocalIdentity],
+    bucket_dir: str,
+    holders: Mapping[tuple[str, str], int] | None,
+) -> tuple[list[FileState], list[dict]]:
+    """Classify pre-derived local entries (see :func:`local_identities`)."""
+    states: list[FileState] = []
+    local_paths: set[str] = set()
+    for identity, path, size in local:
+        local_paths.add(identity[0])
+        coverage = -1 if holders is None else holders.get(identity, 0)
+        states.append(("synced" if identity in held else "to_upload", path, size, coverage))
 
     remote_like: list[dict] = []
-    remote_only: dict[str, int] = {}
-    for (key, _digest), size in held.items():
-        if _is_sentinel(key):
+    remote_only: dict[str, tuple[tuple[str, str], int]] = {}
+    for identity, size in held.items():
+        if _is_sentinel(identity[0]):
             continue
-        remote_like.append({"filepath": key, "size": size})
-        if key not in local_paths:
-            remote_only[key] = size
-    for key, size in remote_only.items():
-        states.append(("to_download", os.path.join(bucket_dir, key), size))
+        remote_like.append({"filepath": identity[0], "size": size})
+        if identity[0] not in local_paths:
+            remote_only.setdefault(identity[0], (identity, size))
+    for path, (identity, size) in remote_only.items():
+        coverage = -1 if holders is None else holders.get(identity, 0)
+        states.append(("to_download", os.path.join(bucket_dir, path), size, coverage))
     return states, remote_like
 
 
@@ -219,27 +251,57 @@ class MasterSyncStatus:
         if store is None:
             emit_event(UiEventName.sync_pending, reason="no_device")
             return
-        sessions, _staged, committed = store.row_counts()
-        if sessions == 0:
-            # Distinguish "nobody is here" from "a device is connected but has
-            # not opened an inventory session": the latter is a waiting state,
-            # never "no device found".
-            reason = "awaiting_inventory" if self._connected_provider() > 0 else "no_device"
-            emit_event(UiEventName.sync_pending, reason=reason)
+        connected = self._connected_provider()
+        # A session that opened but never committed its snapshot says nothing
+        # about what the device holds, so only the published ones are compared.
+        expected = max(connected, len(store.live_session_cids()))
+        published = store.published_session_cids()
+        if not expected:
+            # Nobody to compare with: no device joined and no session is open.
+            emit_event(
+                UiEventName.sync_pending,
+                reason="no_device",
+                devices=0,
+                expected=0,
+            )
             return
-        if committed == 0:
-            # A device is connected but has not published its inventory yet:
-            # this is "unknown" (the front-end shows a waiting state), never
-            # "out of sync" — the comparison has no data to stand on.
-            emit_event(UiEventName.sync_pending, reason="awaiting_inventory")
+        if len(published) < expected:
+            # Every verdict below would be computed on a partial group: a device
+            # without a published inventory is invisible to the comparison.
+            # Report the waiting state with both counts instead of a file verdict
+            # that could claim an alignment nobody verified.
+            emit_event(
+                UiEventName.sync_pending,
+                reason="awaiting_inventory" if expected else "no_device",
+                devices=len(published),
+                expected=expected,
+            )
             return
-        held = store.held_identities()
         local_files = self._local_listing()
         bucket_dir = str(CONFIG.get("LOCAL_BUCKET") or "")
-        states, remote_like = classify(held, local_files, bucket_dir)
+        local = local_identities(local_files, bucket_dir)
+        comparison = store.compare_share(identity for identity, _path, _size in local)
+        states, remote_like = _classify_entries(
+            comparison.held, local, bucket_dir, comparison.holders
+        )
         emit_folder_size(local_files, remote_like)
-        for state, path, size in states:
-            emit_event(UiEventName.file_status, state=state, file=path, size=size)
+        for view in comparison.devices:
+            emit_event(
+                UiEventName.device_status,
+                peer_cid=view.cid,
+                held=view.held,
+                pending_here=view.pending_here,
+                pending_there=view.pending_there,
+            )
+        for state, path, size, holders in states:
+            emit_event(
+                UiEventName.file_status,
+                state=state,
+                file=path,
+                size=size,
+                holders=holders,
+                devices=len(published),
+            )
 
     def _local_listing(self) -> list[dict]:
         now = self._clock()
