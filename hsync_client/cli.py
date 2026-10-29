@@ -306,6 +306,25 @@ def _parse_size_option(
     return parsed
 
 
+def _load_env_file_or_exit(env_file: str | None) -> None:
+    """Load ``--env-file`` before option resolution, exiting on a missing file.
+
+    Both commands resolve some options from the environment after this point
+    (the client would otherwise load the file only later, inside ``run_sync``),
+    so an ``--env-file`` value must be visible here. Kept in one place so the
+    two commands cannot drift on the failure wording or the exit code.
+    """
+    if not env_file:
+        return
+    from hsync_client.config import load_env_file
+
+    try:
+        load_env_file(env_file)
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        raise typer.Exit(1) from None
+
+
 def _common_run_sync_kwargs(values: Mapping[str, Any]) -> dict[str, Any]:
     """Map the shared CLI options to ``run_sync`` keyword arguments.
 
@@ -1318,14 +1337,7 @@ def p2p(
     # Resolve the rendezvous-server endpoints from the CLI option, then the env
     # (loaded here so an --env-file value is visible before run_sync loads it
     # again later). One grammar on both surfaces.
-    if env_file:
-        from hsync_client.config import load_env_file
-
-        try:
-            load_env_file(env_file)
-        except FileNotFoundError as e:
-            print(f"Error: {e}", file=sys.stderr)
-            raise typer.Exit(1)
+    _load_env_file_or_exit(env_file)
 
     rendezvous_endpoints = _build_rendezvous_servers(rendezvous_server, use_env=True)
     if map_data_port:
@@ -1761,14 +1773,7 @@ def server(
     # here so a missing server fails fast with a clean usage error instead of
     # deep inside run_sync, after the banner and logging are already up.
     if resolved_url is None:
-        if env_file:
-            from hsync_client.config import load_env_file
-
-            try:
-                load_env_file(env_file)
-            except FileNotFoundError as e:
-                print(f"Error: {e}", file=sys.stderr)
-                raise typer.Exit(1)
+        _load_env_file_or_exit(env_file)
         from hsync_client.config import get_server_url
 
         resolved_url = get_server_url()

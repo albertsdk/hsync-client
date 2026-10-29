@@ -744,28 +744,28 @@ async def sync(
         guarded_deletes: list = []
         delete_remotes: list = []
         for a in sync_actions:
-            name = a.name
-            if name == SyncActionName.download:
-                downloads.append(a.file)
-            elif name == SyncActionName.upload:
-                if a.permissions_only:
-                    permission_uploads.append(a.file)
-                else:
-                    uploads.append(a.file)
-            elif name == SyncActionName.delete:
-                deletes.append(a.file)
-                if a.tombstone_confirmed:
-                    tombstone_deletes.append(a.file)
-                else:
-                    guarded_deletes.append(a.file)
-            elif name == SyncActionName.delete_remote:
-                delete_remotes.append(a.file)
-            elif name == SyncActionName.nothing:
-                nothing.append(a.file)
-            elif name == SyncActionName.upload_symlink:
-                symlink_uploads.append(a.file)
-            elif name == SyncActionName.download_symlink:
-                symlink_downloads.append(a.file)
+            match a.name:
+                case SyncActionName.download:
+                    downloads.append(a.file)
+                case SyncActionName.upload:
+                    if a.permissions_only:
+                        permission_uploads.append(a.file)
+                    else:
+                        uploads.append(a.file)
+                case SyncActionName.delete:
+                    deletes.append(a.file)
+                    if a.tombstone_confirmed:
+                        tombstone_deletes.append(a.file)
+                    else:
+                        guarded_deletes.append(a.file)
+                case SyncActionName.delete_remote:
+                    delete_remotes.append(a.file)
+                case SyncActionName.nothing:
+                    nothing.append(a.file)
+                case SyncActionName.upload_symlink:
+                    symlink_uploads.append(a.file)
+                case SyncActionName.download_symlink:
+                    symlink_downloads.append(a.file)
 
         # Drop downloads that already failed permanently earlier in this
         # same cycle (e.g. two sync_actions entries for the same file, or a
@@ -2192,54 +2192,88 @@ def _apply_local_mtime(abs_path: str, corrected_mtime: int) -> None:
         log.debug(f'Could not apply mtime to "{abs_path}": {exc}')
 
 
-def get_sync_actions(
-    remote_files: list[dict] | None = None,
-    local_files: list[dict] | None = None,
-    p2p_mode: bool = False,
-    tombstones: dict[str, dict] | None = None,
-    persist_state: bool = True,
+def _actions_from_local(
+    local_files: list[dict],
+    remote_filepaths: set[str],
+    *,
+    tombstones: dict[str, dict],
+    p2p_mode: bool,
+    direction: str,
 ) -> list[SyncAction]:
+    """Classify local entries that never appeared in the remote listing.
+
+    The second half of reconciliation: a local-only path is uploaded, unless a
+    P2P download-only slave must mirror the master (delete) or a causally
+    dominant tombstone proves the local copy is a stale ancestor of a remote
+    deletion (ADR-0003, causal delete-vs-recreate).
     """
-    Determine sync actions by comparing local and remote file lists.
-
-    Uses the causal vector-clock matrix (ADR-0022): content identity is
-    checked first (hash), then causal dominance via the vector clocks, then
-    the corrected-mtime tie-break on true divergence (ADR-0023) with the
-    deterministic SHA-256 fallback. The raw wall clock is never consulted,
-    so clock skew cannot cause an incorrect direction.
-
-    Args:
-        remote_files: List of file metadata from server.
-        local_files: List of file metadata from local filesystem.
-        p2p_mode: If True, sync targets a P2P master peer. Local-only files
-            are uploaded in bidirectional/upload-only modes and deleted only
-            when SYNC_DIRECTION is "download-only".
-        tombstones: Optional deletion-marker payload from the server, keyed by
-            hashed bucket-relative path. When a file exists only locally and a
-            matching tombstone shows it was deleted elsewhere, the local copy
-            is removed instead of being re-uploaded (resurrection guard).
-        persist_state: When False (preview/dry-run), the store is never
-            mutated — ``merge_and_record`` on in-sync files is skipped so the
-            installation ``state DB`` stays unchanged. Comparison is always pure
-            via ``local_version_for_compare``.
-
-    Returns:
-        List of SyncAction objects describing required operations.
-    """
-    if remote_files is None:
-        remote_files = []
-    if local_files is None:
-        local_files = []
-    if tombstones is None:
-        tombstones = {}
-
-    # Pre-compute the direction filter: excluded actions never enter the list.
-    _direction = CONFIG.get("SYNC_DIRECTION", "bidirectional")
-    _excluded = _EXCLUDED_BY_DIRECTION.get(_direction, frozenset())
-
-    sync_actions: list[SyncAction] = []
-    remote_filepaths: set[str] = set()
     bucket_root = CONFIG["LOCAL_BUCKET"]
+    actions: list[SyncAction] = []
+    for local_file_dict in local_files:
+        # .hsynckeep is a per-peer local sentinel: never propagate to remote.
+        if basename(str(local_file_dict.get("filepath", ""))) == HSYNCKEEP_FILENAME:
+            continue
+        # Symlink entry: replicate the LINK (pair path+target), never the bytes
+        # of its target. Escaping targets were already skipped by
+        # get_files_local; the upload path re-validates the target anyway.
+        if local_file_dict.get("type") == "symlink":
+            link = Symlink.from_dict(local_file_dict, bucket_root)
+            if link.filepath and str(link.filepath).lstrip("/") not in remote_filepaths:
+                actions.append(SyncAction(link, SyncActionName.upload_symlink))
+            continue
+        local_file_info = File.from_dict(local_file_dict, bucket_root)
+        if local_file_info.filepath and local_file_info.filepath not in remote_filepaths:
+            file = File.get(local_file_dict["filepath"])
+            if file:
+                if p2p_mode and direction == "download-only":
+                    # P2P download-only slave mirrors master - delete local-only files
+                    actions.append(SyncAction(file, SyncActionName.delete))
+                elif entry := tombstones.get(tombstone_key(local_file_info.filepath)):
+                    # Causal delete-vs-recreate (ADR-0003): compare the tombstone
+                    # clock against the *effective* local clock — ticked when the
+                    # current content differs from the recorded base, so a local
+                    # edit concurrent with the deletion is never mistaken for a
+                    # stale ancestor. The wall clock is never consulted.
+                    local_eff = sync_state.local_version_for_compare(
+                        file.filepath or "", file.sha256sum
+                    )
+                    if _tombstone_deletes_local(entry, local_eff["vclock"] if local_eff else None):
+                        # The deletion provably descends from the common history:
+                        # remove the local copy instead of resurrecting it.
+                        log.info(
+                            f'{ActionLabel.TOMBSTONE} "{file.filepath}" deleted remotely while offline; '
+                            "removing local copy"
+                        )
+                        actions.append(
+                            SyncAction(file, SyncActionName.delete, tombstone_confirmed=True)
+                        )
+                    else:
+                        actions.append(SyncAction(file, SyncActionName.upload))
+                else:
+                    # Default: upload local-only files (server mode and P2P
+                    # bidirectional/upload-only converge toward shared state)
+                    actions.append(SyncAction(file, SyncActionName.upload))
+    return actions
+
+
+def _actions_from_remote(
+    remote_files: list[dict],
+    *,
+    tombstones: dict[str, dict],
+    p2p_mode: bool,
+    persist_state: bool,
+    direction: str,
+) -> tuple[list[SyncAction], set[str]]:
+    """Classify the remote listing against local state.
+
+    Returns the actions for entries the remote still has, plus the set of remote
+    paths (bucket-relative) so the local pass can tell which local entries are
+    local-only. The listing is untrusted input: unsafe or malformed entries are
+    logged and skipped, never acted on.
+    """
+    bucket_root = CONFIG["LOCAL_BUCKET"]
+    actions: list[SyncAction] = []
+    remote_filepaths: set[str] = set()
 
     # Process remote files
     for remote_file_info in remote_files:
@@ -2263,7 +2297,7 @@ def get_sync_actions(
             link = Symlink.from_dict(remote_file_info, bucket_root)
             if link.filepath:
                 remote_filepaths.add(str(link.filepath).lstrip("/"))
-            sync_actions.append(SyncAction(link, SyncActionName.download_symlink))
+            actions.append(SyncAction(link, SyncActionName.download_symlink))
             continue
         # One malformed entry (bogus types for size/mtime, unreadable local
         # stat) must not stall the whole reconciliation cycle.
@@ -2325,7 +2359,7 @@ def get_sync_actions(
                 local_perms = local_file.permissions
                 remote_perms = remote_file.permissions
                 if local_perms and remote_perms and local_perms != remote_perms:
-                    if _direction == "download-only":
+                    if direction == "download-only":
                         if local_file.filepath:
                             set_permissions(local_file.filepath, remote_perms)
                             log.debug(
@@ -2353,9 +2387,9 @@ def get_sync_actions(
                 local_mtime = int(sync_state._corrected_mtime_of(abs_local))
                 remote_mtime = int(remote_corrected)
                 if sync_state.mtime_diverges(local_mtime, remote_mtime):
-                    if _direction == "download-only":
+                    if direction == "download-only":
                         adopt_remote = True
-                    elif _direction == "upload-only":
+                    elif direction == "upload-only":
                         adopt_remote = False
                     else:
                         # Bidirectional: the side whose version is causally
@@ -2382,7 +2416,7 @@ def get_sync_actions(
             if action == SyncActionName.nothing and local_file.sha256sum and persist_state:
                 sync_state.merge_and_record(abs_local, local_file.sha256sum, remote_vclock)
 
-            sync_actions.append(
+            actions.append(
                 SyncAction(
                     remote_file if action == SyncActionName.download else local_file,
                     action,
@@ -2417,61 +2451,84 @@ def get_sync_actions(
             # before the policy was switched) must not remove the copy that
             # still exists remotely. The additive fallback downloads it here
             # instead, so the backup converges upward.
-            if causal_match and _direction != "download-only" and not deletions_are_kept(CONFIG):
+            if causal_match and direction != "download-only" and not deletions_are_kept(CONFIG):
                 log.info(
                     f'{ActionLabel.TOMBSTONE} "{rel}" was deleted locally while offline; '
                     "deleting stale copy on remote"
                 )
-                sync_actions.append(SyncAction(remote_file, SyncActionName.delete_remote))
+                actions.append(SyncAction(remote_file, SyncActionName.delete_remote))
             else:
                 # File exists only on remote - download it
-                sync_actions.append(SyncAction(remote_file, SyncActionName.download))
+                actions.append(SyncAction(remote_file, SyncActionName.download))
+
+    return actions, remote_filepaths
+
+
+def get_sync_actions(
+    remote_files: list[dict] | None = None,
+    local_files: list[dict] | None = None,
+    p2p_mode: bool = False,
+    tombstones: dict[str, dict] | None = None,
+    persist_state: bool = True,
+) -> list[SyncAction]:
+    """
+    Determine sync actions by comparing local and remote file lists.
+
+    Uses the causal vector-clock matrix (ADR-0022): content identity is
+    checked first (hash), then causal dominance via the vector clocks, then
+    the corrected-mtime tie-break on true divergence (ADR-0023) with the
+    deterministic SHA-256 fallback. The raw wall clock is never consulted,
+    so clock skew cannot cause an incorrect direction.
+
+    Args:
+        remote_files: List of file metadata from server.
+        local_files: List of file metadata from local filesystem.
+        p2p_mode: If True, sync targets a P2P master peer. Local-only files
+            are uploaded in bidirectional/upload-only modes and deleted only
+            when SYNC_DIRECTION is "download-only".
+        tombstones: Optional deletion-marker payload from the server, keyed by
+            hashed bucket-relative path. When a file exists only locally and a
+            matching tombstone shows it was deleted elsewhere, the local copy
+            is removed instead of being re-uploaded (resurrection guard).
+        persist_state: When False (preview/dry-run), the store is never
+            mutated — ``merge_and_record`` on in-sync files is skipped so the
+            installation ``state DB`` stays unchanged. Comparison is always pure
+            via ``local_version_for_compare``.
+
+    Returns:
+        List of SyncAction objects describing required operations.
+    """
+    if remote_files is None:
+        remote_files = []
+    if local_files is None:
+        local_files = []
+    if tombstones is None:
+        tombstones = {}
+
+    # Pre-compute the direction filter: excluded actions never enter the list.
+    _direction = CONFIG.get("SYNC_DIRECTION", "bidirectional")
+    _excluded = _EXCLUDED_BY_DIRECTION.get(_direction, frozenset())
+
+    # Process remote files, then local-only entries; each pass owns one
+    # half of the reconciliation and is unit-testable on its own.
+    sync_actions, remote_filepaths = _actions_from_remote(
+        remote_files,
+        tombstones=tombstones,
+        p2p_mode=p2p_mode,
+        persist_state=persist_state,
+        direction=_direction,
+    )
 
     # Find local files not present on remote
-    for local_file_dict in local_files:
-        # .hsynckeep is a per-peer local sentinel: never propagate to remote.
-        if basename(str(local_file_dict.get("filepath", ""))) == HSYNCKEEP_FILENAME:
-            continue
-        # Symlink entry: replicate the LINK (pair path+target), never the bytes
-        # of its target. Escaping targets were already skipped by
-        # get_files_local; the upload path re-validates the target anyway.
-        if local_file_dict.get("type") == "symlink":
-            link = Symlink.from_dict(local_file_dict, bucket_root)
-            if link.filepath and str(link.filepath).lstrip("/") not in remote_filepaths:
-                sync_actions.append(SyncAction(link, SyncActionName.upload_symlink))
-            continue
-        local_file_info = File.from_dict(local_file_dict, bucket_root)
-        if local_file_info.filepath and local_file_info.filepath not in remote_filepaths:
-            file = File.get(local_file_dict["filepath"])
-            if file:
-                if p2p_mode and _direction == "download-only":
-                    # P2P download-only slave mirrors master - delete local-only files
-                    sync_actions.append(SyncAction(file, SyncActionName.delete))
-                elif entry := tombstones.get(tombstone_key(local_file_info.filepath)):
-                    # Causal delete-vs-recreate (ADR-0003): compare the tombstone
-                    # clock against the *effective* local clock — ticked when the
-                    # current content differs from the recorded base, so a local
-                    # edit concurrent with the deletion is never mistaken for a
-                    # stale ancestor. The wall clock is never consulted.
-                    local_eff = sync_state.local_version_for_compare(
-                        file.filepath or "", file.sha256sum
-                    )
-                    if _tombstone_deletes_local(entry, local_eff["vclock"] if local_eff else None):
-                        # The deletion provably descends from the common history:
-                        # remove the local copy instead of resurrecting it.
-                        log.info(
-                            f'{ActionLabel.TOMBSTONE} "{file.filepath}" deleted remotely while offline; '
-                            "removing local copy"
-                        )
-                        sync_actions.append(
-                            SyncAction(file, SyncActionName.delete, tombstone_confirmed=True)
-                        )
-                    else:
-                        sync_actions.append(SyncAction(file, SyncActionName.upload))
-                else:
-                    # Default: upload local-only files (server mode and P2P
-                    # bidirectional/upload-only converge toward shared state)
-                    sync_actions.append(SyncAction(file, SyncActionName.upload))
+    sync_actions.extend(
+        _actions_from_local(
+            local_files,
+            remote_filepaths,
+            tombstones=tombstones,
+            p2p_mode=p2p_mode,
+            direction=_direction,
+        )
+    )
 
     # ── Filter actions based on sync direction (pre-computed frozenset) ────
     if _excluded:

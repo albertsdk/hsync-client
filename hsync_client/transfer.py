@@ -139,6 +139,19 @@ def _emit_transfer_failed(op: str, filepath: str, message: str) -> None:
     emit_event(UiEventName.transfer_failed, op=op, file=filepath, message=message)
 
 
+def _emit_auth_error(action: str, op: str, filepath: str) -> None:
+    """Log and surface an authentication failure for a transfer.
+
+    ``action`` is the human reason (``"Authentication failed"``); ``op`` is the
+    gerund direction (``"downloading"`` / ``"uploading"``). Both the log line and
+    the ``auth_error`` event carry the same sentence so the GUI prompt and the
+    log agree.
+    """
+    message = f'{action} {op} "{filepath}"'
+    log.error(message)
+    emit_event(UiEventName.auth_error, message=message)
+
+
 def _record_synced_base(
     file: File,
     vclock: dict[str, int] | None = None,
@@ -839,10 +852,7 @@ def _accept_download_response(
         )
 
     if status in (401, 403):
-        log.error(f'Authentication failed downloading "{file.filepath}"')
-        emit_event(
-            UiEventName.auth_error, message=f'Authentication failed downloading "{file.filepath}"'
-        )
+        _emit_auth_error("Authentication failed", "downloading", file.filepath)
         response.close()
         return None
     if status == 404:
@@ -2166,44 +2176,41 @@ def _handle_upload_response(file: File, response, t0: float) -> None:
     the streaming branch handles the ``202`` partial-upload case itself before
     delegating here.
     """
-    if response.status_code == 201:
-        log.info(
-            f'{ActionLabel.UPLOAD} "{file.filepath}" {format_bytes(file.size)} '
-            f"{format_duration(monotonic() - t0, subsecond=True)}"
-        )
-        emit_event(UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0)
-        _record_201_upload(file, response)
-    elif response.status_code == 200:
-        # Permissions updated on the same-SHA branch (permission-only
-        # change): local and remote content agree; record the base.
-        log.info(f'{ActionLabel.PERMISSION} "{file.filepath}" (permissions updated)')
-        _record_synced_base(file, vclock=_resolve_local_vclock(file))
-    elif response.status_code == 401:
-        log.error(f'Authentication failed uploading "{file.filepath}"')
-        emit_event(
-            UiEventName.auth_error,
-            message=f'Authentication failed uploading "{file.filepath}"',
-        )
-    elif response.status_code == 403:
-        log.error(f'Access denied uploading "{file.filepath}"')
-    elif response.status_code == 409:
-        _handle_upload_conflict_response(file, response)
-    elif response.status_code >= 500:
-        # Transient server-side failure: raise so the wrapper backs off.
-        raise ServerError(f'Server error uploading "{file.filepath}": {response.status_code}')
-    else:
-        # 4xx (not 401/403/409): permanent — log the server's
-        # diagnostic body and raise a non-retryable error. Escape
-        # braces so loguru does not interpret JSON bodies (e.g.
-        # {"error": "..."}) as format placeholders.
-        body = (response.text or "")[:500]
-        log.error(
-            f"Upload rejected (HTTP {response.status_code}) for "
-            f'"{file.filepath}": {escape_loguru_markup(body)}'
-        )
-        raise PermanentUploadError(
-            f'Upload rejected (HTTP {response.status_code}) for "{file.filepath}": {body}'
-        )
+    status = response.status_code
+    match status:
+        case 201:
+            log.info(
+                f'{ActionLabel.UPLOAD} "{file.filepath}" {format_bytes(file.size)} '
+                f"{format_duration(monotonic() - t0, subsecond=True)}"
+            )
+            emit_event(UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0)
+            _record_201_upload(file, response)
+        case 200:
+            # Permissions updated on the same-SHA branch (permission-only
+            # change): local and remote content agree; record the base.
+            log.info(f'{ActionLabel.PERMISSION} "{file.filepath}" (permissions updated)')
+            _record_synced_base(file, vclock=_resolve_local_vclock(file))
+        case 401:
+            _emit_auth_error("Authentication failed", "uploading", file.filepath)
+        case 403:
+            log.error(f'Access denied uploading "{file.filepath}"')
+        case 409:
+            _handle_upload_conflict_response(file, response)
+        case code if code >= 500:
+            # Transient server-side failure: raise so the wrapper backs off.
+            raise ServerError(f'Server error uploading "{file.filepath}": {code}')
+        case code:
+            # 4xx (not 401/403/409): permanent — log the server's
+            # diagnostic body and raise a non-retryable error. Escape
+            # braces so loguru does not interpret JSON bodies (e.g.
+            # {"error": "..."}) as format placeholders.
+            body = (response.text or "")[:500]
+            log.error(
+                f'Upload rejected (HTTP {code}) for "{file.filepath}": {escape_loguru_markup(body)}'
+            )
+            raise PermanentUploadError(
+                f'Upload rejected (HTTP {code}) for "{file.filepath}": {body}'
+            )
 
 
 def _post_streaming_body(uri: str, headers: dict[str, str], body: Any) -> Any:
