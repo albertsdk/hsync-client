@@ -116,14 +116,23 @@ print_package_hint() {
 print_tool_hint() {
     local tool="$1"
     case "${tool}" in
-        curl | tar)
-            printf '\nInstall "%s".\n' "${tool}" >&2
-            print_package_hint "${tool}"
+        curl)
+            printf '\nThe installer downloads the release archive with "curl".\n' >&2
+            print_package_hint "curl"
+            ;;
+        tar)
+            printf '\nThe installer extracts the release archive with "tar".\n' >&2
+            print_package_hint "tar"
             ;;
         *)
             printf '\nInstall "%s" with your package manager.\n' "${tool}" >&2
             ;;
     esac
+    printf 'Then re-run:\n' >&2
+    printf '  curl -fsSL "https://github.com/%s/releases/latest/download/install.sh" \\\n' \
+        "${REPO}" >&2
+    printf '    | bash\n' >&2
+    printf '  # already downloaded: ./install.sh\n' >&2
 }
 
 validate_version() {
@@ -204,7 +213,7 @@ sha256_verify() {
     elif command -v shasum >/dev/null 2>&1; then
         shasum -a 256 -c "${sums_file}" --ignore-missing
     else
-        printf '\nInstall coreutils (sha256sum) or Perl shasum.\n' >&2
+        printf '\nThe installer verifies the release archive with "sha256sum".\n' >&2
         print_package_hint coreutils
         fail "neither sha256sum nor shasum is available"
     fi

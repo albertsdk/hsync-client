@@ -148,7 +148,9 @@ def test_missing_curl_prints_hint(tmp_path: Path):
 
     assert result.returncode == 1
     assert "required command not found: curl" in result.stderr
-    assert 'Install "curl"' in result.stderr
+    assert 'downloads the release archive with "curl"' in result.stderr
+    assert "Then re-run:" in result.stderr
+    assert "releases/latest/download/install.sh" in result.stderr
 
 
 def test_missing_tar_prints_hint(tmp_path: Path):
@@ -159,4 +161,5 @@ def test_missing_tar_prints_hint(tmp_path: Path):
 
     assert result.returncode == 1
     assert "required command not found: tar" in result.stderr
-    assert 'Install "tar"' in result.stderr
+    assert 'extracts the release archive with "tar"' in result.stderr
+    assert "Then re-run:" in result.stderr
