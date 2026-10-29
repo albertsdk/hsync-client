@@ -455,10 +455,24 @@ design).
 - The tests are timing-sensitive by design (multi‑process + mDNS + election
   handshake). A single timeout or port conflict can cause a cascade of
   failures.
-- Subprocess stdout is captured via `subprocess.PIPE` (stderr merged into
-  it; loguru logs to stdout) and polled for log markers (`MASTER`,
-  `Pinned p2p master certificate`, etc.) with `_wait_for_text_in_stderr`,
-  which also drains the final output of fast-exiting processes.
+- Peer output is written to a **file** next to the synced directory (the
+  `.log` sibling returned by `tests/p2p_helpers.py::_p2p_log_path`, stderr
+  merged into stdout because loguru logs there) and polled for log markers
+  (`MASTER`, `Pinned p2p master certificate`, etc.) with
+  `_wait_for_text_in_stderr`, which also reads the final output of
+  fast-exiting processes. A pipe is never used: its 64 KiB buffer fills during
+  a large sync and blocks the peer inside `write()`. That file is also the
+  first diagnostic for a peer that failed to start.
+- Never edit `hsync_client/` or `tests/` while a suite runs: every peer is a
+  subprocess that imports the sources **at start**, so a mid-run edit tests a
+  mixture of revisions and the peers started during the write exit with a
+  startup error. The symptom is a missing readiness marker
+  (`Master did not become ready`, an instance lock the second client was
+  expected to find held, …), never an import traceback in the pytest report.
+  Re-run the failing node ids on a clean tree before investigating anything
+  else — `HSYNC_BB_P2P=1 .venv/bin/python -m pytest -q -rs $(grep ^FAILED
+  run.log | awk '{print $2}')` — and pass `--basetemp=DIR` to keep the
+  per-peer logs after the run.
 - Do **not** combine LAN and remote/server black-box tests in the same
   `pytest` invocation with `-x`: a LAN timeout will abort the stable
   remote suite. Run the two groups separately, or use `--maxfail`.
