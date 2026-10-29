@@ -59,6 +59,11 @@ class TestComposition:
         second.stop.assert_called_once_with()
         shared.unmap.assert_called_once_with()
 
+    def test_the_composite_refuses_to_build_a_second_peer_manager(self):
+        """One manager or none: building another would split the election."""
+        with pytest.raises(RuntimeError, match="single shared PeerManager"):
+            MultiBootnodeDiscovery([_source()]).create_peer_manager()
+
     def test_the_serving_port_comes_from_the_first_source(self):
         first, second = _source(), _source()
         second.port = 9999

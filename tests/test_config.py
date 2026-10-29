@@ -209,6 +209,24 @@ class TestEnvSettings:
             "b.example:443": (hex64,),
         }
 
+    def test_pins_without_endpoints_fail_at_startup(self, monkeypatch):
+        """A pin with nothing to pin is a configuration error, not a traceback."""
+        from hsync_common.protocol.pairing import parse_fingerprint
+
+        monkeypatch.delenv("HSYNC_DISCOVERY_SERVER_ENDPOINTS", raising=False)
+        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_FINGERPRINTS", "0" * 64)
+        get_env_settings.cache_clear()
+        with pytest.raises(ValueError, match="at least one"):
+            EnvSettings()
+        assert parse_fingerprint("0" * 64) is not None  # sanity: the pin itself is valid
+
+    def test_pins_for_unknown_endpoints_fail_at_startup(self, monkeypatch):
+        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_ENDPOINTS", "a.example")
+        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_FINGERPRINTS", f"b.example={'0' * 64}")
+        get_env_settings.cache_clear()
+        with pytest.raises(ValueError, match="not a configured"):
+            EnvSettings()
+
     def test_a_pin_for_an_unconfigured_server_is_refused(self, monkeypatch):
         from hsync_client.config import get_discovery_server_pins
 

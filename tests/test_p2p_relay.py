@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 import pytest
 from loguru import logger as log
@@ -31,7 +32,12 @@ def _reset_relay_state() -> None:
 
 
 from hsync_client.boot_client import BootnodeProtocolError, frame_line
-from hsync_client.boot_relay import bridge, refusal_code
+from hsync_client.boot_relay import (
+    FailoverRelayDialer,
+    GroupRelayAcceptor,
+    bridge,
+    refusal_code,
+)
 from hsync_client.p2p_discovery import DiscoveryPlanState
 from hsync_client.p2p_handler import _close_relay_dialer, _relay_master_endpoint
 
@@ -187,3 +193,90 @@ def test_the_bridge_copies_bytes_and_closes_both_sides() -> None:
     assert bytes(left_writer.buffer) == b"from-peer"
     assert left_writer.closed is True
     assert right_writer.closed is True
+
+
+class _BudgetDialer:
+    """A relay dialer double that needs a minimum slice of the budget."""
+
+    def __init__(self, *, spend: float, endpoint: tuple[str, int] | None) -> None:
+        self._spend = spend
+        self._endpoint = endpoint
+        self.calls: list[float] = []
+        self.closed = 0
+
+    def open(self, timeout: float = 15.0) -> tuple[str, int] | None:
+        self.calls.append(timeout)
+        time.sleep(min(self._spend, max(0.0, timeout)))
+        # A real dial cannot finish inside a budget shorter than it needs.
+        return self._endpoint if timeout >= self._spend else None
+
+    def close(self) -> None:
+        self.closed += 1
+
+
+class _BudgetAcceptor:
+    """A relay acceptor double that needs a minimum slice of the budget."""
+
+    def __init__(self, *, spend: float, accepted: bool) -> None:
+        self._spend = spend
+        self._accepted = accepted
+        self.calls: list[float] = []
+        self.stopped = 0
+
+    @property
+    def active(self) -> bool:
+        return self._accepted
+
+    def start(self, timeout: float = 10.0) -> bool:
+        self.calls.append(timeout)
+        time.sleep(min(self._spend, max(0.0, timeout)))
+        return self._accepted if timeout >= self._spend else False
+
+    def stop(self) -> None:
+        self.stopped += 1
+
+
+def test_the_dialer_budget_covers_every_server_not_each_one() -> None:
+    """Two dead servers must not double the caller's relay timeout."""
+    first = _BudgetDialer(spend=0.06, endpoint=None)
+    second = _BudgetDialer(spend=0.06, endpoint=("127.0.0.1", 5000))
+
+    started = time.monotonic()
+    assert FailoverRelayDialer([first, second]).open(timeout=0.08) is None
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.25, elapsed
+    assert second.calls == [] or second.calls[0] < 0.08
+
+
+def test_the_dialer_still_pairs_when_a_later_server_has_budget() -> None:
+    first = _BudgetDialer(spend=0.0, endpoint=None)
+    second = _BudgetDialer(spend=0.0, endpoint=("127.0.0.1", 5000))
+
+    dialer = FailoverRelayDialer([first, second])
+    assert dialer.open(timeout=1.0) == ("127.0.0.1", 5000)
+    dialer.close()
+    assert first.closed == 1 and second.closed == 1
+
+
+def test_the_acceptor_budget_covers_every_server_not_each_one() -> None:
+    """Registering on two servers must stay inside one deadline."""
+    first = _BudgetAcceptor(spend=0.06, accepted=False)
+    second = _BudgetAcceptor(spend=0.06, accepted=True)
+
+    started = time.monotonic()
+    assert GroupRelayAcceptor([first, second]).start(timeout=0.08) is False
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.25, elapsed
+
+
+def test_the_acceptor_reports_success_when_any_server_registers() -> None:
+    first = _BudgetAcceptor(spend=0.0, accepted=False)
+    second = _BudgetAcceptor(spend=0.0, accepted=True)
+
+    acceptor = GroupRelayAcceptor([first, second])
+    assert acceptor.start(timeout=1.0) is True
+    assert acceptor.active is True
+    acceptor.stop()
+    assert first.stopped == 1 and second.stopped == 1

@@ -417,6 +417,27 @@ class EnvSettings(BaseSettings):
     )
 
     @model_validator(mode="after")
+    def _validate_discovery_server_pin_targets(self) -> "EnvSettings":
+        """Fail fast when a pin names a server that is not configured.
+
+        The field validators see one value each; only here are the pins and the
+        endpoint list both available. Without this, a typo in
+        ``HSYNC_DISCOVERY_SERVER_FINGERPRINTS`` would surface as a traceback from
+        ``run_sync`` instead of a clean startup failure.
+        """
+        raw = self.discovery_server_fingerprints
+        if not raw:
+            return self
+        pins = parse_pin_map(raw, strict=True)
+        if not pins:
+            return self
+        endpoints = parse_endpoint_list(
+            self.discovery_server_endpoints, strict=True, default_port=BOOT_DEFAULT_PORT
+        )
+        resolve_discovery_server_pins(pins, endpoints, default_port=BOOT_DEFAULT_PORT)
+        return self
+
+    @model_validator(mode="after")
     def _validate_peer_timeout_relationship(self) -> "EnvSettings":
         """Enforce the anti-false-positive relationship between the two knobs.
 

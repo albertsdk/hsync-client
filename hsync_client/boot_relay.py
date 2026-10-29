@@ -32,6 +32,7 @@ import asyncio
 import contextlib
 import json
 import threading
+import time
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
@@ -441,9 +442,19 @@ class FailoverRelayDialer:
         self._winner: RelayDialer | None = None
 
     def open(self, timeout: float = 15.0) -> tuple[str, int] | None:
-        """Try each server in order; return the loopback endpoint or ``None``."""
+        """Try each server in order within one deadline; ``None`` when none pairs.
+
+        The budget covers the whole attempt, not each server: N servers must not
+        multiply the caller's timeout (this runs in the discovery loop, where a
+        blocked call delays serving). Servers are tried in order, so a slow first
+        one can consume the remaining budget of the others.
+        """
+        deadline = time.monotonic() + max(0.0, timeout)
         for dialer in self._dialers:
-            endpoint = dialer.open(timeout)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            endpoint = dialer.open(remaining)
             if endpoint is not None:
                 self._winner = dialer
                 return endpoint
@@ -473,9 +484,21 @@ class GroupRelayAcceptor:
         return any(acceptor.active for acceptor in self._acceptors)
 
     def start(self, timeout: float = 10.0) -> bool:
-        """Register on every server; ``True`` when at least one accepted."""
-        started = [acceptor.start(timeout) for acceptor in self._acceptors]
-        return any(started)
+        """Register on every server within one deadline; ``True`` if any accepted.
+
+        The budget is shared, not per server, so the master-ready path stays
+        bounded with N servers; a slow first server can use up the budget of the
+        others (the listener is registered where it answered in time).
+        """
+        deadline = time.monotonic() + max(0.0, timeout)
+        started = False
+        for acceptor in self._acceptors:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            if acceptor.start(remaining):
+                started = True
+        return started
 
     def stop(self) -> None:
         """Withdraw the listener from every server (idempotent)."""

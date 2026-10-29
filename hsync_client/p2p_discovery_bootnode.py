@@ -829,6 +829,19 @@ class MultiBootnodeDiscovery(DiscoveryPlanState):
 
     # -- DiscoveryPlan surface -------------------------------------------------
 
+    def create_peer_manager(self) -> PeerManager:
+        """Refuse: the composite never owns a manager of its own.
+
+        ``start`` builds exactly one manager (from the first source's config) and
+        injects it into every source, so peer state is single. Building another
+        one here would split discovery and the election; the error makes that
+        misuse loud instead of silent.
+        """
+        raise RuntimeError(
+            "MultiBootnodeDiscovery.start() creates the single shared PeerManager; "
+            "the composite cannot build another one"
+        )
+
     def start(self, register_service: bool = True) -> PeerManager:
         """Start every lease loop over one shared :class:`PeerManager`."""
         manager = self._sources[0].create_peer_manager()
