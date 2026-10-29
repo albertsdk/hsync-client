@@ -353,10 +353,13 @@ Map the p2p data-plane TCP port with UPnP (opt\-in; off by default). Without a
 discovery server the flag has no effect (mDNS discovery stays on the local
 network).
 .TP
-.BI \-\-discovery\-server\-fingerprint\fP= FINGERPRINT
-Pin a discovery server certificate fingerprint (canonical
+.BI \-\-discovery\-server\-fingerprint\fP= ENDPOINT=FINGERPRINT
+Pin the certificate fingerprint of one discovery server (canonical
 .I sha256:<hex>
-or bare hex); repeatable up to two values per server for a rotation window.
+or bare hex). Repeatable, with \fB|\fP separating the two digits of a rotation
+window for the same endpoint; a pin must name a configured endpoint, and a bare
+fingerprint is accepted only with exactly one
+.BR \-\-discovery\-server .
 Refused without at least one
 .BR \-\-discovery\-server .
 Selects the

@@ -31,6 +31,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from hsync_common.protocol.pairing import endpoint_pin_key
 from hsync_common.protocol.tls_trust import TrustPolicy
 from loguru import logger as log
 
@@ -411,6 +412,7 @@ def build_discovery_plan(
     # every 30 s), sized against the node's query/register rate limits; it must
     # not reuse the mDNS heartbeat, which is far faster.
     bootnode_shared = {key: value for key, value in shared.items() if key != "heartbeat_interval"}
+    pins = dict(config.get("DISCOVERY_SERVER_PINS") or {})
     map_data_port = bool(config.get("MAP_DATA_PORT", False))
     # One UPnP mapping for the whole process: N sources publish the same
     # data-plane port, so a mapper per source would create N mappings. With a
@@ -424,7 +426,9 @@ def build_discovery_plan(
             bootnode_port=endpoint.port or BOOTNODE_DEFAULT_PORT,
             bootnode_ports=tuple(config.get("DISCOVERY_SERVER_EXTRA_PORTS") or ()),
             p2p_key=config.get("P2P_KEY"),
-            fingerprints=tuple(config.get("DISCOVERY_SERVER_FINGERPRINTS") or ()),
+            # Pins are per endpoint: each child only ever sees its own server's
+            # digests, so two independent identities never share a pin.
+            fingerprints=pins.get(endpoint_pin_key(endpoint.host, endpoint.port), ()),
             policy=config.get("DISCOVERY_SERVER_TRUST", TrustPolicy.ask),
             prompt=build_trust_prompt(config),
             upnp_enabled=map_data_port,

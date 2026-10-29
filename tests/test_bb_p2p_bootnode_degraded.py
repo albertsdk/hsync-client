@@ -41,7 +41,7 @@ class TestUnreachableBootnode:
         """Both peers sync over mDNS while the configured bootnode is dead."""
         # Given a bootnode configured on a loopback port nothing listens on
         dead_port = _reserve_udp_port()
-        bootnode_args = ("127.0.0.1", "--port", str(dead_port), "--insecure")
+        bootnode_args = ("--discovery-server", f"127.0.0.1:{dead_port}", "--insecure")
 
         master = _p2p_start(
             p2p_master_dir, p2p_bucket, prefer_master=True, extra_args=bootnode_args
@@ -49,7 +49,7 @@ class TestUnreachableBootnode:
         try:
             # The combined plan is active: mDNS runs next to the bootnode
             assert _wait_for_text_in_stderr(
-                master, "Discovery: mDNS on the local network + bootnode", timeout=15
+                master, "Discovery: mDNS on the local network + discovery server(s)", timeout=15
             ), "the hybrid discovery plan is not active"
             assert _wait_for_text_in_stderr(master, "Registered mDNS service", timeout=15), (
                 "Master mDNS service did not register"

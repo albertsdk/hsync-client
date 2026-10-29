@@ -25,7 +25,13 @@ from hsync_common.endpoint import (
 )
 from hsync_common.env import load_env_file as _load_env_file
 from hsync_common.models.tombstone import TOMBSTONE_TTL_DAYS_DEFAULT
-from hsync_common.protocol.pairing import parse_fingerprint
+from hsync_common.protocol.pairing import (
+    UNSCOPED_PIN_KEY,
+    FingerprintPins,
+    endpoint_pin_key,
+    parse_fingerprint,
+    parse_pin_map,
+)
 from hsync_common.protocol.tls_trust import TrustPolicy
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -139,8 +145,20 @@ class EnvSettings(BaseSettings):
     @field_validator("discovery_server_fingerprints", mode="before")
     @classmethod
     def _validate_discovery_server_fingerprints(cls, v: object) -> str | None:
-        """Normalize the discovery-server comma-separated pin list (ADR-0034)."""
-        return _normalize_fingerprint_list(v, "discovery server")
+        """Validate the per-endpoint pin map (``ENDPOINT=FP[|FP][,…]``, ADR-0034).
+
+        Syntax only: which endpoints exist, and whether the single-endpoint
+        shorthand is allowed, is decided against the configured endpoint list
+        (``get_discovery_server_pins``). Failing fast here keeps a typo from
+        silently pinning nothing.
+        """
+        if v is None:
+            return None
+        raw = str(v).strip()
+        if not raw:
+            return None
+        parse_pin_map(raw, strict=True)
+        return raw
 
     @field_validator("server_fingerprints", mode="before")
     @classmethod
@@ -520,9 +538,59 @@ def _parse_fingerprint_list(raw: str | None) -> tuple[str, ...]:
     return tuple(pins)
 
 
-def get_discovery_server_fingerprints() -> tuple[str, ...]:
-    """Get the pinned discovery-server fingerprints (validated, up to two, normalized)."""
-    return _parse_fingerprint_list(get_env_settings().discovery_server_fingerprints)
+def resolve_discovery_server_pins(
+    pins: FingerprintPins,
+    endpoints: tuple[HostPort, ...],
+    *,
+    default_port: int | None = None,
+) -> FingerprintPins:
+    """Bind a parsed pin map to the configured endpoints (single source of truth).
+
+    A pin must name a configured endpoint: a pin for an unknown endpoint is a
+    configuration error, never a pin silently applied to something else. The
+    unscoped shorthand (a bare fingerprint) is accepted only when exactly one
+    endpoint is configured, where it is unambiguous.
+    """
+    keys = [endpoint_pin_key(endpoint.host, endpoint.port) for endpoint in endpoints]
+    if not keys:
+        raise ValueError("a fingerprint requires at least one discovery server endpoint")
+    resolved: FingerprintPins = {}
+    for raw_key, values in pins.items():
+        # A pin key is normalized the same way the endpoint list is, so
+        # ``b.example`` and ``b.example:443`` name one server, not two.
+        key = raw_key
+        if key != UNSCOPED_PIN_KEY:
+            pinned = parse_host_port(key)
+            key = endpoint_pin_key(pinned.host, pinned.port or default_port)
+        if key == UNSCOPED_PIN_KEY:
+            if len(keys) != 1:
+                raise ValueError(
+                    "a fingerprint without an endpoint is ambiguous with several "
+                    "discovery servers; pin it as ENDPOINT=FINGERPRINT"
+                )
+            resolved[keys[0]] = values
+            continue
+        if key not in keys:
+            raise ValueError(
+                f"fingerprint pinned for {key!r}, which is not a configured discovery server"
+            )
+        resolved[key] = values
+    return resolved
+
+
+def get_discovery_server_pins() -> FingerprintPins:
+    """Get the discovery-server pins, keyed by configured endpoint.
+
+    Parsed with the shared ``hsync_common.protocol.pairing.parse_pin_map`` SSOT and
+    bound to the endpoint list, so a pin can only ever describe a server the
+    client actually dials.
+    """
+    pins = parse_pin_map(get_env_settings().discovery_server_fingerprints, strict=True)
+    if not pins:
+        return {}
+    return resolve_discovery_server_pins(
+        pins, get_discovery_server_endpoints(), default_port=BOOT_DEFAULT_PORT
+    )
 
 
 def get_discovery_server_tofu() -> bool:
@@ -849,7 +917,7 @@ class HsyncConfig(TypedDict):
     # Extra UDP ports to try on each discovery-server endpoint (dial fallback)
     DISCOVERY_SERVER_EXTRA_PORTS: tuple[int, ...]
     # Discovery-server certificate fingerprint(s) to pin (up to two for a rotation window)
-    DISCOVERY_SERVER_FINGERPRINTS: tuple[str, ...]
+    DISCOVERY_SERVER_PINS: FingerprintPins
     # Discovery-server TLS trust policy (ADR-0035; default ask)
     DISCOVERY_SERVER_TRUST: TrustPolicy
     # Dangerous explicit opt-in: permit keyless mutation requests

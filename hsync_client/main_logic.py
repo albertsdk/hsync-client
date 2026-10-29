@@ -26,7 +26,7 @@ from hsync_common.protocol.boot_tokens import (
     validate_group_passphrase,
 )
 from hsync_common.protocol.handshake import PROTOCOL_VERSION_REST
-from hsync_common.protocol.pairing import fingerprint_matches
+from hsync_common.protocol.pairing import FingerprintPins, fingerprint_matches
 from hsync_common.protocol.tls_trust import (
     TrustAction,
     TrustPolicy,
@@ -49,7 +49,7 @@ from hsync_client.config import (
     get_connectivity_retry_min_wait,
     get_delta_enabled,
     get_discovery_server_extra_ports,
-    get_discovery_server_fingerprints,
+    get_discovery_server_pins,
     get_discovery_server_refresh_interval,
     get_discovery_server_tofu,
     get_discovery_server_trust,
@@ -609,6 +609,16 @@ def _safe_config_for_log(config: HsyncConfig, env_file: str | None) -> dict[str,
     return safe
 
 
+def _flatten_pins(pins: FingerprintPins) -> tuple[str, ...]:
+    """Unique pinned digests across endpoints (the trust policy needs presence)."""
+    seen: list[str] = []
+    for values in pins.values():
+        for value in values:
+            if value not in seen:
+                seen.append(value)
+    return tuple(seen)
+
+
 def _resolve_discovery_server_trust(
     policy: str | None,
     fingerprints: tuple[str, ...],
@@ -813,7 +823,7 @@ def run_sync(
     p2p_allow_unauthenticated_writes: bool = False,
     discovery_server_endpoints: tuple[Any, ...] = (),
     map_data_port: bool | None = None,
-    discovery_server_fingerprints: tuple[str, ...] = (),
+    discovery_server_pins: FingerprintPins | None = None,
     discovery_server_tofu: bool = False,
     discovery_server_trust: str | None = None,
     server_fingerprints: tuple[str, ...] = (),
@@ -1103,6 +1113,12 @@ def run_sync(
     if _conn_retry_max is None:
         _conn_retry_max = float(CONNECTIVITY_RETRY_MAX_WAIT_DEFAULT)
 
+    # Pins are keyed by endpoint (CLI/config resolved); a missing map means "read
+    # the environment", which is also the single-endpoint configuration path.
+    pins: FingerprintPins = (
+        discovery_server_pins if discovery_server_pins is not None else get_discovery_server_pins()
+    )
+
     config: HsyncConfig = {
         "API": {
             "buckets": f"{effective_server_url}/api/v1/buckets",
@@ -1135,11 +1151,12 @@ def run_sync(
         "DISCOVERY_SERVER_ENDPOINTS": tuple(discovery_server_endpoints),
         "DISCOVERY_SERVER_EXTRA_PORTS": get_discovery_server_extra_ports(),
         # Discovery-server TLS trust (ADR-0034): explicit fingerprints or opt-in TOFU.
-        "DISCOVERY_SERVER_FINGERPRINTS": discovery_server_fingerprints
-        or get_discovery_server_fingerprints(),
+        # Pins are keyed by endpoint: a pin only ever describes a server the
+        # client dials, and two independent servers keep their own identity.
+        "DISCOVERY_SERVER_PINS": pins,
         "DISCOVERY_SERVER_TRUST": _resolve_discovery_server_trust(
             discovery_server_trust,
-            discovery_server_fingerprints or get_discovery_server_fingerprints(),
+            _flatten_pins(pins),
             discovery_server_tofu or get_discovery_server_tofu(),
             verify_ssl,
         ),

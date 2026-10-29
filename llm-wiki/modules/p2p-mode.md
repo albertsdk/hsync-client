@@ -625,12 +625,15 @@ contacted again, and the mDNS source keeps the run alive.
 pin/TOFU); `--ca-cert` is **refused** in `hsync p2p` (it is a server-mode knob,
 and a self-signed bootnode has no usable CA/hostname). With no pin/TOFU the
 client keeps `verify_mode=CERT_REQUIRED` (fail-closed against a self-signed
-node). `DEFAULT_QUIC_IDLE_TIMEOUT = 30.0`. Config surface: `HSYNC_DISCOVERY_SERVER_ENDPOINTS`
-(a `HOST[:PORT]` endpoint: `host`, `host:port`, `[IPv6]`, `[IPv6]:port` via
-`hsync_common.endpoint.parse_host_port`; no scheme/path),
-`HSYNC_DISCOVERY_SERVER_FINGERPRINTS` (comma-separated pins), `HSYNC_DISCOVERY_SERVER_TOFU`,
-`HSYNC_MAP_DATA_PORT`, `HSYNC_P2P_LISTEN_PORT`
-(`constants.BOOTNODE_DEFAULT_PORT = 443`).
+node). `DEFAULT_QUIC_IDLE_TIMEOUT = 30.0`. Config surface: `HSYNC_DISCOVERY_SERVER_ENDPOINTS` (an ordered, comma-separated
+list of `HOST[:PORT]` endpoints: `host`, `host:port`, `[IPv6]`, `[IPv6]:port` via
+`hsync_common.endpoint.parse_endpoint_list` + the channel default port; no
+scheme/path), `HSYNC_DISCOVERY_SERVER_FINGERPRINTS` (`ENDPOINT=FP[|FP]` entries
+parsed by `hsync_common.protocol.pairing.parse_pin_map`, bound to the configured
+endpoints by `config.py::resolve_discovery_server_pins`, then handed to each
+child as `CONFIG["DISCOVERY_SERVER_PINS"]` so every server keeps its own
+identity), `HSYNC_DISCOVERY_SERVER_TOFU`, `HSYNC_MAP_DATA_PORT`,
+`HSYNC_P2P_LISTEN_PORT` (`constants.BOOTNODE_DEFAULT_PORT = 443`).
 
 Token authentication: a **protected bucket** or a **private node** gates
 `register`/`refresh`/`query` (and `leave` in private mode) on a `bucket_token`

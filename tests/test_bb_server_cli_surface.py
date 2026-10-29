@@ -55,49 +55,53 @@ class TestCliSurface:
     def test_invalid_bucket_name_rejected(self):
         # Given a bucket name with forbidden characters
         # When invoking
-        result = runner.invoke(app, ["server", "-b", "bucket.name", "test.example.com"])
+        result = runner.invoke(
+            app, ["server", "-b", "bucket.name", "--server-url", "test.example.com"]
+        )
 
         # Then the CLI rejects it
         assert result.exit_code != 0
 
     def test_bucket_with_hyphens_and_underscores_accepted(self):
-        # Given a valid bucket name and a URL-like hostname (a form the CLI
-        # rejects before any sync is attempted)
-        # When invoking
+        # Given a valid bucket name and a valid full URL
+        # When invoking with a plain-HTTP URL (the only scheme the CLI refuses)
         result = runner.invoke(
             app,
             [
                 "server",
                 "-b",
                 "valid-bucket_name",
-                "https://server.example.com",
+                "--server-url",
+                "http://server.example.com",
                 "--allow-deletions",
             ],
         )
 
         # Then the bucket name parses (no bucket validation error) and the
-        # CLI rejects the URL-like hostname with a usage error instead
+        # rejected value is the scheme, not the bucket
         assert result.exit_code != 0
         assert "must be alphanumeric" not in result.output
-        assert "not a URL" in result.output
+        assert "https" in result.output.lower()
 
-    def test_full_url_hostname_rejected(self):
-        # Given a full URL in the hostname slot (the https:// scheme is implied)
+    def test_plain_http_url_rejected(self):
+        # Given a http:// URL (server mode is HTTPS-only)
         # When invoking
-        result = runner.invoke(app, ["server", "-b", "demo", "https://server.example.com"])
+        result = runner.invoke(
+            app, ["server", "-b", "demo", "--server-url", "http://server.example.com"]
+        )
 
         # Then the CLI reports a usage error and no sync starts
         assert result.exit_code != 0
-        assert "not a URL" in result.output
+        assert "https" in result.output.lower()
 
-    def test_port_requires_hostname(self):
-        # Given --port without a hostname
+    def test_missing_server_url_fails_fast(self):
+        # Given no --server-url and no HSYNC_SERVER_URL
         # When invoking
-        result = runner.invoke(app, ["server", "-b", "demo", "--port", "9753"])
+        result = runner.invoke(app, ["server", "-b", "demo"])
 
         # Then the CLI reports a usage error and no sync starts
         assert result.exit_code != 0
-        assert "requires a hostname" in result.output
+        assert "sync-server url" in result.output.lower()
 
     def test_capabilities_json_outputs_valid_json(self):
         """--capabilities-json produces valid JSON with expected keys."""

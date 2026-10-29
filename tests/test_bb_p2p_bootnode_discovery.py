@@ -47,9 +47,8 @@ class TestBootnodeDiscovery:
         try:
             assert _wait_for_bootnode(bootnode, ready_file), "bootnode did not become ready"
             bootnode_args = (
-                "127.0.0.1",
-                "--port",
-                str(bootnode_port),
+                "--discovery-server",
+                f"127.0.0.1:{bootnode_port}",
                 "--insecure",
             )
 
@@ -59,14 +58,16 @@ class TestBootnodeDiscovery:
             try:
                 # The banner proves the bootnode plan is the active one.
                 assert _wait_for_text_in_stderr(
-                    master, "Discovery: mDNS on the local network + bootnode", timeout=15
+                    master, "Discovery: mDNS on the local network + discovery server(s)", timeout=15
                 ), "the master did not select the bootnode plan"
                 slave = _p2p_start(
                     p2p_slave_dir, p2p_bucket, never_master=True, extra_args=bootnode_args
                 )
                 try:
                     assert _wait_for_text_in_stderr(
-                        slave, "Discovery: mDNS on the local network + bootnode", timeout=15
+                        slave,
+                        "Discovery: mDNS on the local network + discovery server(s)",
+                        timeout=15,
                     )
                     became_master = _wait_for_text_in_stderr(
                         master, "MASTER", timeout=60

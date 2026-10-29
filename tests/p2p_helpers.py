@@ -810,9 +810,9 @@ def _bootnode_start(port: int, ready_file: Path) -> subprocess.Popen:
         [
             binary,
             "run",
-            "--host",
+            "--listen-host",
             "127.0.0.1",
-            "--port",
+            "--listen-port",
             str(port),
             "--ready-file",
             str(ready_file),

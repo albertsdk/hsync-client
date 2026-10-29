@@ -398,13 +398,13 @@ class TestTyperCli:
                 "--discovery-server",
                 "boot.example.net",
                 "--discovery-server-fingerprint",
-                hex64,
+                f"boot.example.net:443={hex64}",
                 "--discovery-server-tofu",
             ],
         )
         assert result.exit_code == 0
         kwargs = mock_run_sync.call_args.kwargs
-        assert kwargs["discovery_server_fingerprints"] == (hex64,)
+        assert kwargs["discovery_server_pins"] == {"boot.example.net:443": (hex64,)}
         assert kwargs["discovery_server_tofu"] is True
 
     def test_bootnode_ca_cert_is_refused(self):
@@ -446,7 +446,66 @@ class TestTyperCli:
             app, ["p2p", "-b", "test", "--discovery-server-fingerprint", "0" * 64]
         )
         assert result.exit_code != 0
-        assert "require at least one --discovery-server" in result.output
+        assert "at least one" in result.output
+
+    def test_a_pin_for_an_unconfigured_server_is_refused(self):
+        """A pin can only describe a server the client actually dials."""
+        result = runner.invoke(
+            app,
+            [
+                "p2p",
+                "-b",
+                "test",
+                "--discovery-server",
+                "a.example",
+                "--discovery-server-fingerprint",
+                f"b.example={'0' * 64}",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "not a configured" in result.output
+
+    def test_a_bare_pin_is_refused_with_several_servers(self):
+        """The shorthand is unambiguous only with exactly one endpoint."""
+        result = runner.invoke(
+            app,
+            [
+                "p2p",
+                "-b",
+                "test",
+                "--discovery-server",
+                "a.example,b.example",
+                "--discovery-server-fingerprint",
+                "0" * 64,
+            ],
+        )
+        assert result.exit_code != 0
+        assert "ambiguous" in result.output
+
+    def test_each_server_keeps_its_own_pins(self, mock_run_sync=None):
+        """Two endpoints, two identities: every pin lands on its own server."""
+        from unittest.mock import patch
+
+        fp_a, fp_b = "a" * 64, "b" * 64
+        with patch("hsync_client.main_logic.run_sync") as run_sync:
+            result = runner.invoke(
+                app,
+                [
+                    "p2p",
+                    "-b",
+                    "test",
+                    "--discovery-server",
+                    "a.example,b.example:8443",
+                    "--discovery-server-fingerprint",
+                    f"a.example:443={fp_a}",
+                    "--discovery-server-fingerprint",
+                    f"b.example:8443={fp_b}",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        pins = run_sync.call_args.kwargs["discovery_server_pins"]
+        assert pins["a.example:443"] == (fp_a,)
+        assert pins["b.example:8443"] == (fp_b,)
 
     def test_bootnode_fingerprint_rejects_invalid(self):
         result = runner.invoke(

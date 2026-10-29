@@ -30,7 +30,11 @@ from hsync_common.endpoint import (
     parse_host_port,
     parse_https_url,
 )
-from hsync_common.protocol.pairing import parse_fingerprint
+from hsync_common.protocol.pairing import (
+    FingerprintPins,
+    parse_fingerprint,
+    parse_pin_map,
+)
 from hsync_common.protocol.tls_trust import TrustPolicy, resolve_self_signed_policy
 from hsync_common.runtime import ColorMode
 
@@ -190,6 +194,33 @@ def _build_server_url(url: str | None) -> str | None:
         except ValueError as exc:
             raise typer.BadParameter(f"invalid server URL: {exc}") from exc
     return build_https_url(_parse_host_port(raw), SERVER_DEFAULT_PORT)
+
+
+def _build_discovery_server_pins(
+    values: list[str] | None, endpoints: tuple[HostPort, ...]
+) -> FingerprintPins:
+    """Resolve ``--discovery-server-fingerprint`` into a per-endpoint pin map.
+
+    ``ENDPOINT=FINGERPRINT[|FINGERPRINT]`` binds a pin to the server it belongs
+    to, which is the only safe form with several servers (a shared pin would tie
+    unrelated identities together). A bare fingerprint is accepted only when the
+    command configured exactly one endpoint, where it cannot be ambiguous.
+    """
+    if not values:
+        return {}
+    if not endpoints:
+        raise typer.BadParameter(
+            "--discovery-server-fingerprint requires at least one --discovery-server endpoint."
+        )
+    # Imported here: the config module pulls the pydantic models, which the CLI
+    # must not load at import time (see tests/test_startup_imports.py).
+    from hsync_client.config import resolve_discovery_server_pins
+
+    try:
+        pins = parse_pin_map(",".join(values), strict=True)
+        return resolve_discovery_server_pins(pins, endpoints, default_port=BOOTNODE_DEFAULT_PORT)
+    except ValueError as exc:
+        raise typer.BadParameter(f"invalid --discovery-server-fingerprint: {exc}") from exc
 
 
 def _build_discovery_servers(
@@ -1312,22 +1343,19 @@ def p2p(
             "with --discovery-server-fingerprint (or use --discovery-server-tofu) instead."
         )
 
-    fingerprints = tuple(discovery_server_fingerprint or ())
-    if len(fingerprints) > 2:
-        raise typer.BadParameter(
-            "at most two --discovery-server-fingerprint values are allowed (rotation window)."
-        )
-    for fp in fingerprints:
-        if parse_fingerprint(fp) is None:
-            raise typer.BadParameter(f"invalid --discovery-server-fingerprint value: {fp!r}")
+    # Pins are per endpoint (``ENDPOINT=FINGERPRINT[|FINGERPRINT]``, repeatable;
+    # a bare fingerprint is the unambiguous single-endpoint shorthand). The map
+    # is bound to the configured endpoints here, so a pin for a server the client
+    # never dials is a usage error rather than a silently ignored value.
+    pins = _build_discovery_server_pins(discovery_server_fingerprint, discovery_endpoints)
 
-    if insecure and (fingerprints or discovery_server_tofu):
+    if insecure and (pins or discovery_server_tofu):
         raise typer.BadParameter(
             "--insecure is mutually exclusive with "
             "--discovery-server-fingerprint/--discovery-server-tofu."
         )
 
-    if (fingerprints or discovery_server_tofu) and not discovery_endpoints:
+    if (pins or discovery_server_tofu) and not discovery_endpoints:
         raise typer.BadParameter(
             "--discovery-server-fingerprint/--discovery-server-tofu require at least "
             "one --discovery-server endpoint."
@@ -1351,7 +1379,7 @@ def p2p(
         p2p_listen_port=p2p_listen_port,
         discovery_server_endpoints=discovery_endpoints,
         map_data_port=effective_map_data_port,
-        discovery_server_fingerprints=fingerprints,
+        discovery_server_pins=pins,
         discovery_server_tofu=bool(discovery_server_tofu),
         discovery_server_trust=discovery_server_trust,
         peer_discovery_timeout=peer_discovery_timeout,

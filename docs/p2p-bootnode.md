@@ -67,6 +67,40 @@ HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p --discovery-server boot.
   --discovery-server-fingerprint YOUR_BOOTNODE_FINGERPRINT
 ```
 
+## More than one discovery server
+
+A single discovery server is a single point of failure, and its routing table
+belongs to it alone. The client therefore accepts **a list** of servers and, for
+every entry it can reach:
+
+1. keeps its own lease (`register` → `refresh` → `query`, every 30 s),
+2. trusts it on its own terms (one certificate pin per server), and
+3. asks it for a peer sample.
+
+The samples are merged into one peer list: a device seen through server A is a
+candidate even when you also reach server B, and each device appears once. The
+master election therefore still sees one candidate set.
+
+```text
+hsync p2p -b shared \
+  --discovery-server boot-a.example.net \
+  --discovery-server boot-b.example.net:8443 \
+  --discovery-server-fingerprint boot-a.example.net:443=sha256:aaaa... \
+  --discovery-server-fingerprint boot-b.example.net:8443=sha256:bbbb...
+```
+
+The same list can be given at once through
+`HSYNC_DISCOVERY_SERVER_ENDPOINTS=boot-a.example.net,boot-b.example.net:8443`
+(desktop and NAS UIs use this form).
+
+What this **does** give you: if one server stops answering, discovery continues
+through the others, and a device registered on any server you reach is visible to
+you. What it does **not** give you: the servers do not share their tables. A peer
+registered only on server A is invisible to a client that can reach only server
+B — the union is built by *your* client, not by the nodes. Closing that last gap
+would need node-to-node federation, which `boot/1` deliberately does not have
+(see `protocol-spec/boot-1.md`, §Transport).
+
 ## Manage the known hosts
 
 The accepted fingerprints live in `$XDG_STATE_HOME/hsync/discovery_server_known_hosts.json`

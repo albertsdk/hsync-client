@@ -190,14 +190,33 @@ class TestEnvSettings:
         get_env_settings.cache_clear()
         assert get_discovery_server_extra_ports() == ()
 
-    def test_bootnode_fingerprint_parses_and_validates(self, monkeypatch):
-        from hsync_client.config import get_discovery_server_fingerprints
+    def test_discovery_server_pins_are_keyed_by_endpoint(self, monkeypatch):
+        """A pin belongs to one endpoint; two servers keep their own identity."""
+        from hsync_client.config import get_discovery_server_pins
 
         hex64 = "0" * 64
         other = "f" * 64
-        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_FINGERPRINTS", f"sha256:{hex64},{other}")
+        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_ENDPOINTS", "a.example:443,b.example")
+        monkeypatch.setenv(
+            "HSYNC_DISCOVERY_SERVER_FINGERPRINTS",
+            f"a.example:443={hex64}|{other},b.example=sha256:{hex64}",
+        )
         get_env_settings.cache_clear()
-        assert get_discovery_server_fingerprints() == (hex64, other)
+        # Keys are the dialed endpoints (the default port is applied), so a pin
+        # and the endpoint it belongs to always compare equal.
+        assert get_discovery_server_pins() == {
+            "a.example:443": (hex64, other),
+            "b.example:443": (hex64,),
+        }
+
+    def test_a_pin_for_an_unconfigured_server_is_refused(self, monkeypatch):
+        from hsync_client.config import get_discovery_server_pins
+
+        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_ENDPOINTS", "a.example")
+        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_FINGERPRINTS", f"other.example={'0' * 64}")
+        get_env_settings.cache_clear()
+        with pytest.raises(ValueError):
+            get_discovery_server_pins()
 
     def test_bootnode_fingerprint_rejects_invalid(self, monkeypatch):
         monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_FINGERPRINTS", "not-a-pin")

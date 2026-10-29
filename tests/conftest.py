@@ -339,18 +339,18 @@ LIVE_SERVER_BUCKETS_DIRS: dict[str, str] = {}
 
 
 def bb_server_cli_args(base_url: str) -> list[str]:
-    """Split the live-server URL into the bare-hostname form of the public CLI.
+    """Turn the live-server URL into the ``--server-url`` form of the public CLI.
 
-    The ``server`` subcommand takes the bare hostname (``https://`` is
-    implied) plus ``--port``; the URL stays the single source of truth in
-    the ``live_server`` fixture so no host/port is hardcoded here.
+    The ``server`` subcommand takes one URL (a bare ``HOST:PORT`` is normalized
+    to ``https://``); the URL stays the single source of truth in the
+    ``live_server`` fixture so no host/port is hardcoded here.
     """
     from urllib.parse import urlparse
 
     parsed = urlparse(base_url)
     if parsed.hostname is None or parsed.port is None:
         raise ValueError(f"live_server URL must carry host and port: {base_url!r}")
-    return [parsed.hostname, "--port", str(parsed.port)]
+    return ["--server-url", f"{parsed.hostname}:{parsed.port}"]
 
 
 # ---------------------------------------------------------------------------

@@ -100,11 +100,11 @@ Both must be explicit: a TTY or `--allow-deletions` never grants them.
 | `HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES` | Dangerously allow p2p filesystem mutations with no shared key | `false` |
 | `HSYNC_P2P_ALLOW_UNAUTHENTICATED` | Explicitly acknowledge running p2p without a shared key (peers unauthenticated, reads open) | `false` |
 | `HSYNC_P2P_LISTEN_PORT` | p2p master port (`1`–`65535`); unset keeps CLI auto (`0`) | — |
-| `HSYNC_DISCOVERY_SERVER_ENDPOINTS` | Bootnode endpoint for cross-network discovery (`host`, `host:port`, `[IPv6]`, `[IPv6]:port`; QUIC/UDP, no scheme); unset = mDNS-only | — |
-| `HSYNC_DISCOVERY_SERVER_EXTRA_PORTS` | Extra UDP ports to try for the **same** bootnode, comma-separated and ordered (multi-port dial fallback); e.g. `53` so a client whose **egress firewall** blocks UDP 443 can still reach the node on 53. Tried after the bootnode/default port | — |
-| `HSYNC_DISCOVERY_SERVER_FINGERPRINTS` | Comma-separated bootnode certificate fingerprint(s) to pin (up to two, `sha256:<hex>` or bare hex) | — |
-| `HSYNC_DISCOVERY_SERVER_TOFU` | Trust the bootnode certificate on first use (`1` = on) | `false` |
-| `HSYNC_DISCOVERY_SERVER_TRUST` | Bootnode TLS trust policy: `ask` (prompt on a terminal and remember, fail closed without one), `accept-new`, `strict`, `none` | `ask` |
+| `HSYNC_DISCOVERY_SERVER_ENDPOINTS` | Ordered, comma-separated discovery-server endpoints for cross-network discovery (`host`, `host:port`, `[IPv6]`, `[IPv6]:port`; QUIC/UDP, no scheme). The client leases **and queries every reachable entry** and merges the peers. Unset = mDNS-only | — |
+| `HSYNC_DISCOVERY_SERVER_EXTRA_PORTS` | Extra UDP ports tried on **each** endpoint, comma-separated and ordered (dial fallback); e.g. `53` so a client whose **egress firewall** blocks UDP 443 can still reach the same node on 53. Tried after the endpoint's own/default port | — |
+| `HSYNC_DISCOVERY_SERVER_FINGERPRINTS` | Pins **per endpoint**: `ENDPOINT=FINGERPRINT[|FINGERPRINT]`, comma-separated (`sha256:<hex>` or bare hex; `|` separates the rotation window). A pin must name a configured endpoint; a bare fingerprint is accepted only with one endpoint. With several servers each keeps its own identity | — |
+| `HSYNC_DISCOVERY_SERVER_TOFU` | Trust a discovery server's certificate on first use (`1` = on) | `false` |
+| `HSYNC_DISCOVERY_SERVER_TRUST` | Discovery-server TLS trust policy: `ask` (prompt on a terminal and remember, fail closed without one), `accept-new`, `strict` (each configured server needs its pin), `none` | `ask` |
 | `HSYNC_MAP_DATA_PORT` | Map the master TCP port with UPnP (`true`/`false`); off by default | `false` |
 | `HSYNC_NEVER_MASTER` | Never become master | `false` |
 | `HSYNC_DEVICE_DIR` | Device identity dir (device ID + p2p keypair + per-folder sync-state DBs `syncstate/<uuid>.db`, `syncstate/index.db`) | `$XDG_STATE_HOME/hsync/device` or `~/.local/state/hsync/device` |
