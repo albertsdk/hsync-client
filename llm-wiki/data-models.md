@@ -84,6 +84,8 @@ The store cache (`_stores`) is keyed by folder UUID so tests that switch
 | `clear_deletion` | `tombstones.py::clear_deletion` | remove a marker (path re-created) |
 | `merge_payload` | `tombstones.py::merge_payload` | causal-merge master/peer markers (dominance + content tie-break, gossip) |
 | `get_payload` | `tombstones.py::get_payload` | union to serve when this peer is master |
+| `deletion_marker_snapshot` | `tombstones.py::deletion_marker_snapshot` | opaque `(version_id, vclock)` snapshot of the marker for an absolute path (`None` when absent): every mint, merge and clear changes it |
+| `destination_mutation_since` | `tombstones.py::destination_mutation_since` | commit gate: true when *abs_path* was removed or replaced since a snapshot — delete/rename-away via the presence check, delete-and-recreate via the marker-snapshot comparison |
 
 Tombstone semantics (causal merge, TTL storage GC, hashed keys) are SSOT in
 `hsync_common.models.tombstone` — see ADR 0003. The store cache (`_stores`)
@@ -99,6 +101,16 @@ the path's stored version, or from this node's first tick when it only ever
 served the path (`p2p_websocket.py::_record_deletion_marker`), and is ticked
 once, so a peer that downloaded the advertised version gets a dominating marker
 and removes the old path instead of re-uploading it.
+
+Because the watcher mints a marker *immediately* on a local delete or rename,
+`destination_mutation_since` is the pre-commit re-validation of a transfer's
+final move: `transfer.py::_download_from_source_attempt` and
+`p2p_delta.py::handle_delta_apply` snapshot the destination (`existed_at_start`
++ marker) before the body streams and re-check it right before `os.replace`.
+A destination deleted, renamed away or deleted-and-recreated while the transfer
+ran is therefore never resurrected or clobbered by the commit; a marker already
+present at the snapshot and left unchanged does not block the commit (the plan
+may legitimately override it, e.g. a peer re-created the file).
 
 ## Runtime config models
 

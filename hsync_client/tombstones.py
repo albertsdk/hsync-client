@@ -19,6 +19,7 @@ mutation so a full sync flushes once instead of per file.
 """
 
 import threading
+from pathlib import Path
 
 from hsync_common.models.tombstone import (
     TombstoneEntry,
@@ -167,3 +168,40 @@ def get_payload() -> dict[str, TombstoneEntry]:
     """Return the JSON-serializable tombstone payload for serving/pushing."""
     with _lock:
         return get_tombstone_store().to_payload()
+
+
+def deletion_marker_snapshot(
+    abs_path: str,
+) -> tuple[str, tuple[tuple[str, int], ...]] | None:
+    """Opaque snapshot of the deletion marker for *abs_path* (None when absent).
+
+    Every mint, merge and clear changes the marker's ``(version_id, vclock)``,
+    so holding the snapshot across an operation and comparing it afterwards
+    detects that the path was deleted, renamed away or re-created while the
+    operation ran.
+    """
+    relpath = relpath_in_bucket(abs_path, bucket_dir())
+    if not relpath:
+        return None
+    with _lock:
+        entry = get_tombstone_store().get(relpath)
+    if entry is None:
+        return None
+    return (entry["version_id"], tuple(sorted(entry["vclock"].items())))
+
+
+def destination_mutation_since(
+    abs_path: str,
+    existed_at_start: bool,
+    marker_snapshot: tuple[str, tuple[tuple[str, int], ...]] | None,
+) -> bool:
+    """True when *abs_path* was removed or replaced since the snapshot was taken.
+
+    The destination changed under a transfer that is about to commit over it: a
+    delete or rename-away is caught by the presence check (the case even a run
+    without a watcher can see), any deletion-marker change — including a
+    delete-and-recreate — by the snapshot comparison.
+    """
+    if existed_at_start and not Path(abs_path).exists():
+        return True
+    return deletion_marker_snapshot(abs_path) != marker_snapshot

@@ -6,9 +6,11 @@
 import io
 import threading
 import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from hsync_common.constants import PARTIAL_DOWNLOAD_SUFFIX
 from hsync_common.models.file import File
 from requests import RequestException
 
@@ -190,6 +192,103 @@ class TestDownloadFile:
             # Guard fires before any network request or final commit
             mock_get.assert_not_called()
             mock_replace.assert_not_called()
+
+    def test_download_does_not_resurrect_a_deleted_destination(self, tmp_path, monkeypatch):
+        """A destination removed mid-download is not re-created by the commit."""
+        expected_sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        file = File(
+            filepath="subdir/file.txt",
+            sha256sum=expected_sha,
+            size=0,
+            mtime=1000,
+            ctime=1000,
+            permissions="644",
+        )
+        dest = tmp_path / "subdir" / "file.txt"
+        dest.parent.mkdir(parents=True)
+        dest.write_bytes(b"old content")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.iter_content = MagicMock(return_value=[b""])
+        mock_response.headers = {"X-Checksum-SHA256": expected_sha}
+
+        from hsync_client import config as client_config
+
+        monkeypatch.setitem(client_config.CONFIG, "LOCAL_BUCKET", str(tmp_path))
+
+        def _remove_dest(*args, **kwargs):
+            dest.unlink()
+            return mock_response
+
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "LOCAL_BUCKET": str(tmp_path),
+                },
+            ),
+            patch("hsync_client.transfer.get", side_effect=_remove_dest),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.replace") as mock_replace,
+        ):
+            download_file(file)
+        mock_replace.assert_not_called()
+        assert not dest.exists()
+        assert not Path(f"{dest}{PARTIAL_DOWNLOAD_SUFFIX}").exists()
+
+    def test_download_does_not_clobber_a_recreated_destination(self, tmp_path, monkeypatch):
+        """A destination deleted and recreated mid-download is preserved."""
+        expected_sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        file = File(
+            filepath="subdir/file.txt",
+            sha256sum=expected_sha,
+            size=0,
+            mtime=1000,
+            ctime=1000,
+            permissions="644",
+        )
+        dest = tmp_path / "subdir" / "file.txt"
+        dest.parent.mkdir(parents=True)
+        dest.write_bytes(b"old content")
+        recreated = b"user replaced the file"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.iter_content = MagicMock(return_value=[b""])
+        mock_response.headers = {"X-Checksum-SHA256": expected_sha}
+
+        from hsync_client import config as client_config
+        from hsync_client.tombstones import record_deletion
+
+        monkeypatch.setitem(client_config.CONFIG, "LOCAL_BUCKET", str(tmp_path))
+
+        def _recreate_dest(*args, **kwargs):
+            dest.unlink()
+            dest.write_bytes(recreated)
+            record_deletion(str(dest), origin_cid="testcid")
+            return mock_response
+
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "LOCAL_BUCKET": str(tmp_path),
+                },
+            ),
+            patch("hsync_client.transfer.get", side_effect=_recreate_dest),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.replace") as mock_replace,
+        ):
+            download_file(file)
+        mock_replace.assert_not_called()
+        assert dest.read_bytes() == recreated
 
     def test_sha256_mismatch_returns_without_saving(self, tmp_path):
         """SHA-256 mismatch logs error and returns."""

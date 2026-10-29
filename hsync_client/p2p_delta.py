@@ -385,6 +385,17 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
     filepath = _resolve_servable(handler, form_fields.get("path", ""))
     if filepath is None:
         return
+    from hsync_client.tombstones import (
+        deletion_marker_snapshot,
+        destination_mutation_since,
+    )
+
+    # Snapshot the destination before the rebuild: if it is deleted or renamed
+    # away — or its deletion marker appears or changes — while the delta runs,
+    # the final move must not commit over it (it would resurrect a removed name
+    # or clobber a file the user recreated in place).
+    dest_existed = Path(filepath).exists()
+    dest_marker = deletion_marker_snapshot(filepath)
 
     try:
         meta = json.loads(form_fields.get("metadata", ""))
@@ -481,6 +492,18 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
             if is_valid_cid(cid) and CONFIG.get("P2P_KEY"):
                 mark_inbound_origin(filepath, cid)
 
+        if destination_mutation_since(filepath, dest_existed, dest_marker):
+            # The destination hash may be unavailable (it was removed): the
+            # conflict detail must still stay processable.
+            try:
+                current = {
+                    "detail": "destination_changed",
+                    "actual_base_sha256": _file_sha256(filepath),
+                }
+            except OSError:
+                current = {"detail": "destination_changed"}
+            handler._send_json_response(_HTTP_CONFLICT, current)
+            return
         os.replace(part_path, filepath)
         cleanup_path = None
 

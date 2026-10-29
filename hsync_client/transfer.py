@@ -97,6 +97,7 @@ from hsync_client.sync_state import (
     note_local_edit,
     resolve_upload_version_fields,
 )
+from hsync_client.tombstones import deletion_marker_snapshot, destination_mutation_since
 from hsync_client.utils import (
     get_ssl_verify,
     get_throttle_delay,
@@ -1027,6 +1028,12 @@ def _download_from_source_attempt(
         return True
     Path(full_save_path).parent.mkdir(parents=True, exist_ok=True)
     partial_file_path = f"{full_save_path}{PARTIAL_DOWNLOAD_SUFFIX}"
+    # Snapshot the destination before the body streams: if it is deleted or
+    # renamed away — or its deletion marker appears or changes — while the
+    # transfer runs, the final move must not commit over it (it would resurrect
+    # a removed name or clobber a file the user recreated in place).
+    dest_existed = Path(full_save_path).exists()
+    dest_marker = deletion_marker_snapshot(full_save_path)
 
     if _already_up_to_date(file, full_save_path, inventory_observer):
         return True
@@ -1245,6 +1252,13 @@ def _download_from_source_attempt(
             log.error(f'Invalid checksum downloading "{file.filepath}"')
             return True
 
+        if destination_mutation_since(full_save_path, dest_existed, dest_marker):
+            log.info(
+                f'Not committing "{file.filepath}": the destination was deleted '
+                "or renamed while downloading"
+            )
+            cleanup_partial = True
+            return True
         replace(partial_file_path, full_save_path)
         cleanup_partial = False
         _finalize_download(

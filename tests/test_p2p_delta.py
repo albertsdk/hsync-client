@@ -835,3 +835,88 @@ class TestDeltaApplyReports:
                 "size": len(new),
             }
         ]
+
+
+class TestApplyDestinationMutation:
+    """A destination deleted or renamed mid-apply must not be resurrected.
+
+    ``handle_delta_apply`` snapshots the destination before rebuilding and
+    re-checks it before the final move: the gate refuses to commit over a
+    removed or recreated entry (409 ``destination_changed``, like the existing
+    ``base_file_changed`` race check).
+    """
+
+    @staticmethod
+    def _align_runtime_bucket(p2p_config: dict, monkeypatch) -> None:
+        """Make the tombstone store resolve the same bucket the handler writes."""
+        from hsync_client import config as client_config
+
+        monkeypatch.setitem(client_config.CONFIG, "LOCAL_BUCKET", p2p_config["LOCAL_BUCKET"])
+
+    @staticmethod
+    def _valid_delta(base: bytes, new: bytes, tmp_path) -> dict:
+        """A metadata recipe for a genuinely applicable delta (see reports test)."""
+        client_base = tmp_path / "client-base.bin"
+        client_base.write_bytes(base)
+        sigs = compute_signatures(str(client_base), BLOCK)
+        ops, literals = find_matches(bytes(new), sigs, BLOCK)
+        meta = _valid_metadata(base, bytes(new), ops=[op.to_dict() for op in ops])
+        return meta, literals
+
+    def test_destination_removed_mid_apply_is_conflict(
+        self, p2p_config, apply_handler, tmp_path, monkeypatch
+    ):
+        self._align_runtime_bucket(p2p_config, monkeypatch)
+        base = _base_bytes()
+        new = bytearray(base)
+        new[100:200] = b"B" * 100
+        target = _master_file(p2p_config, data=base)
+        base_file = Path(p2p_config["LOCAL_BUCKET"]) / "big.bin"
+        meta, literals = self._valid_delta(base, bytes(new), tmp_path)
+
+        real_reconstruct = ld.reconstruct_and_verify
+
+        def _remove_after_rebuild(*args, **kwargs):
+            result = real_reconstruct(*args, **kwargs)
+            target.unlink()
+            return result
+
+        monkeypatch.setattr(ld, "reconstruct_and_verify", _remove_after_rebuild)
+        _apply(apply_handler, meta, literals)
+
+        status, body = apply_handler.sent[0]
+        assert status == 409
+        assert body["detail"] == "destination_changed"
+        assert not base_file.exists()
+        assert not Path(f"{base_file}{PARTIAL_DELTA_SUFFIX}").exists()
+
+    def test_destination_recreated_mid_apply_is_conflict_and_preserved(
+        self, p2p_config, apply_handler, tmp_path, monkeypatch
+    ):
+        self._align_runtime_bucket(p2p_config, monkeypatch)
+        base = _base_bytes()
+        new = bytearray(base)
+        new[100:200] = b"B" * 100
+        _master_file(p2p_config, data=base)
+        base_file = Path(p2p_config["LOCAL_BUCKET"]) / "big.bin"
+        meta, literals = self._valid_delta(base, bytes(new), tmp_path)
+
+        real_reconstruct = ld.reconstruct_and_verify
+        recreated = b"user replaced the file"
+
+        def _recreate_after_rebuild(*args, **kwargs):
+            result = real_reconstruct(*args, **kwargs)
+            base_file.unlink()
+            base_file.write_bytes(recreated)
+            from hsync_client.tombstones import record_deletion
+
+            record_deletion(str(base_file), origin_cid="testcid")
+            return result
+
+        monkeypatch.setattr(ld, "reconstruct_and_verify", _recreate_after_rebuild)
+        _apply(apply_handler, meta, literals)
+
+        status, body = apply_handler.sent[0]
+        assert status == 409
+        assert body["detail"] == "destination_changed"
+        assert base_file.read_bytes() == recreated
