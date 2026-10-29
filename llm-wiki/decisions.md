@@ -249,9 +249,10 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   `FingerprintMismatch`). `bootnode_trust.py` is a `{host:port} → current` TOFU
   store (keys are the bracketed `[IPv6]:port` composite from
   `hsync_common.endpoint.format_authority`) sharing the `_trust_store.JsonStore` lock/atomicity base with
-  `pinning.PinStore` (extracted on its second use — Rule of Three). A mismatch is
-  fatal (`BootnodeFingerprintMismatch`, lease loop stops); `--ca-cert` is refused
-  in `hsync p2p`.
+  `pinning.PinStore` (extracted on its second use — Rule of Three). A mismatch
+  stops the bootnode source (`BootnodeFingerprintMismatch`, lease loop stops and
+  the source is disabled while mDNS keeps running, ADR-0045); `--ca-cert` is
+  refused in `hsync p2p`.
 
 - **Bootnode discovery cadence has its own budget**: the `boot/1` plan uses
   `BOOTNODE_REFRESH_INTERVAL` (`hsync_client.constants`, default `30`, spec
@@ -268,14 +269,23 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   `docs/configuration-p2p.md` and the man page; it is **not** part of the WD OS5
   web config surface in `hsync-wd-os5` (which never exposed the heartbeat).
 
-- **A fatal discovery failure aborts `hsync p2p`**: a
-  `BootnodeFingerprintMismatch` is terminal — the lease loop records it and
-  `wait_for_discovery` raises the new plan-agnostic `DiscoveryFatalError`
-  (`p2p_discovery.py`), which `run_p2p_mode` maps to `ExitCode.FATAL` (exit 1),
-  so the client never waits for peers that can never be discovered. The mDNS plan
-  never raises it; the core still does not branch on the plan (it catches a
-  discovery-layer error). See `hsync-bootnode/docs/faq.md` and `docs/faq-p2p.md`
-  for the operator/client recovery steps (stable `--identity`,
+- **A discovery source failure degrades discovery, it never fails the run**: with
+  a bootnode configured, mDNS and the bootnode channel run side by side
+  (ADR-0039). A bootnode that cannot confirm the node's identity disables **that
+  source** (`p2p_discovery_bootnode.py::BootnodeDiscovery._disable_source`,
+  `source_disabled()`): the lease loop stops, the node is never contacted again
+  (not even for the departure frame) and a structured warning
+  (`source="bootnode"`, `reason="untrusted"`) is published; the mDNS source keeps
+  the group discoverable, so the run continues — there is no fatal discovery
+  error and no `ExitCode.FATAL` path for it (ADR-0045). An *unreachable* node is
+  retried at the `boot/1` cadence with a transient warning
+  (`reason="unreachable"`). Readiness (`p2p_discovery_hybrid.py::HybridDiscovery.endpoint_published`)
+  follows the sources that can still carry traffic, so a disabled source never
+  delays mastership. The desktop pre-flight mirrors the rule: an unreachable
+  discovery server produces a warning and the run proceeds on the local network,
+  while an unreachable/refused sync server still cancels the start (server mode
+  has no alternative). See `hsync-bootnode/docs/faq.md` and `docs/faq-p2p.md` for
+  the operator/client recovery steps (stable `--identity`,
   `--bootnode-fingerprint`, clearing the pin).
 
 - **One log line per boot/1 lease cycle**: aioquic's per-frame QUIC/TLS INFO
@@ -293,8 +303,9 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   once (like `ssh`), remembering it in `bootnode_known_hosts.json`; without a
   terminal it fails closed. The policy is the shared SSOT
   `hsync_common.protocol.tls_trust` (`TrustPolicy` + `evaluate_tls_trust`),
-  consumed by `BootnodeClient` (`policy`/`prompt` fields; `BootnodeNotTrusted` is
-  fatal in the lease loop like a pin mismatch) and mirrored by the Android client
+  consumed by `BootnodeClient` (`policy`/`prompt` fields; `BootnodeNotTrusted`
+  disables the bootnode source in the lease loop, like a pin mismatch, while the
+  run continues on the remaining sources) and mirrored by the Android client
   via the `p2p-bootnode-trust-scenarios` fixture. `--bootnode-trust
   {ask,accept-new,strict}` and `HSYNC_BOOTNODE_TRUST` select the policy;
   `--bootnode-tofu` maps to `accept-new`, `--bootnode-fingerprint` to `strict` and

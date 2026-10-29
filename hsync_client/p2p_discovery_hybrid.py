@@ -14,7 +14,8 @@ A node next to us on the local network is therefore found without a round trip
 through the bootnode, while a node on another network is still found through it;
 a peer seen by both sources updates one entry (the candidate lists merge, and the
 mDNS TXT capabilities are not cleared by the bootnode relay that does not carry
-them).
+them). Each source keeps its own transport lifecycle, so one that stops (an
+untrusted bootnode) degrades discovery to the other instead of ending the run.
 
 Consumers: ``hsync-client`` (``build_discovery_plan`` when a bootnode is set).
 """
@@ -64,14 +65,15 @@ class HybridDiscovery(DiscoveryPlanState):
         self._mdns.stop()
 
     def wait_for_discovery(self, timeout: float) -> None:
-        """Wait on the shared peer manager and surface a bootnode trust failure.
+        """Wait on the shared peer manager.
 
         Peers can arrive from either source, so the wait is the mDNS one (wake on
-        a discovery change, or the window elapsing) plus the bootnode
-        trust-failure check; presence is emitted exactly once, by the mDNS child,
-        and the bootnode result is logged once.
+        a discovery change, or the window elapsing); presence is emitted exactly
+        once, by the mDNS child, and the bootnode result is logged once. A
+        bootnode source that stopped (untrusted node) never fails the wait: it
+        simply delivers no more peers while the local network keeps feeding the
+        shared state.
         """
-        self._bootnode.check_fatal()
         if self._peer_manager is None:
             return
         if not self._discovery_announced:
@@ -80,9 +82,6 @@ class HybridDiscovery(DiscoveryPlanState):
         else:
             log.debug(f"Waiting {timeout}s for peer discovery...")
         self._peer_manager.wait_for_change(timeout)
-        # A trust failure that happened during the wait is terminal: never keep
-        # waiting for peers that can no longer be discovered.
-        self._bootnode.check_fatal()
         self._mdns.emit_discovery_status()
         self._bootnode.log_peer_count()
 
@@ -92,12 +91,17 @@ class HybridDiscovery(DiscoveryPlanState):
         self._bootnode.update_endpoint_ready(ready)
 
     def endpoint_published(self) -> bool:
-        """True once every source has advertised this node's endpoint.
+        """True once every source that can still carry traffic published it.
 
         The mDNS plan has no separate publication step (always ``True``); the
         bootnode plan gates readiness until its endpoint register, so the
-        combined plan is ready only when the node is reachable from both.
+        combined plan is ready only when the node is reachable from both. A
+        disabled bootnode source (untrusted node) carries no traffic at all, so
+        requiring its publication would only delay readiness for a peer that
+        cannot be reached through it.
         """
+        if self._bootnode.source_disabled():
+            return self._mdns.endpoint_published()
         return self._mdns.endpoint_published() and self._bootnode.endpoint_published()
 
     def update_server_ready(self) -> None:

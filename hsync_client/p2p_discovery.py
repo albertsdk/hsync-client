@@ -48,19 +48,7 @@ if TYPE_CHECKING:
     from hsync_client.config import HsyncConfig
 
 
-class DiscoveryFatalError(RuntimeError):
-    """Discovery stopped permanently; retrying cannot help.
-
-    Raised by a plan's ``wait_for_discovery`` when discovery has stopped for
-    good — today the bootnode plan after a certificate pin mismatch
-    (:class:`~hsync_client.boot_client.BootnodeFingerprintMismatch`), where the
-    lease loop stops and no peer can ever be discovered. The sync core aborts
-    with a fatal exit code instead of waiting forever; the mDNS plan never
-    raises it.
-    """
-
-
-__all__ = ["DiscoveryFatalError", "DiscoveryPlan", "DiscoveryPlanState", "build_discovery_plan"]
+__all__ = ["DiscoveryPlan", "DiscoveryPlanState", "build_discovery_plan"]
 
 
 @runtime_checkable
@@ -88,10 +76,10 @@ class DiscoveryPlan(Protocol):
     def wait_for_discovery(self, timeout: float) -> None:
         """Block until the discovery plan turns up peers (or ``timeout``).
 
-        Raises :class:`DiscoveryFatalError` when discovery has permanently
-        stopped (e.g. a bootnode certificate pin mismatch); the sync core then
-        aborts fatally instead of waiting forever for peers that can never be
-        discovered.
+        Never raises for a failing source: a source that cannot deliver peers
+        (an unreachable or untrusted bootnode) is disabled while the remaining
+        sources keep feeding the shared peer state, so the wait always ends on
+        its own timeout or a discovery change.
         """
         ...
 

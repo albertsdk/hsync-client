@@ -189,11 +189,20 @@ both sources run against one `PeerManager` (built once via
 
 - **Presence once**: `wait_for_discovery` blocks on the shared condition; the
   mDNS child owns the presence pair (`emit_discovery_status`), the bootnode child
-  contributes the discovery log (`log_peer_count`) and the fatal check
-  (`check_fatal`, which re-raises a trust failure so the run aborts).
-- **Readiness is the AND**: `endpoint_published()` requires the bootnode's
-  endpoint register (mDNS has no separate step), bounded by
-  `READINESS_ENDPOINT_TIMEOUT_S`.
+  contributes the discovery log (`log_peer_count`).
+- **Per-source failure isolation**: a bootnode that cannot confirm the node's
+  identity is disabled on its own
+  (`BootnodeDiscovery.source_disabled`, ADR-0045) — its lease loop stops, the
+  node is never contacted again (not even for the departure frame), and a
+  structured warning (`source="bootnode"`, `reason="untrusted"`) is published.
+  The wait never raises for it: the mDNS source keeps the group discoverable, so
+  there is no fatal discovery error and no fatal exit branch in
+  `run_p2p_mode`. An *unreachable* node is not disabled — it is retried at the
+  `boot/1` cadence with a transient warning (`reason="unreachable"`).
+- **Readiness** is the AND of the sources that can still carry traffic:
+  `endpoint_published()` requires the bootnode's endpoint register (mDNS has no
+  separate step), bounded by `READINESS_ENDPOINT_TIMEOUT_S`, and skips a disabled
+  source, which can never publish.
 - **One peer entry per CID**: `add_peer` merges a peer seen by both sources —
   the non-empty candidate list wins (`endpoints`, richer than mDNS's single
   address) and `Peer.capabilities_known` stops the bootnode relay, which carries
@@ -466,7 +475,8 @@ group key was derived and that the *shared password* (not the derived key) is
 what every device must use — a group mixing the two input forms derives
 different keys and fails later with an authentication error.
 
-The mDNS trust refusal is **not fatal** (unlike the bootnode lease loop): the
+The mDNS trust refusal is **not fatal** (nor is the bootnode's: a refused
+bootnode source is disabled while discovery continues, ADR-0045): the
 discovery loop retries continuously, so `_evaluate_master_pin` dedupes both the
 log block and the structured event through `_mark_trust_notice` /
 `_clear_trust_notice` (`p2p_handler.py`) over a `notified` map keyed
@@ -504,10 +514,10 @@ peer state:
 | ------ | ---- | ---- |
 | `BootnodeClient` | `boot_client.py::BootnodeClient` | synchronous `boot/1` client: one QUIC/TLS 1.3 connection (ALPN `hsync-boot/1`), one bidi stream per request, NDJSON frames; `register`/`refresh`/`leave`/`query`. ADR-0034 trust fields: `fingerprints` (pin, up to two) / `tofu` (trust on first use) |
 | `build_register_frame` / `build_refresh_frame` / `build_leave_frame` / `build_query_frame` | `boot_client.py::build_register_frame`–`boot_client.py::build_query_frame` | TypedDict frame builders; every request is re-validated against the mirror before it is sent (fail-fast, no network on an invalid frame). `build_register_frame` always emits the election advertisement |
-| `BootnodeError` / `BootnodeUnreachable` / `BootnodeProtocolError` / `BootnodeRefused` / `BootnodeFingerprintMismatch` | `boot_client.py::BootnodeError`–`boot_client.py::BootnodeFingerprintMismatch` | transport failure vs contract violation vs **uniform refusal** (`token_required`/`rate_limited`/`overloaded` answered to `register`/`refresh`; `overloaded` is node capacity, not client abuse) vs pin/TOFU mismatch (fatal) |
+| `BootnodeError` / `BootnodeUnreachable` / `BootnodeProtocolError` / `BootnodeRefused` / `BootnodeFingerprintMismatch` | `boot_client.py::BootnodeError`–`boot_client.py::BootnodeFingerprintMismatch` | transport failure vs contract violation vs **uniform refusal** (`token_required`/`rate_limited`/`overloaded` answered to `register`/`refresh`; `overloaded` is node capacity, not client abuse) vs pin/TOFU mismatch (disables the bootnode source; ADR-0045) |
 | `observed_address` | `stun.py::observed_address` | server-reflexive public `ip:port` from a validated `ack` (STUN-echo) |
 
-| `BootnodeDiscovery` | `p2p_discovery_bootnode.py::BootnodeDiscovery` | the `DiscoveryPlan` implementation (extends `DiscoveryPlanState`): lease loop (register → refresh → query) at the `boot/1` cadence `BOOTNODE_REFRESH_INTERVAL` (default 30 s, spec `boot-1.md`; env `HSYNC_BOOTNODE_REFRESH_INTERVAL`, range 1–300), peer sample → `PeerManager`, plus an **event-based** `wait_for_discovery` (`PeerManager.wait_for_change`, no network) so the wait never polls `query` — the node rate-limits queries to 5/min per (IP, bucket) and a refusal arms a `retry_after` backoff. A `BootnodeFingerprintMismatch` stops the lease loop (never retried), is recorded as a fatal error and re-raised by `wait_for_discovery` as `DiscoveryFatalError` so `run_p2p_mode` exits with `ExitCode.FATAL`. Registration republishes the election advertisement on every role change (`_republish_advert`, `p2p_discovery_bootnode.py::BootnodeDiscovery`) and `update_server_ready`/`update_server_not_ready` mirror the incumbency into the shared `PeerManager`; relayed peers map the advertisement verbatim (`_peer_from_wire`, `p2p_discovery_bootnode.py::BootnodeDiscovery`) and keep the relayed `endpoints[]` candidates (at most four, the node's relay bound), promoting a same-subnet candidate to the peer's primary address so a same-NAT peer dials the local path (no NAT hairpin); a register is never sent without the local certificate fingerprint (the frame would carry an unusable pin) |
+| `BootnodeDiscovery` | `p2p_discovery_bootnode.py::BootnodeDiscovery` | the `DiscoveryPlan` implementation (extends `DiscoveryPlanState`): lease loop (register → refresh → query) at the `boot/1` cadence `BOOTNODE_REFRESH_INTERVAL` (default 30 s, spec `boot-1.md`; env `HSYNC_BOOTNODE_REFRESH_INTERVAL`, range 1–300), peer sample → `PeerManager`, plus an **event-based** `wait_for_discovery` (`PeerManager.wait_for_change`, no network) so the wait never polls `query` — the node rate-limits queries to 5/min per (IP, bucket) and a refusal arms a `retry_after` backoff. A `BootnodeFingerprintMismatch` / `BootnodeNotTrusted` stops the lease loop (never retried, never contacted again) and disables **that source only** (`_disable_source`, `source_disabled()`): a structured warning (`reason="untrusted"`) is published and mDNS keeps the group discoverable, so the run continues (ADR-0045); an unreachable node keeps retrying with a transient warning (`reason="unreachable"`). Registration republishes the election advertisement on every role change (`_republish_advert`, `p2p_discovery_bootnode.py::BootnodeDiscovery`) and `update_server_ready`/`update_server_not_ready` mirror the incumbency into the shared `PeerManager`; relayed peers map the advertisement verbatim (`_peer_from_wire`, `p2p_discovery_bootnode.py::BootnodeDiscovery`) and keep the relayed `endpoints[]` candidates (at most four, the node's relay bound), promoting a same-subnet candidate to the peer's primary address so a same-NAT peer dials the local path (no NAT hairpin); a register is never sent without the local certificate fingerprint (the frame would carry an unusable pin) |
 | `candidate_endpoints` | `nat_traversal.py::candidate_endpoints` | ordered, de-duplicated dialable endpoints for the `register` `endpoints[]` (observed → UPnP → local) |
 | `UpnpMapper` / `discover_igd` | `hsync_client/upnp.py` / `hsync_common/upnp.py` | best-effort TCP port mapping for the master (opt-in, off by default); the SSDP/SOAP core (SSRF-hardened) is the shared `hsync_common.upnp` SSOT, the client adds only the lifecycle; every failure degrades to "no UPnP" (node stays slave-only) |
 | `get_local_ip` | `net_utils.py::get_local_ip` | shared local-source-IP probe (mDNS advertiser, bootnode candidates, p2p handler) |
@@ -516,11 +526,12 @@ peer state:
 | `_probe_master_endpoint` / `_select_master_endpoint` | `p2p_handler.py::_probe_master_endpoint` / `p2p_handler.py::_select_master_endpoint` | pick the first reachable candidate by a fingerprint-pinned TLS handshake with a bounded per-candidate timeout (`MASTER_CANDIDATE_PROBE_TIMEOUT_S`, 3 s); single-candidate peers skip the probe |
 
 Readiness & banner: `run_p2p_mode` logs the active plan at startup
-(`Discovery: mDNS on the local network` vs `Discovery: bootnode HOST:PORT
-(cross-network; UPnP on|off)`). The **bootnode plan only** adds a readiness gate:
-the master emits `[READY]` (and writes the ready file) only after
-`endpoint_published()` — i.e. after the second `register` that carries the
-`endpoints[]`. The mDNS plan returns `True` immediately, so its readiness
+(`Discovery: mDNS on the local network` vs `Discovery: mDNS on the local network
++ bootnode HOST:PORT (cross-network; UPnP on|off)`). The **bootnode plan only**
+adds a readiness gate: the master emits `[READY]` (and writes the ready file)
+only after `endpoint_published()` — i.e. after the second `register` that carries
+the `endpoints[]` — and never waits on a source that is already disabled. The
+mDNS plan returns `True` immediately, so its readiness
 timing is unchanged. The wait is bounded by `READINESS_ENDPOINT_TIMEOUT_S`
 (10 s) so a wedged lease loop degrades to an ungated start instead of hanging.
 
@@ -593,12 +604,13 @@ is the concise case-specific reason (changed pin, node not pinned under `strict`
 no match against `--bootnode-fingerprint`) and whose `guidance` carries the
 SSH-style recovery block — presented fingerprint, store path and the exact
 `hsync trust bootnode add|remove` commands — logged once by `_lease_loop`
-(`p2p_discovery_bootnode.py`), while the fatal propagation line
-(`p2p_handler.py`) repeats only the concise reason. The same refusal emits a
+(`p2p_discovery_bootnode.py`), which then disables the bootnode source; the
+structured warning repeats only the concise reason. The same refusal emits a
 structured event: a strict-unknown node emits `pairing_needed`
 (`scope="bootnode"`), a changed pin / explicit-pin mismatch emits
 `fingerprint_changed`. The connection closes with
-zero bytes sent; the lease loop stops instead of retrying.
+zero bytes sent; the lease loop stops instead of retrying, the node is never
+contacted again, and the mDNS source keeps the run alive.
 `--insecure` disables verification (tests/loopback only, mutually exclusive with
 pin/TOFU); `--ca-cert` is **refused** in `hsync p2p` (it is a server-mode knob,
 and a self-signed bootnode has no usable CA/hostname). With no pin/TOFU the

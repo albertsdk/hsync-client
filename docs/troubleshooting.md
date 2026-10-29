@@ -19,8 +19,9 @@ a bootnode banner), but the peer list stays empty and no sync happens.
   or VPN interfaces) or devices sit on different VLANs. Run the mDNS plan
   checklist in [Sync on the local network](p2p-lan.md).
 - Peers listed but no sync → different `HSYNC_P2P_PASSPHRASE`/`HSYNC_P2P_KEY`, bucket or `--group`.
-- The log shows `Discovery: bootnode …` although mDNS was intended → a bootnode
-  is configured; unset `HSYNC_BOOTNODE` (or drop the positional).
+- The log shows `Discovery: mDNS on the local network + bootnode …` although only
+  mDNS was intended → a bootnode is configured; unset `HSYNC_BOOTNODE` (or drop
+  the positional).
 
 ## After a network change a device stays "waiting"
 

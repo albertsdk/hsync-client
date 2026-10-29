@@ -167,9 +167,9 @@ service run: pin the fingerprint (as above) or use `--bootnode-trust accept-new`
 `--insecure` skips verification and is for loopback tests only.
 
 A device that cannot map its port stays **slave-only** (it still syncs, it just
-never serves). Verify the plan in the log: `Discovery: bootnode
-boot.example.net:443 (cross-network; UPnP on)`. Details, fingerprint rotation
-and troubleshooting: [Sync across networks](p2p-bootnode.md).
+never serves). Verify the plan in the log: `Discovery: mDNS on the local network
++ bootnode boot.example.net:443 (cross-network; UPnP on)`. Details, fingerprint
+rotation and troubleshooting: [Sync across networks](p2p-bootnode.md).
 
 ## Authentication (shared key)
 

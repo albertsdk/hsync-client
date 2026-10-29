@@ -8,9 +8,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from hsync_client.p2p_discovery import DiscoveryFatalError, build_discovery_plan
+from hsync_client.p2p_discovery import build_discovery_plan
 from hsync_client.p2p_discovery_hybrid import HybridDiscovery
 
 _CID = "A" * 21
@@ -146,21 +144,29 @@ class TestHybridLifecycle:
 class TestHybridWait:
     def test_waits_on_the_shared_manager_and_reports_once(self):
         hybrid, mdns, bootnode, shared = _hybrid()
+        bootnode.source_disabled.return_value = False
         hybrid.start()
         hybrid.wait_for_discovery(timeout=5.0)
         shared.wait_for_change.assert_called_once_with(5.0)
-        bootnode.check_fatal.assert_called()
         # Presence is emitted exactly once, by the mDNS child; the bootnode
         # child contributes only the discovery log.
         mdns.emit_discovery_status.assert_called_once()
         bootnode.log_peer_count.assert_called_once()
 
-    def test_bootnode_trust_failure_aborts_the_wait(self):
-        hybrid, _, bootnode, _ = _hybrid()
+    def test_a_disabled_bootnode_source_never_fails_the_wait(self):
+        """An untrusted bootnode degrades discovery to mDNS (regression).
+
+        The run must keep syncing on the local network: the hybrid wait returns
+        normally and the mDNS peer state stays the source of truth.
+        """
+        hybrid, mdns, bootnode, shared = _hybrid()
+        bootnode.source_disabled.return_value = True
         hybrid.start()
-        bootnode.check_fatal.side_effect = DiscoveryFatalError("pin mismatch")
-        with pytest.raises(DiscoveryFatalError):
-            hybrid.wait_for_discovery(timeout=5.0)
+
+        hybrid.wait_for_discovery(timeout=5.0)
+
+        shared.wait_for_change.assert_called_once_with(5.0)
+        mdns.emit_discovery_status.assert_called_once()
 
 
 class TestHybridFanOut:
@@ -204,8 +210,22 @@ class TestHybridFanOut:
 
     def test_endpoint_published_requires_every_source(self):
         hybrid, mdns, bootnode, _ = _hybrid()
+        bootnode.source_disabled.return_value = False
         mdns.endpoint_published.return_value = True
         bootnode.endpoint_published.return_value = False
         assert hybrid.endpoint_published() is False
         bootnode.endpoint_published.return_value = True
+        assert hybrid.endpoint_published() is True
+
+    def test_a_disabled_source_is_skipped_for_readiness(self):
+        """A source that can never publish must not delay master readiness.
+
+        Regression: with an untrusted bootnode the AND-composition held the
+        master in the bounded readiness wait for an endpoint that could never
+        arrive, on top of the source carrying no traffic at all.
+        """
+        hybrid, mdns, bootnode, _ = _hybrid()
+        mdns.endpoint_published.return_value = True
+        bootnode.endpoint_published.return_value = False
+        bootnode.source_disabled.return_value = True
         assert hybrid.endpoint_published() is True

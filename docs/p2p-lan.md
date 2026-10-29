@@ -34,8 +34,9 @@ At startup the client logs the plan it selected:
 Discovery: mDNS on the local network (no bootnode configured)
 ```
 
-If you see `Discovery: bootnode HOST:PORT` instead, a bootnode is configured —
-unset `HSYNC_BOOTNODE` (or drop the positional) to go back to mDNS.
+If you see `Discovery: mDNS on the local network + bootnode HOST:PORT` instead, a
+bootnode is configured — unset `HSYNC_BOOTNODE` (or drop the positional) to go
+back to mDNS-only.
 
 ## Keep groups apart
 

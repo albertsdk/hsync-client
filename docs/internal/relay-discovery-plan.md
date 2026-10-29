@@ -366,9 +366,9 @@ happen once regardless of which option wins.
 1. **Generalise `HybridDiscovery` to N children.**
    `hsync_client/p2p_discovery_hybrid.py::HybridDiscovery` hardcodes
    `mdns` + `bootnode`. Replace with a list of child plans, keeping the ADR-0039
-   semantics: one shared `PeerManager`, presence emitted once, `check_fatal()`
-   across every child, `endpoint_published()` = AND of all children, `set_*`
-   fan-out.
+   and ADR-0045 semantics: one shared `PeerManager`, presence emitted once, a
+   disabled child source skipped (never fatal), `endpoint_published()` = AND of
+   the children that can still carry traffic, `set_*` fan-out.
    Tests: the existing hybrid tests must be extended, not rewritten — one child
    must behave exactly like today.
 2. **Extract the `BootPeer` → `Peer` mapper.** The mapping currently lives inside

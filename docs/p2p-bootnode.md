@@ -92,8 +92,9 @@ Permanently added 'boot.example.net:443' (SHA256) to the list of known hosts (~/
 
 `--bootnode-trust` selects the policy explicitly (`ask`, `accept-new`, `strict`,
 `none`); `--bootnode-fingerprint` implies `strict`, `--bootnode-tofu` implies
-`accept-new`. Without a terminal the `ask` default fails closed, so automation
-must opt in explicitly.
+`accept-new`. Without a terminal the `ask` default fails closed for the bootnode
+source: the node is not used (and local-network discovery keeps working), so
+automation must opt in explicitly.
 
 Service units pass the same inputs as environment variables
 (`HSYNC_BOOTNODE`, `HSYNC_BOOTNODE_FINGERPRINT`, `HSYNC_BOOTNODE_TOFU`,
@@ -126,12 +127,13 @@ retries discovery instead of failing the run.
 ## Confirm which plan is active
 
 ```text
-Discovery: bootnode boot.example.net:443 (cross-network; UPnP on)
+Discovery: mDNS on the local network + bootnode boot.example.net:443 (cross-network; UPnP on)
 ```
 
 The master additionally logs `[READY]` only once its endpoint has been
-published to the bootnode, so the readiness line means "reachable", not just
-"started".
+published to the bootnode (bounded wait), so the readiness line means
+"reachable", not just "started". A bootnode the client stops using (untrusted
+identity) no longer gates that line.
 
 The **master election is the same one used on a local network**: each device
 publishes its role through the node, so a device that is already serving keeps
@@ -162,8 +164,9 @@ limit is negotiated on the authenticated session.
 |---|---|
 | `Discovery: mDNS …` although a bootnode was intended | `HSYNC_BOOTNODE`/positional not set, or an empty value. |
 | Client exits with `--port requires a bootnode hostname` | `--port` passed without a host: add the hostname or `HSYNC_BOOTNODE`. |
-| The client stops with a bootnode trust error before any sync | Bootnode certificate not trusted yet. On a terminal the default `ask` prompt confirms it; with no terminal the client fails closed — pass `--bootnode-fingerprint` (or `--bootnode-tofu`, or `--insecure` only on loopback). |
-| `fingerprint_changed` (bootnode), or `ERROR: Bootnode '…' trust failed: the certificate fingerprint does not match the accepted pin` | The bootnode certificate does not match the pin — possible man-in-the-middle, or the operator restarted/rotated the identity. The client prints the presented fingerprint, the known-hosts file and the exact commands that unblock the situation: re-pin the new fingerprint after verifying it out of band (`hsync trust bootnode add …`) or forget the pin with `hsync trust bootnode remove …` (like `ssh-keygen -R`) to be prompted again; during a planned rotation pass both fingerprints (old + new) once. The client **exits with a non-zero code**: see [FAQ — p2p Mode](faq-p2p.md) and the node's [FAQ](https://github.com/albertsdk/hsync-bootnode/blob/main/docs/faq.md). |
+| `Bootnode … unreachable` warning, devices still sync locally | The node cannot be reached: the client retries it every 30 s and syncs over mDNS meanwhile. The bootnode only adds cross-network discovery; local sync is unaffected. |
+| The bootnode identity cannot be confirmed and cross-network peers stop appearing | The node is not trusted yet (policy `ask` with no terminal, `strict` without a pin, or a changed fingerprint). The client logs the recovery block, publishes a `pairing_needed`/`fingerprint_changed` event (`scope: "bootnode"`) and **keeps syncing on the local network**: it stops using the bootnode, never contacts it again, and never writes to it. Confirm the fingerprint out of band and pin it — `--bootnode-fingerprint`, `hsync trust bootnode add …` (the desktop pins from its trust dialog), or `--bootnode-tofu`/`--insecure` (loopback only) — then restart the run to regain cross-network discovery. |
+| `fingerprint_changed` (bootnode) with `ERROR: Bootnode '…' trust failed: the certificate fingerprint does not match the accepted pin` | The bootnode certificate does not match the pin — possible man-in-the-middle, or the operator restarted/rotated the identity. The client prints the presented fingerprint, the known-hosts file and the exact commands that unblock the situation, then drops the bootnode source (the local network keeps syncing). Re-pin the new fingerprint after verifying it out of band (`hsync trust bootnode add …`) or forget the pin with `hsync trust bootnode remove …` (like `ssh-keygen -R`) to be prompted again; during a planned rotation pass both fingerprints (old + new) once. See [FAQ — p2p Mode](faq-p2p.md) and the node's [FAQ](https://github.com/albertsdk/hsync-bootnode/blob/main/docs/faq.md). |
 | Peer listed but connection fails | The advertised TCP endpoint is not reachable (UPnP disabled/failed and no public port): see "Let the node be reachable". The client retries the other candidates, then discovery. |
 | Two peers on the same network (or same host) never connect | mDNS already runs alongside the bootnode, so same-network peers are normally found directly; this symptom is for peers behind the **same NAT on different networks**, where some routers block NAT loopback (hairpinning) and the public endpoint is unreachable from inside. The client prefers the host/LAN candidate and falls back to the public one. Two peers on different networks still need a routable public endpoint (UPnP/public port) and are not hole-punched. |
 | Cross-network sync not needed | Go back to the [mDNS plan](p2p-lan.md) by unsetting `HSYNC_BOOTNODE`. |

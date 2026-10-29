@@ -122,7 +122,7 @@ at the same **boot/1 bootstrap node** (positional hostname or
 `HSYNC_BOOTNODE`). Election, transport and security are unchanged — only
 discovery differs. See [Sync across networks](p2p-bootnode.md).
 
-**Q: The client aborts with "Bootnode '…' trust failed: the certificate
+**Q: The client reports "Bootnode '…' trust failed: the certificate
 fingerprint does not match the accepted pin" — what do I do?**
 The bootnode authenticates with a self-signed certificate that you **pin**: with
 `--bootnode-tofu` the first fingerprint seen for `host:port` is remembered, and
@@ -140,9 +140,10 @@ accepted pin and the commands that unblock the situation:
 - Ask the operator to persist the node identity (`--identity`) and to publish the
   stable fingerprint for clients to pin.
 
-After a fatal trust failure the client **exits with a non-zero code** instead of
-waiting for peers that can never be discovered. See
-[Sync across networks](p2p-bootnode.md) and the
+After a trust failure the client stops using the bootnode but **keeps syncing on
+the local network**: the bootnode is an optional cross-network source, so the run
+degrades instead of aborting, and the node is never contacted again until you
+pin it. See [Sync across networks](p2p-bootnode.md) and the
 node's [FAQ](https://github.com/albertsdk/hsync-bootnode/blob/main/docs/faq.md).
 
 **Q: How does master election work?**

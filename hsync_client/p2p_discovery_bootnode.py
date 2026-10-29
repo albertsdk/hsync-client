@@ -9,6 +9,11 @@ node (register → refresh, TTL 60 s), queries it for a random peer sample and
 feeds the shared :class:`~hsync_client.p2p_peers.PeerManager`. Master election,
 pairing and the data-plane are unchanged — this module only supplies peers.
 
+This source is optional: when the node cannot be reached the lease loop retries
+(``BootnodeError``), and when it is not trusted the source is disabled for the
+rest of the run instead of failing the whole run, so the remaining sources keep
+the group reachable.
+
 Lease semantics (spec ``boot-1.md``): the first ``register`` has no endpoint
 (the public address is not known yet); the ``ack`` carries the observed
 endpoint (STUN-echo). Once the handler says the data-plane endpoint is ready,
@@ -58,7 +63,7 @@ from hsync_client.net_watch import (
     NetworkSignature,
     get_network_monitor,
 )
-from hsync_client.p2p_discovery import DiscoveryFatalError, DiscoveryPlanState
+from hsync_client.p2p_discovery import DiscoveryPlanState
 from hsync_client.p2p_peers import (
     HSYNC_P2P_LISTEN_PORT,
     Peer,
@@ -182,9 +187,13 @@ class BootnodeDiscovery(DiscoveryPlanState):
         # Alive-peer count at the previous discovery window, so the "found N
         # peer(s)" line is emitted only when the count changes.
         self._last_peer_count = 0
-        # Fatal failure that stopped the lease loop (today: a certificate pin
-        # mismatch); ``wait_for_discovery`` re-raises it so the sync core aborts.
-        self._fatal_error: BaseException | None = None
+        # This source stopped for good (the node is not trusted). The lease loop
+        # has exited, so it delivers no more peers for the rest of the run while
+        # the combined plan keeps serving its remaining sources.
+        self._source_disabled = False
+        # The node failed authentication: never contact it again, not even for
+        # the departure frame.
+        self._untrusted = False
 
     # -- DiscoveryPlan surface -------------------------------------------------
 
@@ -227,9 +236,9 @@ class BootnodeDiscovery(DiscoveryPlanState):
         if self._thread is not None:
             self._thread.join(timeout=10.0)
             self._thread = None
-        # Never contact a node we declared untrusted: a pin mismatch stops the
+        # Never contact a node we declared untrusted: a trust refusal stops the
         # lease loop before any register, so there is no lease to release.
-        if self._fatal_error is None:
+        if not self._untrusted:
             self._send_leave()
         if self._upnp is not None:
             self._upnp.unmap()
@@ -245,7 +254,6 @@ class BootnodeDiscovery(DiscoveryPlanState):
         or it would exhaust the 5/min per-(IP, bucket) query budget and the node
         would answer ``rate_limited`` for the rest of the window.
         """
-        self.check_fatal()
         if self._peer_manager is None:
             return
         if not self._discovery_announced:
@@ -254,12 +262,11 @@ class BootnodeDiscovery(DiscoveryPlanState):
         else:
             log.debug(f"Waiting {timeout}s for peer discovery...")
 
-        # Event-driven wait on the shared peer-change condition (no network), in
-        # short slices so a fatal trust failure recorded by the lease loop is
-        # observed within ~1 s instead of after the whole window.
+        # Event-driven wait on the shared peer-change condition (no network),
+        # in short slices: peers from the other sources keep arriving while
+        # this one is parked.
         deadline = time.monotonic() + max(0.0, timeout)
         while True:
-            self.check_fatal()
             if self._peer_manager.get_alive_peers():
                 break
             remaining = deadline - time.monotonic()
@@ -269,15 +276,16 @@ class BootnodeDiscovery(DiscoveryPlanState):
 
         self.log_peer_count()
 
-    def check_fatal(self) -> None:
-        """Raise :class:`DiscoveryFatalError` if discovery has permanently stopped.
+    def source_disabled(self) -> bool:
+        """True when this source delivers no more peers for the rest of the run.
 
-        The combined discovery plan calls this around its own wait so a bootnode
-        trust failure still aborts the run instead of waiting forever.
+        Set when the node is not trusted (policy ``ask`` without a terminal, a
+        changed pin, ``strict`` without one). The combined plan reads it so it
+        stops requiring this source's endpoint publication; the sync core never
+        sees it: a disabled source is a degraded discovery state, never a fatal
+        run, and the remaining sources keep the group reachable.
         """
-        if self._fatal_error is not None:
-            # A trust failure is terminal: no peer can ever be discovered.
-            raise DiscoveryFatalError(str(self._fatal_error)) from self._fatal_error
+        return self._source_disabled
 
     def log_peer_count(self) -> None:
         """Log the bootnode discovery result when the alive-peer count changes."""
@@ -425,20 +433,22 @@ class BootnodeDiscovery(DiscoveryPlanState):
                 self._query_peers()
             except BootnodeNotTrusted as exc:
                 # Policy ``ask`` could not establish trust (declined, or no
-                # terminal): fatal, and never re-prompt every cycle.
-                self._fatal_error = exc
-                log.error(
-                    f"Bootnode {format_authority(self._bootnode_host, self._bootnode_port)} not trusted: {exc}"
+                # terminal). Never re-prompt every cycle, and never contact the
+                # node again — but it is an optional cross-network source, so
+                # disable it instead of ending the run the local network can
+                # still serve.
+                self._disable_source(
+                    f"Bootnode {format_authority(self._bootnode_host, self._bootnode_port)} "
+                    f"not trusted: {exc}",
                 )
                 return
             except BootnodeFingerprintMismatch as exc:
-                # Fatal: the bootnode failed authentication. Never retry an
+                # The bootnode failed authentication: never retry an
                 # unpinned/untrusted node (the token would leak to an attacker).
-                # Record it so the sync core aborts instead of waiting forever,
-                # and log the full SSH-style recovery block here, once: the fatal
-                # propagation line repeats only the concise reason.
-                self._fatal_error = exc
-                log.error(exc.guidance or str(exc))
+                # The source is disabled for the rest of the run while the other
+                # discovery sources keep the group reachable; the full SSH-style
+                # recovery block is logged here, once.
+                self._disable_source(str(exc), guidance=exc.guidance)
                 return
             except BootnodeRefused as exc:
                 # A uniform refusal (token / rate limit / node capacity) is a valid
@@ -486,6 +496,25 @@ class BootnodeDiscovery(DiscoveryPlanState):
             self._publish_endpoint()
         else:
             self._register(publish_endpoint=False)
+
+    def _disable_source(self, message: str, *, guidance: str | None = None) -> None:
+        """Stop this discovery source for the rest of the run.
+
+        A node that is not trusted must never be contacted again (the
+        ``bucket_token`` would leak to an attacker), but it cannot remove the
+        local network either: the combined plan keeps serving its remaining
+        sources, so the failure is reported as a warning and the source simply
+        delivers no more peers. ``guidance`` carries the long SSH-style recovery
+        block to the log only — the structured warning stays one line.
+        """
+        self._source_disabled = True
+        self._untrusted = True
+        log.error(guidance or message)
+        emit_warning(
+            f"{message} — bootnode discovery stopped, local network discovery continues",
+            source="bootnode",
+            reason="untrusted",
+        )
 
     def _log_refusal(self, exc: BootnodeRefused) -> None:
         """Report a uniform boot/1 refusal once per error, then at DEBUG."""

@@ -26,7 +26,6 @@ from hsync_client.boot_client import (
     BootnodeRefused,
     BootnodeUnreachable,
 )
-from hsync_client.p2p_discovery import DiscoveryFatalError
 from hsync_client.p2p_discovery_bootnode import BootnodeDiscovery
 from hsync_client.p2p_peers import Peer, PeerManager
 from hsync_client.stun import ObservedAddress
@@ -561,18 +560,53 @@ class TestWaitForDiscovery:
         plan._client.query = boom
         plan.wait_for_discovery(timeout=0.05)
 
-    def test_wait_raises_on_a_fatal_trust_failure(self):
-        """A pin mismatch stops discovery for good: the wait must surface it."""
+    def test_lease_loop_reports_an_unreachable_node_as_a_warning(self, monkeypatch):
+        """A dead node is retried (warning only), never disabled like a refusal."""
+        warnings: list[dict] = []
+        monkeypatch.setattr(
+            "hsync_client.p2p_discovery_bootnode.emit_warning",
+            lambda message, **kwargs: warnings.append({"message": message, **kwargs}),
+        )
+        plan, _ = make_plan(refresh_interval=1.0)
+
+        def unreachable(_frame):
+            raise BootnodeUnreachable("ConnectionError")
+
+        plan._client.register = unreachable
+        plan._running = True
+        thread = threading.Thread(target=plan._lease_loop, name="test-lease-dead", daemon=True)
+        thread.start()
+        try:
+            deadline = time.monotonic() + 5.0
+            while not warnings and time.monotonic() < deadline:
+                time.sleep(0.05)
+        finally:
+            plan._stop.set()
+            plan._wake.set()
+            thread.join(timeout=5.0)
+        assert not thread.is_alive()
+        assert [(w["source"], w["reason"]) for w in warnings] == [("bootnode", "unreachable")]
+        # A source that may come back is retried, not disabled.
+        assert plan.source_disabled() is False
+
+    def test_a_disabled_source_does_not_break_the_wait(self):
+        """An untrusted node disables its source; the wait still returns.
+
+        Regression: the wait used to re-raise the trust failure, which ended the
+        whole p2p run even when the local network had peers to sync with.
+        """
         plan, _ = make_plan()
         plan._peer_manager = PeerManager(local_cid=CID, bucket="shared", group="home")
-        plan._fatal_error = BootnodeFingerprintMismatch("pin mismatch")
-        with pytest.raises(DiscoveryFatalError):
-            plan.wait_for_discovery(timeout=5.0)
+        plan._disable_source("pin mismatch")
+
+        plan.wait_for_discovery(timeout=0.05)
+
+        assert plan.source_disabled() is True
 
 
-class TestFatalTrustFailure:
-    def test_lease_loop_records_a_pin_mismatch_and_stops(self):
-        """A ``BootnodeFingerprintMismatch`` is fatal: record it and stop the loop."""
+class TestUntrustedNodeDisablesTheSource:
+    def test_lease_loop_disables_the_source_on_a_pin_mismatch(self):
+        """A ``BootnodeFingerprintMismatch`` stops this source, not the run."""
         plan, _ = make_plan(refresh_interval=1.0)
 
         def mismatch(frame):
@@ -584,11 +618,14 @@ class TestFatalTrustFailure:
         thread.start()
         thread.join(timeout=5.0)
         assert not thread.is_alive(), "the lease loop must stop on a pin mismatch"
-        with pytest.raises(DiscoveryFatalError):
-            plan.wait_for_discovery(timeout=5.0)
+        assert plan.source_disabled() is True
+        # The remaining sources are untouched: the shared peer state still
+        # delivers whatever the local network found.
+        plan._peer_manager = PeerManager(local_cid=CID, bucket="shared", group="home")
+        plan.wait_for_discovery(timeout=0.05)
 
-    def test_lease_loop_stops_on_a_refused_prompt(self):
-        """A declined/unpromptable trust is fatal too: never re-prompt each cycle."""
+    def test_lease_loop_disables_the_source_on_a_refused_prompt(self):
+        """A declined/unpromptable trust disables the source: never re-prompt."""
         plan, _ = make_plan(refresh_interval=1.0)
 
         def refuse(frame):
@@ -600,11 +637,10 @@ class TestFatalTrustFailure:
         thread.start()
         thread.join(timeout=5.0)
         assert not thread.is_alive(), "the lease loop must stop when trust is refused"
-        with pytest.raises(DiscoveryFatalError):
-            plan.wait_for_discovery(timeout=5.0)
+        assert plan.source_disabled() is True
 
     def test_lease_loop_logs_the_recovery_guidance_once(self):
-        """The recovery block is logged where trust failed; the fatal line stays concise."""
+        """The recovery block is logged where trust failed, in one line."""
         from loguru import logger as log
 
         plan, _ = make_plan(refresh_interval=1.0)
@@ -628,9 +664,29 @@ class TestFatalTrustFailure:
             log.remove(sink_id)
         assert not thread.is_alive()
         assert any("GUIDANCE" in message for message in messages)
-        with pytest.raises(DiscoveryFatalError) as excinfo:
-            plan.wait_for_discovery(timeout=5.0)
-        assert str(excinfo.value) == reason, "the fatal line repeats only the concise reason"
+
+    def test_the_disable_is_published_as_a_structured_warning(self, monkeypatch):
+        """The front-end learns the source degraded (one line, not the guidance)."""
+        warnings: list[dict] = []
+        monkeypatch.setattr(
+            "hsync_client.p2p_discovery_bootnode.emit_warning",
+            lambda message, **kwargs: warnings.append({"message": message, **kwargs}),
+        )
+        plan, _ = make_plan()
+
+        plan._disable_source(
+            "bootnode boot.example.net:443: certificate fingerprint does not match",
+            guidance="Bootnode 'boot.example.net:443' trust failed: GUIDANCE",
+        )
+
+        assert warnings == [
+            {
+                "message": "bootnode boot.example.net:443: certificate fingerprint does not "
+                "match — bootnode discovery stopped, local network discovery continues",
+                "source": "bootnode",
+                "reason": "untrusted",
+            }
+        ]
 
 
 class TestStop:
@@ -644,10 +700,10 @@ class TestStop:
         assert any(kind == "leave" for kind, _ in plan._client.calls)
         assert fake_upnp.unmapped is True
 
-    def test_stop_after_a_fatal_trust_failure_skips_leave(self):
+    def test_stop_after_an_untrusted_node_skips_leave(self):
         """Never contact a node declared untrusted: no lease to release."""
         plan, fake_upnp = make_plan()
-        plan._fatal_error = BootnodeFingerprintMismatch("pin mismatch")
+        plan._disable_source("pin mismatch")
         plan._upnp = fake_upnp
         plan._external_port = 8443
         plan._running = True

@@ -49,7 +49,6 @@ from hsync_client.exitcodes import ExitCode, exit_code_for_result
 from hsync_client.master_status import NO_DEVICE_MESSAGE, MasterSyncStatus
 from hsync_client.net_utils import get_local_ip
 from hsync_client.p2p_discovery import (
-    DiscoveryFatalError,
     DiscoveryPlan,
     build_discovery_plan,
 )
@@ -730,11 +729,6 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
                 if not should_continue:
                     break
 
-    except DiscoveryFatalError as exc:
-        # The plan stopped for good (e.g. bootnode certificate pin mismatch):
-        # no peer can ever be discovered, so exit fatally instead of waiting.
-        log.error(f"P2P discovery stopped: {exc}")
-        last_exit = int(ExitCode.FATAL)
     except KeyboardInterrupt:
         log.info("Shutting down P2P mode...")
     finally:
