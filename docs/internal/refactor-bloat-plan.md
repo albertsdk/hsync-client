@@ -1,12 +1,12 @@
 # HSYNC Client — Code-bloat cleanup: implementation plan
 
-> **Status: Plan (Rev. 1, 2026-10-30). Partially implemented — see §2.**
-> The low-risk items are already in the working tree (uncommitted). The four
-> large decompositions remain; this document records the analysis so the work can
-> be resumed without re-deriving it.
+> **Status: Plan (Rev. 1, 2026-10-30). Partially implemented — §2 done.**
+> The low-risk items are committed (`7893eee`). The four large decompositions
+> remain; this document records the analysis so the work can be resumed without
+> re-deriving it.
 >
-> **Next action:** commit §2, then start §5.1 (`_download_from_source_attempt`),
-> because it has the most isolated seams and the strongest existing test suite.
+> **Next action:** start §5.1 (`_download_from_source_attempt`), because it has
+> the most isolated seams and the strongest existing test suite.
 
 ## 1. Context and goal
 
@@ -24,9 +24,10 @@ The client is 37.4k lines across 75 modules. A full scan for bloat
 - **Real remaining debt: four oversized functions** (plus one already fixed,
   `get_sync_actions`). This plan targets those.
 
-## 2. Already implemented (uncommitted as of 2026-10-30)
+## 2. Already implemented (committed as `7893eee` on 2026-10-30)
 
-Working tree in `hsync-client`, 4 files (`git diff --stat` = +244/−175):
+Committed in `hsync-client` before the larger decompositions; the four source
+and wiki files (`git diff --stat` = +244/−175) are:
 
 | Change | Location | Notes |
 | ------ | -------- | ----- |
