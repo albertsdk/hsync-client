@@ -39,7 +39,7 @@ dialing an endpoint that no longer exists until the process is restarted.
 
 - Current builds recover on their own and say so in the log:
   `Network link restored: local address …`, then
-  `mDNS rendezvous rebuilt after a network change: OLD -> NEW` and/or
+  `mDNS discovery rebuilt after a network change: OLD -> NEW` and/or
   `Local address changed from OLD to NEW; republishing the rendezvous endpoint`.
   No restart is needed.
 - A serving node with no connected device is legitimately **Waiting…** (the label
