@@ -672,3 +672,74 @@ def test_register_is_skipped_without_a_local_fingerprint() -> None:
     calls_before = len(plan._client.calls)
     plan._register(publish_endpoint=False)
     assert len(plan._client.calls) == calls_before
+
+
+class TestNetworkChange:
+    """An address change must republish the endpoints the bootnode relays."""
+
+    def test_a_changed_address_republishes_with_the_new_candidates(self, monkeypatch):
+        plan, fake_upnp = make_plan(upnp_enabled=True)
+        monkeypatch.setattr(
+            "hsync_client.p2p_discovery_bootnode.get_local_ip", lambda: "203.0.113.10"
+        )
+        plan.update_server_ready()
+        plan._publish_endpoint()
+
+        _kind, first = plan._client.calls[-1]
+        assert "203.0.113.10" in {endpoint["host"] for endpoint in first["endpoints"]}
+        assert plan._published_local_ip == "203.0.113.10"
+
+        monkeypatch.setattr(
+            "hsync_client.p2p_discovery_bootnode.get_local_ip", lambda: "198.51.100.7"
+        )
+        assert plan._republish_stale_endpoint() is True
+        assert plan._published_endpoints is False
+        # The mapping belonged to the previous network: it is dropped and the
+        # next publish maps the live port again.
+        assert fake_upnp.unmapped is True
+        assert plan._upnp is None
+
+        plan._publish_endpoint()
+        _kind, republished = plan._client.calls[-1]
+        assert "198.51.100.7" in {endpoint["host"] for endpoint in republished["endpoints"]}
+        assert "203.0.113.10" not in {endpoint["host"] for endpoint in republished["endpoints"]}
+        assert plan._published_local_ip == "198.51.100.7"
+        # The new network needs its own mapping: the port is mapped again.
+        assert fake_upnp.mapped == [8443, 8443]
+
+    def test_an_unchanged_address_keeps_the_publication(self, monkeypatch):
+        plan, _ = make_plan()
+        monkeypatch.setattr(
+            "hsync_client.p2p_discovery_bootnode.get_local_ip", lambda: "203.0.113.10"
+        )
+        plan.update_server_ready()
+        plan._publish_endpoint()
+        assert plan._republish_stale_endpoint() is False
+        assert plan._published_endpoints is True
+
+    def test_nothing_to_republish_before_the_first_publication(self, monkeypatch):
+        """A node that never advertised an endpoint has nothing to invalidate."""
+        plan, _ = make_plan()
+        monkeypatch.setattr(
+            "hsync_client.p2p_discovery_bootnode.get_local_ip", lambda: "198.51.100.7"
+        )
+        assert plan._republish_stale_endpoint() is False
+
+    def test_a_network_change_wakes_the_lease_loop(self):
+        from hsync_client.net_watch import NetworkSignature
+
+        plan, _ = make_plan()
+        plan._on_network_change(NetworkSignature(source_ip="198.51.100.7", online=True))
+        assert plan._wake.is_set()
+
+    def test_a_lease_loss_republishes_the_serving_master_endpoint(self):
+        """A dropped lease must not strand a serving master without candidates."""
+        plan, _ = make_plan()
+        plan.update_server_ready()
+        plan._publish_endpoint()
+        plan._client.refresh = lambda frame: None  # the node dropped the lease
+        plan._external_port = 8443
+        plan._refresh()
+        _kind, frame = plan._client.calls[-1]
+        assert frame["endpoints"], "the re-register after a lost lease must carry endpoints"
+        assert plan._published_endpoints is True

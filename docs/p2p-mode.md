@@ -144,6 +144,7 @@ suggested moment — a busy peer is never treated as a broken one.
 | Peers disconnected | "All peers disconnected, waiting for new peers..." | Retry discovery |
 | Peer found | Normal sync flow | Sync, then continue discovery |
 | Master role change | "No longer master, switching to client mode..." | Restart as client |
+| Network changed (new local address) | `Network link restored: local address …` | Automatic: the mDNS record is rebuilt on the new address and the bootnode endpoint republished; no restart |
 
 ### Example Flow
 

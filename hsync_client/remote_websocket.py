@@ -8,8 +8,10 @@ This module provides WebSocket connection management and event handling
 for real-time synchronization with the server.
 """
 
+import asyncio
 import sys
 from asyncio import (
+    AbstractEventLoop,
     CancelledError,
     Task,
     create_task,
@@ -17,6 +19,7 @@ from asyncio import (
     run_coroutine_threadsafe,
     sleep,
     to_thread,
+    wait_for,
 )
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
@@ -50,6 +53,11 @@ from hsync_client.event_queue import EventQueue
 from hsync_client.events import UiEventName, emit_event, set_link_status
 from hsync_client.exceptions import WatcherStartError
 from hsync_client.file_event_handler import BaseFileEventHandler
+from hsync_client.net_watch import (
+    NetworkChangeMonitor,
+    NetworkSignature,
+    get_network_monitor,
+)
 from hsync_client.pools import log_future_error
 from hsync_client.presence import record_presence
 from hsync_client.sync import log_initial_sync_start, periodic_resync, sync
@@ -265,9 +273,13 @@ async def remote_events() -> None:
                 log.warning("Connection closed.")
             set_link_status("waiting")
         except Exception as e:
-            # Unexpected error during event processing
+            # Unexpected error during event processing. The event channel is gone
+            # either way, so the status must stop claiming a live link: the
+            # reconnect loop retries and re-reports "connected" once the sync
+            # succeeds again.
             log.error(f"Exception: {e}")
             emit_event(UiEventName.error, message=f"Exception: {e}")
+            set_link_status("waiting")
         finally:
             event_queue.stop()
             queue_task.cancel()
@@ -447,15 +459,65 @@ def _reconnect_delay(base: float, attempts: int) -> float:
     return uniform(0, max(cap, base))
 
 
-async def _reconnect_backoff(attempts: int, *, log_msg: str) -> int:
-    """Compute, log and sleep the next reconnect delay; return the new attempts.
+class _ReconnectWaker:
+    """Turn a network-change notification into an interruptible backoff sleep.
+
+    The reconnect loop sleeps up to ``RECONNECT_DELAY_MAX`` between attempts, but
+    a link that comes back is usually usable long before that window expires: the
+    monitor's notification ends the sleep at once. Subscribing in the constructor
+    and unsubscribing in :meth:`close` keeps the callback from outliving the loop
+    that owns the event.
+    """
+
+    def __init__(self, loop: AbstractEventLoop) -> None:
+        """Subscribe to the shared network monitor for *loop*."""
+        self._loop = loop
+        self._event = asyncio.Event()
+        self._monitor: NetworkChangeMonitor = get_network_monitor()
+        self._monitor.subscribe(self._on_change)
+
+    def _on_change(self, signature: NetworkSignature) -> None:
+        """Wake the loop when the link is back (runs on the monitor thread)."""
+        if not signature.online:
+            return
+        try:
+            self._loop.call_soon_threadsafe(self._event.set)
+        except RuntimeError:
+            # The loop is already shutting down: nothing left to wake.
+            return
+
+    async def wait(self, delay: float) -> bool:
+        """Wait up to *delay* seconds; ``True`` when a network change woke it."""
+        # Clear first: a change that arrived while the link was healthy must not
+        # cut the next backoff short for no reason.
+        self._event.clear()
+        try:
+            await wait_for(self._event.wait(), timeout=delay)
+        except TimeoutError:
+            return False
+        return True
+
+    def close(self) -> None:
+        """Unsubscribe from the monitor (idempotent)."""
+        self._monitor.unsubscribe(self._on_change)
+
+
+async def _reconnect_backoff(
+    attempts: int, *, log_msg: str, waker: _ReconnectWaker | None = None
+) -> int:
+    """Compute, log and wait the next reconnect delay; return the new attempts.
 
     ``log_msg`` must contain a ``{delay:.1f}`` placeholder for the chosen delay.
+    With a *waker*, a network change ends the wait immediately: the link may be
+    usable again long before the backoff window expires.
     """
     delay = _reconnect_delay(CONFIG["RECONNECT_DELAY"], attempts)
     attempts += 1
     log.info(log_msg.format(delay=delay))
-    await sleep(delay)
+    if waker is None:
+        await sleep(delay)
+    elif await waker.wait(delay):
+        log.info("Network link is back; retrying the server connection now")
     return attempts
 
 
@@ -470,59 +532,74 @@ async def remote_connect() -> None:
     """
     global _resync_task
 
+    # The backoff below is bounded by RECONNECT_DELAY_MAX, but a link that comes
+    # back must be retried at once: the waker ends the sleep on a network change.
+    waker = _ReconnectWaker(get_running_loop())
+
     _attempts = 0
-    while True:
-        try:
-            # Re-measure RTT before each sync — not only on reconnect — so the
-            # first sync after a cold start (startup probes failed because the
-            # server was not yet reachable) re-derives timeout/retry/reconnect
-            # from a live measurement. No-op when autotune is disabled or the
-            # RTT is not measurable.
-            await _refresh_network_tuning()
+    try:
+        while True:
+            try:
+                # Re-measure RTT before each sync — not only on reconnect — so the
+                # first sync after a cold start (startup probes failed because the
+                # server was not yet reachable) re-derives timeout/retry/reconnect
+                # from a live measurement. No-op when autotune is disabled or the
+                # RTT is not measurable.
+                await _refresh_network_tuning()
 
-            # Perform initial sync before entering event loop
-            log_initial_sync_start()
-            await sync()
+                # Perform initial sync before entering event loop
+                log_initial_sync_start()
+                await sync()
 
-            # Cancel previous resync task if it exists. CancelledError is a
-            # BaseException, so awaiting the task we just cancelled re-raises
-            # it and must be suppressed explicitly.
-            if _resync_task is not None and not _resync_task.done():
-                _resync_task.cancel()
-                with suppress(CancelledError):
-                    await _resync_task
+                # A completed sync proves the server link works: drop the outage's
+                # accumulated backoff so the next failure retries promptly instead
+                # of waiting out a delay earned by a failure that is already gone.
+                _attempts = 0
 
-            # Start background resync task if configured
-            if CONFIG["RESYNC"]:
-                _resync_task = create_task(resync())
+                # Cancel previous resync task if it exists. CancelledError is a
+                # BaseException, so awaiting the task we just cancelled re-raises
+                # it and must be suppressed explicitly.
+                if _resync_task is not None and not _resync_task.done():
+                    _resync_task.cancel()
+                    with suppress(CancelledError):
+                        await _resync_task
 
-            # Enter continuous event monitoring
-            await remote_events()
+                # Start background resync task if configured
+                if CONFIG["RESYNC"]:
+                    _resync_task = create_task(resync())
 
-            # A healthy loop reached: reset the backoff for any future outage.
-            _attempts = 0
+                # Enter continuous event monitoring
+                await remote_events()
 
-        except WatcherStartError:
-            # The local watcher could not start (inotify kernel limits). The
-            # parsable [WATCHER ERROR] line and the remediation hint were already
-            # logged at the watcher start site; the exponential backoff below is
-            # the dedicated retry policy — a kernel limit cannot clear by
-            # reconnecting at the normal cadence.
-            _attempts = await _reconnect_backoff(
-                _attempts, log_msg="Watcher start failed; reconnecting in {delay:.1f}s…"
-            )
+            except WatcherStartError:
+                # The local watcher could not start (inotify kernel limits). The
+                # parsable [WATCHER ERROR] line and the remediation hint were already
+                # logged at the watcher start site; the exponential backoff below is
+                # the dedicated retry policy — a kernel limit cannot clear by
+                # reconnecting at the normal cadence.
+                _attempts = await _reconnect_backoff(
+                    _attempts,
+                    log_msg="Watcher start failed; reconnecting in {delay:.1f}s…",
+                    waker=waker,
+                )
 
-        except ConnectionClosed:
-            # WebSocket disconnected - wait before reconnecting
-            _attempts = await _reconnect_backoff(
-                _attempts, log_msg="WebSocket disconnected; reconnecting in {delay:.1f}s…"
-            )
+            except ConnectionClosed:
+                # WebSocket disconnected - wait before reconnecting
+                _attempts = await _reconnect_backoff(
+                    _attempts,
+                    log_msg="WebSocket disconnected; reconnecting in {delay:.1f}s…",
+                    waker=waker,
+                )
 
-        except Exception as e:
-            # Unexpected error - log and retry (transient failures never end
-            # the daemon; permanent errors such as auth are already excluded)
-            log.error(f"An unexpected error occurred: {e}.")
-            _attempts = await _reconnect_backoff(_attempts, log_msg="Reconnecting in {delay:.1f}s…")
+            except Exception as e:
+                # Unexpected error - log and retry (transient failures never end
+                # the daemon; permanent errors such as auth are already excluded)
+                log.error(f"An unexpected error occurred: {e}.")
+                _attempts = await _reconnect_backoff(
+                    _attempts, log_msg="Reconnecting in {delay:.1f}s…", waker=waker
+                )
+    finally:
+        waker.close()
 
 
 # =============================================================================

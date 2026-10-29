@@ -50,6 +50,7 @@ configured `HybridDiscovery` runs **both** over one shared `PeerManager`:
 | `MdnsDiscovery` | `p2p_discovery_mdns.py::MdnsDiscovery` | mDNS/Zeroconf plan (browse + advertise); always active |
 | `HybridDiscovery` | `p2p_discovery_hybrid.py::HybridDiscovery` | runs mDNS + bootnode over one shared `PeerManager` when a bootnode is configured |
 | `HsyncServiceListener` | `p2p_discovery_mdns.py::HsyncServiceListener` | Zeroconf callbacks (add/update/remove; parses the ``connected`` TXT value) |
+| `NetworkChangeMonitor` | `net_watch.py::NetworkChangeMonitor` | host address/link changes shared by both plans: the mDNS rebuild and the bootnode endpoint republish (see [net-watch.md](net-watch.md)) |
 | `HSYNC_SERVICE_TYPE` | `p2p_discovery_mdns.py::HSYNC_SERVICE_TYPE` | `_hsync._tcp.local.` mDNS type |
 
 Election is delegated to the common SSOT: `PeerManager._elect_master` builds
@@ -86,6 +87,36 @@ previewing against its dead endpoint would burn the whole retry budget and
 surface a spurious error. When the probe fails, the slave demotes that peer
 (`PeerManager.remove_peer`) and returns to the discovery loop, so the election
 picks a reachable node.
+
+### Network-change recovery
+
+Discovery recovers on its own when the host loses and regains connectivity
+(`net_watch.py::get_network_monitor`, one shared polling thread — see
+[net-watch.md](net-watch.md)). Both plans subscribe in `start` and unsubscribe in
+`stop`; the callback runs on the monitor thread.
+
+- **mDNS.** The advertised address is no longer sampled once for the process
+  lifetime: on a return transition `MdnsDiscovery._on_network_change` calls
+  `p2p_discovery_mdns.py::MdnsDiscovery._rebuild_mdns`, which retires the old
+  `Zeroconf`, creates a fresh instance, re-registers the record on the current
+  address and recreates the `ServiceBrowser`. A rebuild (not an in-place
+  `update_service`) is what restores the per-interface sockets and multicast
+  memberships an interface bounce destroys **and** replaces the advertised A
+  record, so peers stop dialing the pre-outage address. A failed heartbeat
+  re-announce triggers `p2p_discovery_mdns.py::MdnsDiscovery._recover_mdns`,
+  which first reconciles the sockets (`Zeroconf.update_interfaces`) and escalates
+  to a rebuild when that fails.
+- **bootnode.** `refresh` carries no endpoints, so a lease that survives the
+  outage would keep relaying the old candidates. The monitor callback only wakes
+  the lease loop; before each action the loop runs
+  `p2p_discovery_bootnode.py::BootnodeDiscovery._republish_stale_endpoint`, which
+  compares the sampled address with `_published_local_ip` (recorded by the last
+  endpoint register) and, on a difference, clears `_published_endpoints`, drops
+  the UPnP mapping/`_external_port` from the previous network and forces a full
+  register with the fresh candidates.
+- **Self-record.** `p2p_peers.py::PeerManager.set_local_address` follows the new
+  address, so the node's own record seen looped back is not reported as a
+  duplicated device identity by `PeerManager._is_foreign_duplicate`.
 
 Protocol-mismatched peers are ignored.
 

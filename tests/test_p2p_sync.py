@@ -6,6 +6,7 @@
 import socket
 import threading
 import time
+from contextlib import ExitStack
 from unittest.mock import MagicMock, patch
 
 from hsync_common.protocol.handshake import PROTOCOL_VERSION_P2P
@@ -646,3 +647,133 @@ class TestRecordPublicationSerialization:
                 assert 1 <= int(final[b"heartbeat"]) <= 10
         finally:
             lan.stop()
+
+
+class _FakeNetworkMonitor:
+    """Records the subscribers so a test can raise a change by hand."""
+
+    def __init__(self) -> None:
+        self.subscribers: list = []
+
+    def subscribe(self, callback) -> None:
+        self.subscribers.append(callback)
+
+    def unsubscribe(self, callback) -> None:
+        if callback in self.subscribers:
+            self.subscribers.remove(callback)
+
+    def fire(self, signature) -> None:
+        for callback in list(self.subscribers):
+            callback(signature)
+
+
+class TestNetworkChangeRecovery:
+    """The mDNS record must follow the host's address across a network change."""
+
+    def _started(self, monitor, stack):
+        """Start a plan with Zeroconf/browser/monitor patched for the whole test."""
+        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+
+        instances: list[MagicMock] = []
+
+        def make_zeroconf() -> MagicMock:
+            instance = MagicMock()
+            instances.append(instance)
+            return instance
+
+        stack.enter_context(
+            patch("hsync_client.p2p_discovery_mdns.Zeroconf", side_effect=make_zeroconf)
+        )
+        browser_cls = stack.enter_context(patch("hsync_client.p2p_discovery_mdns.ServiceBrowser"))
+        stack.enter_context(
+            patch("hsync_client.p2p_discovery_mdns.get_network_monitor", return_value=monitor)
+        )
+        lan = MdnsDiscovery(cid="test123", bucket="photos")
+        lan.start(register_service=True)
+        return lan, instances, browser_cls
+
+    def test_address_change_rebuilds_the_stack_and_reannounces(self):
+        """A DHCP reassignment replaces the instance and the advertised address."""
+        from hsync_client.net_watch import NetworkSignature
+
+        monitor = _FakeNetworkMonitor()
+        with ExitStack() as stack:
+            lan, instances, browser_cls = self._started(monitor, stack)
+            try:
+                assert len(instances) == 1
+                assert browser_cls.call_count == 1
+
+                monitor.fire(NetworkSignature(source_ip="10.9.8.7", online=True))
+
+                # The stale instance is retired and a fresh one advertises the
+                # address the host actually owns now.
+                assert len(instances) == 2
+                instances[0].unregister_service.assert_called_once()
+                instances[0].close.assert_called_once()
+                assert browser_cls.call_count == 2
+                info = instances[1].register_service.call_args.args[0]
+                assert info.addresses == [socket.inet_aton("10.9.8.7")]
+                assert lan._local_ip == "10.9.8.7"
+                assert lan.peer_manager is not None
+                assert lan.peer_manager._local_address == "10.9.8.7"
+            finally:
+                lan.stop()
+
+    def test_going_offline_keeps_the_last_record(self):
+        """Nothing can be announced while the link is down: no rebuild happens."""
+        from hsync_client.net_watch import NetworkSignature
+
+        monitor = _FakeNetworkMonitor()
+        with ExitStack() as stack:
+            lan, instances, _browser = self._started(monitor, stack)
+            previous_ip = lan._local_ip
+            try:
+                monitor.fire(NetworkSignature(source_ip="127.0.0.1", online=False))
+                assert len(instances) == 1
+                assert lan._local_ip == previous_ip
+                assert lan._network_offline is True
+            finally:
+                lan.stop()
+
+    def test_failed_heartbeat_reconciles_the_sockets(self):
+        """A failed re-announce repairs the per-interface sockets."""
+        monitor = _FakeNetworkMonitor()
+        with ExitStack() as stack:
+            lan, instances, _browser = self._started(monitor, stack)
+            try:
+                lan._recover_mdns()
+                instances[0].update_interfaces.assert_called_once()
+                assert len(instances) == 1
+            finally:
+                lan.stop()
+
+    def test_a_failed_reconcile_escalates_to_a_rebuild(self):
+        """An unrecoverable reconcile rebuilds instead of staying silent."""
+        from hsync_client.net_watch import NetworkSignature
+
+        monitor = _FakeNetworkMonitor()
+        with ExitStack() as stack:
+            lan, instances, _browser = self._started(monitor, stack)
+            try:
+                instances[0].update_interfaces.side_effect = OSError("no such device")
+                stack.enter_context(
+                    patch(
+                        "hsync_client.p2p_discovery_mdns.network_signature",
+                        return_value=NetworkSignature(source_ip="10.9.8.7", online=True),
+                    )
+                )
+                lan._recover_mdns()
+                assert len(instances) == 2
+                assert lan._local_ip == "10.9.8.7"
+            finally:
+                lan.stop()
+
+    def test_stop_unsubscribes_from_the_monitor(self):
+        """A torn-down plan must not be woken by later network changes."""
+        monitor = _FakeNetworkMonitor()
+        with ExitStack() as stack:
+            lan, instances, _browser = self._started(monitor, stack)
+            assert len(monitor.subscribers) == 1
+            lan.stop()
+            assert monitor.subscribers == []
+            assert len(instances) == 1

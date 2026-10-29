@@ -5,6 +5,7 @@
 
 import asyncio
 import contextlib
+import time
 import warnings
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -484,6 +485,119 @@ class TestReconnectDelay:
         second = delay(2, 1)
         third = delay(2, 2)
         assert first < second < third
+
+
+class TestReconnectBackoffWaker:
+    """A network change must end the reconnect backoff immediately."""
+
+    class _Monitor:
+        """Minimal stand-in for the shared network monitor."""
+
+        def __init__(self):
+            self.callbacks = []
+
+        def subscribe(self, callback):
+            self.callbacks.append(callback)
+
+        def unsubscribe(self, callback):
+            if callback in self.callbacks:
+                self.callbacks.remove(callback)
+
+    def _waker(self, monkeypatch):
+        from hsync_client.remote_websocket import _ReconnectWaker
+
+        monitor = self._Monitor()
+        monkeypatch.setattr("hsync_client.remote_websocket.get_network_monitor", lambda: monitor)
+        return _ReconnectWaker(asyncio.get_running_loop()), monitor
+
+    @pytest.mark.asyncio
+    async def test_a_network_change_ends_the_wait_at_once(self, monkeypatch):
+        from hsync_client.remote_websocket import _reconnect_backoff
+
+        monkeypatch.setattr("hsync_client.remote_websocket.CONFIG", {"RECONNECT_DELAY": 300.0})
+        monkeypatch.setattr(
+            "hsync_client.remote_websocket._reconnect_delay", lambda base, attempts: 300.0
+        )
+        waker, _monitor = self._waker(monkeypatch)
+        try:
+            # The monitor's notification lands while the backoff is sleeping: the
+            # wait clears a stale signal first, so it must arrive mid-wait.
+            asyncio.get_running_loop().call_later(0.05, waker._event.set)
+            started = time.monotonic()
+            attempts = await _reconnect_backoff(2, log_msg="retry in {delay:.1f}s", waker=waker)
+            assert attempts == 3
+            assert time.monotonic() - started < 5.0
+        finally:
+            waker.close()
+
+    @pytest.mark.asyncio
+    async def test_the_wait_drops_a_stale_wakeup(self, monkeypatch):
+        """A change seen while connected must not shorten the next backoff."""
+        waker, _monitor = self._waker(monkeypatch)
+        try:
+            waker._event.set()
+            assert await waker.wait(0.01) is False
+        finally:
+            waker.close()
+
+    @pytest.mark.asyncio
+    async def test_only_an_online_change_wakes_the_loop(self, monkeypatch):
+        from hsync_client.net_watch import NetworkSignature
+
+        waker, monitor = self._waker(monkeypatch)
+        try:
+            monitor.callbacks[0](NetworkSignature(source_ip="127.0.0.1", online=False))
+            await asyncio.sleep(0)
+            assert not waker._event.is_set()
+
+            monitor.callbacks[0](NetworkSignature(source_ip="10.0.0.5", online=True))
+            await asyncio.sleep(0)
+            assert waker._event.is_set()
+        finally:
+            waker.close()
+
+    @pytest.mark.asyncio
+    async def test_a_successful_sync_resets_the_backoff(self, monkeypatch):
+        """A completed sync proves the link works: the outage's counter is dropped.
+
+        Without the reset, a reconnect that succeeds after a long outage keeps the
+        delay earned during it for the next, unrelated failure.
+        """
+        from hsync_client.remote_websocket import remote_connect
+
+        attempts_seen = []
+        sync_calls = {"n": 0}
+
+        async def mock_sync():
+            sync_calls["n"] += 1
+            if sync_calls["n"] == 1:
+                raise OSError("link down")
+
+        async def mock_remote_events():
+            raise _StopLoop("stop")
+
+        async def mock_backoff(attempts, *, log_msg, waker=None):
+            attempts_seen.append(attempts)
+            if len(attempts_seen) >= 2:
+                raise KeyboardInterrupt("stop")
+            return attempts + 1
+
+        monitor = self._Monitor()
+        with (
+            patch(
+                "hsync_client.remote_websocket.CONFIG",
+                {"RESYNC": None, "RECONNECT_DELAY": 0.01},
+            ),
+            patch("hsync_client.remote_websocket.sync", mock_sync),
+            patch("hsync_client.remote_websocket.remote_events", mock_remote_events),
+            patch("hsync_client.remote_websocket._reconnect_backoff", mock_backoff),
+            patch("hsync_client.remote_websocket.get_network_monitor", lambda: monitor),
+        ):
+            with contextlib.suppress(KeyboardInterrupt):
+                await remote_connect()
+        # First failure at attempts=0, then the successful sync resets the
+        # counter, so the following failure starts from 0 again.
+        assert attempts_seen == [0, 0]
 
 
 class TestRemoteConnect:

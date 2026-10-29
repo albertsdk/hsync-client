@@ -38,6 +38,12 @@ from hsync_client.constants import (
     PEER_TIMEOUT,
 )
 from hsync_client.net_utils import get_local_ip
+from hsync_client.net_watch import (
+    NetworkChangeMonitor,
+    NetworkSignature,
+    get_network_monitor,
+    network_signature,
+)
 from hsync_client.p2p_discovery import DiscoveryPlanState
 from hsync_client.p2p_peers import (
     HSYNC_P2P_LISTEN_PORT,
@@ -340,9 +346,13 @@ class MdnsDiscovery(DiscoveryPlanState):
         self._heartbeat_interval = heartbeat_interval
         # If port is 0, get a random free port
         self._port = port if port != 0 else get_free_port()
-        # The IP this node advertises over mDNS, computed once so the advertised
-        # address and the discovery self-check compare against the same value.
+        # The IP this node advertises over mDNS. Sampled once here and refreshed
+        # by the network-change recovery below: the record is re-announced on
+        # every heartbeat, so a stale address would keep peers dialing a dead
+        # endpoint until the process restarted.
         self._local_ip = get_local_ip()
+        self._network_monitor: NetworkChangeMonitor | None = None
+        self._network_offline = False
 
         self._zeroconf: Zeroconf | None = None
         self._browser: ServiceBrowser | None = None
@@ -453,6 +463,12 @@ class MdnsDiscovery(DiscoveryPlanState):
             target=self._heartbeat_loop, name="hsync-lan-heartbeat", daemon=True
         )
         self._heartbeat_thread.start()
+
+        # React to address changes for the whole run: the rebuild below is what
+        # turns a master stuck in the desktop's "waiting" state back into a
+        # reachable one after the host loses and regains connectivity.
+        self._network_monitor = get_network_monitor()
+        self._network_monitor.subscribe(self._on_network_change)
 
         return self._peer_manager
 
@@ -629,6 +645,105 @@ class MdnsDiscovery(DiscoveryPlanState):
                 self._heartbeat()
             except Exception:
                 log.exception("Heartbeat re-announce failed")
+                # A failed announcement is how a bounced interface manifests:
+                # repair instead of staying silent until the process restarts.
+                self._recover_mdns()
+
+    def _on_network_change(self, signature: NetworkSignature) -> None:
+        """Recover the mDNS stack after the host lost or regained its link.
+
+        While the link is down nothing can be announced, so the record keeps the
+        last address; the recovery happens on the way back, when the address is
+        known again. Called on the network-monitor thread.
+        """
+        if not signature.online:
+            self._network_offline = True
+            log.warning(
+                "Network connection lost: mDNS announcements stay suspended until it returns"
+            )
+            return
+        if not self._network_offline and signature.source_ip == self._local_ip:
+            return
+        self._network_offline = False
+        self._rebuild_mdns(signature.source_ip)
+
+    def _recover_mdns(self) -> None:
+        """Repair the mDNS sockets after a failed announcement.
+
+        ``update_interfaces`` reconciles the per-interface sockets with the live
+        adapter set — the state a bounced interface leaves behind (a socket
+        bound to an address that vanished). A failed reconcile escalates to a
+        full rebuild, so one dead socket never strands discovery.
+        """
+        zc = self._zeroconf
+        if zc is None or not self._running:
+            return
+        try:
+            zc.update_interfaces()
+        except Exception as exc:
+            log.warning(f"mDNS interface reconcile failed ({exc}); rebuilding discovery")
+            signature = network_signature()
+            if signature.online:
+                self._rebuild_mdns(signature.source_ip)
+            return
+        log.info("mDNS sockets reconciled after a failed announcement")
+
+    def _rebuild_mdns(self, local_ip: str) -> None:
+        """Rebuild the Zeroconf stack on *local_ip* and re-announce the record.
+
+        A rebuild, not an in-place update, is what restores a working
+        announcement: the sockets opened before the outage can be bound to an
+        address that no longer exists, and only a fresh instance guarantees new
+        per-interface sockets and multicast memberships. It also replaces the
+        advertised A record, so a DHCP reassignment stops pointing peers at the
+        old address.
+        """
+        with self._record_lock:
+            if not self._running:
+                return
+            previous_ip = self._local_ip
+            previous_zc = self._zeroconf
+            previous_info = self._service_info
+            self._local_ip = local_ip
+            self._service_info = None
+            self._browser = None
+            self._zeroconf = None
+
+        # The teardown is slow (unregister broadcasts a goodbye), so it runs
+        # outside the record lock: the heartbeat thread must not stall behind it.
+        if previous_zc is not None:
+            if previous_info is not None:
+                try:
+                    previous_zc.unregister_service(previous_info)
+                except Exception as exc:
+                    log.debug(f"mDNS unregister during the rebuild failed: {exc}")
+            try:
+                previous_zc.close()
+            except Exception as exc:
+                log.debug(f"mDNS teardown during the rebuild failed: {exc}")
+
+        zc = Zeroconf()
+        with self._record_lock:
+            if not self._running:
+                # stop() ran while the stack was being rebuilt: close the fresh
+                # instance instead of publishing after a teardown.
+                zc.close()
+                return
+            self._zeroconf = zc
+
+        self._register_service(server_ready=self._server_ready, endpoint_ready=self._endpoint_ready)
+        with self._record_lock:
+            if not self._running:
+                # A teardown that landed while the record was being registered
+                # owns the new instance: never start a browser on a closed one.
+                return
+            peer_manager = self._peer_manager
+        if peer_manager is not None:
+            self._browser = ServiceBrowser(
+                zc, HSYNC_SERVICE_TYPE, HsyncServiceListener(peer_manager)
+            )
+            peer_manager.set_local_address(local_ip)
+        log.info(f"mDNS discovery rebuilt after a network change: {previous_ip} -> {local_ip}")
 
     def stop(self) -> None:
         """Stop P2P discovery and unregister service."""
@@ -636,6 +751,13 @@ class MdnsDiscovery(DiscoveryPlanState):
             return
 
         log.info("Stopping P2P mode")
+
+        # Stop reacting to network changes first: a rebuild that starts now
+        # would race the teardown below and leave a fresh Zeroconf instance
+        # behind. A callback already in flight bails out on ``_running``.
+        if self._network_monitor is not None:
+            self._network_monitor.unsubscribe(self._on_network_change)
+            self._network_monitor = None
 
         # Stop the heartbeat loop first and wait for a possibly in-flight
         # re-announce (bounded by the zeroconf update_service timeout) so it
@@ -667,17 +789,22 @@ class MdnsDiscovery(DiscoveryPlanState):
 
         log.info("P2P mode stopped")
 
-    def _register_service(self, server_ready: bool = False) -> None:
+    def _register_service(self, server_ready: bool = False, endpoint_ready: bool = False) -> None:
         """Register this client as an mDNS service.
 
         Args:
             server_ready: If True, indicates the HTTP server is listening.
+            endpoint_ready: If True, this slave's read-only seeder endpoint is
+                bound. The rebuild after a network change passes both flags so
+                the fresh record advertises exactly what the retired one did.
         """
         with self._record_lock:
             if not self._zeroconf:
                 return
 
-            self._service_info = self._build_service_info(server_ready=server_ready)
+            self._service_info = self._build_service_info(
+                server_ready=server_ready, endpoint_ready=endpoint_ready
+            )
 
             # Register the service
             try:
@@ -710,8 +837,8 @@ class MdnsDiscovery(DiscoveryPlanState):
         :meth:`_refresh_service` (in-place update), so both paths advertise the
         exact same property set for a given ``server_ready`` value.
         """
-        # Get local IP address (computed once in __init__ so discovery's
-        # self-check compares against the exact address this record advertises)
+        # Get local IP address (kept current by the network-change recovery in
+        # __init__/start, so the record never advertises a dead endpoint)
         local_ip = self._local_ip or get_local_ip()
 
         # Create service name: bucket-cid

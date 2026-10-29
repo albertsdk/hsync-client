@@ -1050,6 +1050,32 @@ class TestDuplicateIdentityDetection:
         assert pm._peers == {}
         assert mock_log.error.call_count == 0
 
+    def test_set_local_address_follows_a_network_change(self):
+        """Our own record on the new address is self-discovery, not a clone.
+
+        A DHCP reassignment makes the node announce (and see looped back) the
+        new address: keeping the old one would report a duplicated identity.
+        """
+        pm = PeerManager(
+            local_cid="local123",
+            bucket="photos",
+            local_address="192.168.1.1",
+            local_cert_fingerprint="fp-local",
+        )
+        pm.set_local_address("192.168.1.99")
+        with patch("hsync_client.p2p_peers.log") as mock_log:
+            pm.add_peer(
+                Peer(
+                    cid="local123",
+                    bucket="photos",
+                    address="192.168.1.99",
+                    port=9753,
+                    cert_fingerprint="fp-local",
+                )
+            )
+        assert pm._peers == {}
+        assert [c for c in mock_log.error.call_args_list if "Duplicate" in str(c)] == []
+
 
 class TestReconcileStalePeers:
     """Tests for the periodic staleness sweep (fast master failover)."""

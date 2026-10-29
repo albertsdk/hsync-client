@@ -61,18 +61,29 @@ the WSS event stream pins the live connection via
 - `remote_connect` (`remote_websocket.py::remote_connect`) is an infinite loop: each
   iteration re-measures RTT and re-seeds bandwidth (`_refresh_network_tuning()`,
   `remote_websocket.py::remote_connect`) and runs a full `sync()` before `remote_events`; on `ConnectionClosed`
-  or unexpected error it sleeps a **full-jitter exponential backoff**
+  or unexpected error it waits a **full-jitter exponential backoff**
   (`_reconnect_delay`: `uniform(0, min(base*2**attempts, RECONNECT_DELAY_MAX))`,
-  base = `RECONNECT_DELAY`) and loops again; the attempt counter resets after
-  a healthy loop. `WatcherStartError` (local watcher refused even by the
-  polling fallback — see [modules/sync-core.md](sync-core.md), "Watcher
-  lifecycle") has its own branch: same exponential backoff, but a dedicated
-  log line so the retry is not mistaken for a transport failure. Not
-  attempt-capped: the daemon never exits on connectivity.
+  base = `RECONNECT_DELAY`) and loops again. The wait is **interruptible**: the
+  loop holds a `remote_websocket.py::_ReconnectWaker`, which turns the shared
+  network monitor's "link is back" notification (`net_watch.py::NetworkChangeMonitor`,
+  see [net-watch.md](net-watch.md)) into an `asyncio.Event` the backoff waits on, so
+  a restored link is retried immediately instead of after up to
+  `RECONNECT_DELAY_MAX`; the waker clears a stale signal first and unsubscribes
+  when the loop ends. The attempt counter resets both after a healthy loop and as
+  soon as `sync()` succeeds (a completed round proves the link works), so an
+  unrelated later failure does not inherit the outage's delay. `WatcherStartError`
+  (local watcher refused even by the polling fallback — see
+  [modules/sync-core.md](sync-core.md), "Watcher lifecycle") has its own branch:
+  same exponential backoff, but a dedicated log line so the retry is not mistaken
+  for a transport failure. Not attempt-capped: the daemon never exits on
+  connectivity.
   Autotune may rewrite `RECONNECT_DELAY` (the backoff base) from RTT. The
   per-iteration refresh means the first sync after a cold start (startup
   probes failed while the server was still down) also runs on freshly
   measured RTT/bandwidth rather than the startup safe defaults.
+  Any failure of the event channel — `ConnectionClosed` or an unexpected
+  exception — reports `waiting` (`remote_websocket.py::remote_events`), so the
+  desktop never keeps claiming a live link while the loop is retrying.
 - **Initial connectivity check** (`main_logic._check_server_connectivity`
   `main_logic.py::_check_server_connectivity`) runs before the WS loop and uses exponential backoff
   with **7 attempts, 1–30 s** (default: `CONNECTIVITY_RETRY_*` constants,

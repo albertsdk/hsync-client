@@ -270,6 +270,17 @@ class PeerManager:
             self._elect_master()
             self._signal_change()
 
+    def set_local_address(self, address: str) -> None:
+        """Record the address this node currently advertises (network change).
+
+        ``_is_foreign_duplicate`` compares a peer presenting our own CID against
+        the address we announce. After a DHCP reassignment the record we send
+        (and see looped back) carries the new address, so leaving the old one in
+        place would report our own record as a cloned device identity.
+        """
+        with self._lock:
+            self._local_address = address
+
     def set_master_candidacy(self, eligible: bool) -> None:
         """Include or exclude the local node from the master election.
 

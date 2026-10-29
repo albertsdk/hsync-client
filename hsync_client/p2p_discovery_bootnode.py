@@ -53,6 +53,11 @@ from hsync_client.constants import (
 from hsync_client.events import emit_warning
 from hsync_client.nat_traversal import candidate_endpoints
 from hsync_client.net_utils import get_local_ip
+from hsync_client.net_watch import (
+    NetworkChangeMonitor,
+    NetworkSignature,
+    get_network_monitor,
+)
 from hsync_client.p2p_discovery import DiscoveryFatalError, DiscoveryPlanState
 from hsync_client.p2p_peers import (
     HSYNC_P2P_LISTEN_PORT,
@@ -149,8 +154,13 @@ class BootnodeDiscovery(DiscoveryPlanState):
         self._observed: ObservedAddress | None = None
         self._endpoint_ready = False
         self._published_endpoints = False
+        # Address carried by the last endpoint register. Only a full register
+        # publishes endpoints (a refresh does not), so this is what detects that
+        # the candidates relayed by the node went stale after a network change.
+        self._published_local_ip: str | None = None
         self._external_port: int | None = None
         self._upnp: UpnpMapper | None = None
+        self._network_monitor: NetworkChangeMonitor | None = None
 
         self._server_ready = False
         self._connected_clients = 0
@@ -198,6 +208,10 @@ class BootnodeDiscovery(DiscoveryPlanState):
             target=self._lease_loop, name="p2p-bootnode-lease", daemon=True
         )
         self._thread.start()
+        # Wake the lease loop on a network change so a changed address is
+        # republished at once instead of after the next 30 s lease tick.
+        self._network_monitor = get_network_monitor()
+        self._network_monitor.subscribe(self._on_network_change)
         return manager
 
     def stop(self) -> None:
@@ -207,6 +221,9 @@ class BootnodeDiscovery(DiscoveryPlanState):
         self._running = False
         self._stop.set()
         self._wake.set()
+        if self._network_monitor is not None:
+            self._network_monitor.unsubscribe(self._on_network_change)
+            self._network_monitor = None
         if self._thread is not None:
             self._thread.join(timeout=10.0)
             self._thread = None
@@ -326,6 +343,51 @@ class BootnodeDiscovery(DiscoveryPlanState):
         self._advert_generation += 1
         self._wake.set()
 
+    def _on_network_change(self, signature: NetworkSignature) -> None:
+        """Wake the lease loop so a changed local address is republished.
+
+        The loop owns every publication flag: it compares the freshly sampled
+        address with the one carried by the last endpoint register and forces a
+        full register when they differ. Waking it keeps the republish prompt
+        instead of waiting up to one lease interval. Called on the
+        network-monitor thread.
+        """
+        if not signature.online:
+            return
+        self._wake.set()
+
+    def _republish_stale_endpoint(self) -> bool:
+        """Invalidate the published endpoints when the local address changed.
+
+        ``refresh`` carries no endpoints (only a full ``register`` does), so
+        while the lease survives a network change the node keeps relaying the
+        pre-outage candidates: the address a DHCP reassignment replaced, plus a
+        UPnP mapping that belongs to the previous network. Returns ``True`` when
+        the caller must publish the endpoints again.
+        """
+        if not (self._endpoint_ready or self._server_ready or self._published_endpoints):
+            return False
+        if self._published_local_ip is None:
+            return False
+        current = self._local_ip or get_local_ip()
+        if current == self._published_local_ip:
+            return False
+        log.info(
+            f"Local address changed from {self._published_local_ip} to {current}; "
+            "republishing the bootnode endpoint"
+        )
+        self._published_endpoints = False
+        if self._upnp is not None:
+            # The mapping was created on the previous network (another router or
+            # external address): drop it so the next publish maps the live port.
+            try:
+                self._upnp.unmap()
+            except Exception as exc:
+                log.debug(f"UPnP unmap during the network change failed: {exc}")
+            self._upnp = None
+        self._external_port = None
+        return True
+
     # -- Lease loop ------------------------------------------------------------
 
     def _lease_loop(self) -> None:
@@ -336,8 +398,18 @@ class BootnodeDiscovery(DiscoveryPlanState):
             try:
                 if first:
                     action = "register"
-                    self._register(publish_endpoint=False)
+                    # A re-register after an unreachable node is also the first
+                    # chance to republish endpoints that a network change made
+                    # stale: publish them in this frame (which re-creates the
+                    # UPnP mapping for the new network) instead of one tick later.
+                    if self._republish_stale_endpoint():
+                        self._publish_endpoint()
+                    else:
+                        self._register(publish_endpoint=False)
                     first = False
+                elif self._republish_stale_endpoint():
+                    action = "publish endpoint"
+                    self._publish_endpoint()
                 elif self._sent_advert_generation != self._advert_generation:
                     # The role changed (promotion or yield): re-register so the
                     # node relays the fresh advertisement immediately instead of
@@ -453,7 +525,11 @@ class BootnodeDiscovery(DiscoveryPlanState):
             log.warning("Bootnode register skipped: no local certificate fingerprint yet")
             return
         generation = self._advert_generation
-        endpoints = self._endpoint_wire() if publish_endpoint else []
+        # Sample the address once: it both builds the endpoint candidates and
+        # records what this publication carries, so the comparison against a
+        # later network change is exact.
+        local_ip = self._local_ip or get_local_ip()
+        endpoints = self._endpoint_wire(local_ip) if publish_endpoint else []
         ack = self._client.register(
             build_register_frame(
                 cid=self._cid,
@@ -476,6 +552,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
             self._observed = observed_address(ack)
             if publish_endpoint:
                 self._published_endpoints = True
+                self._published_local_ip = local_ip
             self._sent_advert_generation = generation
             log.debug(
                 "Bootnode register ok: observed "
@@ -501,7 +578,9 @@ class BootnodeDiscovery(DiscoveryPlanState):
         )
         if ack is None:  # the node dropped the lease: fall back to a full register
             self._published_endpoints = False
-            self._register(publish_endpoint=self._endpoint_ready)
+            # A serving master's candidates must not be dropped with the lease:
+            # publishing again is what makes it reachable for the next peer.
+            self._register(publish_endpoint=self._endpoint_ready or self._server_ready)
 
     def _query_peers(self) -> None:
         if self._peer_manager is None:
@@ -589,11 +668,11 @@ class BootnodeDiscovery(DiscoveryPlanState):
             endpoints=candidates,
         )
 
-    def _endpoint_wire(self) -> list[dict[str, object]]:
+    def _endpoint_wire(self, local_ip: str) -> list[dict[str, object]]:
         return [
             candidate.as_wire()
             for candidate in candidate_endpoints(
-                local_ip=self._local_ip or get_local_ip(),
+                local_ip=local_ip,
                 listen_port=self._port,
                 observed=self._observed,
                 external_port=self._external_port,

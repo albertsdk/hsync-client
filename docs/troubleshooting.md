@@ -22,6 +22,51 @@ a bootnode banner), but the peer list stays empty and no sync happens.
 - The log shows `Discovery: bootnode …` although mDNS was intended → a bootnode
   is configured; unset `HSYNC_BOOTNODE` (or drop the positional).
 
+## After a network change a device stays "waiting"
+
+**Symptom.** The host lost its connection (Wi-Fi reconnect, cable unplugged,
+another network) and regained it a while ago, but hsync-desktop keeps showing
+**Waiting…** even though the other device is online. Stopping and starting the
+sync makes it work again.
+
+**Cause.** Discovery advertises the host's local address and holds sockets bound
+to the live interface. An older client keeps announcing the pre-outage address (a
+DHCP reassignment replaces it) and never reconciles those sockets, so peers keep
+dialing an endpoint that no longer exists until the process is restarted.
+
+**Remedy.**
+
+- Current builds recover on their own and say so in the log:
+  `Network link restored: local address …`, then
+  `mDNS discovery rebuilt after a network change: OLD -> NEW` and/or
+  `Local address changed from OLD to NEW; republishing the bootnode endpoint`.
+  No restart is needed.
+- A serving node with no connected device is legitimately **Waiting…** (the label
+  is localized): check the role shown in the window. A **Primary node** waits for
+  a device by design — the other side is the one that must find and connect to it.
+- On an older build the workaround is to stop and start the sync after the
+  network change.
+
+## Server mode takes a long time to reconnect
+
+**Symptom.** In server mode the link drops, the status reads **Waiting…** and
+then **Syncing…** (both labels are localized), and the client keeps retrying well
+after the network is back.
+
+**Cause.** The reconnect loop backs off exponentially with full jitter, capped at
+the retry delay (`--retry-delay`, up to 60 s), and every attempt runs a full
+sync whose requests are bounded by the HTTP timeout. An outage therefore keeps
+delaying the next attempt even once connectivity returns.
+
+**Remedy.**
+
+- Current builds end the backoff as soon as the host regains connectivity and
+  drop the accumulated retry delay once a sync completes, so recovery is
+  immediate and needs no restart.
+- If it still fails after the link is back, the problem is the server (see
+  [Server mode](server-mode.md)): check the connection settings, the API key and
+  the server certificate pin/trust errors reported in the log.
+
 ## The file watcher degrades to polling (inotify limits)
 
 **Symptom.** The client log shows a parsable warning and the watcher switches
