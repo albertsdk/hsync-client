@@ -2163,9 +2163,12 @@ class P2PEndpointMixin(_HTTPTransportBase):
         raw_file: IO[bytes] | None = None
         out_file: IO[bytes] | None = None
         response_sent = False
+        dest_existed_at_start = False
+        dest_marker_snapshot: tuple[str, tuple[tuple[str, int], ...]] | None = None
 
         def _file_open(form_fields, field_name, filename):
-            nonlocal dest_path, tmp_path, raw_file, out_file
+            nonlocal dest_path, tmp_path, raw_file, out_file, dest_existed_at_start
+            nonlocal dest_marker_snapshot
             path = form_fields.get("path", "")
             is_compressed_local = form_fields.get("compressed", "false").lower() == "true"
 
@@ -2183,6 +2186,13 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
             dest_path = dest_path_local
             tmp_path = dest_path_local + PARTIAL_DOWNLOAD_SUFFIX
+            # Snapshot the destination when the body starts writing: a delete or
+            # rename that happens while it streams must not be undone by the
+            # commit below (same contract as the central server gate).
+            dest_existed_at_start = Path(dest_path).exists()
+            from hsync_client.tombstones import deletion_marker_snapshot
+
+            dest_marker_snapshot = deletion_marker_snapshot(dest_path)
 
             # Resumable upload: if offset > 0, append to an existing
             # .part file whose size must match the declared offset.
@@ -2398,6 +2408,21 @@ class P2PEndpointMixin(_HTTPTransportBase):
                 except OSError as e:
                     log.error(f'Could not save conflict copy for "{dest_path}": {e}')
                 self._send_error_response(HTTP_CONFLICT, "conflict_lost")
+                response_sent = True
+                return
+
+            # The destination must still be the entry the upload set out to
+            # write: a deletion/rename that happened while the body streamed
+            # must neither be undone by the commit nor hidden by the conflict
+            # dance (checked before the accepted_conflict_won move below).
+            from hsync_client.tombstones import destination_mutation_since
+
+            if destination_mutation_since(dest_path, dest_existed_at_start, dest_marker_snapshot):
+                log.info(
+                    f'Upload of "{dest_path}" rejected: the destination was '
+                    "deleted or renamed while uploading"
+                )
+                self._send_error_response(HTTP_CONFLICT, "destination_changed")
                 response_sent = True
                 return
 

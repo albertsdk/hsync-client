@@ -383,6 +383,58 @@ class TestLANSyncIntegration:
             assert uploaded.exists()
             assert uploaded.read_bytes() == file_data
 
+    def test_upload_does_not_resurrect_a_destination_deleted_mid_upload(
+        self, master_server, tmp_path, monkeypatch
+    ):
+        """A destination removed mid-upload is not re-created by the commit."""
+        import requests
+        from hsync_common.hashing import compute_sha256
+
+        from hsync_client import p2p_websocket
+        from hsync_client.transfer import _build_multipart_streaming
+
+        srv, port, master_bucket = master_server
+        master_bucket.mkdir(parents=True, exist_ok=True)
+        target = master_bucket / "binary.mp3"
+        target.write_bytes(b"old content")
+        file_data = b"new content"
+        test_file = tmp_path / "new.mp3"
+        test_file.write_bytes(file_data)
+        sha = compute_sha256(str(test_file))
+
+        real_mark = p2p_websocket.mark_inbound_origin
+
+        def _mark_then_remove(*args, **kwargs):
+            # The destination disappears while the upload is being processed
+            # (a delete or rename applied by the master itself).
+            target.unlink()
+            return real_mark(*args, **kwargs)
+
+        monkeypatch.setattr(p2p_websocket, "mark_inbound_origin", _mark_then_remove)
+
+        with patch("hsync_client.p2p_server.CONFIG", unauth_write_config(str(master_bucket))):
+            url = f"http://127.0.0.1:{port}/api/v1/buckets/test/files"
+            fields = {
+                "cid": "TestClientX1234567890",
+                "path": "",
+                "ctime": str(time.time()),
+                "mtime": str(time.time()),
+                "size": str(len(file_data)),
+                "sha256sum": sha,
+                "permissions": "664",
+                "offset": "0",
+            }
+            boundary = "testboundary123456"
+            body, content_type = _build_multipart_streaming(
+                str(test_file), fields, boundary=boundary, filename="binary.mp3"
+            )
+            response = requests.post(
+                url, headers={"Content-Type": content_type}, data=body, timeout=10
+            )
+
+        assert response.status_code == 409, response.text
+        assert not target.exists()
+
 
 class TestLANDuplicateCidGuard:
     """The HTTP write endpoints refuse duplicated device identities (409)."""

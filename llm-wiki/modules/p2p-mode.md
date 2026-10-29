@@ -335,7 +335,13 @@ The
 `_handle_upload` endpoint arbitrate-then-commit: a stale upload is rejected
 (`409 superseded`), a tie-break loser is preserved as a conflicted copy
 (`409 conflict_lost`), and an accepted upload records the merged vclock
-(convergence invariant, ADR-0022 §5). The `/files` listing and broadcast events attach the
+(convergence invariant, ADR-0022 §5). Before the commit the destination is
+**re-validated** (`tombstones.destination_mutation_since` against a snapshot
+taken when the body started): a destination deleted, renamed away or
+deleted-and-recreated while the body streamed is answered `409
+destination_changed` and the `.part` is discarded — checked before the
+`accepted_conflict_won` move so the conflict dance cannot hide the mutation
+(same gate as the central server upload/delta-apply). The `/files` listing and broadcast events attach the
 effective causal version to each `FileDict` so slaves run the same causal
 matrix on the wire data.
 
