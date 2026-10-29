@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from hsync_common.protocol.tls_trust import TrustPolicy
 from loguru import logger as log
@@ -125,6 +125,23 @@ class DiscoveryPlan(Protocol):
         """Install a callback that yields the live connected-client count."""
         ...
 
+    def relay_dialer(self, target_cid: str) -> Any:
+        """A data-relay tunnel factory towards *target_cid*, or ``None``.
+
+        Discovery plans that cannot relay (mDNS) return ``None``; the bootnode
+        plan returns a ready-to-open :class:`hsync_client.boot_relay.RelayDialer`.
+        The caller owns the returned object and must close it.
+        """
+        ...
+
+    def relay_acceptor(self, local_port: int) -> Any:
+        """A data-relay listener for this node, or ``None`` when unsupported.
+
+        Only the bootnode plan can ask the node to relay inbound sessions; the
+        caller starts and stops the returned acceptor with the serving role.
+        """
+        ...
+
 
 class DiscoveryPlanState:
     """Shared trivial state for the concrete discovery plans.
@@ -205,6 +222,14 @@ class DiscoveryPlanState:
     def set_connected_clients_provider(self, provider: Callable[[], int] | None) -> None:
         """Install a callback that yields the live connected-client count."""
         self._connected_clients_provider = provider
+
+    def relay_dialer(self, target_cid: str) -> Any:
+        """No data relay: a LAN-only plan has no public rendezvous point."""
+        return None
+
+    def relay_acceptor(self, local_port: int) -> Any:
+        """No data relay: a LAN-only plan serves its listen port directly."""
+        return None
 
     def create_peer_manager(self) -> PeerManager:
         """Build the :class:`PeerManager` from this plan's shared configuration.

@@ -37,6 +37,10 @@ from hsync_common.protocol.bootnode import (
     BootQuery,
     BootRefresh,
     BootRegister,
+    BootRelayAttach,
+    BootRelayConnect,
+    BootRelayListen,
+    BootRelayPing,
     BootResponse,
     validate_boot_ack,
     validate_boot_frame,
@@ -53,6 +57,7 @@ from hsync_common.text import compact_json_bytes
 from loguru import logger as log
 
 from hsync_client.bootnode_trust import BootnodeTrustStore, default_bootnode_trust_store
+from hsync_client.constants import RELAY_IDLE_TIMEOUT_S
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.trust_messages import known_hosts_added_message, mismatch_guidance
 
@@ -70,6 +75,11 @@ __all__ = [
     "build_query_frame",
     "build_refresh_frame",
     "build_register_frame",
+    "build_relay_attach_frame",
+    "build_relay_connect_frame",
+    "build_relay_listen_frame",
+    "build_relay_ping_frame",
+    "frame_line",
 ]
 
 # QUIC idle timeout: a single request/response exchange is well under a second
@@ -411,6 +421,25 @@ class BootnodeClient:
         configuration.verify_mode = ssl.CERT_NONE
         return configuration
 
+    def relay_configuration(self) -> QuicConfiguration:
+        """QUIC/TLS configuration for a long-lived **relay** connection.
+
+        Same trust model as discovery; only the idle timeout differs, because a
+        relay connection carries a whole sync session (the effective value is
+        still the minimum of the two peers' advertised timeouts).
+        """
+        configuration = self._quic_configuration()
+        configuration.idle_timeout = RELAY_IDLE_TIMEOUT_S
+        return configuration
+
+    def verify_peer(self, client: Any) -> None:
+        """Public entry point for :meth:`_verify_peer` (relay connections)."""
+        self._verify_peer(client)
+
+    def candidate_ports(self) -> tuple[int, ...]:
+        """Ordered UDP ports to try for this node (multi-port egress fallback)."""
+        return self._candidate_ports()
+
     def _verify_peer(self, client: Any) -> None:
         """Apply the trust policy against the peer fingerprint, pre-write.
 
@@ -671,3 +700,84 @@ def build_query_frame(
     )
     _apply_optional(frame, group=group, bucket_token=bucket_token, limit=limit)
     return frame
+
+
+def build_relay_listen_frame(
+    *,
+    cid: str,
+    bucket: str,
+    group: str | None = None,
+    bucket_token: str | None = None,
+) -> BootRelayListen:
+    """Build a ``relay_listen`` frame (the serving peer's control stream)."""
+    frame = BootRelayListen(
+        protocol_version=PROTOCOL_VERSION_BOOT,
+        type="relay_listen",
+        cid=cid,
+        bucket=bucket,
+    )
+    _apply_optional(frame, group=group, bucket_token=bucket_token)
+    return frame
+
+
+def build_relay_ping_frame(*, cid: str, bucket: str) -> BootRelayPing:
+    """Build a ``relay_ping`` keepalive (control stream, no reply)."""
+    return BootRelayPing(
+        protocol_version=PROTOCOL_VERSION_BOOT,
+        type="relay_ping",
+        cid=cid,
+        bucket=bucket,
+    )
+
+
+def build_relay_connect_frame(
+    *,
+    cid: str,
+    bucket: str,
+    target_cid: str,
+    group: str | None = None,
+    bucket_token: str | None = None,
+) -> BootRelayConnect:
+    """Build a ``relay_connect`` frame (requester side of one session)."""
+    frame = BootRelayConnect(
+        protocol_version=PROTOCOL_VERSION_BOOT,
+        type="relay_connect",
+        cid=cid,
+        bucket=bucket,
+        target_cid=target_cid,
+    )
+    _apply_optional(frame, group=group, bucket_token=bucket_token)
+    return frame
+
+
+def build_relay_attach_frame(
+    *,
+    cid: str,
+    bucket: str,
+    relay_id: str,
+    bucket_token: str | None = None,
+) -> BootRelayAttach:
+    """Build a ``relay_attach`` frame (serving peer's per-session stream)."""
+    frame = BootRelayAttach(
+        protocol_version=PROTOCOL_VERSION_BOOT,
+        type="relay_attach",
+        cid=cid,
+        bucket=bucket,
+        relay_id=relay_id,
+    )
+    _apply_optional(frame, bucket_token=bucket_token)
+    return frame
+
+
+def frame_line(frame: Mapping[str, Any]) -> bytes:
+    """Serialize one validated ``boot/1`` frame as an NDJSON line.
+
+    Validation runs before serialization, so a builder bug fails here instead of
+    making the node drop the frame silently (unknown fields are fatal on the
+    wire). Relay data streams reuse this for their single framed line; every
+    following byte on those streams is opaque TLS.
+    """
+    validated = validate_boot_frame(frame)
+    if validated is None:
+        raise BootnodeProtocolError(f"refusing to send an invalid {frame.get('type')!r} frame")
+    return compact_json_bytes(validated) + b"\n"

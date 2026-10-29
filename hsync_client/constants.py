@@ -240,6 +240,23 @@ BOOTNODE_REFRESH_INTERVAL = 30
 BOOTNODE_REFRESH_INTERVAL_MIN = 1
 BOOTNODE_REFRESH_INTERVAL_MAX = 300
 
+# Data relay over boot/1 (peers behind CGNAT). The forwarding chunk is fixed so
+# a session's memory is bounded; the idle timeout has to stay well above the
+# WebSocket heartbeat cadence (an idle-but-open control plane is normal traffic),
+# and the keepalive keeps the listener's QUIC connection alive between sessions.
+RELAY_BUFFER_BYTES = 64 * 1024
+RELAY_IDLE_TIMEOUT_S = 180.0
+RELAY_KEEPALIVE_INTERVAL = 20.0
+# How long a slave waits for the node to pair a relay session before giving up
+# and returning to the discovery loop.
+RELAY_OPEN_TIMEOUT_S = 15.0
+# Bounded per-candidate probe budget the relay replaces only as a last resort.
+RELAY_ACCEPT_TIMEOUT_S = 10.0
+# After a refused/failed relay attempt, wait this long before trying again: the
+# discovery loop re-enters the role functions every second, and a node without
+# the relay enabled would otherwise be re-dialled once per second.
+RELAY_RETRY_BACKOFF_S = 30.0
+
 # P2P discovery timeout (seconds). Default is 0 = "wait indefinitely",
 # mirroring the client-server behaviour (the client keeps retrying the
 # connection forever by default). A finite positive value bounds how long

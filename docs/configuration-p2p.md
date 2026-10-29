@@ -18,6 +18,7 @@ p2p configuration for peer-to-peer synchronization without a central server.
 | `--bootnode-trust` | Bootnode TLS trust policy: `ask` (prompt on a terminal and remember, fail closed without one), `accept-new`, `strict`, `none` | `ask` |
 | `--group` | p2p group name (only peers in the same group see each other) | — (all peers visible) |
 | `--listen-port` | Port when acting as p2p master; `0` = pick a free port | `0` (auto) |
+| *(data relay)* | No client option: when no advertised candidate is reachable (both peers behind carrier-grade NAT) the client relays the data plane through the bootnode automatically, if the node runs with `--relay` | — (last resort; see [Sync across networks](p2p-bootnode.md#behind-carrier-grade-nat-mobile-hotspot-guest-network)) |
 | `--prefer-master` | Prefer this device as the master | `false` (CLI only) |
 | `--never-master` | Prevent this device from ever becoming master | `false` |
 | `--p2p-trust` | P2P master trust policy: `ask` (confirm an unknown master on a terminal, fail closed without one), `accept-new` (pin the first sighting silently) or `strict` (require an explicit pin) | `ask` |

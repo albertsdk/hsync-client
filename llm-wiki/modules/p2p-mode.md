@@ -67,6 +67,15 @@ master classify its share. Whether a node's HTTPS seeder is reachable *now* is n
 a discovery fact: it is carried by the authenticated WSS session and its capacity
 advertisement (ADR-0030).
 
+The bootnode plan also supplies the **data plane** when no candidate is dialable
+(`boot_relay.py::RelayDialer` / `RelayAcceptor`, ADR-0047): the master registers a
+relay listener with the node as part of the serving role
+(`p2p_handler.py::_start_master_relay`, withdrawn by `_stop_p2p_serving`), and a
+slave that failed every direct candidate asks the node for a tunnel
+(`p2p_handler.py::_relay_master_endpoint`) and dials the loopback endpoint it gets
+back. The bytes are the peers' own TLS, so certificate pinning still authenticates
+the master and the displayed master address stays the real one.
+
 The local node's candidacy can also be dropped at runtime
 (`p2p_peers.py::PeerManager.set_master_candidacy`): a client parked in
 continuous dry-run, waiting for the desktop's `PREVIEW`/`SYNC` commands, cannot

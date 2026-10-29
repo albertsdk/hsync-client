@@ -48,6 +48,7 @@ from hsync_client.boot_client import (
     build_refresh_frame,
     build_register_frame,
 )
+from hsync_client.boot_relay import RelayAcceptor, RelayDialer
 from hsync_client.constants import (
     BOOTNODE_DEFAULT_PORT,
     BOOTNODE_REFRESH_INTERVAL,
@@ -299,6 +300,38 @@ class BootnodeDiscovery(DiscoveryPlanState):
         """Publish (or retract) this node's data-plane endpoint."""
         self._endpoint_ready = ready
         self._wake.set()
+
+    def relay_dialer(self, target_cid: str) -> RelayDialer | None:
+        """Tunnel factory towards *target_cid* through the node's data relay.
+
+        The relay is the last resort of ``_select_master_endpoint``: it is only
+        asked for after every advertised candidate failed, which is exactly the
+        case of two peers behind carrier-grade NAT. The caller owns the returned
+        dialer (``open()`` then ``close()``).
+        """
+        if not self._running:
+            return None
+        return RelayDialer(
+            self._client,
+            cid=self._cid,
+            bucket=self._bucket,
+            target_cid=target_cid,
+            group=self._group,
+            bucket_token=self._token,
+        )
+
+    def relay_acceptor(self, local_port: int) -> RelayAcceptor | None:
+        """Listener that accepts relayed sessions and feeds the local master."""
+        if not self._running:
+            return None
+        return RelayAcceptor(
+            self._client,
+            cid=self._cid,
+            bucket=self._bucket,
+            local_port=local_port,
+            group=self._group,
+            bucket_token=self._token,
+        )
 
     def endpoint_published(self) -> bool:
         """True once the bootnode has been sent our endpoint (second register)."""

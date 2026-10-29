@@ -23,6 +23,7 @@ Consumers: ``hsync-client`` (``build_discovery_plan`` when a bootnode is set).
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 from loguru import logger as log
 
@@ -118,6 +119,14 @@ class HybridDiscovery(DiscoveryPlanState):
         """Publish the connected-client count on every source."""
         self._mdns.set_connected_clients(count)
         self._bootnode.set_connected_clients(count)
+
+    def relay_dialer(self, target_cid: str) -> Any:
+        """Delegate the data relay to the bootnode source (mDNS has none)."""
+        return self._bootnode.relay_dialer(target_cid)
+
+    def relay_acceptor(self, local_port: int) -> Any:
+        """Delegate the data relay listener to the bootnode source."""
+        return self._bootnode.relay_acceptor(local_port)
 
     def set_master_eligibility(self, eligible: bool) -> None:
         """Withdraw or restore this node's master candidacy on every source.

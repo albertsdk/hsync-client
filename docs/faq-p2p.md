@@ -178,7 +178,16 @@ each other. Devices with different groups (or no group) are isolated.
 Not for local-network (mDNS) sync — discovery stays within the subnet and needs
 no router configuration. Cross-network groups that use a bootnode must expose
 the master's sync port: the client can map it with UPnP when you opt in
-(`--upnp` / `HSYNC_UPNP_ENABLED=true`), otherwise forward it on the router.
+(`--upnp` / `HSYNC_UPNP_ENABLED=true`), otherwise forward it on the router. When
+the node runs with `--relay`, the master does not need to be reachable at all:
+the bootnode relays the data plane (see [Sync across networks](p2p-bootnode.md)).
+
+**Q: Can two devices on mobile data (hotspot, data SIM) sync with each other?**
+Yes, through a bootnode started with `--relay`: a carrier-grade NAT accepts no
+inbound connection, so the node carries the data plane and forwards the peers'
+TLS verbatim. The client logs `[RELAY]` when that path is in use; it costs an
+extra network leg and the node's uplink, so it is the last resort after every
+direct address failed.
 
 **Q: Can I sync over Wi-Fi and wired Ethernet?**
 Yes. As long as devices are on the same subnet, they will discover each other

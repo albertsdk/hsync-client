@@ -31,10 +31,14 @@ from hsync_common.text import safe_json_for_log
 from loguru import logger as module_log
 
 from hsync_client.autotune import classify_network, derive_managed_rtt_updates, measure_rtt
+from hsync_client.boot_relay import RelayAcceptor, RelayDialer
 from hsync_client.config import CONFIG, set_config
 from hsync_client.constants import (
     BOOTNODE_DEFAULT_PORT,
     HEARTBEAT_INTERVAL,
+    RELAY_ACCEPT_TIMEOUT_S,
+    RELAY_OPEN_TIMEOUT_S,
+    RELAY_RETRY_BACKOFF_S,
     WATCHER_START_RETRY_DELAY_S,
     ActionLabel,
 )
@@ -88,6 +92,18 @@ NO_MASTER_WARNING_TIMEOUT = 60.0
 # Message carried by the ``no_peers`` event when a p2p one-shot aborts because no
 # peer was discovered (exit code ``P2P_NO_PEER``).
 NO_PEERS_MESSAGE = NO_DEVICE_MESSAGE
+
+# Data relay over the bootnode: the serving role owns one acceptor (a listener
+# control stream plus one bridged stream per requester) and the requesting role
+# owns at most one dialer (a tunnel to the elected master). Both are process-wide
+# because the discovery loop re-enters the role functions every second and the
+# tunnel must outlive that call.
+_active_relay_acceptor: RelayAcceptor | None = None
+_active_relay_dialer: RelayDialer | None = None
+# Monotonic deadline before which no relay attempt is made. The discovery loop
+# runs once per second, so a node that does not offer the relay would be dialled
+# at that rate without it (and would answer ``rate_limited``).
+_relay_retry_at = 0.0
 
 
 def _p2p_status(connected_clients: int) -> str:
@@ -358,6 +374,9 @@ def _stop_p2p_serving(ws_server: P2PWebSocketServer | None, http_server: P2PServ
     shutdown paths.
     """
     close_future = http_server.stop_serving() if http_server is not None else None
+    # The relay listener belongs to the serving role: withdraw it together with
+    # the role so a yielded node stops accepting relayed sessions at once.
+    _stop_master_relay()
     if close_future is not None:
         # Wait for the live clients to be closed before detaching the store they
         # still use to end their inventory sessions.
@@ -735,6 +754,7 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
         if master_channel is not None:
             master_channel.close()
         _stop_p2p_serving(p2p_ws_server, p2p_server)
+        _close_relay_dialer()
         _stop_slave_inventory(
             p2p_sync,
             inventory_publisher,
@@ -892,6 +912,10 @@ def _run_as_master(
             )
             return p2p_server, p2p_ws_server
         p2p_sync.update_server_ready()
+        # Serving role is live: offer the bootnode a relay listener so peers that
+        # no inbound NAT mapping reaches can still reach this master. Started
+        # after ``update_server_ready`` so the endpoint it bridges to is bound.
+        _start_master_relay(p2p_sync, log)
         # Bootnode plan only: the master is reachable across networks only once
         # its endpoint has been published to the bootnode (UPnP ok or public IP
         # known). mDNS reports published immediately, so its readiness timing is
@@ -1135,6 +1159,82 @@ def _select_master_endpoint(master, log) -> tuple[str, int] | None:
     return None
 
 
+def _start_master_relay(p2p_sync: DiscoveryPlan, log) -> None:
+    """Ask the bootnode to relay inbound sessions to this master (once per stint).
+
+    Idempotent across the discovery loop's one-second re-entries: the acceptor is
+    kept while it is alive, so a stable master holds exactly one listener control
+    stream. A node whose bootnode has no relay enabled simply keeps serving
+    direct peers (debug line, no warning: it is the node operator's choice), and
+    the attempt is not repeated before ``RELAY_RETRY_BACKOFF_S``.
+    """
+    global _active_relay_acceptor, _relay_retry_at
+    if _active_relay_acceptor is not None and _active_relay_acceptor.active:
+        return
+    now = time.monotonic()
+    if now < _relay_retry_at:
+        return
+    acceptor = p2p_sync.relay_acceptor(p2p_sync.port)
+    if acceptor is None:
+        return
+    if acceptor.start(timeout=RELAY_ACCEPT_TIMEOUT_S):
+        _active_relay_acceptor = acceptor
+        log.info(
+            f"{ActionLabel.RELAY} listening on the bootnode — peers without a "
+            "reachable inbound port can sync through it"
+        )
+        return
+    acceptor.stop()
+    _relay_retry_at = now + RELAY_RETRY_BACKOFF_S
+    log.debug("Bootnode data relay unavailable; serving directly reachable peers only")
+
+
+def _stop_master_relay() -> None:
+    """Withdraw the master's relay listener (role retirement / shutdown)."""
+    global _active_relay_acceptor
+    acceptor, _active_relay_acceptor = _active_relay_acceptor, None
+    if acceptor is not None:
+        acceptor.stop()
+
+
+def _close_relay_dialer() -> None:
+    """Drop the requester-side tunnel (idempotent)."""
+    global _active_relay_dialer
+    dialer, _active_relay_dialer = _active_relay_dialer, None
+    if dialer is not None:
+        dialer.close()
+
+
+def _relay_master_endpoint(plan: DiscoveryPlan | None, master: Any, log) -> tuple[str, int] | None:
+    """Open a relayed tunnel to the master; return the loopback endpoint.
+
+    This is the last resort after every advertised candidate failed: two peers
+    behind carrier-grade NAT have no dialable address at all, so the only
+    remaining path is through the bootnode that already introduced them. ``None``
+    keeps the caller's normal "no reachable endpoint, retry discovery" behaviour.
+    """
+    global _active_relay_dialer, _relay_retry_at
+    _close_relay_dialer()
+    if plan is None:
+        return None
+    now = time.monotonic()
+    if now < _relay_retry_at:
+        return None
+    dialer = plan.relay_dialer(master.cid)
+    if dialer is None:
+        return None
+    endpoint = dialer.open(RELAY_OPEN_TIMEOUT_S)
+    if endpoint is None:
+        _relay_retry_at = now + RELAY_RETRY_BACKOFF_S
+        return None
+    _active_relay_dialer = dialer
+    log.info(
+        f"{ActionLabel.RELAY} master {master.cid} has no reachable inbound port; "
+        "relaying the data plane through the bootnode"
+    )
+    return endpoint
+
+
 def _run_as_slave(
     config: "HsyncConfig",
     log,
@@ -1153,6 +1253,9 @@ def _run_as_slave(
     """
     from asyncio import run
 
+    # Every attempt starts with a clean transport choice: a tunnel opened for the
+    # previous session (or a previous master) must not outlive it.
+    _close_relay_dialer()
     master = peer_manager.get_master()
     if master:
         # Wait for master to be ready (server_ready=true in mDNS)
@@ -1197,14 +1300,27 @@ def _run_as_slave(
         # several candidates, so the local one is preferred over the NATed
         # public one. A single-candidate peer keeps its endpoint unchanged.
         endpoint = _select_master_endpoint(master, log)
+        relayed = False
+        if endpoint is None:
+            endpoint = _relay_master_endpoint(plan, master, log)
+            relayed = endpoint is not None
         if endpoint is None:
             log.warning(f"No reachable endpoint for master {master.cid}; retrying discovery.")
             return (not one_shot) or wait_indefinitely_for_peer, int(ExitCode.OK)
         master_host, master_port = endpoint
 
+        # `master_url` is the transport address (loopback when relayed) and is
+        # what the HTTP/WS client, the source resolver and the transfer core use.
+        # What the operator and the UI see stays the master's own address: a
+        # ``127.0.0.1`` row in the status bar would be meaningless.
         master_url = server_url(master_host, master_port, use_https=master.use_https)
-        log.info(f"Connecting to master: {master.cid} at {master_url}")
-        emit_event(UiEventName.server, url=master_url)
+        display_url = (
+            master_url
+            if not relayed
+            else server_url(master.address, master.port, use_https=master.use_https)
+        )
+        log.info(f"Connecting to master: {master.cid} at {display_url}")
+        emit_event(UiEventName.server, url=display_url)
 
         config["API"]["buckets"] = f"{master_url}/api/v1/buckets"
         ws_master_url = http_to_ws(master_url)
@@ -1232,8 +1348,12 @@ def _run_as_slave(
         )
 
         # Re-derive autotune-managed tuning from the real master RTT (the P2P
-        # startup probe is skipped when only the placeholder URL is known)
-        _refresh_p2p_network_tuning(master, config, log, host=master_host, port=master_port)
+        # startup probe is skipped when only the placeholder URL is known). A
+        # relayed master is reached over loopback, so its measured RTT says
+        # nothing about the real two-leg path: keep the current tuning instead of
+        # tightening timeouts around a localhost round trip.
+        if not relayed:
+            _refresh_p2p_network_tuning(master, config, log, host=master_host, port=master_port)
 
         exit_code = int(ExitCode.OK)
         if config["DRYRUN"]:

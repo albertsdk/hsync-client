@@ -54,6 +54,7 @@ _LABEL_DESCRIPTIONS: dict[ActionLabel, str] = {
     ActionLabel.WATCHER_FALLBACK: "File watcher degraded to polling (inotify/descriptor limit)",
     ActionLabel.WATCHER_RESTORE: "File watcher restored to inotify (limits freed)",
     ActionLabel.FD_EXHAUSTED: "File-descriptor limit reached (RLIMIT_NOFILE / fs.file-max)",
+    ActionLabel.RELAY: "p2p data plane relayed through the bootnode (no inbound port was reachable)",
 }
 
 
