@@ -4,7 +4,7 @@
 """Shared measurement core for the hsync-client L1 micro-benchmarks (stdlib only).
 
 Methodology mirrors ``hsync-common/bench/common.py`` and
-``hsync-bootnode/bench/common.py``: one :class:`BenchResult` per measured
+``hsync-rendezvous/bench/common.py``: one :class:`BenchResult` per measured
 operation, warmup executed outside the timed samples, per-call
 ``time.perf_counter`` latency, and an optional ``--json-out`` dump.
 

@@ -105,7 +105,7 @@ class TestResolveServerTrust:
 class TestTrustPolicyResolutionParity:
     """Both pinned transports must share one flag/env precedence.
 
-    Regression: the bootnode and the sync server used to carry two hand-copied
+    Regression: the rendezvous and the sync server used to carry two hand-copied
     implementations of the same precedence, so a new rule (or a typo in one)
     silently changed one transport only. Only the fallback may differ.
     """
@@ -129,10 +129,10 @@ class TestTrustPolicyResolutionParity:
     ):
         from hsync_client import main_logic
 
-        monkeypatch.setattr(main_logic, "get_discovery_server_trust", lambda: env_default)
+        monkeypatch.setattr(main_logic, "get_rendezvous_server_trust", lambda: env_default)
         monkeypatch.setattr(main_logic, "get_server_trust", lambda: env_default)
 
-        bootnode = main_logic._resolve_discovery_server_trust(
+        rendezvous = main_logic._resolve_rendezvous_server_trust(
             policy, fingerprints, tofu, verify_ssl
         )
         server = main_logic._resolve_server_trust(policy, fingerprints, tofu, verify_ssl)
@@ -140,10 +140,10 @@ class TestTrustPolicyResolutionParity:
         if env_default is None and policy is None and not fingerprints and not tofu:
             # No signal at all: only the documented default differs.
             assert verify_ssl is True
-            assert bootnode is TrustPolicy.ask
+            assert rendezvous is TrustPolicy.ask
             assert server is TrustPolicy.chain
             return
-        assert bootnode is server
+        assert rendezvous is server
 
 
 class _FakeSocket:

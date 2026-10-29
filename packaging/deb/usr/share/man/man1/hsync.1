@@ -26,7 +26,7 @@ hsync \- file synchronization client (Server and P2P modes)
 .
 .SY hsync
 .B trust
-.BI peer | discovery\-server | server
+.BI peer | rendezvous\-server | server
 .RI [ OPTIONS ]
 .YS
 .
@@ -171,7 +171,7 @@ the client runs continuously (daemon mode, the default): it keeps the
 connection open, syncs changes in real time, and retries an unreachable
 server indefinitely instead of exiting. In p2p mode it runs one slave sync
 cycle and exits, and a run that is still alone when
-.B \-\-peer\-discovery\-timeout
+.B \-\-peer\-rendezvous\-timeout
 expires exits with code
 .B 5
 instead of serving as a lone master; a master that is serving live peers
@@ -326,54 +326,54 @@ Hidden option intended for GUI integration.
 .\" --- p2p subcommand ---
 .SS p2p subcommand
 .TP
-.BI \-\-discovery\-server\fP= ENDPOINT
-Discovery server (the
-.B hsync\-bootnode
+.BI \-\-rendezvous\-server\fP= ENDPOINT
+Rendezvous server (the
+.B hsync\-rendezvous
 daemon speaking
-.IR boot/1 )
-for cross-network peer discovery: a bare hostname/IPv4, a bracketed IPv6
+.IR rdv/1 )
+for cross-network peer rendezvous: a bare hostname/IPv4, a bracketed IPv6
 literal, or a
 .IR HOST : PORT
 pair (the QUIC scheme is implied). Repeatable, and each value may carry a
 comma-separated list, so the option accepts exactly the grammar of
-.BR HSYNC_DISCOVERY_SERVER_ENDPOINTS .
+.BR HSYNC_RENDEZVOUS_SERVER_ENDPOINTS .
 The client leases and queries every listed server and merges the peers it
 learns, so a peer registered through one server is visible through any other.
 Omit it to stay on mDNS only. An endpoint that carries no port uses 443; extra
 UDP ports to try on
 .B each
 endpoint (egress-firewall fallback) are set with
-.BR HSYNC_DISCOVERY_SERVER_EXTRA_PORTS .
+.BR HSYNC_RENDEZVOUS_SERVER_EXTRA_PORTS .
 .TP
 .BR \-\-listen\-port =\fIPORT\fP
 Port to listen on when acting as p2p master (default: 0 = auto).
 .TP
 .B \-\-map\-data\-port
 Map the p2p data-plane TCP port with UPnP (opt\-in; off by default). Without a
-discovery server the flag has no effect (mDNS discovery stays on the local
+rendezvous server the flag has no effect (mDNS rendezvous stays on the local
 network).
 .TP
-.BI \-\-discovery\-server\-fingerprint\fP= ENDPOINT=FINGERPRINT
-Pin the certificate fingerprint of one discovery server (canonical
+.BI \-\-rendezvous\-server\-fingerprint\fP= ENDPOINT=FINGERPRINT
+Pin the certificate fingerprint of one rendezvous server (canonical
 .I sha256:<hex>
 or bare hex). Repeatable, with \fB|\fP separating the two digits of a rotation
 window for the same endpoint; a pin must name a configured endpoint, and a bare
 fingerprint is accepted only with exactly one
-.BR \-\-discovery\-server .
+.BR \-\-rendezvous\-server .
 Refused without at least one
-.BR \-\-discovery\-server .
+.BR \-\-rendezvous\-server .
 Selects the
 .I strict
 trust policy.
 .TP
-.B \-\-discovery\-server\-tofu
-Trust a discovery server certificate on first use (accept-new); a later
+.B \-\-rendezvous\-server\-tofu
+Trust a rendezvous server certificate on first use (accept-new); a later
 mismatch is refused as a possible man-in-the-middle. Selects the
 .I accept-new
 trust policy.
 .TP
-.BI \-\-discovery\-server\-trust\fP= POLICY
-Discovery-server TLS trust policy. One of:
+.BI \-\-rendezvous\-server\-trust\fP= POLICY
+Rendezvous-server TLS trust policy. One of:
 .RS
 .TP
 .I ask
@@ -382,22 +382,22 @@ it; refuse a changed one. Without a terminal the client fails closed.
 .TP
 .I accept-new
 Pin the first sighting silently (same as
-.BR \-\-discovery\-server\-tofu ).
+.BR \-\-rendezvous\-server\-tofu ).
 .TP
 .I strict
 Require a pin (same as
-.BR \-\-discovery\-server\-fingerprint ).
+.BR \-\-rendezvous\-server\-fingerprint ).
 .TP
 .I none
 No verification (loopback/tests only; same as an unpinned insecure link).
 .RE
 .IP
 The decision is remembered in the known-hosts store (see
-.BR HSYNC_DISCOVERY_SERVER_TRUST_FILE );
+.BR HSYNC_RENDEZVOUS_SERVER_TRUST_FILE );
 manage it with
-.BR "hsync trust discovery\-server" .
-.BR \-\-peer\-discovery\-timeout =\fISEC\fP
-Time to wait for initial p2p peer discovery
+.BR "hsync trust rendezvous\-server" .
+.BR \-\-peer\-rendezvous\-timeout =\fISEC\fP
+Time to wait for initial p2p peer rendezvous
 (default:
 .BR 0 ;
 wait indefinitely, matching the server-mode default of retrying an
@@ -509,7 +509,7 @@ Show a legend of the output symbols.
 The client pins self-signed certificate fingerprints in three SSH-style stores:
 the p2p known-peers store (keyed by
 .IR device-id|bucket ),
-the bootnode known-hosts store (keyed by
+the rendezvous known-hosts store (keyed by
 .IR host:port )
 and the sync-server known-hosts store (keyed by
 .IR host:port ).
@@ -521,8 +521,8 @@ namespace; verify a fingerprint out of band before pinning it.
 Manage the p2p known-peers store (identities are
 .IR device-id|bucket ).
 .TP
-.B "hsync trust discovery\-server {list,show,add,remove,fingerprint} [\-\-json]"
-Manage the bootnode known-hosts store.
+.B "hsync trust rendezvous\-server {list,show,add,remove,fingerprint} [\-\-json]"
+Manage the rendezvous known-hosts store.
 .B fingerprint
 prints a node's certificate fingerprint without trusting it.
 .TP
@@ -583,7 +583,7 @@ read, and 2 on a usage error such as a missing
 .\" --- Group-key derivation ---
 .SS Group-key derivation
 Derive the raw 64-hex P2P group key from a shared password, so the key can be
-placed in a bootnode key file.
+placed in a rendezvous key file.
 .TP
 .B hsync derive\-group\-key
 Prompt for the shared password with hidden input and print the derived key.
@@ -593,7 +593,7 @@ The password must be at least 12 characters.
 Read the password from the given file descriptor (parent-process use).
 .PP
 The output is the group key secret: store it where only the service can read
-it. The bootnode always consumes the raw derived key; clients may instead set
+it. The rendezvous always consumes the raw derived key; clients may instead set
 the password directly with
 .BR HSYNC_P2P_PASSPHRASE .
 .
@@ -647,9 +647,9 @@ passes
 on both sides.
 .
 .P
-Cross-network discovery through a
-.B boot/1
-bootstrap node uses the same group key when the node gates access: the client
+Cross-network rendezvous through a
+.B rdv/1
+rendezvous node uses the same group key when the node gates access: the client
 derives a bucket token from it and presents the token to a protected bucket or
 a private node, so the derived key must match the key configured on the node.
 Use
@@ -720,7 +720,7 @@ used as-is. It is the credential that authorizes writes: without it the group
 is read-only and a write-capable run is refused unless it is download-only or
 the dangerous
 .B \-\-allow\-unauthenticated\-writes
-opt-in is explicit. With a bootnode it is also the group key the client derives
+opt-in is explicit. With a rendezvous it is also the group key the client derives
 its bucket token from, required by a protected bucket or a private node.
 Mutually exclusive with
 .BR HSYNC_P2P_PASSPHRASE .
@@ -777,54 +777,54 @@ Periodic resync interval in seconds (default:
 .BR 300 ;
 0 = disabled).
 .TP
-.B HSYNC_DISCOVERY_SERVER_ENDPOINTS
-Optional bootnode endpoint for cross-network discovery: a bare hostname/IPv4, a
+.B HSYNC_RENDEZVOUS_SERVER_ENDPOINTS
+Optional rendezvous endpoint for cross-network rendezvous: a bare hostname/IPv4, a
 .RI HOST : PORT
 pair, or a bracketed IPv6 literal (optionally
 .RI [ IPv6 ]: port ).
-No scheme or path. Unset keeps discovery on mDNS only. The QUIC port defaults to
+No scheme or path. Unset keeps rendezvous on mDNS only. The QUIC port defaults to
 443; an explicit
 .B \-\-port
 overrides a port embedded here.
 .TP
-.B HSYNC_DISCOVERY_SERVER_EXTRA_PORTS
+.B HSYNC_RENDEZVOUS_SERVER_EXTRA_PORTS
 Comma-separated, ordered extra UDP ports to try for the
 .B same
-bootnode (multi-port dial fallback); e.g.
+rendezvous (multi-port dial fallback); e.g.
 .I 53
 so a client whose egress firewall blocks UDP 443 can still reach the node on
-port 53. Attempted after the bootnode/default port. The bootnode must listen on
+port 53. Attempted after the rendezvous/default port. The rendezvous must listen on
 the same set
-.RI ( hsync\-bootnode
+.RI ( hsync\-rendezvous
 .BR \-\-ports ).
 Unset keeps single-port dialing.
 .TP
-.B HSYNC_DISCOVERY_SERVER_FINGERPRINTS
-Comma-separated bootnode certificate fingerprint(s) to pin (up to two,
+.B HSYNC_RENDEZVOUS_SERVER_FINGERPRINTS
+Comma-separated rendezvous certificate fingerprint(s) to pin (up to two,
 .I sha256:<hex>
 or bare hex).
 .TP
-.B HSYNC_DISCOVERY_SERVER_TOFU
-Trust the bootnode certificate on first use (1 = on; default off).
+.B HSYNC_RENDEZVOUS_SERVER_TOFU
+Trust the rendezvous certificate on first use (1 = on; default off).
 .TP
-.B HSYNC_DISCOVERY_SERVER_TRUST
-Bootnode TLS trust policy:
+.B HSYNC_RENDEZVOUS_SERVER_TRUST
+Rendezvous TLS trust policy:
 .IR ask " (default), " accept-new ", " strict " or " none .
 Equivalent to
-.BR \-\-discovery\-server\-trust .
+.BR \-\-rendezvous\-server\-trust .
 .TP
-.B HSYNC_DISCOVERY_SERVER_TRUST_FILE
-File storing the trusted bootnode fingerprints (default:
-.IR $XDG_STATE_HOME/hsync/discovery_server_known_hosts.json ,
+.B HSYNC_RENDEZVOUS_SERVER_TRUST_FILE
+File storing the trusted rendezvous fingerprints (default:
+.IR $XDG_STATE_HOME/hsync/rendezvous_server_known_hosts.json ,
 or
-.IR ~/.local/state/hsync/discovery_server_known_hosts.json
+.IR ~/.local/state/hsync/rendezvous_server_known_hosts.json
 when
 .I XDG_STATE_HOME
 is unset).
 .TP
 .B HSYNC_MAP_DATA_PORT
 Map the master TCP port with UPnP (true/false; default false = opt\-in only
-with a bootnode).
+with a rendezvous).
 .TP
 .B HSYNC_P2P_LISTEN_PORT
 Port to use when acting as p2p master (default: 0 = auto).
@@ -832,7 +832,7 @@ Port to use when acting as p2p master (default: 0 = auto).
 .B HSYNC_P2P_GROUP
 Group name for p2p peer filtering (default: empty = no filter).
 .TP
-.B HSYNC_PEER_DISCOVERY_TIMEOUT
+.B HSYNC_PEER_RENDEZVOUS_TIMEOUT
 Seconds to wait for the first p2p peer (default:
 .BR 0 ;
 wait indefinitely, mirroring the server-mode default of retrying an
@@ -909,13 +909,13 @@ significant on fast local networks.
 Heartbeat interval in seconds for p2p mode (default:
 .BR 5 ;
 range: 1\(en60). Governs how often a peer's mDNS presence is re-announced and how
-often the discovery loop re-evaluates peer liveness.
+often the rendezvous loop re-evaluates peer liveness.
 .TP
-.B HSYNC_DISCOVERY_SERVER_REFRESH_INTERVAL
-\fBboot/1\fR lease and query cadence in seconds (default:
+.B HSYNC_RENDEZVOUS_SERVER_REFRESH_INTERVAL
+\fBrdv/1\fR lease and query cadence in seconds (default:
 .BR 30 ;
 range: 1\(en300). Governs how often the client registers, refreshes its lease
-and queries the bootnode for peers. Keep it inside the node's rate limits
+and queries the rendezvous for peers. Keep it inside the node's rate limits
 (5 queries/min per IP and bucket; the protocol specifies a 30\(ens refresh).
 .TP
 .B HSYNC_PEER_TIMEOUT
@@ -983,13 +983,13 @@ identity lives in
 .IR device/ ,
 and the trusted keys live in
 .IR server_known_hosts.json ,
-.IR discovery_server_known_hosts.json
+.IR rendezvous_server_known_hosts.json
 and
 .IR p2p_known_peers.json .
 Set
 .BR HSYNC_DEVICE_DIR ,
 .BR HSYNC_SERVER_TRUST_FILE ,
-.BR HSYNC_DISCOVERY_SERVER_TRUST_FILE
+.BR HSYNC_RENDEZVOUS_SERVER_TRUST_FILE
 or
 .BR HSYNC_P2P_PIN_FILE
 to move one item out of it. The server keeps its per-bucket state here.
@@ -1063,14 +1063,14 @@ is unset; override with
 .BR HSYNC_P2P_PIN_FILE ).
 Pinned fingerprints of known p2p peers (TOFU).
 .TP
-.IR $XDG_STATE_HOME/hsync/discovery_server_known_hosts.json
+.IR $XDG_STATE_HOME/hsync/rendezvous_server_known_hosts.json
 (or
-.IR ~/.local/state/hsync/discovery_server_known_hosts.json
+.IR ~/.local/state/hsync/rendezvous_server_known_hosts.json
 when
 .I XDG_STATE_HOME
 is unset; override with
-.BR HSYNC_DISCOVERY_SERVER_TRUST_FILE ).
-Known-hosts store for bootnode certificate fingerprints.
+.BR HSYNC_RENDEZVOUS_SERVER_TRUST_FILE ).
+Known-hosts store for rendezvous certificate fingerprints.
 .TP
 .IR $XDG_STATE_HOME/hsync/server_known_hosts.json
 (or
@@ -1156,22 +1156,22 @@ HSYNC_P2P_PASSPHRASE=a-long-shared-password hsync p2p \-b shared \-\-group home
 .EE
 .RE
 .TP
-p2p with a full raw key instead of a password (advanced; also the bootnode form):
+p2p with a full raw key instead of a password (advanced; also the rendezvous form):
 .RS
 .EX
 HSYNC_P2P_KEY=YOUR_SHARED_KEY_AT_LEAST_32_CHARACTERS hsync p2p \-b shared
 .EE
 .RE
 .TP
-derive the raw key for a bootnode key file from a shared password:
+derive the raw key for a rendezvous key file from a shared password:
 .RS
 .EX
 hsync derive\-group\-key
 .EE
 .RE
 .
-.SS Bootnode discovery
-Discover peers across networks through a boot/1 bootstrap node. The first
+.SS Rendezvous rendezvous
+Discover peers across networks through a rdv/1 rendezvous node. The first
 contact shows the certificate fingerprint and asks for confirmation (like
 .BR ssh (1)),
 then remembers it:
@@ -1184,8 +1184,8 @@ Non-interactive deployments accept the first sighting explicitly, or pin a
 fingerprint the operator published out of band:
 .PP
 .EX
-hsync p2p boot.example.net \-b shared \-\-discovery\-server\-tofu
-hsync p2p boot.example.net \-b shared \-\-discovery\-server\-fingerprint sha256:FINGERPRINT
+hsync p2p boot.example.net \-b shared \-\-rendezvous\-server\-tofu
+hsync p2p boot.example.net \-b shared \-\-rendezvous\-server\-fingerprint sha256:FINGERPRINT
 .EE
 .PP
 Read a node's fingerprint without trusting it, pin it, and manage the known
@@ -1195,10 +1195,10 @@ and
 .BR ssh\-keygen \-R ):
 .PP
 .EX
-hsync trust discovery\-server fingerprint boot.example.net
-hsync trust discovery\-server add boot.example.net sha256:FINGERPRINT
-hsync trust discovery\-server list
-hsync trust discovery\-server remove boot.example.net
+hsync trust rendezvous\-server fingerprint boot.example.net
+hsync trust rendezvous\-server add boot.example.net sha256:FINGERPRINT
+hsync trust rendezvous\-server list
+hsync trust rendezvous\-server remove boot.example.net
 .EE
 .PP
 Authenticate to a private node or a protected bucket. The node holds the raw
@@ -1304,7 +1304,7 @@ Causal conflicts were resolved by preserving
 files.
 .TP
 .B 5
-P2P one-shot: no peer/master found within the discovery timeout (a lone
+P2P one-shot: no peer/master found within the rendezvous timeout (a lone
 client exits instead of serving as master).
 .
 .\" ---------------------------------------------------------------------

@@ -1,13 +1,13 @@
 # Sync on the local network (mDNS)
 
 How to run `hsync p2p` with **mDNS only**: peers find each other over mDNS on the
-same local network, with no server and no bootnode. mDNS is always active, so
-this page covers running without a bootnode configured.
+same local network, with no server and no rendezvous. mDNS is always active, so
+this page covers running without a rendezvous configured.
 
 > First sync with two devices? Start from
 > [Getting Started — p2p Mode](getting-started-p2p.md); this page covers
 > operating and verifying the local-network plan.
-> Discovery through a bootstrap node instead: [Sync across networks](p2p-bootnode.md).
+> Rendezvous through a rendezvous node instead: [Sync across networks](p2p-rendezvous.md).
 
 ## Before you start
 
@@ -19,23 +19,23 @@ this page covers running without a bootnode configured.
 ## Run the plan
 
 ```bash
-# Continuous p2p sync with mDNS discovery (no bootnode configured).
+# Continuous p2p sync with mDNS rendezvous (no rendezvous configured).
 HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p /srv/hsync
 ```
 
-Nothing else is required: with no `BOOTNODE` hostname and no `HSYNC_DISCOVERY_SERVER_ENDPOINTS`,
-`hsync p2p` never contacts a bootstrap node.
+Nothing else is required: with no `RENDEZVOUS` hostname and no `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS`,
+`hsync p2p` never contacts a rendezvous node.
 
 ## Confirm which plan is active
 
 At startup the client logs the plan it selected:
 
 ```text
-Discovery: mDNS on the local network (no bootnode configured)
+Rendezvous: mDNS on the local network (no rendezvous configured)
 ```
 
-If you see `Discovery: mDNS on the local network + bootnode HOST:PORT` instead, a
-bootnode is configured — unset `HSYNC_DISCOVERY_SERVER_ENDPOINTS` (or drop the positional) to go
+If you see `Rendezvous: mDNS on the local network + rendezvous HOST:PORT` instead, a
+rendezvous is configured — unset `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS` (or drop the positional) to go
 back to mDNS-only.
 
 ## Keep groups apart
@@ -57,7 +57,7 @@ HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p /srv/hsyn
 HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p /srv/hsync --never-master
 ```
 
-The mDNS plan also exposes `--peer-discovery-timeout SECONDS` (default `0` = wait
+The mDNS plan also exposes `--peer-rendezvous-timeout SECONDS` (default `0` = wait
 indefinitely) for one-shot runs.
 
 ## Verify it works
@@ -71,7 +71,7 @@ indefinitely) for one-shot runs.
 
 | Symptom | Likely cause |
 |---|---|
-| No peers discovered | Devices on different networks/VLANs, or mDNS blocked (some guest Wi-Fi and container networks) → use the [bootnode plan](p2p-bootnode.md) across networks. |
+| No peers discovered | Devices on different networks/VLANs, or mDNS blocked (some guest Wi-Fi and container networks) → use the [rendezvous plan](p2p-rendezvous.md) across networks. |
 | Peers seen, no sync | Different `HSYNC_P2P_PASSPHRASE`/`HSYNC_P2P_KEY`, bucket or `--group`. |
 | Writes refused | No shared secret on one side: set the same password or raw key, or use `--sync-direction download-only`. |
 

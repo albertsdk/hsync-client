@@ -59,10 +59,10 @@ across topologies. Continuous is the default and `--once` is the only run-mode k
 | `_check_deletion_risk` | `main_logic.py::_check_deletion_risk` | warn/prompt on risky delete settings (`--allow-deletions` bypass; fails fast with exit 1 when no interactive TTY) |
 | `_check_p2p_write_policy` | `main_logic.py` | default-deny every write-capable no-key p2p run, independent of TTY; only `--allow-unauthenticated-writes` or `HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES=true` opts in |
 | `_check_p2p_keyless_policy` | `main_logic.py` | confirm keyless p2p (no shared secret); `--allow-unauthenticated-p2p` or the writes opt-in acknowledges; fails closed without a TTY |
-| `_warn_if_p2p_in_container` | `main_logic.py::_warn_if_p2p_in_container` | warn that mDNS discovery cannot cross container bridge/NAT networking (suggests `--network host`) |
+| `_warn_if_p2p_in_container` | `main_logic.py::_warn_if_p2p_in_container` | warn that mDNS rendezvous cannot cross container bridge/NAT networking (suggests `--network host`) |
 | `_check_disk_space` | `main_logic.py::_check_disk_space` | min-free-disk guard |
 | `_check_server_connectivity` | `main_logic.py::_check_server_connectivity` | startup health gate; one-shot mode fails fast on an unreachable server, continuous mode (default) logs a warning and lets `remote_connect` retry forever (p2p parity) |
-| `_get_stability_delay_value` / `_get_discovery_timeout_value` / `_get_resync_value` | `main_logic.py::_get_stability_delay_value` / `main_logic.py::_get_discovery_timeout_value` / `main_logic.py::_get_resync_value` | resolve CLI > env > default |
+| `_get_stability_delay_value` / `_get_rendezvous_timeout_value` / `_get_resync_value` | `main_logic.py::_get_stability_delay_value` / `main_logic.py::_get_rendezvous_timeout_value` / `main_logic.py::_get_resync_value` | resolve CLI > env > default |
 | `_start_hsyncignore_watcher` | `main_logic.py::_start_hsyncignore_watcher` | hot-reload `.hsyncignore` matcher |
 | `_safe_config_for_log` | `main_logic.py::_safe_config_for_log` | builds the redacted verbose `Local configuration` dump: masks `API_KEY`/`P2P_KEY`/`Authorization` and appends a `PATHS` section (`ENV_FILE`, `DEVICE_DIR`, `STATE_DIR`, `STATE_DB`, `LOCKS_DIR`) resolved from `identity.default_device_dir`/`default_locks_dir` + `folder.default_state_dir`/`default_syncstate_db_path` |
 | `_run_preview` | `preview.py::_run_preview` | dry-run action preview |
@@ -78,27 +78,27 @@ across topologies. Continuous is the default and `--once` is the only run-mode k
 | `set_config` | `config.py::set_config` | write the global in-place; modules read `CONFIG` directly — **no** `get_config` |
 | `set_debug` / `is_debug` | `config.py::set_debug` / `config.py::is_debug` | debug flag |
 | `load_env_file` | `config.py::load_env_file` | dotenv loader |
-| typed getters | `config.py::get_server_url`–`config.py::get_connectivity_retry_max_wait` | `get_server_url`, `get_api_key`, p2p getters (`get_p2p_key`/`get_p2p_group`/`get_p2p_listen_port`), the discovery-server getters (`get_discovery_server_endpoints`/`_extra_ports`/`_fingerprints`/`_tofu`/`_trust`/`_refresh_interval`), `get_map_data_port`, `get_peer_discovery_timeout`, guard getters, delta getters, etc. |
+| typed getters | `config.py::get_server_url`–`config.py::get_connectivity_retry_max_wait` | `get_server_url`, `get_api_key`, p2p getters (`get_p2p_key`/`get_p2p_group`/`get_p2p_listen_port`), the rendezvous-server getters (`get_rendezvous_server_endpoints`/`_extra_ports`/`_fingerprints`/`_tofu`/`_trust`/`_refresh_interval`), `get_map_data_port`, `get_peer_rendezvous_timeout`, guard getters, delta getters, etc. |
 
-The `p2p` subcommand takes a repeatable `--discovery-server ENDPOINT`
+The `p2p` subcommand takes a repeatable `--rendezvous-server ENDPOINT`
 (`HOST[:PORT]`, QUIC/UDP, no scheme; each value may itself carry a comma list)
 plus `--map-data-port` (opt-in UPnP for the data-plane port, off by default).
-`_build_discovery_servers` (`cli.py::_build_discovery_servers`) parses the values
+`_build_rendezvous_servers` (`cli.py::_build_rendezvous_servers`) parses the values
 with the shared `hsync_common.endpoint.parse_endpoint_list` in strict mode
 (an invalid or duplicated entry is a usage error, never a silently ignored
 flag), applies the channel default port, and falls back to
-`HSYNC_DISCOVERY_SERVER_ENDPOINTS` when the option is omitted. The sources are
-selected in `p2p_discovery.build_discovery_plan`: no endpoints → mDNS only;
-one or more → `HybridDiscovery` running mDNS **and** one
-`BootnodeDiscovery` per endpoint (wrapped in
-`MultiBootnodeDiscovery` when there is more than one) over one shared
-`PeerManager`, so `p2p_handler.run_p2p_mode` only sees the `DiscoveryPlan`
+`HSYNC_RENDEZVOUS_SERVER_ENDPOINTS` when the option is omitted. The sources are
+selected in `p2p_rendezvous.build_rendezvous_plan`: no endpoints → mDNS only;
+one or more → `HybridRendezvous` running mDNS **and** one
+`RendezvousRendezvous` per endpoint (wrapped in
+`MultiRendezvousRendezvous` when there is more than one) over one shared
+`PeerManager`, so `p2p_handler.run_p2p_mode` only sees the `RendezvousPlan`
 surface and the election stays single.
 
-Multi-port dial fallback: `HSYNC_DISCOVERY_SERVER_EXTRA_PORTS`
-(`config.py::get_discovery_server_extra_ports`, a thin lenient wrapper over the shared
+Multi-port dial fallback: `HSYNC_RENDEZVOUS_SERVER_EXTRA_PORTS`
+(`config.py::get_rendezvous_server_extra_ports`, a thin lenient wrapper over the shared
 `hsync_common.endpoint.parse_port_list` SSOT) adds extra UDP ports to try for the
-SAME bootnode; `BootnodeClient` (`boot_client.py::_with_connection`) dials the last
+SAME rendezvous; `RendezvousClient` (`rdv_client.py::_with_connection`) dials the last
 working port first (then the primary and extras) and falls back only on a
 **handshake** failure — the blocked-port signal — so a client whose egress
 firewall blocks UDP 443 reaches the node on another port (e.g. 53) and every
@@ -107,17 +107,17 @@ reachable, so a reply timeout or a trust/protocol error propagates without
 re-dialling. The wire is unchanged and trust stays a single pin (shared fleet
 identity), so the fallback never re-prompts.
 
-The discovery-server endpoints are `HSYNC_DISCOVERY_SERVER_ENDPOINTS`
-(`_validate_discovery_server_endpoints` normalizes the list through the shared
+The rendezvous-server endpoints are `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS`
+(`_validate_rendezvous_server_endpoints` normalizes the list through the shared
 `hsync_common.endpoint.normalize_endpoint_list` in strict mode — the same
 rule the desktop GUI applies to its field; `host`, `host:port`, `[IPv6]`,
 `[IPv6]:port`, comma-separated, no scheme or path), and UPnP is
 `HSYNC_MAP_DATA_PORT` (default `false`; opt-in). The p2p command resolves CLI >
-env (`_build_discovery_servers`, `use_env=True`: a CLI value replaces the whole
-env list), and `get_discovery_server_endpoints()` applies the channel default
+env (`_build_rendezvous_servers`, `use_env=True`: a CLI value replaces the whole
+env list), and `get_rendezvous_server_endpoints()` applies the channel default
 port so `a` and `a:443` are one destination.
 `HSYNC_P2P_LISTEN_PORT` sets the master TCP listen port (env for the
-`p2p_listen_port` field; `BOOTNODE_DEFAULT_PORT = 443` in `constants.py`).
+`p2p_listen_port` field; `RENDEZVOUS_DEFAULT_PORT = 443` in `constants.py`).
 
 Peer-download settings are `HSYNC_P2P_PEER_DOWNLOAD=true` and
 `HSYNC_P2P_PEER_READ_CAP=2`. `--no-peer-download` is applied as
@@ -164,7 +164,7 @@ write opt-in is `CLI-opt-in OR environment-opt-in` and defaults false.
 - Range and bucket validation is inline in `cli.py` (Typer) — e.g.
   `resync`/`reconnect_delay` bounds raise `typer.BadParameter` from
   `_validate_shared_options` (`cli.py::_validate_shared_options`); bucket naming
-  via `_validate_bucket` (`cli.py::_validate_bucket`); p2p-only checks (discovery timeout,
+  via `_validate_bucket` (`cli.py::_validate_bucket`); p2p-only checks (rendezvous timeout,
   `--prefer-master` exclusivity) live in the `p2p` subcommand. There is no
   separate validators module.
 - Docs drift guard: `tests/test_docs_option_parity.py` walks every command

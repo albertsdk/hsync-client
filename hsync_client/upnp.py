@@ -4,12 +4,12 @@
 """UPnP-IGD for the p2p master's **TCP** listen port.
 
 The SSDP/SOAP implementation (including the SSRF hardening) is the
-``hsync_common.upnp`` SSOT shared with ``hsync-bootnode``; this module only adds
+``hsync_common.upnp`` SSOT shared with ``hsync-rendezvous``; this module only adds
 ``UpnpMapper`` — the best-effort TCP mapping lifecycle with clean teardown.
 Every failure degrades to the documented "no UPnP" state: the node stays
 slave-only instead of advertising an endpoint it cannot serve.
 
-Consumers: ``hsync-client`` (p2p_discovery_bootnode), tests.
+Consumers: ``hsync-client`` (p2p_rendezvous_rendezvous), tests.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ class UpnpMapper:
         try:
             service = discover_igd()
         except UpnpError as exc:
-            log.debug(f"UPnP discovery failed: {exc}")
+            log.debug(f"UPnP rendezvous failed: {exc}")
             return None
         if service is None:
             log.debug("UPnP: no IGD discovered")

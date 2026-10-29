@@ -16,18 +16,18 @@ from typing_extensions import TypedDict
 from hsync_client.config import CONFIG, HsyncConfig, get_env_settings
 from hsync_client.constants import (
     CLIENT_NAME,
-    DISCOVERY_TIMEOUT_DEFAULT,
     FILE_STABILITY_INTERVAL_DEFAULT,
     HEADER_CLIENT_NAME,
     HEADER_CLIENT_VERSION,
     HSYNC_VERSION,
+    RENDEZVOUS_TIMEOUT_DEFAULT,
     RESYNC_DEFAULT,
 )
 from hsync_client.events import get_emitter, init_emitter
 from hsync_client.identity import InstanceLockError
 from hsync_client.main_logic import (
     _check_server_connectivity,
-    _get_peer_discovery_timeout_value,
+    _get_peer_rendezvous_timeout_value,
     _get_resync_value,
     _get_stability_delay_value,
     _safe_config_for_log,
@@ -116,73 +116,73 @@ class TestGetStabilityDelayValue:
             get_env_settings.cache_clear()
 
 
-class TestGetDiscoveryTimeoutValue:
-    """Tests for _get_peer_discovery_timeout_value function."""
+class TestGetRendezvousTimeoutValue:
+    """Tests for _get_peer_rendezvous_timeout_value function."""
 
     def test_cli_value_takes_priority(self):
         """CLI argument is used when provided."""
-        assert _get_peer_discovery_timeout_value(15) == 15
+        assert _get_peer_rendezvous_timeout_value(15) == 15
 
     def test_cli_zero_means_wait_indefinitely(self):
         """CLI value of 0 is valid and preserved."""
-        assert _get_peer_discovery_timeout_value(0) == 0
+        assert _get_peer_rendezvous_timeout_value(0) == 0
 
     def test_env_value_used_when_no_cli(self):
         """Environment variable is used when CLI argument is None."""
         get_env_settings.cache_clear()
-        old = os.environ.get("HSYNC_PEER_DISCOVERY_TIMEOUT")
-        os.environ["HSYNC_PEER_DISCOVERY_TIMEOUT"] = "20"
+        old = os.environ.get("HSYNC_PEER_RENDEZVOUS_TIMEOUT")
+        os.environ["HSYNC_PEER_RENDEZVOUS_TIMEOUT"] = "20"
         try:
             get_env_settings.cache_clear()
-            assert _get_peer_discovery_timeout_value(None) == 20
+            assert _get_peer_rendezvous_timeout_value(None) == 20
         finally:
             if old is not None:
-                os.environ["HSYNC_PEER_DISCOVERY_TIMEOUT"] = old
+                os.environ["HSYNC_PEER_RENDEZVOUS_TIMEOUT"] = old
             else:
-                os.environ.pop("HSYNC_PEER_DISCOVERY_TIMEOUT", None)
+                os.environ.pop("HSYNC_PEER_RENDEZVOUS_TIMEOUT", None)
             get_env_settings.cache_clear()
 
     def test_env_zero_means_wait_indefinitely(self):
         """Environment value of 0 is valid and preserved."""
         get_env_settings.cache_clear()
-        old = os.environ.get("HSYNC_PEER_DISCOVERY_TIMEOUT")
-        os.environ["HSYNC_PEER_DISCOVERY_TIMEOUT"] = "0"
+        old = os.environ.get("HSYNC_PEER_RENDEZVOUS_TIMEOUT")
+        os.environ["HSYNC_PEER_RENDEZVOUS_TIMEOUT"] = "0"
         try:
             get_env_settings.cache_clear()
-            assert _get_peer_discovery_timeout_value(None) == 0
+            assert _get_peer_rendezvous_timeout_value(None) == 0
         finally:
             if old is not None:
-                os.environ["HSYNC_PEER_DISCOVERY_TIMEOUT"] = old
+                os.environ["HSYNC_PEER_RENDEZVOUS_TIMEOUT"] = old
             else:
-                os.environ.pop("HSYNC_PEER_DISCOVERY_TIMEOUT", None)
+                os.environ.pop("HSYNC_PEER_RENDEZVOUS_TIMEOUT", None)
             get_env_settings.cache_clear()
 
     def test_default_when_no_cli_no_env(self):
         """Default constant is used when neither CLI nor env is set."""
         get_env_settings.cache_clear()
-        old = os.environ.get("HSYNC_PEER_DISCOVERY_TIMEOUT")
-        os.environ.pop("HSYNC_PEER_DISCOVERY_TIMEOUT", None)
+        old = os.environ.get("HSYNC_PEER_RENDEZVOUS_TIMEOUT")
+        os.environ.pop("HSYNC_PEER_RENDEZVOUS_TIMEOUT", None)
         try:
             get_env_settings.cache_clear()
-            assert _get_peer_discovery_timeout_value(None) == DISCOVERY_TIMEOUT_DEFAULT
+            assert _get_peer_rendezvous_timeout_value(None) == RENDEZVOUS_TIMEOUT_DEFAULT
         finally:
             if old is not None:
-                os.environ["HSYNC_PEER_DISCOVERY_TIMEOUT"] = old
+                os.environ["HSYNC_PEER_RENDEZVOUS_TIMEOUT"] = old
             get_env_settings.cache_clear()
 
     def test_cli_overrides_env(self):
         """CLI argument overrides environment variable."""
         get_env_settings.cache_clear()
-        old = os.environ.get("HSYNC_PEER_DISCOVERY_TIMEOUT")
-        os.environ["HSYNC_PEER_DISCOVERY_TIMEOUT"] = "99"
+        old = os.environ.get("HSYNC_PEER_RENDEZVOUS_TIMEOUT")
+        os.environ["HSYNC_PEER_RENDEZVOUS_TIMEOUT"] = "99"
         try:
             get_env_settings.cache_clear()
-            assert _get_peer_discovery_timeout_value(5) == 5
+            assert _get_peer_rendezvous_timeout_value(5) == 5
         finally:
             if old is not None:
-                os.environ["HSYNC_PEER_DISCOVERY_TIMEOUT"] = old
+                os.environ["HSYNC_PEER_RENDEZVOUS_TIMEOUT"] = old
             else:
-                os.environ.pop("HSYNC_PEER_DISCOVERY_TIMEOUT", None)
+                os.environ.pop("HSYNC_PEER_RENDEZVOUS_TIMEOUT", None)
             get_env_settings.cache_clear()
 
 
@@ -450,7 +450,7 @@ class _RunSyncKwargs(TypedDict, total=False):
     max_bandwidth_download: int | None
     p2p_mode: bool
     p2p_listen_port: int
-    peer_discovery_timeout: int | None
+    peer_rendezvous_timeout: int | None
     p2p_group: str | None
     prefer_master: bool
     never_master: bool
@@ -490,7 +490,7 @@ def _default_run_sync_kwargs(
         "max_bandwidth_download": None,
         "p2p_mode": False,
         "p2p_listen_port": 0,
-        "peer_discovery_timeout": 5,
+        "peer_rendezvous_timeout": 5,
         "p2p_group": None,
         "prefer_master": False,
         "never_master": False,
@@ -599,21 +599,21 @@ class TestRunSync:
             # run_p2p_mode should have been called
             mock_p2p.assert_called_once()
 
-    def test_p2p_mode_uses_default_discovery_timeout_when_unset(self, tmp_path):
-        """P2P discovery timeout defaults to 10 when CLI and env are unset."""
+    def test_p2p_mode_uses_default_rendezvous_timeout_when_unset(self, tmp_path):
+        """P2P rendezvous timeout defaults to 10 when CLI and env are unset."""
         kwargs = _default_run_sync_kwargs(
             tmp_path,
             server_url=None,
             p2p_mode=True,
             p2p_allow_unauthenticated=True,
-            peer_discovery_timeout=None,
+            peer_rendezvous_timeout=None,
             sync_direction="download-only",
         )
 
         with (
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
             patch("hsync_client.main_logic.get_server_url", return_value=None),
-            patch("hsync_client.main_logic.get_peer_discovery_timeout", return_value=None),
+            patch("hsync_client.main_logic.get_peer_rendezvous_timeout", return_value=None),
             patch("hsync_client.p2p_handler.run_p2p_mode") as mock_p2p,
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
@@ -626,7 +626,7 @@ class TestRunSync:
             assert exc_info.value.code == 0
 
         config_arg = mock_p2p.call_args.args[0]
-        assert config_arg["PEER_DISCOVERY_TIMEOUT"] == DISCOVERY_TIMEOUT_DEFAULT
+        assert config_arg["PEER_RENDEZVOUS_TIMEOUT"] == RENDEZVOUS_TIMEOUT_DEFAULT
 
     def test_p2p_mode_derives_one_shot_from_continuous(self, tmp_path):
         """ONE_SHOT mirrors --once: continuous=False -> True, True -> False."""
@@ -655,14 +655,14 @@ class TestRunSync:
             config_arg = mock_p2p.call_args.args[0]
             assert config_arg["ONE_SHOT"] is expected
 
-    def test_p2p_mode_preserves_zero_discovery_timeout(self, tmp_path):
-        """P2P discovery timeout of 0 is preserved as wait-indefinitely."""
+    def test_p2p_mode_preserves_zero_rendezvous_timeout(self, tmp_path):
+        """P2P rendezvous timeout of 0 is preserved as wait-indefinitely."""
         kwargs = _default_run_sync_kwargs(
             tmp_path,
             server_url=None,
             p2p_mode=True,
             p2p_allow_unauthenticated=True,
-            peer_discovery_timeout=0,
+            peer_rendezvous_timeout=0,
             sync_direction="download-only",
         )
 
@@ -681,7 +681,7 @@ class TestRunSync:
             assert exc_info.value.code == 0
 
         config_arg = mock_p2p.call_args.args[0]
-        assert config_arg["PEER_DISCOVERY_TIMEOUT"] == 0
+        assert config_arg["PEER_RENDEZVOUS_TIMEOUT"] == 0
 
     def test_invalid_logfile_returns_early(self, tmp_path):
         """run_sync exits non-zero when the logfile path is invalid."""
@@ -920,7 +920,7 @@ class TestRunSync:
 
     def test_p2p_passphrase_is_derived_into_the_config(self, tmp_path):
         """A valid password is scrypt-derived to the 64-hex group key."""
-        from hsync_common.protocol.boot_tokens import derive_group_key
+        from hsync_common.protocol.rdv_tokens import derive_group_key
 
         kwargs = _default_run_sync_kwargs(tmp_path, server_url="https://localhost:8000")
 
@@ -1278,7 +1278,7 @@ class TestStartupErrorVisibility:
             server_url=None,
             p2p_mode=True,
             p2p_allow_unauthenticated=True,
-            peer_discovery_timeout=None,
+            peer_rendezvous_timeout=None,
             sync_direction="download-only",
             events_json_fd=write_fd,
         )
@@ -1286,7 +1286,7 @@ class TestStartupErrorVisibility:
             with (
                 patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
                 patch("hsync_client.main_logic.get_server_url", return_value=None),
-                patch("hsync_client.main_logic.get_peer_discovery_timeout", return_value=None),
+                patch("hsync_client.main_logic.get_peer_rendezvous_timeout", return_value=None),
                 patch("hsync_client.p2p_handler.run_p2p_mode") as mock_p2p,
                 patch("hsync_client.main_logic.set_config"),
                 patch("hsync_client.main_logic.set_debug"),
@@ -1320,7 +1320,7 @@ class TestStartupErrorVisibility:
             server_url=None,
             p2p_mode=True,
             p2p_allow_unauthenticated=True,
-            peer_discovery_timeout=None,
+            peer_rendezvous_timeout=None,
             sync_direction="download-only",
             events_json_fd=write_fd,
         )
@@ -1333,7 +1333,7 @@ class TestStartupErrorVisibility:
             with (
                 patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
                 patch("hsync_client.main_logic.get_server_url", return_value=None),
-                patch("hsync_client.main_logic.get_peer_discovery_timeout", return_value=None),
+                patch("hsync_client.main_logic.get_peer_rendezvous_timeout", return_value=None),
                 patch("hsync_client.main_logic.set_config"),
                 patch("hsync_client.main_logic.set_debug"),
                 patch("hsync_client.main_logic.is_tty_interactive", return_value=True),

@@ -386,7 +386,7 @@ async def _refresh_network_tuning() -> None:
 
     Only keys listed in ``CONFIG["AUTOTUNE_MANAGED_KEYS"]`` are rewritten, so
     an explicit CLI/env override (``--http-timeout``, ``HSYNC_RECONNECT_DELAY`` …)
-    survives the refresh — same guard as the P2P post-discovery refresh
+    survives the refresh — same guard as the P2P post-rendezvous refresh
     (``p2p_handler._refresh_p2p_network_tuning``). A failed/unmeasurable probe
     keeps the current values instead of resetting them to the SAFE profile.
     When the passive bandwidth EMA is still empty (startup active probe

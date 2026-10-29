@@ -4,8 +4,8 @@ This guide covers the test suite for the HSYNC Client: structure, how to run
 tests, how to write new tests, and cross-project testing with `hsync-common`.
 
 > **Terminology:** in this guide **LAN** denotes the p2p test lane (the black-box
-> `test_bb_p2p_*` suite, which runs the **mDNS** discovery plan on loopback). p2p
-> mode also supports the **bootnode** discovery plan; those tests do not exercise
+> `test_bb_p2p_*` suite, which runs the **mDNS** rendezvous plan on loopback). p2p
+> mode also supports the **rendezvous** rendezvous plan; those tests do not exercise
 > it.
 
 > For development setup, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
@@ -110,7 +110,7 @@ tests/
 ├── test_p2p_server_https.py            # LAN server HTTPS setup
 ├── test_p2p_server_security.py         # LAN server security
 ├── test_p2p_server_thread_cap.py       # LAN server thread cap
-├── test_p2p_service_listener.py        # LAN service discovery listener
+├── test_p2p_service_listener.py        # LAN service rendezvous listener
 ├── test_p2p_utils.py                   # LAN utility functions
 ├── test_p2p_websocket_handle.py        # LAN WebSocket handle
 ├── test_p2p_websocket_handler.py       # LAN WebSocket handler
@@ -289,11 +289,11 @@ async def test_websocket_event(mock_ws):
 
 ## p2p mode testing
 
-p2p mode tests require special setup because they involve mDNS discovery and
+p2p mode tests require special setup because they involve mDNS rendezvous and
 peer-to-peer connections:
 
 1. Use `pytest-asyncio` for async LAN operations
-2. Mock `zeroconf` service discovery to avoid needing a real mDNS daemon
+2. Mock `zeroconf` service rendezvous to avoid needing a real mDNS daemon
 3. Test master election logic independently with known peer lists
 4. Test LAN server startup/shutdown lifecycle
 5. Test fingerprint pinning with known certificate hashes
@@ -355,7 +355,7 @@ files:
 
 | File | What it covers |
 |------|---------------|
-| `test_bb_p2p_core.py` | Core LAN sync cycle: discovery, election, full sync. |
+| `test_bb_p2p_core.py` | Core LAN sync cycle: rendezvous, election, full sync. |
 | `test_bb_p2p_advanced.py` | Advanced LAN scenarios (edge cases, complex file trees). |
 | `test_bb_p2p_auth_direction.py` | LAN authentication and sync‑direction enforcement. |
 | `test_bb_p2p_delta.py` | LAN delta transfer over the public REST surface (reconstruct, 404s). |
@@ -368,9 +368,9 @@ files:
 | `test_bb_p2p_websocket_relay.py` | p2p WebSocket relay, fan‑out, and handshake protocol. |
 | `test_bb_p2p_corrected_mtime.py` | ADR-0023 corrected‑mtime tie‑break in p2p mode: divergent edits converge on the newer corrected mtime with loser preservation; sync completes when NTP is unreachable. |
 
-| `test_bb_p2p_bootnode_client.py` | the client's `BootnodeClient` against the **real** `hsync-bootnode` (register → ack/STUN-echo, query relay, refresh, leave); skips when the sibling bootnode is not built. |
-| `test_bb_p2p_bootnode_discovery.py` | two clients discover **and sync through** a loopback bootnode (`BOOTNODE 127.0.0.1 --port <p> --insecure`); also holds the opt-in real-NAT check. |
-| `test_bb_p2p_bootnode_relay.py` | the **data relay** end-to-end: a master that advertises only undialable candidates (test seam `HSYNC_P2P_TEST_ADVERTISED_ENDPOINTS`) syncs with a slave **through** a `--relay` bootnode — both `[RELAY]` lines plus the file exchange. |
+| `test_bb_p2p_rendezvous_client.py` | the client's `RendezvousClient` against the **real** `hsync-rendezvous` (register → ack/STUN-echo, query relay, refresh, leave); skips when the sibling rendezvous is not built. |
+| `test_bb_p2p_rendezvous_rendezvous.py` | two clients discover **and sync through** a loopback rendezvous (`RENDEZVOUS 127.0.0.1 --port <p> --insecure`); also holds the opt-in real-NAT check. |
+| `test_bb_p2p_rendezvous_relay.py` | the **data relay** end-to-end: a master that advertises only undialable candidates (test seam `HSYNC_P2P_TEST_ADVERTISED_ENDPOINTS`) syncs with a slave **through** a `--relay` rendezvous — both `[RELAY]` lines plus the file exchange. |
 
 **These tests are disabled by default** because they are inherently
 environment‑sensitive (multicast on loopback, self‑signed certificate
@@ -419,7 +419,7 @@ design).
   and `HSYNC_P2P_PIN_FILE` (TOFU pins) under the test's `tmp_path` — nothing
   ever touches the developer's real `~/.local/state/hsync`. Two peers in one
   test are *distinct devices* by construction (same host + same bucket +
-  same device ID would be ignored as "self" in discovery). Restarting a peer
+  same device ID would be ignored as "self" in rendezvous). Restarting a peer
   on the same directory reuses its identity; deleting the `*.pem` files
   rotates the certificate while keeping the device ID (used by the
   fingerprint-changed test).

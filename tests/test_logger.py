@@ -308,10 +308,10 @@ class TestSetupLogging:
     def test_aioquic_quic_logger_is_quiet_at_info(self):
         """aioquic's per-frame QUIC/TLS chatter is hidden unless ``--debug``.
 
-        Regression: ``quic`` logs several INFO lines per boot/1 exchange
+        Regression: ``quic`` logs several INFO lines per rdv/1 exchange
         ("Retrying with token", "Negotiated protocol version", "ALPN negotiated
         protocol", "Connection close sent"), drowning the client's own one-line
-        summary. Its level is pinned to WARNING; the boot/1 client logs the
+        summary. Its level is pinned to WARNING; the rdv/1 client logs the
         concise per-cycle line instead.
         """
         setup_logging()

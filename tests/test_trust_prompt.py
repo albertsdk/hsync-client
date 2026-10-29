@@ -19,25 +19,25 @@ def tty(monkeypatch):
 
 @pytest.mark.parametrize("policy", [TrustPolicy.accept_new, TrustPolicy.strict, TrustPolicy.none])
 def test_non_ask_policies_never_prompt(policy, tty):
-    assert trust_prompt.build_trust_prompt({"DISCOVERY_SERVER_TRUST": policy}) is None
+    assert trust_prompt.build_trust_prompt({"RENDEZVOUS_SERVER_TRUST": policy}) is None
 
 
 def test_ask_without_a_terminal_fails_closed(tty):
     tty["isatty"] = False
-    assert trust_prompt.build_trust_prompt({"DISCOVERY_SERVER_TRUST": TrustPolicy.ask}) is None
+    assert trust_prompt.build_trust_prompt({"RENDEZVOUS_SERVER_TRUST": TrustPolicy.ask}) is None
 
 
 def test_ask_on_a_terminal_uses_the_ssh_style_prompt(tty):
-    prompt = trust_prompt.build_trust_prompt({"DISCOVERY_SERVER_TRUST": TrustPolicy.ask})
+    prompt = trust_prompt.build_trust_prompt({"RENDEZVOUS_SERVER_TRUST": TrustPolicy.ask})
     assert prompt is trust_prompt.terminal_trust_prompt
 
 
 def test_ask_prompt_is_not_auto_accepted(tty):
     """Policy ``ask`` always uses the SSH-style prompt; there is no auto-accept."""
-    prompt = trust_prompt.build_trust_prompt({"DISCOVERY_SERVER_TRUST": TrustPolicy.ask})
+    prompt = trust_prompt.build_trust_prompt({"RENDEZVOUS_SERVER_TRUST": TrustPolicy.ask})
     assert prompt is trust_prompt.terminal_trust_prompt
     tty["isatty"] = False
-    assert trust_prompt.build_trust_prompt({"DISCOVERY_SERVER_TRUST": TrustPolicy.ask}) is None
+    assert trust_prompt.build_trust_prompt({"RENDEZVOUS_SERVER_TRUST": TrustPolicy.ask}) is None
 
 
 def test_server_policy_key_and_prompt(tty):
@@ -48,10 +48,10 @@ def test_server_policy_key_and_prompt(tty):
         prompt=trust_prompt.server_terminal_trust_prompt,
     )
     assert prompt is trust_prompt.server_terminal_trust_prompt
-    # The bootnode policy key is not consulted when the server key is selected.
+    # The rendezvous policy key is not consulted when the server key is selected.
     assert (
         trust_prompt.build_trust_prompt(
-            {"DISCOVERY_SERVER_TRUST": TrustPolicy.ask},
+            {"RENDEZVOUS_SERVER_TRUST": TrustPolicy.ask},
             policy_key="SERVER_TRUST",
             prompt=trust_prompt.server_terminal_trust_prompt,
         )

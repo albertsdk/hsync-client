@@ -41,7 +41,7 @@ __all__ = [
 # lines without needing a lock.
 _PIPE_ATOMIC_WRITE = 4096
 
-# Warnings are episodic by nature (a discovery server that flaps, a watcher that
+# Warnings are episodic by nature (a rendezvous server that flaps, a watcher that
 # degrades and recovers): the structured channel carries at most one entry per
 # ``(source, message)`` per window. Without it a flapping condition would turn
 # into a notification storm, which is worse than the silence it replaces. The
@@ -195,7 +195,7 @@ def emit_warning(
     """Publish a non-fatal warning on the structured channel, deduplicated.
 
     The engine already logs the same fact (``[WATCHER FALLBACK]``, an
-    unreachable discovery server, …): this is its structured counterpart, which a
+    unreachable rendezvous server, …): this is its structured counterpart, which a
     front-end surfaces as an in-app banner and — when the window is not focused
     — as a system notification. A non-fatal condition must never be reported as
     ``error``: the run continues.

@@ -267,7 +267,7 @@ def setup_logging(
 
     # aioquic logs every QUIC connection lifecycle at INFO ("Retrying with
     # token", "Negotiated protocol version", "ALPN negotiated protocol",
-    # "Connection close sent") — several lines per boot/1 exchange. The bootnode
+    # "Connection close sent") — several lines per rdv/1 exchange. The rendezvous
     # client already logs one concise line per exchange, so keep the library at
     # WARNING (still surfaced) unless the user asked for the full detail with
     # ``--debug``, where its diagnostics remain useful.

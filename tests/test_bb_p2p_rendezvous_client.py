@@ -1,16 +1,16 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""Black-box integration: ``BootnodeClient`` against the real ``hsync-bootnode``.
+"""Black-box integration: ``RendezvousClient`` against the real ``hsync-rendezvous``.
 
-The bootnode is a separate repository. This test spawns its sibling binary on a
+The rendezvous is a separate repository. This test spawns its sibling binary on a
 loopback UDP port (with a scrubbed environment and a ready file) and drives the
-public ``boot/1`` wire through the client's QUIC client: register → ack
+public ``rdv/1`` wire through the client's QUIC client: register → ack
 (STUN-echo), query → relayed peer, refresh → ack, leave. It asserts only the
-wire contract, so it would pass against a C ``hsync-bootnode`` too.
+wire contract, so it would pass against a C ``hsync-rendezvous`` too.
 
 Gated by ``HSYNC_BB_P2P=1`` (the client BB gate) and skipped when the sibling
-bootnode is not built.
+rendezvous is not built.
 """
 
 from __future__ import annotations
@@ -20,23 +20,23 @@ import os
 import pytest
 from hsync_common.protocol.tls_trust import TrustPolicy
 
-from hsync_client.boot_client import (
-    BootnodeClient,
+from hsync_client.rdv_client import (
+    RendezvousClient,
     build_leave_frame,
     build_query_frame,
     build_refresh_frame,
     build_register_frame,
 )
 from tests.p2p_helpers import (
-    _bootnode_start,
+    _rendezvous_start,
     _reserve_udp_port,
-    _stop_bootnode,
-    _wait_for_bootnode,
+    _stop_rendezvous,
+    _wait_for_rendezvous,
 )
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("HSYNC_BB_P2P") != "1",
-    reason="Bootnode client e2e needs a loopback bootnode; set HSYNC_BB_P2P=1 to enable",
+    reason="Rendezvous client e2e needs a loopback rendezvous; set HSYNC_BB_P2P=1 to enable",
 )
 
 CID = "A1b2C3d4E5f6G7h8I9j0K"
@@ -45,27 +45,27 @@ BUCKET = "shared"
 
 
 @pytest.fixture
-def bootnode_endpoint(tmp_path):
-    """Start the sibling bootnode on loopback and yield its ``(host, port)``."""
+def rendezvous_endpoint(tmp_path):
+    """Start the sibling rendezvous on loopback and yield its ``(host, port)``."""
     port = _reserve_udp_port()
-    ready_file = tmp_path / "bootnode.ready"
+    ready_file = tmp_path / "rendezvous.ready"
     try:
-        proc = _bootnode_start(port, ready_file)
+        proc = _rendezvous_start(port, ready_file)
     except FileNotFoundError:
-        pytest.skip("hsync-bootnode is not built (sibling repo venv missing)")
+        pytest.skip("hsync-rendezvous is not built (sibling repo venv missing)")
     try:
-        if not _wait_for_bootnode(proc, ready_file):
+        if not _wait_for_rendezvous(proc, ready_file):
             output = proc.stdout.read() if proc.stdout else ""
-            pytest.skip(f"bootnode did not become ready: {output}")
+            pytest.skip(f"rendezvous did not become ready: {output}")
         yield "127.0.0.1", port
     finally:
-        _stop_bootnode(proc)
+        _stop_rendezvous(proc)
 
 
-def test_boot_1_roundtrip_against_real_bootnode(bootnode_endpoint):
+def test_boot_1_roundtrip_against_real_rendezvous(rendezvous_endpoint):
     """register ack/STUN-echo, query relay, refresh and leave succeed."""
-    host, port = bootnode_endpoint
-    client = BootnodeClient(host, port, policy=TrustPolicy.none, timeout=10.0)
+    host, port = rendezvous_endpoint
+    client = RendezvousClient(host, port, policy=TrustPolicy.none, timeout=10.0)
 
     ack = client.register(
         build_register_frame(
@@ -85,7 +85,7 @@ def test_boot_1_roundtrip_against_real_bootnode(bootnode_endpoint):
     response = client.query(build_query_frame(bucket=BUCKET))
     assert response is not None
     relayed = [peer for peer in response["peers"] if peer["cid"] == CID]
-    assert relayed, "the bootnode must relay the peer it just registered"
+    assert relayed, "the rendezvous must relay the peer it just registered"
     assert relayed[0]["capacity"] == 5
     assert relayed[0]["reachable"] is True
 

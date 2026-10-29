@@ -1,20 +1,20 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""Bootnode discovery plan for ``hsync p2p`` (cross-network, ``boot/1``).
+"""Rendezvous rendezvous plan for ``hsync p2p`` (cross-network, ``rdv/1``).
 
-The second implementation of the :class:`~hsync_client.p2p_discovery.DiscoveryPlan`
-interface: instead of browsing mDNS, it keeps a lease on a ``boot/1`` bootstrap
+The second implementation of the :class:`~hsync_client.p2p_rendezvous.RendezvousPlan`
+interface: instead of browsing mDNS, it keeps a lease on a ``rdv/1`` rendezvous
 node (register → refresh, TTL 60 s), queries it for a random peer sample and
 feeds the shared :class:`~hsync_client.p2p_peers.PeerManager`. Master election,
 pairing and the data-plane are unchanged — this module only supplies peers.
 
 This source is optional: when the node cannot be reached the lease loop retries
-(``BootnodeError``), and when it is not trusted the source is disabled for the
+(``RendezvousError``), and when it is not trusted the source is disabled for the
 rest of the run instead of failing the whole run, so the remaining sources keep
 the group reachable.
 
-Lease semantics (spec ``boot-1.md``): the first ``register`` has no endpoint
+Lease semantics (spec ``rdv-1.md``): the first ``register`` has no endpoint
 (the public address is not known yet); the ``ack`` carries the observed
 endpoint (STUN-echo). Once the handler says the data-plane endpoint is ready,
 the adapter maps the TCP port with UPnP (best-effort) and sends a **second
@@ -33,34 +33,16 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from hsync_common.endpoint import format_authority
-from hsync_common.protocol.bootnode import BootPeer, derive_bucket_token
+from hsync_common.protocol.rendezvous import RdvPeer, derive_bucket_token
 from hsync_common.protocol.tls_trust import TrustPolicy
 from loguru import logger as log
 
-from hsync_client.boot_client import (
-    BootnodeClient,
-    BootnodeError,
-    BootnodeFingerprintMismatch,
-    BootnodeNotTrusted,
-    BootnodeRefused,
-    TrustPrompt,
-    build_leave_frame,
-    build_query_frame,
-    build_refresh_frame,
-    build_register_frame,
-)
-from hsync_client.boot_relay import (
-    FailoverRelayDialer,
-    GroupRelayAcceptor,
-    RelayAcceptor,
-    RelayDialer,
-)
 from hsync_client.constants import (
-    BOOTNODE_DEFAULT_PORT,
-    BOOTNODE_REFRESH_INTERVAL,
-    BOOTNODE_REFRESH_INTERVAL_MIN,
     HSYNC_VERSION,
     PEER_TIMEOUT,
+    RENDEZVOUS_DEFAULT_PORT,
+    RENDEZVOUS_REFRESH_INTERVAL,
+    RENDEZVOUS_REFRESH_INTERVAL_MIN,
 )
 from hsync_client.events import emit_warning
 from hsync_client.nat_traversal import CandidateEndpoint, candidate_endpoints
@@ -70,7 +52,6 @@ from hsync_client.net_watch import (
     NetworkSignature,
     get_network_monitor,
 )
-from hsync_client.p2p_discovery import DiscoveryPlanState
 from hsync_client.p2p_peers import (
     HSYNC_P2P_LISTEN_PORT,
     Peer,
@@ -78,21 +59,40 @@ from hsync_client.p2p_peers import (
     dial_candidates,
     get_free_port,
 )
+from hsync_client.p2p_rendezvous import RendezvousPlanState
+from hsync_client.rdv_client import (
+    RendezvousClient,
+    RendezvousError,
+    RendezvousFingerprintMismatch,
+    RendezvousNotTrusted,
+    RendezvousRefused,
+    TrustPrompt,
+    build_leave_frame,
+    build_query_frame,
+    build_refresh_frame,
+    build_register_frame,
+)
+from hsync_client.rdv_relay import (
+    FailoverRelayDialer,
+    GroupRelayAcceptor,
+    RelayAcceptor,
+    RelayDialer,
+)
 from hsync_client.stun import ObservedAddress, observed_address
 from hsync_client.upnp import UpnpMapper
 
-__all__ = ["BootnodeDiscovery", "MultiBootnodeDiscovery", "SharedUpnpMapping"]
+__all__ = ["RendezvousRendezvous", "MultiRendezvousRendezvous", "SharedUpnpMapping"]
 
-# How often the lease loop wakes to register/refresh/query. The bootnode
+# How often the lease loop wakes to register/refresh/query. The rendezvous
 # rate-limits ``query`` to 5/min per (IP, bucket) and ``register``/``refresh`` to
-# 10/min (``boot-1.md``), so the client uses the spec's 30 s refresh window
+# 10/min (``rdv-1.md``), so the client uses the spec's 30 s refresh window
 # instead of the mDNS heartbeat cadence.
-_DEFAULT_REFRESH_S = BOOTNODE_REFRESH_INTERVAL
+_DEFAULT_REFRESH_S = RENDEZVOUS_REFRESH_INTERVAL
 
 # Test-only override of the endpoint list a master publishes. Test-only: no CLI
 # flag, no config field, no packaging/docs surface — it exists so a black-box
 # test can make a real master advertise undialable candidates on a single host
-# and force the relayed path (``tests/test_bb_p2p_bootnode_relay.py``).
+# and force the relayed path (``tests/test_bb_p2p_rendezvous_relay.py``).
 _TEST_ADVERTISED_ENDPOINTS_ENV = "HSYNC_P2P_TEST_ADVERTISED_ENDPOINTS"
 
 
@@ -128,7 +128,7 @@ def _test_advertised_endpoints() -> list[CandidateEndpoint] | None:
 
 
 class SharedUpnpMapping:
-    """One UPnP mapping shared by every discovery source of this process.
+    """One UPnP mapping shared by every rendezvous source of this process.
 
     N sources publish the same data-plane port, so mapping per source would
     create N mappings and up to N different external ports for one service. The
@@ -162,17 +162,17 @@ class SharedUpnpMapping:
                 log.debug(f"UPnP unmap failed: {exc}")
 
 
-class BootnodeDiscovery(DiscoveryPlanState):
-    """``DiscoveryPlan`` backed by a ``boot/1`` bootstrap node."""
+class RendezvousRendezvous(RendezvousPlanState):
+    """``RendezvousPlan`` backed by a ``rdv/1`` rendezvous node."""
 
     def __init__(
         self,
         cid: str,
         bucket: str,
         *,
-        bootnode_host: str,
-        bootnode_port: int = BOOTNODE_DEFAULT_PORT,
-        bootnode_ports: tuple[int, ...] = (),
+        rendezvous_host: str,
+        rendezvous_port: int = RENDEZVOUS_DEFAULT_PORT,
+        rendezvous_ports: tuple[int, ...] = (),
         port: int = HSYNC_P2P_LISTEN_PORT,
         group: str | None = None,
         use_https: bool = True,
@@ -191,12 +191,12 @@ class BootnodeDiscovery(DiscoveryPlanState):
         shared_upnp: SharedUpnpMapping | None = None,
         capacity: int = 0,
         peer_download_enabled: bool = False,
-        client_factory: Callable[..., BootnodeClient] = BootnodeClient,
+        client_factory: Callable[..., RendezvousClient] = RendezvousClient,
         upnp_factory: Callable[[], UpnpMapper] = UpnpMapper,
         local_ip: str | None = None,
     ) -> None:
-        self._bootnode_host = bootnode_host
-        self._bootnode_port = bootnode_port
+        self._rendezvous_host = rendezvous_host
+        self._rendezvous_port = rendezvous_port
         self._init_common_fields(
             cid=cid,
             bucket=bucket,
@@ -209,9 +209,9 @@ class BootnodeDiscovery(DiscoveryPlanState):
             sync_direction=sync_direction,
             peer_timeout=peer_timeout,
         )
-        self._refresh_interval = max(float(BOOTNODE_REFRESH_INTERVAL_MIN), refresh_interval)
+        self._refresh_interval = max(float(RENDEZVOUS_REFRESH_INTERVAL_MIN), refresh_interval)
         # Earliest monotonic time the next ``query`` may run: keeps the client
-        # inside the bootnode's 5/min per-(IP, bucket) query budget and honours a
+        # inside the rendezvous's 5/min per-(IP, bucket) query budget and honours a
         # ``rate_limited`` ``retry_after`` instead of hammering the node.
         self._next_query_at = 0.0
         self._upnp_enabled = upnp_enabled
@@ -220,9 +220,9 @@ class BootnodeDiscovery(DiscoveryPlanState):
         self._port = port if port != 0 else get_free_port()
 
         self._client: Any = client_factory(
-            bootnode_host,
-            bootnode_port,
-            ports=bootnode_ports,
+            rendezvous_host,
+            rendezvous_port,
+            ports=rendezvous_ports,
             fingerprints=fingerprints,
             policy=policy,
             prompt=prompt,
@@ -263,13 +263,13 @@ class BootnodeDiscovery(DiscoveryPlanState):
         # flip that lands while a re-register is in flight.
         self._advert_generation = 0
         self._sent_advert_generation = 0
-        # Uniform refusals (rate limit / token) are legitimate boot/1 answers:
+        # Uniform refusals (rate limit / token) are legitimate rdv/1 answers:
         # log the first occurrence of each error at WARNING, repeats at DEBUG,
         # so a persistent misconfiguration stays visible without spamming.
         self._refusals_logged: set[str] = set()
 
-        self._discovery_announced = False
-        # Alive-peer count at the previous discovery window, so the "found N
+        self._rendezvous_announced = False
+        # Alive-peer count at the previous rendezvous window, so the "found N
         # peer(s)" line is emitted only when the count changes.
         self._last_peer_count = 0
         # This source stopped for good (the node is not trusted). The lease loop
@@ -280,7 +280,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
         # the departure frame.
         self._untrusted = False
 
-    # -- DiscoveryPlan surface -------------------------------------------------
+    # -- RendezvousPlan surface -------------------------------------------------
 
     def start(
         self, register_service: bool = True, peer_manager: PeerManager | None = None
@@ -288,7 +288,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
         """Start the lease loop and return the shared :class:`PeerManager`.
 
         ``peer_manager`` lets a combined plan share one manager across both
-        discovery sources (mDNS + bootnode); it is built from this plan's
+        rendezvous sources (mDNS + rendezvous); it is built from this plan's
         configuration when omitted.
         """
         manager = peer_manager or self.create_peer_manager()
@@ -299,7 +299,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
         manager.elect()
         self._running = True
         self._thread = threading.Thread(
-            target=self._lease_loop, name="p2p-bootnode-lease", daemon=True
+            target=self._lease_loop, name="p2p-rendezvous-lease", daemon=True
         )
         self._thread.start()
         # Wake the lease loop on a network change so a changed address is
@@ -328,23 +328,23 @@ class BootnodeDiscovery(DiscoveryPlanState):
         if self._owns_upnp_mapping and self._shared_upnp is not None:
             self._shared_upnp.unmap()
 
-    def wait_for_discovery(self, timeout: float) -> None:
+    def wait_for_rendezvous(self, timeout: float) -> None:
         """Block until at least one live peer is known, or ``timeout`` elapses.
 
         The network cadence (register/refresh/query) belongs to the lease loop,
-        which runs at :data:`BOOTNODE_REFRESH_INTERVAL` (spec: 30 s) to stay
-        inside the bootnode's per-bucket rate limits. This wait therefore only
+        which runs at :data:`RENDEZVOUS_REFRESH_INTERVAL` (spec: 30 s) to stay
+        inside the rendezvous's per-bucket rate limits. This wait therefore only
         parks on the shared peer-change event; it never polls ``query`` itself,
         or it would exhaust the 5/min per-(IP, bucket) query budget and the node
         would answer ``rate_limited`` for the rest of the window.
         """
         if self._peer_manager is None:
             return
-        if not self._discovery_announced:
-            log.info(f"Waiting {timeout}s for peer discovery...")
-            self._discovery_announced = True
+        if not self._rendezvous_announced:
+            log.info(f"Waiting {timeout}s for peer rendezvous...")
+            self._rendezvous_announced = True
         else:
-            log.debug(f"Waiting {timeout}s for peer discovery...")
+            log.debug(f"Waiting {timeout}s for peer rendezvous...")
 
         # Event-driven wait on the shared peer-change condition (no network),
         # in short slices: peers from the other sources keep arriving while
@@ -366,18 +366,18 @@ class BootnodeDiscovery(DiscoveryPlanState):
         Set when the node is not trusted (policy ``ask`` without a terminal, a
         changed pin, ``strict`` without one). The combined plan reads it so it
         stops requiring this source's endpoint publication; the sync core never
-        sees it: a disabled source is a degraded discovery state, never a fatal
+        sees it: a disabled source is a degraded rendezvous state, never a fatal
         run, and the remaining sources keep the group reachable.
         """
         return self._source_disabled
 
     def log_peer_count(self) -> None:
-        """Log the bootnode discovery result when the alive-peer count changes."""
+        """Log the rendezvous rendezvous result when the alive-peer count changes."""
         peers = self._peer_manager.get_alive_peers() if self._peer_manager else []
         if len(peers) != self._last_peer_count:
             self._last_peer_count = len(peers)
             if peers:
-                log.info(f"Bootnode discovery: found {len(peers)} peer(s)")
+                log.info(f"Rendezvous rendezvous: found {len(peers)} peer(s)")
 
     def update_endpoint_ready(self, ready: bool) -> None:
         """Publish (or retract) this node's data-plane endpoint."""
@@ -417,13 +417,13 @@ class BootnodeDiscovery(DiscoveryPlanState):
         )
 
     def endpoint_published(self) -> bool:
-        """True once the bootnode has been sent our endpoint (second register)."""
+        """True once the rendezvous has been sent our endpoint (second register)."""
         return self._published_endpoints
 
     def update_server_ready(self) -> None:
         """The local master server is ready to accept peers.
 
-        Publishes the incumbency twice: in the bootnode advertisement (so relayed
+        Publishes the incumbency twice: in the rendezvous advertisement (so relayed
         peers rank this node as the serving master, exactly like the mDNS
         ``server_ready`` TXT flag) and in the shared :class:`PeerManager` (an
         incumbent must also win its *own* election, otherwise the next relayed
@@ -498,7 +498,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
             return False
         log.info(
             f"Local address changed from {self._published_local_ip} to {current}; "
-            "republishing the bootnode endpoint"
+            "republishing the rendezvous endpoint"
         )
         self._published_endpoints = False
         if self._shared_upnp is not None:
@@ -543,53 +543,53 @@ class BootnodeDiscovery(DiscoveryPlanState):
                     action = "refresh"
                     self._refresh()
                 self._query_peers()
-            except BootnodeNotTrusted as exc:
+            except RendezvousNotTrusted as exc:
                 # Policy ``ask`` could not establish trust (declined, or no
                 # terminal). Never re-prompt every cycle, and never contact the
                 # node again — but it is an optional cross-network source, so
                 # disable it instead of ending the run the local network can
                 # still serve.
                 self._disable_source(
-                    f"Bootnode {format_authority(self._bootnode_host, self._bootnode_port)} "
+                    f"Rendezvous {format_authority(self._rendezvous_host, self._rendezvous_port)} "
                     f"not trusted: {exc}",
                 )
                 return
-            except BootnodeFingerprintMismatch as exc:
-                # The bootnode failed authentication: never retry an
+            except RendezvousFingerprintMismatch as exc:
+                # The rendezvous failed authentication: never retry an
                 # unpinned/untrusted node (the token would leak to an attacker).
                 # The source is disabled for the rest of the run while the other
-                # discovery sources keep the group reachable; the full SSH-style
+                # rendezvous sources keep the group reachable; the full SSH-style
                 # recovery block is logged here, once.
                 self._disable_source(str(exc), guidance=exc.guidance)
                 return
-            except BootnodeRefused as exc:
+            except RendezvousRefused as exc:
                 # A uniform refusal (token / rate limit / node capacity) is a valid
-                # boot/1 answer: keep the lease state and retry at the normal
+                # rdv/1 answer: keep the lease state and retry at the normal
                 # cadence instead of resetting to a full register (which would
                 # deepen a rate limit). Honour the node's ``retry_after`` so a
                 # rate-limited or overloaded client waits at least as long as the
                 # node asked, never less.
                 self._log_refusal(exc)
                 backoff = float(exc.retry_after or 0)
-            except BootnodeError as exc:
+            except RendezvousError as exc:
                 message = (
-                    f"Bootnode {format_authority(self._bootnode_host, self._bootnode_port)} "
+                    f"Rendezvous {format_authority(self._rendezvous_host, self._rendezvous_port)} "
                     f"unreachable: {exc}"
                 )
                 log.warning(message)
-                # Structured counterpart: discovery keeps retrying, so this is a
+                # Structured counterpart: rendezvous keeps retrying, so this is a
                 # warning (the run continues), not an error. Deduplicated, so a
                 # flapping node cannot flood the front-end.
-                emit_warning(message, source="bootnode", reason="unreachable")
+                emit_warning(message, source="rendezvous", reason="unreachable")
                 first = True  # re-register once the node is reachable again
             except Exception as exc:
-                log.warning(f"Bootnode lease loop error: {exc}")
+                log.warning(f"Rendezvous lease loop error: {exc}")
             else:
                 # One concise line per successful lease cycle instead of the
                 # per-frame QUIC/TLS chatter aioquic logs at INFO (now DEBUG).
                 peers = self._peer_manager.get_alive_peers() if self._peer_manager else []
                 log.info(
-                    f"Bootnode {format_authority(self._bootnode_host, self._bootnode_port)}: "
+                    f"Rendezvous {format_authority(self._rendezvous_host, self._rendezvous_port)}: "
                     f"{action} ok ({len(peers)} peer(s))"
                 )
             self._wake.wait(timeout=max(self._refresh_interval, backoff))
@@ -610,7 +610,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
             self._register(publish_endpoint=False)
 
     def _disable_source(self, message: str, *, guidance: str | None = None) -> None:
-        """Stop this discovery source for the rest of the run.
+        """Stop this rendezvous source for the rest of the run.
 
         A node that is not trusted must never be contacted again (the
         ``bucket_token`` would leak to an attacker), but it cannot remove the
@@ -623,15 +623,15 @@ class BootnodeDiscovery(DiscoveryPlanState):
         self._untrusted = True
         log.error(guidance or message)
         emit_warning(
-            f"{message} — bootnode discovery stopped, local network discovery continues",
-            source="bootnode",
+            f"{message} — rendezvous rendezvous stopped, local network rendezvous continues",
+            source="rendezvous",
             reason="untrusted",
         )
 
-    def _log_refusal(self, exc: BootnodeRefused) -> None:
-        """Report a uniform boot/1 refusal once per error, then at DEBUG."""
+    def _log_refusal(self, exc: RendezvousRefused) -> None:
+        """Report a uniform rdv/1 refusal once per error, then at DEBUG."""
         message = (
-            f"Bootnode {format_authority(self._bootnode_host, self._bootnode_port)} refused the lease "
+            f"Rendezvous {format_authority(self._rendezvous_host, self._rendezvous_port)} refused the lease "
             f"frame: {exc.error}"
         )
         if exc.retry_after:
@@ -663,7 +663,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
             # ``cert_fp`` is the pin the requester compares: the frame carries a
             # full SHA-256 digest or it is not sent at all (an empty/placeholder
             # value would be an invalid frame — and a pin nobody can compare).
-            log.warning("Bootnode register skipped: no local certificate fingerprint yet")
+            log.warning("Rendezvous register skipped: no local certificate fingerprint yet")
             return
         generation = self._advert_generation
         # Sample the address once: it both builds the endpoint candidates and
@@ -696,7 +696,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
                 self._published_local_ip = local_ip
             self._sent_advert_generation = generation
             log.debug(
-                "Bootnode register ok: observed "
+                "Rendezvous register ok: observed "
                 f"{format_authority(self._observed.host, self._observed.port)}, "
                 f"ttl {ack['ttl']}s"
             )
@@ -747,7 +747,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
             else:
                 self._next_query_at = now + self._refresh_interval
             log.debug(
-                f"Bootnode {format_authority(self._bootnode_host, self._bootnode_port)} query refused: "
+                f"Rendezvous {format_authority(self._rendezvous_host, self._rendezvous_port)} query refused: "
                 f"{response['error']}"
             )
             return
@@ -757,14 +757,14 @@ class BootnodeDiscovery(DiscoveryPlanState):
             if peer is not None and peer.cid != self._cid:
                 self._peer_manager.add_peer(peer)
 
-    def _peer_from_wire(self, wire: BootPeer) -> Peer | None:
+    def _peer_from_wire(self, wire: RdvPeer) -> Peer | None:
         """Map a relayed peer to the shared :class:`Peer`; skip unreachable ones.
 
         ``reachable=false`` entries carry no dialable data-plane endpoint (a
-        bootstrap-only register), so they are not peers yet. Every other field —
+        rendezvous-only register), so they are not peers yet. Every other field —
         including the election advertisement (``server_ready``/``prefer_master``/
         ``never_master``/``startup_time``/``sync_direction``) — is relayed
-        verbatim by the node, so a bootnode-discovered peer enters the shared
+        verbatim by the node, so a rendezvous-discovered peer enters the shared
         election with the same inputs as a mDNS-discovered one. They are
         unauthenticated claims: the data plane pins the peer certificate before
         any file is exchanged.
@@ -827,16 +827,16 @@ class BootnodeDiscovery(DiscoveryPlanState):
             self._client.leave(
                 build_leave_frame(cid=self._cid, bucket=self._bucket, bucket_token=self._token)
             )
-        except BootnodeError as exc:
-            log.debug(f"Bootnode leave failed (best-effort): {exc}")
+        except RendezvousError as exc:
+            log.debug(f"Rendezvous leave failed (best-effort): {exc}")
 
 
 def _client_version() -> str:
     return HSYNC_VERSION
 
 
-class MultiBootnodeDiscovery(DiscoveryPlanState):
-    """Lease and query several discovery servers over one shared ``PeerManager``.
+class MultiRendezvousRendezvous(RendezvousPlanState):
+    """Lease and query several rendezvous servers over one shared ``PeerManager``.
 
     Each child keeps its own transport, trust policy and lease state (the
     observed endpoint and the published candidates are per node), while peer
@@ -849,37 +849,37 @@ class MultiBootnodeDiscovery(DiscoveryPlanState):
     this node through any server that did see it. A source that stops for good
     (an untrusted node) is disabled on its own, never for its siblings.
 
-    The children must be built with the same serving ``port``; ``build_discovery_plan``
+    The children must be built with the same serving ``port``; ``build_rendezvous_plan``
     resolves it once for exactly that reason.
     """
 
     def __init__(
         self,
-        sources: Sequence[BootnodeDiscovery],
+        sources: Sequence[RendezvousRendezvous],
         *,
         shared_upnp: SharedUpnpMapping | None = None,
     ) -> None:
         if not sources:
-            raise ValueError("at least one discovery source is required")
+            raise ValueError("at least one rendezvous source is required")
         self._sources = list(sources)
         self._shared_upnp = shared_upnp
         self._port = self._sources[0].port
         self._peer_manager: PeerManager | None = None
         self._connected_clients_provider: Callable[[], int] | None = None
-        self._discovery_announced = False
+        self._rendezvous_announced = False
 
-    # -- DiscoveryPlan surface -------------------------------------------------
+    # -- RendezvousPlan surface -------------------------------------------------
 
     def create_peer_manager(self) -> PeerManager:
         """Refuse: the composite never owns a manager of its own.
 
         ``start`` builds exactly one manager (from the first source's config) and
         injects it into every source, so peer state is single. Building another
-        one here would split discovery and the election; the error makes that
+        one here would split rendezvous and the election; the error makes that
         misuse loud instead of silent.
         """
         raise RuntimeError(
-            "MultiBootnodeDiscovery.start() creates the single shared PeerManager; "
+            "MultiRendezvousRendezvous.start() creates the single shared PeerManager; "
             "the composite cannot build another one"
         )
 
@@ -889,7 +889,7 @@ class MultiBootnodeDiscovery(DiscoveryPlanState):
         self._peer_manager = manager
         for source in self._sources:
             source.start(register_service=register_service, peer_manager=manager)
-        log.info(f"P2P discovery started ({len(self._sources)} discovery server(s))")
+        log.info(f"P2P rendezvous started ({len(self._sources)} rendezvous server(s))")
         return manager
 
     def stop(self) -> None:
@@ -899,15 +899,15 @@ class MultiBootnodeDiscovery(DiscoveryPlanState):
         if self._shared_upnp is not None:
             self._shared_upnp.unmap()
 
-    def wait_for_discovery(self, timeout: float) -> None:
+    def wait_for_rendezvous(self, timeout: float) -> None:
         """Wait once on the shared manager: peers can arrive from any source."""
         if self._peer_manager is None:
             return
-        if not self._discovery_announced:
-            log.info(f"Waiting {timeout}s for peer discovery...")
-            self._discovery_announced = True
+        if not self._rendezvous_announced:
+            log.info(f"Waiting {timeout}s for peer rendezvous...")
+            self._rendezvous_announced = True
         else:
-            log.debug(f"Waiting {timeout}s for peer discovery...")
+            log.debug(f"Waiting {timeout}s for peer rendezvous...")
         self._peer_manager.wait_for_change(timeout)
         self.log_peer_count()
 

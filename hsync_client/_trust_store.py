@@ -3,15 +3,15 @@
 
 """Shared cross-process-locked JSON file store for durable peer trust.
 
-Both the P2P pin store (:class:`hsync_client.pinning.PinStore`) and the bootnode
-TOFU store (:class:`hsync_client.bootnode_trust.BootnodeTrustStore`) persist
+Both the P2P pin store (:class:`hsync_client.pinning.PinStore`) and the rendezvous
+TOFU store (:class:`hsync_client.rendezvous_trust.RendezvousTrustStore`) persist
 trust state outside the synced bucket and must share one locking/atomicity
 contract: a per-path thread lock, an advisory cross-process lock, owner-only
 permissions (``0600`` file / ``0700`` dir) and a read-modify-fsync-replace
 transaction. This module owns that contract; the two stores only differ in the
 JSON schema they validate.
 
-Consumers: ``hsync-client`` (pinning.py, bootnode_trust.py).
+Consumers: ``hsync-client`` (pinning.py, rendezvous_trust.py).
 """
 
 from __future__ import annotations

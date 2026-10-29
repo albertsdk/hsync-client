@@ -135,7 +135,7 @@ URL until a master is discovered, so the startup RTT probe is skipped
 (`rtt_ms=None` → SAFE values) instead of failing against the placeholder, and
 the placeholder URL is not emitted as a `server` UI event.
 
-### LAN post-discovery refresh (`p2p_handler._refresh_p2p_network_tuning`)
+### LAN post-rendezvous refresh (`p2p_handler._refresh_p2p_network_tuning`)
 
 In p2p mode the real network endpoint is known only after master election.
 Once the master is discovered and pinned, `_run_as_slave` measures the RTT
@@ -189,7 +189,7 @@ The provenance tag (`cli` / `env` / `autotune` / `default`) is the single
 encode site for the precedence chain: `AUTOTUNE_MANAGED_KEYS` is built from
 the tags of all five tuning keys (only `autotune`/`default`-sourced keys are
 managed), so explicit CLI/env overrides are never re-derived — by the LAN
-post-discovery refresh nor the per-cycle concurrency refresh.
+post-rendezvous refresh nor the per-cycle concurrency refresh.
 
 `TRANSFER_RETRY_ATTEMPTS` is always `3` (no env/CLI override in v1).
 

@@ -21,7 +21,7 @@ hsync server --server-url server.example.com -b mybucket -p /path/to/dir
 
 The fastest way to see HSYNC in action is to run the server and a client on the
 same machine. You need the [server](https://github.com/albertsdk/hsync-server)
-running locally (Docker or Poetry). At first start the server bootstraps an
+running locally (Docker or Poetry). At first start the server rendezvouss an
 admin account and prints its full token once — export it as `HSYNC_API_KEY`.
 
 ```bash
@@ -29,7 +29,7 @@ admin account and prints its full token once — export it as `HSYNC_API_KEY`.
 #    It listens on https://localhost:9753 with a self-signed cert.
 
 # 2. Export the account token printed by the server at first start
-export HSYNC_API_KEY="hs_HsyncAdminBootstrap01_SECRET"
+export HSYNC_API_KEY="hs_HsyncAdminRendezvous01_SECRET"
 
 # 3. Create the bucket on the server (once; the creator becomes its owner)
 curl -k -X POST "https://localhost:9753/api/v1/buckets?bucket=demo" \
@@ -64,11 +64,11 @@ export HSYNC_API_KEY="hs_ACCOUNT_ID_ACCOUNT_SECRET"
 ```
 
 `HSYNC_API_KEY` holds the **full account token** (`hs_<id>_<secret>`) issued by
-the server — at bootstrap for the admin account, or with
+the server — at rendezvous for the admin account, or with
 `hsync-server admin client add --name <client-name> --role client` for dedicated
 accounts (see the server
 [Getting Started](https://github.com/albertsdk/hsync-server/blob/main/docs/getting-started.md)
-guide). `HSYNC_ADMIN_KEY` is a server-side bootstrap secret and has no meaning
+guide). `HSYNC_ADMIN_KEY` is a server-side rendezvous secret and has no meaning
 on the client.
 
 See [Configuration — Server Mode](configuration-server.md) for all server-mode options.

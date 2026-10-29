@@ -36,7 +36,7 @@ class ExitCode(IntEnum):
     #: Causal conflicts were resolved by preserving ``*_conflicted_copy_*``
     #: files. Requires operator attention.
     CONFLICTS = 4
-    #: P2P one-shot: no peer/master was found within the discovery timeout;
+    #: P2P one-shot: no peer/master was found within the rendezvous timeout;
     #: nothing was synchronized.
     P2P_NO_PEER = 5
 

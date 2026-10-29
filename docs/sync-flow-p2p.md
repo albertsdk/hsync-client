@@ -5,12 +5,12 @@ peer-to-peer p2p mode.
 
 > For Server Mode sync flow, see [Sync Flow — Server Mode](sync-flow-server.md).
 
-## 1. Discovery & Master Election
+## 1. Rendezvous & Master Election
 
 1. **Announcement**: Each peer announces itself — via mDNS on the LAN (default),
-   or by registering with the configured `boot/1` bootnode for a group spread
+   or by registering with the configured `rdv/1` rendezvous for a group spread
    across networks — advertising its CID, bucket, group, and capabilities.
-2. **Peer Discovery**: `Peermanager` collects all visible peers in the same group.
+2. **Peer Rendezvous**: `Peermanager` collects all visible peers in the same group.
 3. **Master Election**: A deterministic algorithm selects the master:
    - `server_ready` (incumbent) beats newcomers
    - `prefer_master` beats ordinary peers

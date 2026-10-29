@@ -13,7 +13,7 @@ The command is `hsync`; it runs in one of two modes — **Server Mode** or **p2p
 Point it at a folder and choose how the devices meet:
 
 * **Server Mode** — every device syncs through your own [HSYNC Server](https://github.com/albertsdk/hsync-server), which keeps a central copy. Best when devices live on different networks, or when you want a hub that is always reachable.
-* **p2p Mode** — devices sync directly, peer-to-peer: on the same network they find each other automatically (mDNS); across networks an optional self-hosted bootnode introduces them. No server, no central copy.
+* **p2p Mode** — devices sync directly, peer-to-peer: on the same network they find each other automatically (mDNS); across networks an optional self-hosted rendezvous introduces them. No server, no central copy.
 
 Files stay in their original format, directly browsable on disk, and there is no third-party account or service in the data path. The same client covers simple setups — one folder on two laptops — and advanced ones: one-way backups, read-only mirrors, scheduled one-shot runs, isolated groups with shared keys, bandwidth limits.
 
@@ -122,9 +122,9 @@ flowchart TB
    files from the master or directly from a peer that holds the exact content;
    the master relays metadata to all connected peers
 
-Devices find each other automatically on the same network (mDNS) and sync directly, peer-to-peer: nothing passes through another machine. Across networks, an optional self-hosted bootnode introduces peers — discovery only, never your files (details in **Internet P2P** below).
+Devices find each other automatically on the same network (mDNS) and sync directly, peer-to-peer: nothing passes through another machine. Across networks, an optional self-hosted rendezvous introduces peers — rendezvous only, never your files (details in **Internet P2P** below).
 
-**Choose it when:** a handful of devices share one network, or you prefer zero infrastructure. Concepts and setup: [p2p Mode](docs/p2p-mode.md) · [Across networks with a bootnode](docs/p2p-bootnode.md).
+**Choose it when:** a handful of devices share one network, or you prefer zero infrastructure. Concepts and setup: [p2p Mode](docs/p2p-mode.md) · [Across networks with a rendezvous](docs/p2p-rendezvous.md).
 
 Continuous mode is the default in both topologies: the client keeps running and reacts to changes immediately. Pass `--once` to run a single sync cycle and exit — ideal for cron, systemd timers and CI, with a documented exit code. See [Sync Modes](docs/sync-modes.md).
 
@@ -198,14 +198,14 @@ HSYNC Client focuses on reliable, fast transfers.
 
 **🔗 P2P mode (direct, no server)**
 
-* **Zero-config discovery:** mDNS (Bonjour/Avahi) finds peers on the same network automatically.
+* **Zero-config rendezvous:** mDNS (Bonjour/Avahi) finds peers on the same network automatically.
 * **Automatic coordinator:** the client picks the master based on capabilities and reachability.
 * **Trust on first use (TOFU):** a self-signed identity pinned by certificate fingerprint.
 * **Network isolation:** a shared password (`HSYNC_P2P_PASSPHRASE`) or raw key (`HSYNC_P2P_KEY`), plus `--group`, keep distinct clusters apart on one network.
-* **NAT traversal:** optional UPnP port mapping and the bootnode's STUN-style echo for cross-network reachability — no manual port forwarding in the common case.
+* **NAT traversal:** optional UPnP port mapping and the rendezvous's STUN-style echo for cross-network reachability — no manual port forwarding in the common case.
 * **Stable device identity:** a persistent device ID and keypair keep pins across restarts; a rotated key shows up as a changed fingerprint.
 
-> **Internet P2P.** An optional, self-hostable discovery node ([HSYNC Bootnode](https://github.com/albertsdk/hsync-bootnode)) extends the peer-to-peer topology beyond a single LAN segment over `boot/1` (QUIC/UDP 443, no-log, RAM-only). Pass a bootnode hostname to `hsync p2p` (positional argument or `HSYNC_DISCOVERY_SERVER_ENDPOINTS`) to sync devices that are **not** on the same local network — same mode, same election, same data plane; only discovery differs. Writes are authorized by a shared key, so a keyless LAN is read-only. The bootnode is a **stable v1** (Python).
+> **Internet P2P.** An optional, self-hostable rendezvous node ([HSYNC Rendezvous](https://github.com/albertsdk/hsync-rendezvous)) extends the peer-to-peer topology beyond a single LAN segment over `rdv/1` (QUIC/UDP 443, no-log, RAM-only). Pass a rendezvous hostname to `hsync p2p` (positional argument or `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS`) to sync devices that are **not** on the same local network — same mode, same election, same data plane; only rendezvous differs. Writes are authorized by a shared key, so a keyless LAN is read-only. The rendezvous is a **stable v1** (Python).
 
 ## Documentation
 
@@ -218,7 +218,7 @@ HSYNC Client focuses on reliable, fast transfers.
 - [Sync Modes](docs/sync-modes.md) - Server and p2p modes (continuous / one-shot)
 - [Server Mode](docs/server-mode.md) - Client-Server synchronization details
 - [p2p Mode](docs/p2p-mode.md) - P2P synchronization details
-- [p2p across networks (bootnode)](docs/p2p-bootnode.md) - Cross-network discovery through a `boot/1` bootstrap node
+- [p2p across networks (rendezvous)](docs/p2p-rendezvous.md) - Cross-network rendezvous through a `rdv/1` rendezvous node
 - [Scheduling & Automation](docs/scheduling.md) - Cron, systemd timers and alerts
 - [Architecture](docs/internal/architecture.md) - Internal design
 - [Architecture Decision Records](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/README.md) - Why the stable, cross-project decisions were made
@@ -240,7 +240,7 @@ The other components of the HSYNC ecosystem:
 - [HSYNC Desktop](https://github.com/albertsdk/hsync-desktop/blob/main/README.md) — Desktop GUI front-end.
 - [HSYNC Server](https://github.com/albertsdk/hsync-server/blob/main/README.md) — Central sync hub: REST API, WebSocket relay, file storage.
 - [HSYNC Android](https://github.com/albertsdk/hsync-android/blob/main/README.md) — Android client app. *(in development)*
-- [HSYNC Bootnode](https://github.com/albertsdk/hsync-bootnode/blob/main/README.md) — Optional Internet discovery node for P2P (`boot/1`, no-log, RAM-only).
+- [HSYNC Rendezvous](https://github.com/albertsdk/hsync-rendezvous/blob/main/README.md) — Optional Internet rendezvous node for P2P (`rdv/1`, no-log, RAM-only).
 - [HSYNC Common](https://github.com/albertsdk/hsync-common/blob/main/README.md) — Shared library: data models, protocol, delta transfer, hashing.
 
 ## Security & Vulnerability Reporting

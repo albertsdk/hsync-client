@@ -20,8 +20,8 @@ classes covered:
 
 Opt-in: requires ``HSYNC_BB_SECURITY=1`` (security probes are adversarial by
 nature, so they stay out of the default run — mirrors ``hsync-server``'s
-``tests/test_bb_security.py`` and ``hsync-bootnode``'s
-``tests/test_bb_bootnode_security.py``).
+``tests/test_bb_security.py`` and ``hsync-rendezvous``'s
+``tests/test_bb_rendezvous_security.py``).
 
 The shared probes live in ``pentest/probes.py``; the standalone runner is
 ``pentest/run_pentest.py``; the findings report is

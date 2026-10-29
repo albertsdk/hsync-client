@@ -5,8 +5,8 @@
 
 Covers the two pieces that decide *whether* traffic is relayed — the
 ``_select_master_endpoint`` fallback in ``p2p_handler`` and the loopback bridge in
-``boot_relay`` — without a live node: the end-to-end path is exercised by
-``tests/test_bb_p2p_bootnode_relay.py``.
+``rdv_relay`` — without a live node: the end-to-end path is exercised by
+``tests/test_bb_p2p_rendezvous_relay.py``.
 """
 
 from __future__ import annotations
@@ -31,15 +31,15 @@ def _reset_relay_state() -> None:
     p2p_handler._relay_retry_at = 0.0
 
 
-from hsync_client.boot_client import BootnodeProtocolError, frame_line
-from hsync_client.boot_relay import (
+from hsync_client.p2p_handler import _close_relay_dialer, _relay_master_endpoint
+from hsync_client.p2p_rendezvous import RendezvousPlanState
+from hsync_client.rdv_client import RendezvousProtocolError, frame_line
+from hsync_client.rdv_relay import (
     FailoverRelayDialer,
     GroupRelayAcceptor,
     bridge,
     refusal_code,
 )
-from hsync_client.p2p_discovery import DiscoveryPlanState
-from hsync_client.p2p_handler import _close_relay_dialer, _relay_master_endpoint
 
 
 class _Master:
@@ -74,7 +74,7 @@ class _Plan:
 
 def test_a_lan_only_plan_never_relays() -> None:
     """The mDNS plan has no rendezvous point, so the fallback stays a no-op."""
-    plan = object.__new__(DiscoveryPlanState)
+    plan = object.__new__(RendezvousPlanState)
     assert plan.relay_dialer("whatever") is None
     assert plan.relay_acceptor(8443) is None
     assert _relay_master_endpoint(plan, _Master(), log) is None
@@ -104,7 +104,7 @@ def test_a_refused_session_keeps_the_retry_loop() -> None:
 
 
 def test_a_refused_relay_is_not_retried_on_every_tick() -> None:
-    """A node without the relay must not be re-dialled once per discovery tick."""
+    """A node without the relay must not be re-dialled once per rendezvous tick."""
     dialer = _Dialer(None)
     plan = _Plan(dialer)
     assert _relay_master_endpoint(plan, _Master(), log) is None
@@ -131,7 +131,7 @@ def test_a_relay_error_line_reports_its_uniform_code() -> None:
         refusal_code(
             json.dumps(
                 {
-                    "protocol_version": "boot/1",
+                    "protocol_version": "rdv/1",
                     "type": "relay_error",
                     "error": "relay_unavailable",
                 }
@@ -146,11 +146,11 @@ def test_a_relay_error_line_reports_its_uniform_code() -> None:
 def test_frame_line_validates_before_sending() -> None:
     """A malformed relay frame fails locally instead of being dropped remotely."""
     line = frame_line(
-        {"protocol_version": "boot/1", "type": "relay_ping", "cid": _Master.cid, "bucket": "b"}
+        {"protocol_version": "rdv/1", "type": "relay_ping", "cid": _Master.cid, "bucket": "b"}
     )
     assert line.endswith(b"\n")
-    with pytest.raises(BootnodeProtocolError):
-        frame_line({"protocol_version": "boot/1", "type": "relay_ping", "cid": "short"})
+    with pytest.raises(RendezvousProtocolError):
+        frame_line({"protocol_version": "rdv/1", "type": "relay_ping", "cid": "short"})
 
 
 class _Reader:

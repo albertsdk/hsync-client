@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""Presence counting for local-network p2p (mDNS, no bootnode).
+"""Presence counting for local-network p2p (mDNS, no rendezvous).
 
 The pair is ``connected/total``, self included. These tests pin the arithmetic
 for the master and the slave paths so a regression (e.g. the old relay-only
@@ -10,9 +10,9 @@ for the master and the slave paths so a regression (e.g. the old relay-only
 
 import pytest
 
-import hsync_client.p2p_discovery_mdns as mdns
-from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+import hsync_client.p2p_rendezvous_mdns as mdns
 from hsync_client.p2p_peers import Peer, PeerManager
+from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
 LOCAL = "local-device"
 
@@ -32,8 +32,8 @@ def presence(monkeypatch) -> list[tuple[int, int]]:
     return seen
 
 
-def _plan() -> MdnsDiscovery:
-    plan = MdnsDiscovery(cid=LOCAL, bucket="shared", group="home", port=0)
+def _plan() -> MdnsRendezvous:
+    plan = MdnsRendezvous(cid=LOCAL, bucket="shared", group="home", port=0)
     plan._peer_manager = PeerManager(local_cid=LOCAL, bucket="shared", group="home")
     return plan
 
@@ -55,7 +55,7 @@ class TestMasterPresence:
         plan = _plan()
         plan.set_connected_clients_provider(lambda: 0)
 
-        plan.emit_discovery_status()
+        plan.emit_rendezvous_status()
 
         assert presence == [(1, 1)]
 
@@ -64,7 +64,7 @@ class TestMasterPresence:
         plan.set_connected_clients_provider(lambda: 1)
         plan._peer_manager.add_peer(_peer("slave"))
 
-        plan.emit_discovery_status()
+        plan.emit_rendezvous_status()
 
         assert presence == [(2, 2)]
 
@@ -74,7 +74,7 @@ class TestMasterPresence:
         plan._peer_manager.add_peer(_peer("slave-a"))
         plan._peer_manager.add_peer(_peer("slave-b"))
 
-        plan.emit_discovery_status()
+        plan.emit_rendezvous_status()
 
         assert presence == [(3, 3)]
 
@@ -84,7 +84,7 @@ class TestMasterPresence:
         plan.set_connected_clients_provider(lambda: 5)
         plan._peer_manager.add_peer(_peer("slave"))
 
-        plan.emit_discovery_status()
+        plan.emit_rendezvous_status()
 
         assert presence == [(2, 2)]
 
@@ -94,7 +94,7 @@ class TestSlavePresence:
         plan = _plan()
         plan._peer_manager.add_peer(_peer("master", connected=1, prefer_master=True))
 
-        plan.emit_discovery_status()
+        plan.emit_rendezvous_status()
 
         assert presence == [(2, 2)]
 
@@ -105,7 +105,7 @@ class TestSlavePresence:
         plan._peer_manager.add_peer(master)
         plan._peer_manager.mark_peer_connected(master.cid)
 
-        plan.emit_discovery_status()
+        plan.emit_rendezvous_status()
 
         assert presence == [(2, 2)]
 
@@ -114,6 +114,6 @@ class TestSlavePresence:
         plan._peer_manager.add_peer(_peer("master", connected=2, prefer_master=True))
         plan._peer_manager.add_peer(_peer("other-slave"))
 
-        plan.emit_discovery_status()
+        plan.emit_rendezvous_status()
 
         assert presence == [(3, 3)]

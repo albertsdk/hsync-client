@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""Tests for MdnsDiscovery class in P2P module."""
+"""Tests for MdnsRendezvous class in P2P module."""
 
 import socket
 import threading
@@ -13,39 +13,39 @@ from hsync_common.protocol.handshake import PROTOCOL_VERSION_P2P
 
 
 class TestLANSync:
-    """Tests for MdnsDiscovery class."""
+    """Tests for MdnsRendezvous class."""
 
     def test_p2p_sync_creation(self):
-        """Test creating a MdnsDiscovery instance."""
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        """Test creating a MdnsRendezvous instance."""
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        lan = MdnsDiscovery(cid="test123", bucket="photos")
+        lan = MdnsRendezvous(cid="test123", bucket="photos")
         assert lan.port > 0  # Random port assigned
         assert lan.group is None
         assert lan.use_https is False
 
     def test_p2p_sync_with_group(self):
-        """Test MdnsDiscovery with group parameter."""
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        """Test MdnsRendezvous with group parameter."""
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        lan = MdnsDiscovery(cid="test123", bucket="photos", group="team-a")
+        lan = MdnsRendezvous(cid="test123", bucket="photos", group="team-a")
         assert lan.group == "team-a"
 
     def test_p2p_sync_with_https(self):
-        """Test MdnsDiscovery with HTTPS enabled."""
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        """Test MdnsRendezvous with HTTPS enabled."""
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        lan = MdnsDiscovery(
+        lan = MdnsRendezvous(
             cid="test123", bucket="photos", use_https=True, cert_fingerprint="abc123def456"
         )
         assert lan.use_https is True
         assert lan.cert_fingerprint == "abc123def456"
 
     def test_p2p_sync_with_prefer_master(self):
-        """Test MdnsDiscovery with prefer_master."""
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        """Test MdnsRendezvous with prefer_master."""
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        lan = MdnsDiscovery(
+        lan = MdnsRendezvous(
             cid="test123",
             bucket="photos",
             prefer_master=True,
@@ -55,27 +55,27 @@ class TestLANSync:
 
     def test_p2p_sync_multiple_stops(self):
         """Test that stopping multiple times is safe."""
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        lan = MdnsDiscovery(cid="test123", bucket="photos")
+        lan = MdnsRendezvous(cid="test123", bucket="photos")
         lan.start(register_service=False)
         lan.stop()
         lan.stop()  # Should not raise
 
     def test_p2p_sync_stop_without_start(self):
         """Test stopping without starting is safe."""
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        lan = MdnsDiscovery(cid="test123", bucket="photos")
+        lan = MdnsRendezvous(cid="test123", bucket="photos")
         lan.stop()  # Should not raise
 
-    def test_wait_for_discovery_announces_waiting_once(self):
+    def test_wait_for_rendezvous_announces_waiting_once(self):
         """The "waiting" notice is logged once; later polls drop to debug."""
         from unittest.mock import patch
 
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        lan = MdnsDiscovery(cid="test123", bucket="photos")
+        lan = MdnsRendezvous(cid="test123", bucket="photos")
         lan._peer_manager = MagicMock()
         lan._peer_manager.get_alive_peers.return_value = []
         # Local node is master: presence never consults a remote master peer.
@@ -83,32 +83,32 @@ class TestLANSync:
         lan._peer_manager.get_master.return_value = None
 
         with (
-            patch("hsync_client.p2p_discovery_mdns.time.sleep"),
-            patch("hsync_client.p2p_discovery_mdns.log") as mock_log,
+            patch("hsync_client.p2p_rendezvous_mdns.time.sleep"),
+            patch("hsync_client.p2p_rendezvous_mdns.log") as mock_log,
         ):
-            lan.wait_for_discovery(timeout=1)
-            lan.wait_for_discovery(timeout=1)
+            lan.wait_for_rendezvous(timeout=1)
+            lan.wait_for_rendezvous(timeout=1)
 
         waiting_info = [
             c
             for c in mock_log.info.call_args_list
-            if c.args and "for peer discovery" in str(c.args[0])
+            if c.args and "for peer rendezvous" in str(c.args[0])
         ]
         waiting_debug = [
             c
             for c in mock_log.debug.call_args_list
-            if c.args and "for peer discovery" in str(c.args[0])
+            if c.args and "for peer rendezvous" in str(c.args[0])
         ]
         assert len(waiting_info) == 1, "waiting notice must log once at info level"
         assert len(waiting_debug) == 1, "subsequent polls must drop to debug"
 
-    def test_wait_for_discovery_logs_result_only_on_change(self):
-        """Discovery results are logged only when the peer count changes."""
+    def test_wait_for_rendezvous_logs_result_only_on_change(self):
+        """Rendezvous results are logged only when the peer count changes."""
         from unittest.mock import patch
 
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        lan = MdnsDiscovery(cid="test123", bucket="photos")
+        lan = MdnsRendezvous(cid="test123", bucket="photos")
         lan._peer_manager = MagicMock()
 
         peer = MagicMock()
@@ -123,12 +123,12 @@ class TestLANSync:
         lan._peer_manager.get_alive_peers.side_effect = [[], [], [peer]]
 
         with (
-            patch("hsync_client.p2p_discovery_mdns.time.sleep"),
-            patch("hsync_client.p2p_discovery_mdns.log") as mock_log,
+            patch("hsync_client.p2p_rendezvous_mdns.time.sleep"),
+            patch("hsync_client.p2p_rendezvous_mdns.log") as mock_log,
         ):
-            lan.wait_for_discovery(timeout=1)
-            lan.wait_for_discovery(timeout=1)
-            lan.wait_for_discovery(timeout=1)
+            lan.wait_for_rendezvous(timeout=1)
+            lan.wait_for_rendezvous(timeout=1)
+            lan.wait_for_rendezvous(timeout=1)
 
         infos = [str(c.args[0]) for c in mock_log.info.call_args_list if c.args]
         alone_msgs = [m for m in infos if "this client is alone" in m]
@@ -136,13 +136,13 @@ class TestLANSync:
         assert len(alone_msgs) == 1, "the 'alone' state must log once, not on every poll"
         assert len(discovered_msgs) == 1, "a new peer count must log once on change"
 
-    def test_wait_for_discovery_connected_clients_logged_once(self):
+    def test_wait_for_rendezvous_connected_clients_logged_once(self):
         """A master with connected WS clients reports them instead of "alone"."""
         from unittest.mock import patch
 
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        lan = MdnsDiscovery(cid="test123", bucket="photos")
+        lan = MdnsRendezvous(cid="test123", bucket="photos")
         lan._peer_manager = MagicMock()
         lan._peer_manager.get_alive_peers.return_value = []
         lan._peer_manager.get_master_cid.return_value = "test123"
@@ -150,11 +150,11 @@ class TestLANSync:
         lan.set_connected_clients_provider(lambda: 2)
 
         with (
-            patch("hsync_client.p2p_discovery_mdns.time.sleep"),
-            patch("hsync_client.p2p_discovery_mdns.log") as mock_log,
+            patch("hsync_client.p2p_rendezvous_mdns.time.sleep"),
+            patch("hsync_client.p2p_rendezvous_mdns.log") as mock_log,
         ):
-            lan.wait_for_discovery(timeout=1)
-            lan.wait_for_discovery(timeout=1)
+            lan.wait_for_rendezvous(timeout=1)
+            lan.wait_for_rendezvous(timeout=1)
 
         infos = [str(c.args[0]) for c in mock_log.info.call_args_list if c.args]
         connected_msgs = [m for m in infos if "2 client(s) connected" in m]
@@ -162,20 +162,20 @@ class TestLANSync:
         assert len(connected_msgs) == 1, "the connected count must log once, not on every poll"
         assert len(alone_msgs) == 0, "a master with connected clients is not alone"
 
-    def test_wait_for_discovery_waits_on_peer_change_event(self):
-        """The discovery wait delegates to the peer manager's change event."""
+    def test_wait_for_rendezvous_waits_on_peer_change_event(self):
+        """The rendezvous wait delegates to the peer manager's change event."""
         from unittest.mock import patch
 
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        lan = MdnsDiscovery(cid="test123", bucket="photos")
+        lan = MdnsRendezvous(cid="test123", bucket="photos")
         lan._peer_manager = MagicMock()
         lan._peer_manager.get_alive_peers.return_value = []
         lan._peer_manager.get_master_cid.return_value = "test123"
         lan._peer_manager.get_master.return_value = None
 
-        with patch("hsync_client.p2p_discovery_mdns.time.sleep") as mock_sleep:
-            lan.wait_for_discovery(timeout=7)
+        with patch("hsync_client.p2p_rendezvous_mdns.time.sleep") as mock_sleep:
+            lan.wait_for_rendezvous(timeout=7)
 
         lan._peer_manager.wait_for_change.assert_called_once_with(7)
         mock_sleep.assert_not_called()
@@ -189,9 +189,9 @@ class TestLANSync:
         """
         from unittest.mock import patch
 
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        lan = MdnsDiscovery(cid="test123", bucket="photos")
+        lan = MdnsRendezvous(cid="test123", bucket="photos")
         lan._service_info = MagicMock()  # a serving registered master
         # __init__ already provides a real threading.Lock with no timer, which
         # is exactly the state this test needs. Re-instantiating the lock via
@@ -202,7 +202,7 @@ class TestLANSync:
 
         # Cancel every timer the debounce schedules: the test simulates the
         # single firing that would happen after the last change.
-        with patch("hsync_client.p2p_discovery_mdns.threading.Timer") as mock_timer_cls:
+        with patch("hsync_client.p2p_rendezvous_mdns.threading.Timer") as mock_timer_cls:
             mock_timer_cls.side_effect = lambda *a, **k: MagicMock(name="timer", **k)
             lan.set_connected_clients(1)
             lan.set_connected_clients(2)
@@ -218,9 +218,9 @@ class TestLANSync:
 
     def test_stop_cancels_pending_refresh(self):
         """stop() cancels a pending debounced refresh before touching Zeroconf."""
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        lan = MdnsDiscovery(cid="test123", bucket="photos")
+        lan = MdnsRendezvous(cid="test123", bucket="photos")
         lan._service_info = MagicMock()
         lan._running = True
 
@@ -249,20 +249,20 @@ class TestGetFreePort:
 
 
 class TestStartStop:
-    """Tests for MdnsDiscovery.start/stop with Zeroconf mocked out."""
+    """Tests for MdnsRendezvous.start/stop with Zeroconf mocked out."""
 
     def _start(self, lan, **kwargs):
         with (
-            patch("hsync_client.p2p_discovery_mdns.Zeroconf") as mock_zc_cls,
-            patch("hsync_client.p2p_discovery_mdns.ServiceBrowser") as mock_browser_cls,
+            patch("hsync_client.p2p_rendezvous_mdns.Zeroconf") as mock_zc_cls,
+            patch("hsync_client.p2p_rendezvous_mdns.ServiceBrowser") as mock_browser_cls,
         ):
             pm = lan.start(**kwargs)
         return pm, mock_zc_cls, mock_browser_cls
 
     def test_start_without_registration(self):
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        lan = MdnsDiscovery(cid="test123", bucket="photos")
+        lan = MdnsRendezvous(cid="test123", bucket="photos")
         pm, mock_zc_cls, mock_browser_cls = self._start(lan, register_service=False)
         try:
             assert pm is lan.peer_manager
@@ -277,9 +277,9 @@ class TestStartStop:
             lan.stop()
 
     def test_start_with_registration(self):
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        lan = MdnsDiscovery(cid="test123", bucket="photos")
+        lan = MdnsRendezvous(cid="test123", bucket="photos")
         _pm, mock_zc_cls, _mb = self._start(lan, register_service=True)
         try:
             mock_zc_cls.return_value.register_service.assert_called_once()
@@ -288,12 +288,12 @@ class TestStartStop:
             lan.stop()
 
     def test_stop_unregisters_and_closes(self):
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        lan = MdnsDiscovery(cid="test123", bucket="photos")
+        lan = MdnsRendezvous(cid="test123", bucket="photos")
         with (
-            patch("hsync_client.p2p_discovery_mdns.Zeroconf") as mock_zc_cls,
-            patch("hsync_client.p2p_discovery_mdns.ServiceBrowser"),
+            patch("hsync_client.p2p_rendezvous_mdns.Zeroconf") as mock_zc_cls,
+            patch("hsync_client.p2p_rendezvous_mdns.ServiceBrowser"),
         ):
             lan.start(register_service=True)
             lan.stop()
@@ -307,12 +307,12 @@ class TestRegisterService:
     """Tests for the mDNS TXT record built by _register_service."""
 
     def _started_p2p(self, **kwargs):
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        lan = MdnsDiscovery(cid="test123", bucket="photos", **kwargs)
+        lan = MdnsRendezvous(cid="test123", bucket="photos", **kwargs)
         with (
-            patch("hsync_client.p2p_discovery_mdns.Zeroconf") as mock_zc_cls,
-            patch("hsync_client.p2p_discovery_mdns.ServiceBrowser"),
+            patch("hsync_client.p2p_rendezvous_mdns.Zeroconf") as mock_zc_cls,
+            patch("hsync_client.p2p_rendezvous_mdns.ServiceBrowser"),
         ):
             lan.start(register_service=False)
         return lan, mock_zc_cls.return_value
@@ -370,12 +370,12 @@ class TestRegisterService:
 
     def test_heartbeat_increments_and_reannounces(self):
         """The liveness counter increments and re-announces via update_service."""
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        lan = MdnsDiscovery(cid="test123", bucket="photos")
+        lan = MdnsRendezvous(cid="test123", bucket="photos")
         with (
-            patch("hsync_client.p2p_discovery_mdns.Zeroconf") as mock_zc_cls,
-            patch("hsync_client.p2p_discovery_mdns.ServiceBrowser"),
+            patch("hsync_client.p2p_rendezvous_mdns.Zeroconf") as mock_zc_cls,
+            patch("hsync_client.p2p_rendezvous_mdns.ServiceBrowser"),
         ):
             lan.start(register_service=True)
             zc = mock_zc_cls.return_value
@@ -417,7 +417,7 @@ class TestRegisterService:
             lan.stop()
 
     def test_compression_and_delta_flags(self, monkeypatch):
-        from hsync_client import p2p_discovery_mdns as p2p_module
+        from hsync_client import p2p_rendezvous_mdns as p2p_module
 
         monkeypatch.setattr(
             p2p_module,
@@ -442,9 +442,9 @@ class TestRegisterService:
             lan.stop()
 
     def test_register_service_without_zeroconf_is_noop(self):
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        lan = MdnsDiscovery(cid="test123", bucket="photos")
+        lan = MdnsRendezvous(cid="test123", bucket="photos")
         lan._register_service()  # _zeroconf is None: must not raise
         assert lan._service_info is None
 
@@ -453,20 +453,20 @@ class TestUpdateServerReady:
     """Tests for update_server_ready re-registration."""
 
     def test_update_without_registration_warns(self):
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        lan = MdnsDiscovery(cid="test123", bucket="photos")
-        with patch("hsync_client.p2p_discovery_mdns.log") as mock_log:
+        lan = MdnsRendezvous(cid="test123", bucket="photos")
+        with patch("hsync_client.p2p_rendezvous_mdns.log") as mock_log:
             lan.update_server_ready()  # never started: warn, don't raise
         assert len(mock_log.warning.call_args_list) == 1
 
     def test_update_reregisters_with_server_ready(self):
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        lan = MdnsDiscovery(cid="test123", bucket="photos")
+        lan = MdnsRendezvous(cid="test123", bucket="photos")
         with (
-            patch("hsync_client.p2p_discovery_mdns.Zeroconf") as mock_zc_cls,
-            patch("hsync_client.p2p_discovery_mdns.ServiceBrowser"),
+            patch("hsync_client.p2p_rendezvous_mdns.Zeroconf") as mock_zc_cls,
+            patch("hsync_client.p2p_rendezvous_mdns.ServiceBrowser"),
         ):
             lan.start(register_service=True)
             zc = mock_zc_cls.return_value
@@ -488,20 +488,20 @@ class TestUpdateServerReady:
         """A bound slave seeder advertises TLS material but never server_ready.
 
         The read-only seeder is a *runtime* fact carried by the authenticated
-        handshake (ADR-0030); the discovery record must advertise no seeder flag,
+        handshake (ADR-0030); the rendezvous record must advertise no seeder flag,
         only the endpoint material a requester needs to reach it.
         """
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        lan = MdnsDiscovery(
+        lan = MdnsRendezvous(
             cid="test123",
             bucket="photos",
             use_https=True,
             cert_fingerprint="ff00",
         )
         with (
-            patch("hsync_client.p2p_discovery_mdns.Zeroconf") as mock_zc_cls,
-            patch("hsync_client.p2p_discovery_mdns.ServiceBrowser"),
+            patch("hsync_client.p2p_rendezvous_mdns.Zeroconf") as mock_zc_cls,
+            patch("hsync_client.p2p_rendezvous_mdns.ServiceBrowser"),
         ):
             lan.start(register_service=True)
             zc = mock_zc_cls.return_value
@@ -534,12 +534,12 @@ class TestUpdateServerReady:
         would remain a "zombie incumbent" — ranked top of the election while no
         longer serving — prolonging a split-brain.
         """
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        lan = MdnsDiscovery(cid="test123", bucket="photos")
+        lan = MdnsRendezvous(cid="test123", bucket="photos")
         with (
-            patch("hsync_client.p2p_discovery_mdns.Zeroconf") as mock_zc_cls,
-            patch("hsync_client.p2p_discovery_mdns.ServiceBrowser"),
+            patch("hsync_client.p2p_rendezvous_mdns.Zeroconf") as mock_zc_cls,
+            patch("hsync_client.p2p_rendezvous_mdns.ServiceBrowser"),
         ):
             lan.start(register_service=True)
             zc = mock_zc_cls.return_value
@@ -586,13 +586,13 @@ class TestRecordPublicationSerialization:
     interleave, or the published TXT state diverges from the local state."""
 
     def test_concurrent_heartbeat_and_refresh_are_serialized(self):
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        lan = MdnsDiscovery(cid="test123", bucket="photos")
+        lan = MdnsRendezvous(cid="test123", bucket="photos")
         try:
             with (
-                patch("hsync_client.p2p_discovery_mdns.Zeroconf") as mock_zc_cls,
-                patch("hsync_client.p2p_discovery_mdns.ServiceBrowser"),
+                patch("hsync_client.p2p_rendezvous_mdns.Zeroconf") as mock_zc_cls,
+                patch("hsync_client.p2p_rendezvous_mdns.ServiceBrowser"),
             ):
                 lan.start(register_service=True)
                 zc = mock_zc_cls.return_value
@@ -672,7 +672,7 @@ class TestNetworkChangeRecovery:
 
     def _started(self, monitor, stack):
         """Start a plan with Zeroconf/browser/monitor patched for the whole test."""
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
         instances: list[MagicMock] = []
 
@@ -682,13 +682,13 @@ class TestNetworkChangeRecovery:
             return instance
 
         stack.enter_context(
-            patch("hsync_client.p2p_discovery_mdns.Zeroconf", side_effect=make_zeroconf)
+            patch("hsync_client.p2p_rendezvous_mdns.Zeroconf", side_effect=make_zeroconf)
         )
-        browser_cls = stack.enter_context(patch("hsync_client.p2p_discovery_mdns.ServiceBrowser"))
+        browser_cls = stack.enter_context(patch("hsync_client.p2p_rendezvous_mdns.ServiceBrowser"))
         stack.enter_context(
-            patch("hsync_client.p2p_discovery_mdns.get_network_monitor", return_value=monitor)
+            patch("hsync_client.p2p_rendezvous_mdns.get_network_monitor", return_value=monitor)
         )
-        lan = MdnsDiscovery(cid="test123", bucket="photos")
+        lan = MdnsRendezvous(cid="test123", bucket="photos")
         lan.start(register_service=True)
         return lan, instances, browser_cls
 
@@ -758,7 +758,7 @@ class TestNetworkChangeRecovery:
                 instances[0].update_interfaces.side_effect = OSError("no such device")
                 stack.enter_context(
                     patch(
-                        "hsync_client.p2p_discovery_mdns.network_signature",
+                        "hsync_client.p2p_rendezvous_mdns.network_signature",
                         return_value=NetworkSignature(source_ip="10.9.8.7", online=True),
                     )
                 )

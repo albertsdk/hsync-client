@@ -34,20 +34,20 @@ informed of remediation progress.
   connection-level fingerprint pinning (TOFU); optional shared-secret
   authentication (`HSYNC_P2P_PASSPHRASE`, or the raw `HSYNC_P2P_KEY`) and
   group isolation (`--group`).
-- **Bootnode discovery** — the `boot/1` QUIC/TLS channel authenticates the
-  bootstrap node by certificate fingerprint: on a terminal the first contact is
+- **Rendezvous rendezvous** — the `rdv/1` QUIC/TLS channel authenticates the
+  rendezvous node by certificate fingerprint: on a terminal the first contact is
   SSH-like (the client shows the fingerprint and asks to confirm it once, then
   remembers it). A run without a terminal must decide explicitly — pin it with
-  `--bootnode-fingerprint` (or `HSYNC_BOOTNODE_FINGERPRINT`) or trust the first
-  sighting with `--bootnode-tofu`; a changed fingerprint is always refused.
+  `--rendezvous-fingerprint` (or `HSYNC_RENDEZVOUS_FINGERPRINT`) or trust the first
+  sighting with `--rendezvous-tofu`; a changed fingerprint is always refused.
   `--insecure` skips verification and is for loopback/testing only.
 - **Integrity** — transfers are verified with SHA-256 checksums.
 
 ## Hardening Recommendations
 
 - Prefer HTTPS endpoints and avoid `--insecure` outside testing.
-- Pin the bootnode fingerprint (`--bootnode-fingerprint`) on every device instead
-  of accepting it at the prompt (`ask`) or with `--bootnode-tofu`.
+- Pin the rendezvous fingerprint (`--rendezvous-fingerprint`) on every device instead
+  of accepting it at the prompt (`ask`) or with `--rendezvous-tofu`.
 - Set a shared secret (`HSYNC_P2P_PASSPHRASE`, or the raw `HSYNC_P2P_KEY`) when
   using p2p mode on shared networks.
 - Keep your API key out of shell history and logs.

@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""Data relay over ``boot/1``: reach a peer that no inbound NAT mapping reaches.
+"""Data relay over ``rdv/1``: reach a peer that no inbound NAT mapping reaches.
 
 Two peers that are both behind carrier-grade NAT cannot dial each other: neither
-accepts an inbound TCP connection. The bootnode is the one element of the group
+accepts an inbound TCP connection. The rendezvous is the one element of the group
 that is publicly reachable, so it can pair them and forward their TLS bytes
-opaque (``boot/1`` relay frames). This module is the client half:
+opaque (``rdv/1`` relay frames). This module is the client half:
 
 * :class:`RelayDialer` — the requester side. It opens a relay session and then
   exposes it as a **loopback TCP listener**: the regular HTTPS/WSS client dials
@@ -19,11 +19,11 @@ opaque (``boot/1`` relay frames). This module is the client half:
   exactly as it does for a direct connection.
 
 Both run their own asyncio loop in a background thread (the sync engine is
-threaded) and reuse the bootnode client's trust machinery
-(``BootnodeClient.relay_configuration``/``verify_peer``), so pins, TOFU and the
-SSH-style prompt behave exactly as they do for discovery.
+threaded) and reuse the rendezvous client's trust machinery
+(``RendezvousClient.relay_configuration``/``verify_peer``), so pins, TOFU and the
+SSH-style prompt behave exactly as they do for rendezvous.
 
-Consumers: ``hsync-client`` (``p2p_handler`` through the discovery plan), tests.
+Consumers: ``hsync-client`` (``p2p_handler`` through the rendezvous plan), tests.
 """
 
 from __future__ import annotations
@@ -37,27 +37,27 @@ from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 from aioquic.asyncio import connect
-from hsync_common.protocol.bootnode import (
-    validate_boot_relay_error,
-    validate_boot_relay_incoming,
-    validate_boot_relay_listening,
-    validate_boot_relay_ok,
+from hsync_common.protocol.rendezvous import (
+    validate_rdv_relay_error,
+    validate_rdv_relay_incoming,
+    validate_rdv_relay_listening,
+    validate_rdv_relay_ok,
 )
 from loguru import logger as log
 
-from hsync_client.boot_client import (
-    BootnodeClient,
-    BootnodeProtocolError,
+from hsync_client.constants import (
+    RELAY_BUFFER_BYTES,
+    RELAY_IDLE_TIMEOUT_S,
+    RELAY_KEEPALIVE_INTERVAL,
+)
+from hsync_client.rdv_client import (
+    RendezvousClient,
+    RendezvousProtocolError,
     build_relay_attach_frame,
     build_relay_connect_frame,
     build_relay_listen_frame,
     build_relay_ping_frame,
     frame_line,
-)
-from hsync_client.constants import (
-    RELAY_BUFFER_BYTES,
-    RELAY_IDLE_TIMEOUT_S,
-    RELAY_KEEPALIVE_INTERVAL,
 )
 
 __all__ = [
@@ -79,7 +79,7 @@ def refusal_code(raw: bytes) -> str | None:
         decoded = json.loads(raw)
     except (json.JSONDecodeError, UnicodeDecodeError):
         return "relay_unavailable"
-    refusal = validate_boot_relay_error(decoded)
+    refusal = validate_rdv_relay_error(decoded)
     return None if refusal is None else str(refusal["error"])
 
 
@@ -104,7 +104,7 @@ async def _probe_relay_connect(quic: Any, frame: dict[str, object], timeout: flo
         return None, None, "relay_unavailable"
     raw = bytes(reply).rstrip(b"\n")
     refusal = refusal_code(raw)
-    if refusal is not None or (raw and validate_boot_relay_ok(json.loads(raw)) is None):
+    if refusal is not None or (raw and validate_rdv_relay_ok(json.loads(raw)) is None):
         stream_writer.close()
         return None, None, refusal or "relay_protocol"
     return stream_reader, stream_writer, None
@@ -126,10 +126,10 @@ async def _pump(reader: Any, writer: Any, idle_timeout: float, done: asyncio.Eve
 
 
 @contextlib.asynccontextmanager
-async def _quic_session(client: BootnodeClient) -> AsyncIterator[Any]:
+async def _quic_session(client: RendezvousClient) -> AsyncIterator[Any]:
     """Dial the node for a long-lived relay session, first reachable port first.
 
-    Mirrors ``BootnodeClient._with_connection``: only a failed **connection**
+    Mirrors ``RendezvousClient._with_connection``: only a failed **connection**
     falls back to the next candidate port (a client whose egress firewall blocks
     UDP 443 but allows 53 still relays), and once the handshake succeeded any
     later transport error is the session's own failure, not a reason to redial.
@@ -153,7 +153,7 @@ async def _quic_session(client: BootnodeClient) -> AsyncIterator[Any]:
             if connected:
                 raise
             last_exc = exc
-    log.debug(f"Relay cannot reach the discovery server: {last_exc}")
+    log.debug(f"Relay cannot reach the rendezvous server: {last_exc}")
 
 
 async def bridge(
@@ -197,7 +197,7 @@ class RelayDialer:
 
     def __init__(
         self,
-        client: BootnodeClient,
+        client: RendezvousClient,
         *,
         cid: str,
         bucket: str,
@@ -222,7 +222,7 @@ class RelayDialer:
 
         ``None`` means the node could not pair it (relay disabled, no listener
         for the target, capacity reached): the caller then keeps its normal
-        "no reachable endpoint, retry discovery" path.
+        "no reachable endpoint, retry rendezvous" path.
         """
         self._thread = threading.Thread(
             target=self._thread_main, name="hsync-relay-dialer", daemon=True
@@ -263,7 +263,7 @@ class RelayDialer:
             # Pre-flight: prove the node pairs a session for this target before
             # exposing a loopback endpoint, so ``open()`` keeps returning ``None``
             # for a node without the relay (the caller backs off instead of
-            # re-dialling on every discovery tick). The probe stream is closed
+            # re-dialling on every rendezvous tick). The probe stream is closed
             # right after the reply; real sessions are paired per connection.
             probe_reader, probe_writer, refusal = await _probe_relay_connect(
                 quic, self._connect_frame(), self._client.timeout
@@ -312,7 +312,7 @@ class RelayDialer:
                     log.debug(f"Relay session refused by the node: {refusal}")
                 tcp_writer.close()
                 return
-            log.info("Relay tunnel established with the master (via the discovery server)")
+            log.info("Relay tunnel established with the master (via the rendezvous server)")
             await bridge(tcp_reader, tcp_writer, stream_reader, stream_writer)
 
         return _handle
@@ -323,7 +323,7 @@ class RelayAcceptor:
 
     def __init__(
         self,
-        client: BootnodeClient,
+        client: RendezvousClient,
         *,
         cid: str,
         bucket: str,
@@ -408,11 +408,11 @@ class RelayAcceptor:
                 if refusal is not None:
                     log.debug(f"Relay listener refused by the node: {refusal}")
                     return
-                if raw and validate_boot_relay_listening(json.loads(raw)) is None:
-                    raise BootnodeProtocolError("expected a 'relay_listening' frame")
+                if raw and validate_rdv_relay_listening(json.loads(raw)) is None:
+                    raise RendezvousProtocolError("expected a 'relay_listening' frame")
                 self._registered = True
                 self._ready.set()
-                log.info("Relay listener registered with the discovery server")
+                log.info("Relay listener registered with the rendezvous server")
                 tasks = [
                     asyncio.create_task(self._read_incoming(quic, reader, sessions)),
                     asyncio.create_task(self._keepalive(writer)),
@@ -437,7 +437,7 @@ class RelayAcceptor:
             if not line:
                 return
             try:
-                frame = validate_boot_relay_incoming(json.loads(bytes(line).rstrip(b"\n")))
+                frame = validate_rdv_relay_incoming(json.loads(bytes(line).rstrip(b"\n")))
             except (json.JSONDecodeError, UnicodeDecodeError):
                 return
             if frame is None:
@@ -478,9 +478,9 @@ class RelayAcceptor:
 
 
 class FailoverRelayDialer:
-    """Relay dialer that pairs through the first discovery server that accepts it.
+    """Relay dialer that pairs through the first rendezvous server that accepts it.
 
-    With several discovery servers configured, the peer a relay session targets
+    With several rendezvous servers configured, the peer a relay session targets
     may be listening on any of them and a ``query`` record does not say which
     one paired it. Each server is asked in order and the first ``relay_ok``
     wins, so the caller keeps its single "open, then close" contract.
@@ -494,7 +494,7 @@ class FailoverRelayDialer:
         """Try each server in order within one deadline; ``None`` when none pairs.
 
         The budget covers the whole attempt, not each server: N servers must not
-        multiply the caller's timeout (this runs in the discovery loop, where a
+        multiply the caller's timeout (this runs in the rendezvous loop, where a
         blocked call delays serving). Servers are tried in order, so a slow first
         one can consume the remaining budget of the others.
         """
@@ -517,7 +517,7 @@ class FailoverRelayDialer:
 
 
 class GroupRelayAcceptor:
-    """Relay listener registered on **every** discovery server of the group.
+    """Relay listener registered on **every** rendezvous server of the group.
 
     A peer reaches this node through whichever server it is paired with, so the
     serving side must be present on all of them; a single successful

@@ -39,30 +39,30 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   `--quarantine` renames a corrupt DB aside. Wire/capabilities: the `state`
   subcommand appears automatically in `--capabilities-json` (introspected), so
   the desktop gates its button on `supports_subcommand(doc, "state")`.
-- **Bootnode multi-port dial fallback**: `HSYNC_DISCOVERY_SERVER_EXTRA_PORTS`
-  (`config.py::get_bootnode_ports`) adds extra UDP ports for the **same** bootnode;
-  `BootnodeClient._with_connection` (`boot_client.py`) dials the last working port
+- **Rendezvous multi-port dial fallback**: `HSYNC_RENDEZVOUS_SERVER_EXTRA_PORTS`
+  (`config.py::get_rendezvous_ports`) adds extra UDP ports for the **same** rendezvous;
+  `RendezvousClient._with_connection` (`rdv_client.py`) dials the last working port
   first (then the primary and extras) and falls back **only when the QUIC handshake
   fails** — the blocked-port signal: the "port problem" is the **client's egress
-  firewall**, not the node (decision 57 in `hsync-bootnode`), so a blocked primary
+  firewall**, not the node (decision 57 in `hsync-rendezvous`), so a blocked primary
   is paid once, not on every exchange. A reply timeout or a trust/protocol error is
   a real exchange failure and never re-dials (no duplicate frame is sent).
   Trust stays a single pin (shared fleet identity), so the fallback never
-  re-prompts; the `boot/1` wire is unchanged.
+  re-prompts; the `rdv/1` wire is unchanged.
 - **Continuous/daemon mode is the default in both topologies**: the client
   runs indefinitely, retries an unreachable server forever (`run_sync`
   connectivity gate is non-fatal in continuous mode; `remote_connect`
   (`remote_websocket.py`) loops forever with full-jitter exponential
-  backoff), and p2p discovery waits indefinitely by default
-  (`DISCOVERY_TIMEOUT_DEFAULT = 0`).
+  backoff), and p2p rendezvous waits indefinitely by default
+  (`RENDEZVOUS_TIMEOUT_DEFAULT = 0`).
   Continuous is the default and `--once` is the single
   one-shot selector in both topologies (in p2p mode it runs one slave sync
   cycle and exits; the master role stays continuous **while it has live
-  peers**). The finite discovery window ends a one-shot run even when the
-  local role was resolved as MASTER at discovery start: with no live peer the
-  discovery loop exits with `ExitCode.P2P_NO_PEER` (5)
+  peers**). The finite rendezvous window ends a one-shot run even when the
+  local role was resolved as MASTER at rendezvous start: with no live peer the
+  rendezvous loop exits with `ExitCode.P2P_NO_PEER` (5)
   (`exitcodes.py::ExitCode`) instead of serving as a peer-less master, so a
-  scheduled `--once` run always terminates unless `--discovery-timeout 0`
+  scheduled `--once` run always terminates unless `--rendezvous-timeout 0`
   explicitly waits forever. Rationale: sync
   daemons (Syncthing, Nextcloud/Dropbox clients) never exit on a transient
   connectivity loss; schedulers want the explicit one-shot + exit-code
@@ -147,7 +147,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   (`utils/paths.py::path_lock`) to avoid concurrent writes to the same file.
 - **Failover via periodic staleness sweep**: a hard-crashed master sends no
   mDNS goodbye and no further announce, so election is also re-run on every
-  discovery wake and on a slave WebSocket drop
+  rendezvous wake and on a slave WebSocket drop
   (`PeerManager.reconcile_stale_peers`, `p2p_peers.py::PeerManager.reconcile_stale_peers`), which demotes any peer
   whose heartbeat is older than `HSYNC_PEER_TIMEOUT`. The peer timeout must be
   ≥ 2× `HSYNC_HEARTBEAT_INTERVAL` (enforced in `config.EnvSettings`) so a
@@ -173,7 +173,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   under Poetry 2.x (2.3.2, pinned in the builder image): `--only` is exhaustive
   and a co-present `--with` is ignored, so `--only main --with build` exits 0
   while installing no PyInstaller. That form silently broke `rpi`/`deb-all` in
-  hsync-bootnode, hsync-server and hsync-desktop.
+  hsync-rendezvous, hsync-server and hsync-desktop.
 - **Tag-driven release** (`.github/workflows/release.yml`): pushing a `vX.Y.Z`
   tag gates on lint+test, then builds native binaries on per-OS matrix runners
   (`linux-amd64`, `linux-arm64`, `darwin-amd64`, `darwin-arm64`, `windows-amd64`
@@ -192,7 +192,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   `curl -fsSIL -w %{url_effective}` (no GitHub API, no rate limit; drafts and
   pre-releases are excluded by GitHub), validates the `vX.Y.Z` tag, then proceeds
   exactly as for a pinned version (`install.sh`, `resolve_latest_version`).
-  User docs point at `releases/latest/download/install.sh` so the bootstrap
+  User docs point at `releases/latest/download/install.sh` so the rendezvous
   needs no version either.
 - **RPM packaging (`rpm`/`rpm-all`)**: `compile.sh --target rpm` (host, needs
   `rpmbuild`) and `rpm-all` (Docker: x86_64 + aarch64,
@@ -242,82 +242,82 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
 > New decisions affecting multiple repos: add the ADR in `hsync-common` first,
 > then map it here.
 
-- **Bootnode TLS trust (ADR-0034, `hsync-common`)**: the `boot/1` node is
-  authenticated pre-write. `BootnodeClient` gained `fingerprints`/`tofu`
+- **Rendezvous TLS trust (ADR-0034, `hsync-common`)**: the `rdv/1` node is
+  authenticated pre-write. `RendezvousClient` gained `fingerprints`/`tofu`
   (replacing the unusable `ca_cert`); the pin/TOFU decision is the shared
   `hsync_common.protocol.pairing` SSOT (`parse_fingerprint`/`fingerprint_matches`/
-  `FingerprintMismatch`). `bootnode_trust.py` is a `{host:port} → current` TOFU
+  `FingerprintMismatch`). `rendezvous_trust.py` is a `{host:port} → current` TOFU
   store (keys are the bracketed `[IPv6]:port` composite from
   `hsync_common.endpoint.format_authority`) sharing the `_trust_store.JsonStore` lock/atomicity base with
   `pinning.PinStore` (extracted on its second use — Rule of Three). A mismatch
-  stops the bootnode source (`BootnodeFingerprintMismatch`, lease loop stops and
+  stops the rendezvous source (`RendezvousFingerprintMismatch`, lease loop stops and
   the source is disabled while mDNS keeps running, ADR-0045); `--ca-cert` is
   refused in `hsync p2p`.
 
-- **Bootnode discovery cadence has its own budget**: the `boot/1` plan uses
-  `BOOTNODE_REFRESH_INTERVAL` (`hsync_client.constants`, default `30`, spec
-  ``boot-1.md``: "client refresh every 30 s"; env `HSYNC_DISCOVERY_SERVER_REFRESH_INTERVAL`,
+- **Rendezvous rendezvous cadence has its own budget**: the `rdv/1` plan uses
+  `RENDEZVOUS_REFRESH_INTERVAL` (`hsync_client.constants`, default `30`, spec
+  ``rdv-1.md``: "client refresh every 30 s"; env `HSYNC_RENDEZVOUS_SERVER_REFRESH_INTERVAL`,
   range 1–300) to drive the lease loop's register/refresh/query, distinct from the
-  mDNS `HEARTBEAT_INTERVAL` (5 s). `BootnodeDiscovery.wait_for_discovery` is
+  mDNS `HEARTBEAT_INTERVAL` (5 s). `RendezvousRendezvous.wait_for_rendezvous` is
   event-based (`PeerManager.wait_for_change`, like mDNS) and never polls `query`
   itself; a refused `query` arms a `retry_after` backoff. Rationale: the node
   rate-limits `query` to 5/min per (IP, bucket) and `register`/`refresh` to
-  10/min (`hsync-bootnode/python/src/hsync_bootnode/handler.py::BootHandler`), and this cadence keeps the client inside those
+  10/min (`hsync-rendezvous/python/src/hsync_rendezvous/handler.py::RendezvousHandler`), and this cadence keeps the client inside those
   limits instead of burning the burst and being `rate_limited` for the rest of
-  the window, which would starve real discovery.
-  `HSYNC_DISCOVERY_SERVER_REFRESH_INTERVAL` is documented in
+  the window, which would starve real rendezvous.
+  `HSYNC_RENDEZVOUS_SERVER_REFRESH_INTERVAL` is documented in
   `docs/configuration-p2p.md` and the man page; it is **not** part of the WD OS5
   web config surface in `hsync-wd-os5` (which never exposed the heartbeat).
 
-- **A discovery source failure degrades discovery, it never fails the run**: with
-  a bootnode configured, mDNS and the bootnode channel run side by side
-  (ADR-0039). A bootnode that cannot confirm the node's identity disables **that
-  source** (`p2p_discovery_bootnode.py::BootnodeDiscovery._disable_source`,
+- **A rendezvous source failure degrades rendezvous, it never fails the run**: with
+  a rendezvous configured, mDNS and the rendezvous channel run side by side
+  (ADR-0039). A rendezvous that cannot confirm the node's identity disables **that
+  source** (`p2p_rendezvous_rendezvous.py::RendezvousRendezvous._disable_source`,
   `source_disabled()`): the lease loop stops, the node is never contacted again
   (not even for the departure frame) and a structured warning
-  (`source="bootnode"`, `reason="untrusted"`) is published; the mDNS source keeps
-  the group discoverable, so the run continues — there is no fatal discovery
+  (`source="rendezvous"`, `reason="untrusted"`) is published; the mDNS source keeps
+  the group discoverable, so the run continues — there is no fatal rendezvous
   error and no `ExitCode.FATAL` path for it (ADR-0045). An *unreachable* node is
-  retried at the `boot/1` cadence with a transient warning
-  (`reason="unreachable"`). Readiness (`p2p_discovery_hybrid.py::HybridDiscovery.endpoint_published`)
+  retried at the `rdv/1` cadence with a transient warning
+  (`reason="unreachable"`). Readiness (`p2p_rendezvous_hybrid.py::HybridRendezvous.endpoint_published`)
   follows the sources that can still carry traffic, so a disabled source never
   delays mastership. The desktop pre-flight mirrors the rule: an unreachable
-  discovery server produces a warning and the run proceeds on the local network,
+  rendezvous server produces a warning and the run proceeds on the local network,
   while an unreachable/refused sync server still cancels the start (server mode
-  has no alternative). See `hsync-bootnode/docs/faq.md` and `docs/faq-p2p.md` for
+  has no alternative). See `hsync-rendezvous/docs/faq.md` and `docs/faq-p2p.md` for
   the operator/client recovery steps (stable `--identity`,
-  `--discovery-server-fingerprint`, clearing the pin).
+  `--rendezvous-server-fingerprint`, clearing the pin).
 
-- **One log line per boot/1 lease cycle**: aioquic's per-frame QUIC/TLS INFO
+- **One log line per rdv/1 lease cycle**: aioquic's per-frame QUIC/TLS INFO
   records (`Retrying with token`, `Negotiated protocol version`, `ALPN
   negotiated protocol`, `Connection close sent`) are pinned to WARNING in
   `logger.setup_logging` (DEBUG with `--debug`), and `_lease_loop` emits a single
   INFO summary per successful cycle
-  (`Bootnode <host>:<port>: <action> ok (N peer(s))`). Rationale: four library
+  (`Rendezvous <host>:<port>: <action> ok (N peer(s))`). Rationale: four library
   lines per exchange, repeated every cycle, drowned the client's own output
   without adding actionable information; the library detail stays available with
   `--debug`.
 
-- **SSH-like bootnode trust (ADR-0035)**: the default policy is `ask` — on a
-  terminal the client prints the unknown bootnode fingerprint and confirms it
-  once (like `ssh`), remembering it in `discovery_server_known_hosts.json`; without a
+- **SSH-like rendezvous trust (ADR-0035)**: the default policy is `ask` — on a
+  terminal the client prints the unknown rendezvous fingerprint and confirms it
+  once (like `ssh`), remembering it in `rendezvous_server_known_hosts.json`; without a
   terminal it fails closed. The policy is the shared SSOT
   `hsync_common.protocol.tls_trust` (`TrustPolicy` + `evaluate_tls_trust`),
-  consumed by `BootnodeClient` (`policy`/`prompt` fields; `BootnodeNotTrusted`
-  disables the bootnode source in the lease loop, like a pin mismatch, while the
+  consumed by `RendezvousClient` (`policy`/`prompt` fields; `RendezvousNotTrusted`
+  disables the rendezvous source in the lease loop, like a pin mismatch, while the
   run continues on the remaining sources) and mirrored by the Android client
-  via the `p2p-bootnode-trust-scenarios` fixture. `--discovery-server-trust
-  {ask,accept-new,strict}` and `HSYNC_DISCOVERY_SERVER_TRUST` select the policy;
-  `--discovery-server-tofu` maps to `accept-new`, `--discovery-server-fingerprint` to `strict` and
-  `--insecure` to `none`. The store (`discovery_server_known_hosts.json`) keeps
+  via the `p2p-rendezvous-trust-scenarios` fixture. `--rendezvous-server-trust
+  {ask,accept-new,strict}` and `HSYNC_RENDEZVOUS_SERVER_TRUST` select the policy;
+  `--rendezvous-server-tofu` maps to `accept-new`, `--rendezvous-server-fingerprint` to `strict` and
+  `--insecure` to `none`. The store (`rendezvous_server_known_hosts.json`) keeps
   `{current, updated_at, first_seen, source}` and is managed with
-  `hsync trust discovery-server {list,show,add,remove,fingerprint}` (`fingerprint` reads a
+  `hsync trust rendezvous-server {list,show,add,remove,fingerprint}` (`fingerprint` reads a
   node's certificate without trusting it). The prompt is built by
   `hsync_client/trust_prompt.py` and only prompts on a terminal under policy
   `ask`; non-interactive acceptance is expressed with `accept-new` (TOFU).
 
-- **Discovery elects the local role at start**: each plan calls
-  `PeerManager.elect()` (`p2p_peers.py`) once when discovery starts. The election
+- **Rendezvous elects the local role at start**: each plan calls
+  `PeerManager.elect()` (`p2p_peers.py`) once when rendezvous starts. The election
   previously ran only on peer add/remove, a local readiness change and the stale
   sweep, so a node with **no peers yet** never resolved its role: a lone
   `--prefer-master` node (the documented single-device master,
@@ -340,20 +340,20 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
 
 - **One naming rule for destinations, ports and bind addresses**: the sync-server
   endpoint is `--server-url`/`HSYNC_SERVER_URL` (a URL: it may carry a
-  reverse-proxy path), the discovery servers are the repeatable
-  `--discovery-server`/`HSYNC_DISCOVERY_SERVER_ENDPOINTS` (scheme-less
+  reverse-proxy path), the rendezvous servers are the repeatable
+  `--rendezvous-server`/`HSYNC_RENDEZVOUS_SERVER_ENDPOINTS` (scheme-less
   `HOST[:PORT]` endpoints, because the QUIC/UDP channel refuses a scheme), extra
-  dial ports of those same endpoints are `HSYNC_DISCOVERY_SERVER_EXTRA_PORTS`,
+  dial ports of those same endpoints are `HSYNC_RENDEZVOUS_SERVER_EXTRA_PORTS`,
   and bind addresses are `--listen-*`. No flag is a bare `--port` any more: a
   port always travels inside the endpoint it belongs to, so the same word can no
   longer mean "port I dial" and "port I bind". Renaming the client's
-  discovery-server surface also freed the `HSYNC_DISCOVERY_*` prefix: the
-  peer-discovery wait is `HSYNC_PEER_DISCOVERY_TIMEOUT`, so `HSYNC_DISCOVERY_*`
+  rendezvous-server surface also freed the `HSYNC_RENDEZVOUS_*` prefix: the
+  peer-rendezvous wait is `HSYNC_PEER_RENDEZVOUS_TIMEOUT`, so `HSYNC_RENDEZVOUS_*`
   never describes two different objects.
-- **Several discovery servers are leased and merged client-side, not replicated**:
+- **Several rendezvous servers are leased and merged client-side, not replicated**:
   every configured endpoint gets its own lease (register/refresh/query) and its
   own trust state, and the samples merge in the shared `PeerManager` by CID. A
-  node stays a single RAM-only routing table (the `boot/1` spec forbids state
+  node stays a single RAM-only routing table (the `rdv/1` spec forbids state
   sharding), so redundancy is a client property and no peer data crosses nodes.
   A plain failover would have re-created the partition it tries to hide: with
   two live nodes, a client pinned to one would never see the other's devices.

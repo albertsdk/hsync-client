@@ -43,7 +43,7 @@ def _proc_rss_mb(pid: int) -> float:
 
     Kept local on purpose: bench scripts are standalone per repository (there
     is no cross-repo helper module, and hsync-common is off-limits for bench
-    tooling), so this mirrors the bootnode/server soak helpers.
+    tooling), so this mirrors the rendezvous/server soak helpers.
     """
     try:
         with open(f"/proc/{pid}/status", encoding="ascii") as fh:

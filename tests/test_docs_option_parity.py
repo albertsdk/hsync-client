@@ -68,7 +68,7 @@ def _mentioned(flag: str, text: str) -> bool:
 def _man_entries() -> set[str]:
     """Long options that own a definition block (a ``.TP`` entry) in the page.
 
-    Inline ``.BR \\-\\-flag`` mentions inside prose (e.g. the bootnode's own
+    Inline ``.BR \\-\\-flag`` mentions inside prose (e.g. the rendezvous's own
     ``--ports``) are intentionally not entries: they document another binary.
     """
     lines = _MAN_PAGE.read_text(encoding="utf-8").splitlines()

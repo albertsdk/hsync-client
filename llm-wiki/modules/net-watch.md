@@ -13,9 +13,9 @@ side in the desktop's "waiting" state until the client was restarted.
 | `network_signature` | `net_watch.py::network_signature` | samples `net_utils.get_local_ip` (one UDP `connect`, no packet) and marks the loopback fallback as offline |
 | `NetworkChangeMonitor` | `net_watch.py::NetworkChangeMonitor` | the polling thread (`NETWORK_POLL_INTERVAL_S`), `subscribe`/`unsubscribe`, `poll_once`, `signature` |
 | `get_network_monitor` | `net_watch.py::get_network_monitor` | process-wide singleton, thread started on first use |
-| `MdnsDiscovery._on_network_change` / `_rebuild_mdns` / `_recover_mdns` | `p2p_discovery_mdns.py::MdnsDiscovery._on_network_change` | rebuild the Zeroconf stack on the fresh address / repair after a failed announcement |
-| `BootnodeDiscovery._on_network_change` / `_republish_stale_endpoint` | `p2p_discovery_bootnode.py::BootnodeDiscovery._republish_stale_endpoint` | wake the lease loop / force a full endpoint re-register |
-| `PeerManager.set_local_address` | `p2p_peers.py::PeerManager.set_local_address` | keep the self-discovery check on the address we currently announce |
+| `MdnsRendezvous._on_network_change` / `_rebuild_mdns` / `_recover_mdns` | `p2p_rendezvous_mdns.py::MdnsRendezvous._on_network_change` | rebuild the Zeroconf stack on the fresh address / repair after a failed announcement |
+| `RendezvousRendezvous._on_network_change` / `_republish_stale_endpoint` | `p2p_rendezvous_rendezvous.py::RendezvousRendezvous._republish_stale_endpoint` | wake the lease loop / force a full endpoint re-register |
+| `PeerManager.set_local_address` | `p2p_peers.py::PeerManager.set_local_address` | keep the self-rendezvous check on the address we currently announce |
 | `_ReconnectWaker` | `remote_websocket.py::_ReconnectWaker` | bridges a change into the remote mode's backoff sleep |
 
 ## Semantics
@@ -33,7 +33,7 @@ side in the desktop's "waiting" state until the client was restarted.
 
 ## Consumers
 
-**mDNS** (`MdnsDiscovery.start` subscribes, `stop` unsubscribes). On
+**mDNS** (`MdnsRendezvous.start` subscribes, `stop` unsubscribes). On
 `online == False` nothing can be announced, so the record keeps the last address
 and `_network_offline` latches. On the way back — an address different from the
 advertised one, or a previous offline state — `_rebuild_mdns` retires the old
@@ -46,7 +46,7 @@ record. If a heartbeat re-announce raises, `_recover_mdns` first reconciles the
 sockets (`Zeroconf.update_interfaces`, which the client never called before) and
 escalates to a rebuild when that fails.
 
-**bootnode** (`BootnodeDiscovery.start` subscribes, `stop` unsubscribes). A
+**rendezvous** (`RendezvousRendezvous.start` subscribes, `stop` unsubscribes). A
 `refresh` carries no endpoints — only a full `register` does — so while a lease
 survives an outage the node would keep relaying the pre-outage candidates. The
 monitor callback only wakes the lease loop (`_wake`); the loop owns every
@@ -69,7 +69,7 @@ shorten the next backoff for no reason.
 
 `tests/test_net_watch.py` drives the probe by hand (no network).
 `tests/test_p2p_sync.py::TestNetworkChangeRecovery` covers the mDNS rebuild,
-`tests/test_p2p_discovery_bootnode.py::TestNetworkChange` the endpoint
+`tests/test_p2p_rendezvous_rendezvous.py::TestNetworkChange` the endpoint
 republish, `tests/test_p2p_peer_manager.py::TestDuplicateIdentityDetection` the
 self-address update and
 `tests/test_websocket_events.py::TestReconnectBackoffWaker` the interruptible

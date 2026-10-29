@@ -73,7 +73,7 @@ to measure yet, and probing the placeholder URL would always fail with a
 spurious warning. The placeholder URL is also not emitted as a `server` UI
 event (`main_logic.py::run_sync`).
 
-### LAN post-discovery refresh (`p2p_handler._refresh_p2p_network_tuning`)
+### LAN post-rendezvous refresh (`p2p_handler._refresh_p2p_network_tuning`)
 
 `p2p_handler.py::_refresh_p2p_network_tuning`, called from `_run_as_slave` (`p2p_handler.py::_run_as_slave`) after
 the master is pinned and `set_config(config)` has run. Measures the real RTT

@@ -51,7 +51,7 @@ _folder_cache: dict[str, tuple[str, str]] = {}
 
 
 def reset_bucket_folder_cache() -> None:
-    """Drop every cached folder resolution (tests; folder re-discovery)."""
+    """Drop every cached folder resolution (tests; folder re-rendezvous)."""
     _folder_cache.clear()
 
 

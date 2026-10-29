@@ -225,7 +225,7 @@ def _terminate_child_hsync_processes(
     test's ``finally: _terminate(...)`` runs — or the kill doesn't reach the
     children in time — stale mDNS peers linger (``PEER_TIMEOUT = 15s``) and
     cascade into later tests (split-brain elections, port conflicts, stale
-    discovery). ``_terminate`` only handles the ``Popen`` it is given; this
+    rendezvous). ``_terminate`` only handles the ``Popen`` it is given; this
     helper is the safety net for the cases it cannot reach.
 
     ``pgrep -P <pytest_pid> -f <pattern>`` filters to *direct* children of this
@@ -326,7 +326,7 @@ def _kill_orphan_hsync_processes() -> Generator[None]:
 # =============================================================================
 
 BB_ADMIN_SECRET = "bb0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd"
-BB_API_KEY = f"hs_HsyncAdminBootstrap01_{BB_ADMIN_SECRET}"
+BB_API_KEY = f"hs_HsyncAdminRendezvous01_{BB_ADMIN_SECRET}"
 BB_CLIENT_CID = "TestClientX1234567890"  # exactly 21 alphanumeric chars per CID_PATTERN
 
 # Base-url -> buckets-dir registry for the module-scoped live servers. Consumed
@@ -554,7 +554,7 @@ def _server_env(buckets_dir: str, state_dir: str) -> dict:
     content nor the shared ``state DB`` account store is reused across
     tests — a shared ``state DB`` caused startup ``SQLITE_BUSY`` / stale
     schema collisions when several server modules ran in one session. The
-    scrypt cost is lowered to keep bootstrap fast.
+    scrypt cost is lowered to keep rendezvous fast.
     """
     import os
 

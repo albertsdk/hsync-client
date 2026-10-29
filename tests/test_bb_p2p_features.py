@@ -183,7 +183,7 @@ class TestP2PDelta:
 
 class TestP2PPeriodicResync:
     # Two independent timing budgets (60 s to complete the first sync, then a
-    # 20 s interval inside a 40 s window) on a suite whose multicast discovery
+    # 20 s interval inside a 40 s window) on a suite whose multicast rendezvous
     # is environment-sensitive; retried like the other election-timing tests.
     @pytest.mark.flaky(reruns=3, reruns_delay=5)
     def test_periodic_resync_fires(self, p2p_master_dir, p2p_slave_dir, p2p_bucket, bb_sample):
@@ -300,7 +300,7 @@ class TestP2PKeyless:
         """A keyless download-only node passes the write policy and, with the
         explicit keyless acknowledgement, keeps running.
 
-        The node starts, runs discovery and keeps waiting for peers — the
+        The node starts, runs rendezvous and keeps waiting for peers — the
         point is that the run is *allowed* without HSYNC_P2P_KEY once the
         posture is acknowledged (no write-policy error) and stays alive.
         """
@@ -313,9 +313,9 @@ class TestP2PKeyless:
             extra_env={"HSYNC_P2P_KEY": None},
         )
         try:
-            # Then it completes discovery (no write-policy error) and stays alive
+            # Then it completes rendezvous (no write-policy error) and stays alive
             alone = _wait_for_text_in_stderr(node, "No other peers discovered", timeout=30)
-            assert alone, "Download-only keyless node should complete a discovery round"
+            assert alone, "Download-only keyless node should complete a rendezvous round"
             assert ActionLabel.AUTH_REQUIRED not in _stderr_text(node), (
                 "Download-only keyless run must not trip the write policy"
             )

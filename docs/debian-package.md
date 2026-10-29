@@ -187,17 +187,17 @@ systemd unit's `ExecStart`; the rest are consumed directly by the hsync binary.
 | `HSYNC_BUCKET` † | `hsync` | Remote bucket name |
 | `HSYNC_PATH` † | `/var/lib/hsync` | Local directory to synchronise |
 | `HSYNC_P2P_HTTPS` | `true` | Use HTTPS for p2p peer communication (always on, not configurable) |
-| `HSYNC_P2P_GROUP` | *(empty)* | Restrict discovery to a group |
+| `HSYNC_P2P_GROUP` | *(empty)* | Restrict rendezvous to a group |
 | `HSYNC_P2P_PASSPHRASE` | *(empty)* | Shared password for peer authentication (at least 12 characters; derived to the group key). Mutually exclusive with `HSYNC_P2P_KEY` |
-| `HSYNC_P2P_KEY` | *(empty)* | Full raw group key (at least 32 characters) for peer authentication (also the bootnode group key for protected/private bootnodes) |
+| `HSYNC_P2P_KEY` | *(empty)* | Full raw group key (at least 32 characters) for peer authentication (also the rendezvous group key for protected/private rendezvouss) |
 | `HSYNC_DEVICE_DIR` | `/var/lib/hsync/device` | Directory for the persistent device identity (device ID + p2p keypair) and the per-folder sync-state DBs (`syncstate/<uuid>.db`, `syncstate/index.db`) |
 | `HSYNC_STATE_DIR` | `/var/lib/hsync/state` | Installation state directory: the server's per-bucket state and the default parent of the device identity, trust stores and p2p pins when their own override is unset |
 | `HSYNC_LOCKS_DIR` | `/var/lib/hsync/locks` | Directory for the per-directory instance locks (`<sha256>.lock` per synced directory) |
 | `HSYNC_P2P_PIN_FILE` | `/var/lib/hsync/p2p_known_peers.json` | File storing pinned fingerprints of known p2p peers (TOFU) |
-| `HSYNC_DISCOVERY_SERVER_TRUST_FILE` | `/var/lib/hsync/discovery_server_known_hosts.json` | File storing trusted bootnode fingerprints (known-hosts store) |
+| `HSYNC_RENDEZVOUS_SERVER_TRUST_FILE` | `/var/lib/hsync/rendezvous_server_known_hosts.json` | File storing trusted rendezvous fingerprints (known-hosts store) |
 | `HSYNC_SERVER_TRUST_FILE` | `/var/lib/hsync/server_known_hosts.json` | File storing trusted server fingerprints (known-hosts store) |
 | `HSYNC_SERVER_TRUST` | `chain` | Server TLS trust policy (`chain`/`ask`/`accept-new`/`strict`/`none`) |
-| `HSYNC_PEER_DISCOVERY_TIMEOUT` | `0` | Seconds to wait for the first peer (0 = indefinite) |
+| `HSYNC_PEER_RENDEZVOUS_TIMEOUT` | `0` | Seconds to wait for the first peer (0 = indefinite) |
 | `HSYNC_NEVER_MASTER` | `false` | Never become master; always remain a client/slave |
 | `HSYNC_SERVER_URL` | *(empty)* | Server endpoint: `host`/`host:port`/`[IPv6]`/`[IPv6]:port` or full `https://` URL (for server mode) |
 | `HSYNC_API_KEY` | *(empty)* | API key (for server mode) |

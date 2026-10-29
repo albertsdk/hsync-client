@@ -2,7 +2,7 @@
 # Copyright (c) 2025 Alberto Basso
 
 """
-Clock-offset bootstrap for the HSYNC client (ADR-0023).
+Clock-offset rendezvous for the HSYNC client (ADR-0023).
 
 Resolves the process-wide offset used to compute ``corrected_mtime``:
 
@@ -12,7 +12,7 @@ Resolves the process-wide offset used to compute ``corrected_mtime``:
 * **P2P mode / placeholder URL** — no server is known yet, so a configurable
   list of public SNTP servers (``HSYNC_NTP_HOSTS``, comma-separated; defaults
   from ``hsync_common.constants.NTP_DEFAULT_HOSTS``) is probed **in the
-  background** so discovery is never blocked. ``sync()`` freezes the offset
+  background** so rendezvous is never blocked. ``sync()`` freezes the offset
   for the duration of a cycle (``ClockOffsetStore.begin_epoch``): a probe
   that finishes mid-cycle applies only to the next cycle.
 * **Offline / air-gapped** — every probe fails: the offset is recorded as 0
@@ -107,8 +107,8 @@ def _measure_ntp_offset(logger: Any) -> tuple[float, str | None]:
 def start_ntp_clock_offset_probe(logger: Any = log) -> threading.Thread:
     """Start the SNTP offset probe on a background daemon thread.
 
-    P2P discovery must never wait on an external time source: the probe runs
-    concurrently with discovery. A newer call invalidates in-flight workers
+    P2P rendezvous must never wait on an external time source: the probe runs
+    concurrently with rendezvous. A newer call invalidates in-flight workers
     (generation token) so a slow probe cannot overwrite a fresher result.
     ``sync()`` freezes the offset for one cycle, so a probe that finishes
     mid-cycle applies only to the next cycle.

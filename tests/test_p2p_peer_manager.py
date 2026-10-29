@@ -7,8 +7,8 @@ import time
 from unittest.mock import patch
 
 from hsync_client.constants import PEER_TIMEOUT
-from hsync_client.p2p_discovery_mdns import HsyncServiceListener
 from hsync_client.p2p_peers import Peer, PeerManager
+from hsync_client.p2p_rendezvous_mdns import HsyncServiceListener
 
 
 class TestPeerManager:
@@ -128,7 +128,7 @@ class TestPeerManager:
         assert elapsed < 2.0, "a peer discovered mid-wait must wake the loop early"
 
     def test_wait_for_change_blocks_until_timeout_when_alone(self):
-        """With no discovery change the wait still blocks for the full window."""
+        """With no rendezvous change the wait still blocks for the full window."""
         pm = PeerManager(local_cid="local123", bucket="photos")
 
         start = time.monotonic()
@@ -150,7 +150,7 @@ class TestPeerManager:
         assert elapsed >= 0.2, "the generation must be consumed so a later wait blocks"
 
     def test_wait_for_change_wakes_on_connected_update(self):
-        """A master's updated connected count wakes the discovery loop."""
+        """A master's updated connected count wakes the rendezvous loop."""
         pm = PeerManager(local_cid="local123", bucket="photos")
         pm.add_peer(
             Peer(cid="peer1", bucket="photos", address="192.168.1.100", port=9753, connected=0)
@@ -167,7 +167,7 @@ class TestPeerManager:
         assert elapsed < 1.0, "a connected-count update must wake the loop"
 
     def test_wait_for_change_ignores_heartbeat_only_refresh(self):
-        """A last_seen-only mDNS refresh must not wake the discovery loop."""
+        """A last_seen-only mDNS refresh must not wake the rendezvous loop."""
         pm = PeerManager(local_cid="local123", bucket="photos")
         pm.add_peer(Peer(cid="peer1", bucket="photos", address="192.168.1.100", port=9753))
         pm.wait_for_change(timeout=0.0)
@@ -937,9 +937,9 @@ class TestGetMasterEdgeCases:
 
 
 class TestDuplicateIdentityDetection:
-    """A peer presenting our own CID must be told apart from a self-discovery."""
+    """A peer presenting our own CID must be told apart from a self-rendezvous."""
 
-    def test_self_discovery_ignored_when_same_address_and_fingerprint(self):
+    def test_self_rendezvous_ignored_when_same_address_and_fingerprint(self):
         pm = PeerManager(
             local_cid="local123",
             bucket="photos",
@@ -1025,7 +1025,7 @@ class TestDuplicateIdentityDetection:
         assert len(error_calls) == 1
 
     def test_duplicate_identity_emits_ui_event(self):
-        """Discovery detection emits the duplicate_identity UI event once."""
+        """Rendezvous detection emits the duplicate_identity UI event once."""
         from hsync_client.events import UiEventName
 
         pm = PeerManager(
@@ -1051,7 +1051,7 @@ class TestDuplicateIdentityDetection:
         assert mock_log.error.call_count == 0
 
     def test_set_local_address_follows_a_network_change(self):
-        """Our own record on the new address is self-discovery, not a clone.
+        """Our own record on the new address is self-rendezvous, not a clone.
 
         A DHCP reassignment makes the node announce (and see looped back) the
         new address: keeping the old one would report a duplicated identity.
@@ -1309,7 +1309,7 @@ class TestRemoveServiceGoodbyeGrace:
 
 
 class TestInitialElection:
-    """Discovery elects once at start so a node resolves its role without peers.
+    """Rendezvous elects once at start so a node resolves its role without peers.
 
     Regression: the election only ran on peer events, so a lone
     ``--prefer-master`` node never became master and never served, and a joining

@@ -11,7 +11,7 @@ certificate verification.
 The P2P master identity follows the shared service-identity model (ADR-0037):
 ECDSA P-256, an unencrypted PKCS#8 key guarded by ``0o600``/``0o700``
 filesystem permissions, and a 20-year validity — the same model as the
-``hsync-bootnode`` node key and the ``hsync-server`` TLS certificate. The
+``hsync-rendezvous`` node key and the ``hsync-server`` TLS certificate. The
 certificate is authenticated by pinning its fingerprint, not by WebPKI.
 """
 

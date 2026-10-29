@@ -70,7 +70,7 @@ and caveats to watch for.
 |-----------|-------|
 | P2P only (no central server) | Server mode + p2p mode |
 | Custom protocol (BEP) on port 22000 | HTTP/HTTPS on port 9753 or custom port |
-| Global discovery via relays | Central server or mDNS p2p discovery |
+| Global rendezvous via relays | Central server or mDNS p2p rendezvous |
 | File versioning built-in | Conflict files (`_conflicted_copy_*`) |
 | Web GUI for management | CLI + desktop GUI (hsync-desktop) |
 
@@ -85,8 +85,8 @@ and caveats to watch for.
      every device — the shared secret
      authorizes writes (a keyless p2p is read-only, and a keyless bidirectional
      run is refused). Devices on the same network discover each other over mDNS;
-     if they are spread across networks, point them at a bootstrap node (see
-     [Sync across networks](p2p-bootnode.md)) — same mode, same election, same
+     if they are spread across networks, point them at a rendezvous node (see
+     [Sync across networks](p2p-rendezvous.md)) — same mode, same election, same
      data plane.
 
 2. **Export your Syncthing ignore patterns**. Syncthing's `.stignore` uses a
@@ -124,10 +124,10 @@ and caveats to watch for.
   snapshots or external backup.
 - Syncthing's "Receive Only" folder type maps to HSYNC's `--sync-direction
   download-only`.
-- p2p Mode does not use Syncthing's global discovery or relays. It discovers
+- p2p Mode does not use Syncthing's global rendezvous or relays. It discovers
   peers over mDNS on the local network, or across networks through your own
-  self-hosted `boot/1` bootnode (see
-  [Sync across networks](p2p-bootnode.md)); Server Mode remains the alternative
+  self-hosted `rdv/1` rendezvous (see
+  [Sync across networks](p2p-rendezvous.md)); Server Mode remains the alternative
   when you prefer a central hub.
 
 ---
@@ -186,7 +186,7 @@ drives), HSYNC automates the entire process:
    real time and propagate them automatically.
 
 4. **For serverless sync**, use the `p2p` subcommand without a server — devices
-   discover each other via mDNS on the same network, or through a bootnode
+   discover each other via mDNS on the same network, or through a rendezvous
    across networks, and sync directly.
 
 ---
@@ -194,7 +194,7 @@ drives), HSYNC automates the entire process:
 ## General migration checklist
 
 - [ ] HSYNC Server is deployed and reachable (Server Mode) or the devices can
-  reach each other (p2p Mode, via mDNS on a LAN or a bootnode across networks)
+  reach each other (p2p Mode, via mDNS on a LAN or a rendezvous across networks)
 - [ ] Source-of-truth device has been identified
 - [ ] Source device has uploaded all files to the bucket
 - [ ] Additional devices have downloaded to **empty** directories

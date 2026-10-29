@@ -17,7 +17,7 @@ starts the watcher loop. Console script: `cli.run` (`cli.py::run`).
 | Mode | Trigger | Network role | Core entry |
 | ---- | ------- | ------------ | ---------- |
 | **Remote (server)** | `hsync server` subcommand; continuous unless `--once` | client ↔ `hsync-server` (REST + WS) | `remote_websocket.remote_events` (`remote_websocket.py::remote_events`) |
-| **p2p** | `hsync p2p` subcommand | master (serves) or slave (syncs to master) via mDNS or bootnode discovery + HTTPS/WSS | `p2p_handler.run_p2p_mode` (`p2p_handler.py::run_p2p_mode`) |
+| **p2p** | `hsync p2p` subcommand | master (serves) or slave (syncs to master) via mDNS or rendezvous rendezvous + HTTPS/WSS | `p2p_handler.run_p2p_mode` (`p2p_handler.py::run_p2p_mode`) |
 
 p2p sub-roles: `_run_as_master` (`p2p_handler.py::_run_as_master`) starts the **single**
 `P2PServer` (`p2p_server.py::P2PServer`) — one TLS listener serving the REST data plane and
@@ -100,7 +100,7 @@ config (CONFIG SSOT) / events (UI event emitter)
         │
 sync / transfer / event_dispatch / event_queue / file_event_handler / upload_scheduler   (core)
         │
-remote_websocket | p2p_peers.py / p2p_discovery_mdns.py + p2p_server + p2p_websocket + p2p_handler   (modes)
+remote_websocket | p2p_peers.py / p2p_rendezvous_mdns.py + p2p_server + p2p_websocket + p2p_handler   (modes)
         │
 main_logic (orchestration) ← cli ← main
 ```
@@ -171,7 +171,7 @@ re-raised untouched.
 | Tombstones | `tombstones.py` | same DB, `tombstones` table | deletion propagation |
 | Folder identity | `state_backend.py` | `.hsyncfolder` at bucket root | UUIDv4 re-anchor |
 | TOFU pins | `pinning.py::PinStore` | pin store (0o600) | p2p master fingerprint trust |
-| Bootnode trust | `bootnode_trust.py::BootnodeTrustStore` | `$HSYNC_DISCOVERY_SERVER_TRUST_FILE` (0o600) | bootnode fingerprint pin/TOFU (ADR-0034) |
+| Rendezvous trust | `rendezvous_trust.py::RendezvousTrustStore` | `$HSYNC_RENDEZVOUS_SERVER_TRUST_FILE` (0o600) | rendezvous fingerprint pin/TOFU (ADR-0034) |
 | p2p master identity | `ssl_utils.py::load_or_create_master_cert` | persistent cert/key (0o600) | stable fingerprint across restarts |
 
 `resolve_bucket_folder` (`state_backend.py::resolve_bucket_folder`) memoizes the

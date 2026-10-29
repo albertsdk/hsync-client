@@ -2,7 +2,7 @@
 
 This is the **technical companion** to [p2p Mode](../p2p-mode.md). It documents the
 low-level mechanisms behind peer-to-peer synchronization: the master's HTTP/WS
-API, the discovery/election/sync flows, certificate pinning, and the
+API, the rendezvous/election/sync flows, certificate pinning, and the
 echo-suppression machinery.
 
 > **Most users do not need this page.** For setup, options and recipes start
@@ -24,14 +24,14 @@ flowchart TB
         end
 
         subgraph "Client A"
-            A_DISC[mDNS Discovery]
+            A_DISC[mDNS Rendezvous]
             A_SYNC[Sync Engine]
             A_WATCH[File Watcher]
             A_FILES[(Local Files)]
         end
 
         subgraph "Client B"
-            B_DISC[mDNS Discovery]
+            B_DISC[mDNS Rendezvous]
             B_SYNC[Sync Engine]
             B_WATCH[File Watcher]
             B_FILES[(Local Files)]
@@ -52,7 +52,7 @@ flowchart TB
     B_WATCH -->|"④ Monitor"| B_FILES
 ```
 
-## Discovery and Election Flow
+## Rendezvous and Election Flow
 
 ```mermaid
 sequenceDiagram
@@ -60,7 +60,7 @@ sequenceDiagram
     participant B as Client B<br/>(CID: xyz789)
     participant C as Client C<br/>(CID: def456)
 
-    Note over A,C: Phase 1: Discovery
+    Note over A,C: Phase 1: Rendezvous
     A->>A: Register mDNS service
     B->>B: Register mDNS service
     C->>C: Register mDNS service
@@ -534,7 +534,7 @@ sequenceDiagram
 
 ### mDNS Service
 
-p2p mode uses mDNS (Multicast DNS) for peer discovery:
+p2p mode uses mDNS (Multicast DNS) for peer rendezvous:
 
 - **Service Type**: `_hsync._tcp.local.`
 - **TXT Records**: the canonical key set of the
@@ -545,10 +545,10 @@ p2p mode uses mDNS (Multicast DNS) for peer discovery:
   only when true
 - **Dependency**: `zeroconf` (Python library for mDNS/DNS-SD)
 
-When the group uses a bootnode instead, the same election inputs (`server_ready`,
+When the group uses a rendezvous instead, the same election inputs (`server_ready`,
 `prefer_master`, `never_master`, `startup_time`, `sync_direction`) travel in the
 `register` frame and come back on every relayed peer of a `query`, so the master
-election is identical whether mDNS runs alone or alongside the bootnode. They are
+election is identical whether mDNS runs alone or alongside the rendezvous. They are
 unauthenticated hints, exactly like the TXT flags: the data plane pins the peer
 certificate before any file is exchanged.
 
@@ -559,7 +559,7 @@ whether delta transfer can be used with that peer.
 `peer_download=true` advertises protocol implementation. The runtime fact that a
 continuous slave's read-only HTTPS seeder is bound is deliberately **not** on the
 TXT record: it travels on the authenticated WSS session and its `serve_slots`
-capacity advertisement (ADR-0030), so a stale discovery record can never exclude a
+capacity advertisement (ADR-0030), so a stale rendezvous record can never exclude a
 seeder that is in fact serving. A serving slave still advertises the endpoint
 material (`https`/`cert_fp`) while its listener is bound.
 
@@ -595,6 +595,6 @@ flowchart TB
 > process-wide bounded pool of 8 workers instead of one thread per
 > filesystem event, so worker keep-alive sessions to the master are reused.
 
-> The canonical discovery/election protocol is specified in
+> The canonical rendezvous/election protocol is specified in
 > `hsync-common/docs/p2p-protocol.md` and shared across the Python client and
 > Android via `hsync_common.protocol.p2p`.

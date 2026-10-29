@@ -8,7 +8,7 @@ HSYNC has two orthogonal axes of operation: **topology** (where files live) and
 | Mode | Description | Guide |
 |------|-------------|-------|
 | **Server Mode** | Central server relays sync and keeps a copy of the synced content; all clients sync through it | [Server Mode](sync-modes-server.md) |
-| **p2p Mode** | Peer-to-peer; no server required. Same local network (mDNS) or across networks through an optional bootnode | [p2p Mode](sync-modes-p2p.md) |
+| **p2p Mode** | Peer-to-peer; no server required. Same local network (mDNS) or across networks through an optional rendezvous | [p2p Mode](sync-modes-p2p.md) |
 
 ## Run mode
 

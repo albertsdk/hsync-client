@@ -19,14 +19,14 @@ from hsync_common.disk import check_free_space
 from hsync_common.endpoint import format_authority
 from hsync_common.format import format_bytes
 from hsync_common.ignore import IgnoreMatcher, set_active_matcher
-from hsync_common.protocol.boot_tokens import (
+from hsync_common.protocol.handshake import PROTOCOL_VERSION_REST
+from hsync_common.protocol.pairing import FingerprintPins, fingerprint_matches
+from hsync_common.protocol.rdv_tokens import (
     WeakGroupPassphrase,
     derive_group_key,
     validate_group_key,
     validate_group_passphrase,
 )
-from hsync_common.protocol.handshake import PROTOCOL_VERSION_REST
-from hsync_common.protocol.pairing import FingerprintPins, fingerprint_matches
 from hsync_common.protocol.tls_trust import (
     TrustAction,
     TrustPolicy,
@@ -48,11 +48,6 @@ from hsync_client.config import (
     get_connectivity_retry_max_wait,
     get_connectivity_retry_min_wait,
     get_delta_enabled,
-    get_discovery_server_extra_ports,
-    get_discovery_server_pins,
-    get_discovery_server_refresh_interval,
-    get_discovery_server_tofu,
-    get_discovery_server_trust,
     get_heartbeat_interval,
     get_ignore_patterns,
     get_map_data_port,
@@ -71,8 +66,13 @@ from hsync_client.config import (
     get_p2p_peer_read_cap,
     get_p2p_peer_sources_max,
     get_p2p_trust,
-    get_peer_discovery_timeout,
+    get_peer_rendezvous_timeout,
     get_peer_timeout,
+    get_rendezvous_server_extra_ports,
+    get_rendezvous_server_pins,
+    get_rendezvous_server_refresh_interval,
+    get_rendezvous_server_tofu,
+    get_rendezvous_server_trust,
     get_resync,
     get_server_fingerprints,
     get_server_tofu,
@@ -85,12 +85,10 @@ from hsync_client.config import (
     set_debug,
 )
 from hsync_client.constants import (
-    BOOTNODE_REFRESH_INTERVAL,
     CLIENT_NAME,
     CONNECTIVITY_RETRY_ATTEMPTS_DEFAULT,
     CONNECTIVITY_RETRY_MAX_WAIT_DEFAULT,
     CONNECTIVITY_RETRY_MIN_WAIT_DEFAULT,
-    DISCOVERY_TIMEOUT_DEFAULT,
     FILE_STABILITY_INTERVAL_DEFAULT,
     HEADER_CLIENT_NAME,
     HEADER_CLIENT_VERSION,
@@ -100,6 +98,8 @@ from hsync_client.constants import (
     HSYNCKEEP_FILENAME,
     MAX_INBOUND_SIZE_MB_DEFAULT,
     PEER_TIMEOUT,
+    RENDEZVOUS_REFRESH_INTERVAL,
+    RENDEZVOUS_TIMEOUT_DEFAULT,
     RESYNC_DEFAULT,
     TRANSFER_RETRY_ATTEMPTS_DEFAULT,
     TRANSFER_RETRY_MAX_WAIT_DEFAULT,
@@ -166,7 +166,7 @@ def _fatal_startup(message: str, *, log: Any | None = None) -> NoReturn:
 
 
 # Provenance of a resolved tuning value; feeds AUTOTUNE_MANAGED_KEYS so the P2P
-# post-discovery refresh re-derives only autotune/default-sourced keys and never
+# post-rendezvous refresh re-derives only autotune/default-sourced keys and never
 # clobbers explicit CLI/env overrides. Single encode site: the resolvers below.
 TuningSource = Literal["cli", "env", "autotune", "default"]
 
@@ -201,9 +201,9 @@ def _get_stability_delay_value(cli_value: int | None) -> int:
     return _first_defined(cli_value, get_stability_delay(), FILE_STABILITY_INTERVAL_DEFAULT)
 
 
-def _get_peer_discovery_timeout_value(cli_value: int | None) -> int:
+def _get_peer_rendezvous_timeout_value(cli_value: int | None) -> int:
     """Priority: CLI > env > default. ``0`` means wait indefinitely."""
-    return _first_defined(cli_value, get_peer_discovery_timeout(), DISCOVERY_TIMEOUT_DEFAULT)
+    return _first_defined(cli_value, get_peer_rendezvous_timeout(), RENDEZVOUS_TIMEOUT_DEFAULT)
 
 
 def _get_resync_value(cli_value: int | None) -> int | None:
@@ -490,9 +490,9 @@ def _check_p2p_keyless_policy(
 
 
 def _warn_if_p2p_in_container(logger: Any) -> None:
-    """Warn that mDNS peer discovery usually fails under container networking.
+    """Warn that mDNS peer rendezvous usually fails under container networking.
 
-    P2P discovery relies on multicast, which does not cross the NAT boundary
+    P2P rendezvous relies on multicast, which does not cross the NAT boundary
     of the default bridge network used by container runtimes; P2P mode inside
     a container therefore requires host networking to find peers.
     """
@@ -501,7 +501,7 @@ def _warn_if_p2p_in_container(logger: Any) -> None:
         return
     logger.warning(
         f"P2P mode inside a {info.runtime or 'unknown'} container: mDNS peer "
-        "discovery cannot cross container bridge/NAT networking. Use host "
+        "rendezvous cannot cross container bridge/NAT networking. Use host "
         "networking (e.g. 'docker run --network host') or peers will not be found."
     )
 
@@ -619,28 +619,28 @@ def _flatten_pins(pins: FingerprintPins) -> tuple[str, ...]:
     return tuple(seen)
 
 
-def _resolve_discovery_server_trust(
+def _resolve_rendezvous_server_trust(
     policy: str | None,
     fingerprints: tuple[str, ...],
     tofu: bool,
     verify_ssl: bool,
 ) -> TrustPolicy:
-    """Resolve the discovery-server trust policy from flags/env (ADR-0035).
+    """Resolve the rendezvous-server trust policy from flags/env (ADR-0035).
 
-    Precedence: ``--insecure`` (``none``) > ``--discovery-server-fingerprint``
-    (``strict``) > ``--discovery-server-tofu`` (``accept-new``) > the flag value >
-    ``HSYNC_DISCOVERY_SERVER_TRUST`` > the ``ask`` default.
+    Precedence: ``--insecure`` (``none``) > ``--rendezvous-server-fingerprint``
+    (``strict``) > ``--rendezvous-server-tofu`` (``accept-new``) > the flag value >
+    ``HSYNC_RENDEZVOUS_SERVER_TRUST`` > the ``ask`` default.
 
     The precedence itself is the shared SSOT
     (:func:`hsync_common.protocol.tls_trust.resolve_trust_policy`); only the
-    ``ask`` fallback and the discovery-server env source are transport-specific.
+    ``ask`` fallback and the rendezvous-server env source are transport-specific.
     """
     return resolve_trust_policy(
         policy,
         fingerprints,
         tofu,
         verify_ssl,
-        env_default=get_discovery_server_trust(),
+        env_default=get_rendezvous_server_trust(),
         fallback=TrustPolicy.ask,
     )
 
@@ -793,7 +793,7 @@ def run_sync(
     max_bandwidth_download: int | None,
     p2p_mode: bool,
     p2p_listen_port: int,
-    peer_discovery_timeout: int | None,
+    peer_rendezvous_timeout: int | None,
     p2p_group: str | None,
     prefer_master: bool,
     never_master: bool,
@@ -821,11 +821,11 @@ def run_sync(
     delta_min_file_size_p2p: int | None = None,
     p2p_peer_download_enabled: bool = True,
     p2p_allow_unauthenticated_writes: bool = False,
-    discovery_server_endpoints: tuple[Any, ...] = (),
+    rendezvous_server_endpoints: tuple[Any, ...] = (),
     map_data_port: bool | None = None,
-    discovery_server_pins: FingerprintPins | None = None,
-    discovery_server_tofu: bool = False,
-    discovery_server_trust: str | None = None,
+    rendezvous_server_pins: FingerprintPins | None = None,
+    rendezvous_server_tofu: bool = False,
+    rendezvous_server_trust: str | None = None,
     server_fingerprints: tuple[str, ...] = (),
     server_tofu: bool = False,
     server_trust: str | None = None,
@@ -1026,7 +1026,7 @@ def run_sync(
             rtt_port = parsed.port or (443 if parsed.scheme == "https" else 80)
 
             # P2P placeholder: no server to probe yet — defer RTT measurement
-            # to the post-discovery refresh in p2p_handler (slave role only).
+            # to the post-rendezvous refresh in p2p_handler (slave role only).
             rtt_ms = None if using_p2p_placeholder else measure_rtt(rtt_host, rtt_port)
             net_class = classify_network(rtt_ms)
             # Active bandwidth probe seeds the class at startup when the passive
@@ -1116,7 +1116,9 @@ def run_sync(
     # Pins are keyed by endpoint (CLI/config resolved); a missing map means "read
     # the environment", which is also the single-endpoint configuration path.
     pins: FingerprintPins = (
-        discovery_server_pins if discovery_server_pins is not None else get_discovery_server_pins()
+        rendezvous_server_pins
+        if rendezvous_server_pins is not None
+        else get_rendezvous_server_pins()
     )
 
     config: HsyncConfig = {
@@ -1148,23 +1150,23 @@ def run_sync(
         "MAX_WAIT_TIMEOUT": max_wait_timeout,
         "P2P_MODE": p2p_mode,
         "P2P_LISTEN_PORT": p2p_listen_port or get_p2p_listen_port() or 0,
-        "DISCOVERY_SERVER_ENDPOINTS": tuple(discovery_server_endpoints),
-        "DISCOVERY_SERVER_EXTRA_PORTS": get_discovery_server_extra_ports(),
-        # Discovery-server TLS trust (ADR-0034): explicit fingerprints or opt-in TOFU.
+        "RENDEZVOUS_SERVER_ENDPOINTS": tuple(rendezvous_server_endpoints),
+        "RENDEZVOUS_SERVER_EXTRA_PORTS": get_rendezvous_server_extra_ports(),
+        # Rendezvous-server TLS trust (ADR-0034): explicit fingerprints or opt-in TOFU.
         # Pins are keyed by endpoint: a pin only ever describes a server the
         # client dials, and two independent servers keep their own identity.
-        "DISCOVERY_SERVER_PINS": pins,
-        "DISCOVERY_SERVER_TRUST": _resolve_discovery_server_trust(
-            discovery_server_trust,
+        "RENDEZVOUS_SERVER_PINS": pins,
+        "RENDEZVOUS_SERVER_TRUST": _resolve_rendezvous_server_trust(
+            rendezvous_server_trust,
             _flatten_pins(pins),
-            discovery_server_tofu or get_discovery_server_tofu(),
+            rendezvous_server_tofu or get_rendezvous_server_tofu(),
             verify_ssl,
         ),
         "MAP_DATA_PORT": get_map_data_port() if map_data_port is None else bool(map_data_port),
-        "PEER_DISCOVERY_TIMEOUT": _get_peer_discovery_timeout_value(peer_discovery_timeout),
+        "PEER_RENDEZVOUS_TIMEOUT": _get_peer_rendezvous_timeout_value(peer_rendezvous_timeout),
         "HEARTBEAT_INTERVAL": get_heartbeat_interval() or HEARTBEAT_INTERVAL,
-        "DISCOVERY_SERVER_REFRESH_INTERVAL": get_discovery_server_refresh_interval()
-        or BOOTNODE_REFRESH_INTERVAL,
+        "RENDEZVOUS_SERVER_REFRESH_INTERVAL": get_rendezvous_server_refresh_interval()
+        or RENDEZVOUS_REFRESH_INTERVAL,
         "PEER_TIMEOUT": get_peer_timeout() or PEER_TIMEOUT,
         "P2P_KEY": resolved_p2p_key,
         "P2P_GROUP": p2p_group or get_p2p_group(),
@@ -1222,7 +1224,7 @@ def run_sync(
         # Auto-tuning runtime state (updated below after set_config)
         "AUTOTUNE_ENABLED": autotune_enabled,
         "AUTOTUNE_STORAGE_TYPE": tuning.storage_type.value if (autotune_enabled and tuning) else "",
-        # Keys the P2P post-discovery refresh AND the per-cycle concurrency
+        # Keys the P2P post-rendezvous refresh AND the per-cycle concurrency
         # refresh may re-derive: only those resolved from autotune/default
         # (CLI/env overrides are preserved). Derived from `_tuning_keys` so it
         # stays in sync with the user-override log above.
@@ -1273,7 +1275,7 @@ def run_sync(
         allow_deletions=config["ALLOW_DELETIONS"],
         allow_unauthenticated_writes=config["P2P_ALLOW_UNAUTHENTICATED_WRITES"],
         allow_unauthenticated_p2p=config["P2P_ALLOW_UNAUTHENTICATED"],
-        discovery_server_trust=config["DISCOVERY_SERVER_TRUST"],
+        rendezvous_server_trust=config["RENDEZVOUS_SERVER_TRUST"],
         server_trust=config["SERVER_TRUST"],
     )
 
@@ -1298,7 +1300,7 @@ def run_sync(
         )
 
     # Keyless P2P confirmation: authorization is orthogonal to a dry-run, which
-    # still performs discovery/TLS/connection (and a keyless master still serves
+    # still performs rendezvous/TLS/connection (and a keyless master still serves
     # reads), so the gate applies even when no actions are executed.
     _check_p2p_keyless_policy(
         p2p_mode=config["P2P_MODE"],
@@ -1329,7 +1331,7 @@ def run_sync(
     # log line, which the Desktop reports as a fatal exit.
     emit_event(UiEventName.ready)
     try:
-        # P2P Mode: Peer Discovery and Master Election
+        # P2P Mode: Peer Rendezvous and Master Election
         if config["P2P_MODE"]:
             from hsync_client.p2p_handler import run_p2p_mode
 

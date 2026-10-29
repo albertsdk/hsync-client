@@ -219,7 +219,7 @@ class TestOneShot:
             extra_args=("--once",),
         )
         try:
-            # When no peers are discovered within the discovery timeout
+            # When no peers are discovered within the rendezvous timeout
             try:
                 exit_code = proc.wait(timeout=30)
             except subprocess.TimeoutExpired:
@@ -303,7 +303,7 @@ class TestMasterFailover:
             a = _p2p_start(peer_a, p2p_bucket)
             # Stagger peer_b so peer_a's startup_time is unambiguously earlier.
             # The "earliest startup wins" tiebreak samples startup_time in
-            # MdnsDiscovery.__init__, well after process spawn, so two peers spawned
+            # MdnsRendezvous.__init__, well after process spawn, so two peers spawned
             # back-to-back race on which one reports the earlier timestamp (and
             # the CID tiebreak would then flakily elect peer_b instead of
             # peer_a). A short gap removes the race without changing the
@@ -396,7 +396,7 @@ class TestMasterFailover:
                     master.wait()
 
                     # Poll for the post-crash self-election (the liveness window
-                    # is HSYNC_PEER_TIMEOUT=5s plus discovery, so allow ample
+                    # is HSYNC_PEER_TIMEOUT=5s plus rendezvous, so allow ample
                     # time). The winner is whichever survivor self-elects.
                     deadline = time.time() + 90
                     while True:
@@ -470,7 +470,7 @@ class TestNoSplitBrainOnQuiescentPeer:
                 # links stay up (the quiescence window that used to split-brain).
                 time.sleep(5)
 
-                # peer_a resolves its local role at discovery start, before it
+                # peer_a resolves its local role at rendezvous start, before it
                 # can know about the preferred master, so its log legitimately
                 # carries one self-election line followed by a [MASTER YIELD].
                 # The split-brain guard is about a *new* election once peer_b

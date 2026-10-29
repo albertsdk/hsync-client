@@ -39,7 +39,7 @@ def _make_p2p_config(tmp_path, **overrides: Any) -> HsyncConfig:
         "SYNC_DIRECTION": "bidirectional",
         "LOCAL_BUCKET": str(tmp_path),
         "P2P_KEY": None,
-        "PEER_DISCOVERY_TIMEOUT": 1,
+        "PEER_RENDEZVOUS_TIMEOUT": 1,
         "DRYRUN": False,
         "ONE_SHOT": True,
         "REQUEST_HEADERS": {"X-Client-Id": "test-cid"},
@@ -67,7 +67,7 @@ def _make_cert_info(**overrides: Any) -> MagicMock:
 def _patch_p2p_listener(port: int = 9000) -> tuple[MagicMock, MagicMock]:
     """Build a mock process-wide listener for ``run_p2p_mode`` tests.
 
-    The discovery layer is still patched per test; this only stands in for the
+    The rendezvous layer is still patched per test; this only stands in for the
     unified listener that ``run_p2p_mode`` now constructs once at startup.
     """
     server = MagicMock()
@@ -276,7 +276,7 @@ class TestRunAsMaster:
     def test_run_as_master_startup_messages_logged_once(self, tmp_path):
         """Role and Ctrl+C notices are emitted only on the first activation.
 
-        The discovery loop re-enters _run_as_master every iteration while the
+        The rendezvous loop re-enters _run_as_master every iteration while the
         client stays master; the one-shot startup messages must not repeat.
         """
         from hsync_client.p2p_handler import _run_as_master
@@ -346,7 +346,7 @@ class TestRunAsMaster:
     def test_run_as_master_reuses_inventory_store_across_iterations(self, tmp_path):
         """The inventory store is created once per master stint, then reused.
 
-        The discovery loop re-enters ``_run_as_master`` roughly once a second
+        The rendezvous loop re-enters ``_run_as_master`` roughly once a second
         while the node stays master; recreating the store there would leak a
         SQLite handle and wipe the live inventory sessions with ``activate()``.
         """
@@ -392,7 +392,7 @@ class TestRunAsMasterContinuousSemantics:
     :func:`_run_as_master`, the function must:
 
     * Always sleep once and return (no infinite ``while True`` inside).
-    * Be re-entered by the outer discovery loop while the role holds,
+    * Be re-entered by the outer rendezvous loop while the role holds,
       without rebinding servers (verified by other tests above).
     """
 
@@ -428,7 +428,7 @@ class TestRunAsMasterContinuousSemantics:
 
 
 class TestRunLanModeOuterLoopMasterPath:
-    """Regression tests for the outer discovery loop on the master path.
+    """Regression tests for the outer rendezvous loop on the master path.
 
     The master path must never exit the outer loop on its own: since the
     master is inherently continuous, the loop only exits via
@@ -462,7 +462,7 @@ class TestRunLanModeOuterLoopMasterPath:
 
         listener_server, listener_ws = _patch_p2p_listener()
         with (
-            patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
+            patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous", return_value=mock_p2p_sync),
             patch("hsync_client.p2p_handler.P2PServer", return_value=listener_server),
             patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=listener_ws),
             patch("time.sleep", side_effect=_sleep_then_interrupt_after_three),
@@ -481,7 +481,7 @@ class TestRunLanModeOuterLoopMasterPath:
     def test_master_loop_exits_one_shot_when_alone(self, tmp_path):
         """A one-shot master that stayed alone exits with P2P_NO_PEER.
 
-        The local role is resolved at discovery start, so a lone eligible node
+        The local role is resolved at rendezvous start, so a lone eligible node
         is already MASTER before any peer exists (that is what lets a joining
         slave find a serving master). The continuous master loop must still
         honour the finite one-shot window: with no live peer there is nobody to
@@ -491,7 +491,7 @@ class TestRunLanModeOuterLoopMasterPath:
         from hsync_client import p2p_handler
         from hsync_client.exitcodes import ExitCode
 
-        config = _make_p2p_config(tmp_path, PEER_DISCOVERY_TIMEOUT=10, ONE_SHOT=True)
+        config = _make_p2p_config(tmp_path, PEER_RENDEZVOUS_TIMEOUT=10, ONE_SHOT=True)
         mock_log = MagicMock()
 
         mock_peer_mgr = MagicMock()
@@ -507,7 +507,7 @@ class TestRunLanModeOuterLoopMasterPath:
 
         listener_server, listener_ws = _patch_p2p_listener()
         with (
-            patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
+            patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous", return_value=mock_p2p_sync),
             patch("hsync_client.p2p_handler.P2PServer", return_value=listener_server),
             patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=listener_ws),
             patch("hsync_client.p2p_handler.time.monotonic", side_effect=lambda: next(monotonic)),
@@ -517,7 +517,7 @@ class TestRunLanModeOuterLoopMasterPath:
             exit_code = p2p_handler.run_p2p_mode(config, mock_log)
 
         assert exit_code == int(ExitCode.P2P_NO_PEER)
-        assert mock_p2p_sync.wait_for_discovery.call_count == 1
+        assert mock_p2p_sync.wait_for_rendezvous.call_count == 1
         assert any("this client is alone" in str(c) for c in mock_log.warning.call_args_list)
         # The GUI needs a typed signal to say "no devices to send to".
         from hsync_client.events import UiEventName
@@ -561,7 +561,7 @@ class TestRunLanModeNoMasterWarning:
 
         listener_server, listener_ws = _patch_p2p_listener()
         with (
-            patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
+            patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous", return_value=mock_p2p_sync),
             patch("hsync_client.p2p_handler.P2PServer", return_value=listener_server),
             patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=listener_ws),
             patch.object(p2p_handler, "_run_as_slave", side_effect=_slave),
@@ -581,14 +581,14 @@ class TestRunLanModeNoMasterWarning:
         )
 
 
-class TestRunLanModeDiscoveryTimeout:
-    """Tests for discovery timeout sentinel semantics in the outer P2P loop."""
+class TestRunLanModeRendezvousTimeout:
+    """Tests for rendezvous timeout sentinel semantics in the outer P2P loop."""
 
     def test_timeout_zero_uses_poll_interval_not_busy_spin(self, tmp_path):
-        """PEER_DISCOVERY_TIMEOUT=0 keeps waiting but still sleeps in finite polling windows."""
+        """PEER_RENDEZVOUS_TIMEOUT=0 keeps waiting but still sleeps in finite polling windows."""
         from hsync_client.p2p_handler import run_p2p_mode
 
-        config = _make_p2p_config(tmp_path, PEER_DISCOVERY_TIMEOUT=0, ONE_SHOT=True)
+        config = _make_p2p_config(tmp_path, PEER_RENDEZVOUS_TIMEOUT=0, ONE_SHOT=True)
         mock_log = MagicMock()
 
         mock_peer_mgr = MagicMock()
@@ -599,31 +599,31 @@ class TestRunLanModeDiscoveryTimeout:
         mock_p2p_sync = MagicMock()
         mock_p2p_sync.start.return_value = mock_peer_mgr
         mock_p2p_sync.port = 9000
-        mock_p2p_sync.wait_for_discovery.side_effect = [None, KeyboardInterrupt]
+        mock_p2p_sync.wait_for_rendezvous.side_effect = [None, KeyboardInterrupt]
 
         listener_server, listener_ws = _patch_p2p_listener()
         with (
-            patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
+            patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous", return_value=mock_p2p_sync),
             patch("hsync_client.p2p_handler.P2PServer", return_value=listener_server),
             patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=listener_ws),
         ):
             run_p2p_mode(config, mock_log)
 
-        first_call = mock_p2p_sync.wait_for_discovery.call_args_list[0]
+        first_call = mock_p2p_sync.wait_for_rendezvous.call_args_list[0]
         assert first_call.kwargs["timeout"] == HEARTBEAT_INTERVAL
-        assert any("Discovery timeout disabled" in str(c) for c in mock_log.info.call_args_list)
+        assert any("Rendezvous timeout disabled" in str(c) for c in mock_log.info.call_args_list)
 
-    def test_a_stopped_discovery_source_does_not_abort_the_run(self, tmp_path):
-        """A source that stopped (untrusted bootnode) leaves the run going.
+    def test_a_stopped_rendezvous_source_does_not_abort_the_run(self, tmp_path):
+        """A source that stopped (untrusted rendezvous) leaves the run going.
 
-        Regression: the plan used to raise ``DiscoveryFatalError`` from
-        ``wait_for_discovery``, which ended the whole p2p run with
+        Regression: the plan used to raise ``RendezvousFatalError`` from
+        ``wait_for_rendezvous``, which ended the whole p2p run with
         ``ExitCode.FATAL`` even when the local network had peers to sync with.
         """
         from hsync_client.exitcodes import ExitCode
         from hsync_client.p2p_handler import run_p2p_mode
 
-        config = _make_p2p_config(tmp_path, PEER_DISCOVERY_TIMEOUT=0, ONE_SHOT=True)
+        config = _make_p2p_config(tmp_path, PEER_RENDEZVOUS_TIMEOUT=0, ONE_SHOT=True)
         mock_log = MagicMock()
         mock_peer_mgr = MagicMock()
         mock_peer_mgr.is_master.return_value = False
@@ -631,25 +631,25 @@ class TestRunLanModeDiscoveryTimeout:
         mock_p2p_sync.start.return_value = mock_peer_mgr
         mock_p2p_sync.port = 9000
         mock_p2p_sync.source_disabled.return_value = True
-        mock_p2p_sync.wait_for_discovery.side_effect = [None, KeyboardInterrupt]
+        mock_p2p_sync.wait_for_rendezvous.side_effect = [None, KeyboardInterrupt]
 
         listener_server, listener_ws = _patch_p2p_listener()
         with (
-            patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
+            patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous", return_value=mock_p2p_sync),
             patch("hsync_client.p2p_handler.P2PServer", return_value=listener_server),
             patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=listener_ws),
         ):
             assert run_p2p_mode(config, mock_log) == int(ExitCode.OK)
 
         # The loop kept iterating after the source stopped: only the interrupt
-        # ended it, never a fatal discovery error.
-        assert mock_p2p_sync.wait_for_discovery.call_count == 2
+        # ended it, never a fatal rendezvous error.
+        assert mock_p2p_sync.wait_for_rendezvous.call_count == 2
 
     def test_one_shot_ignores_early_ineligible_peer_until_deadline(self, tmp_path):
-        """A seeder wakeup must not end discovery before a master appears."""
+        """A seeder wakeup must not end rendezvous before a master appears."""
         from hsync_client import p2p_handler
 
-        config = _make_p2p_config(tmp_path, PEER_DISCOVERY_TIMEOUT=10, ONE_SHOT=True)
+        config = _make_p2p_config(tmp_path, PEER_RENDEZVOUS_TIMEOUT=10, ONE_SHOT=True)
         mock_log = MagicMock()
         mock_peer_mgr = MagicMock()
         mock_peer_mgr.is_master.return_value = False
@@ -663,7 +663,7 @@ class TestRunLanModeDiscoveryTimeout:
 
         listener_server, listener_ws = _patch_p2p_listener()
         with (
-            patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
+            patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous", return_value=mock_p2p_sync),
             patch("hsync_client.p2p_handler.P2PServer", return_value=listener_server),
             patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=listener_ws),
             patch.object(p2p_handler, "_run_as_slave", return_value=(False, 5)) as run_slave,
@@ -672,8 +672,8 @@ class TestRunLanModeDiscoveryTimeout:
         ):
             assert p2p_handler.run_p2p_mode(config, mock_log) == 5
 
-        assert mock_p2p_sync.wait_for_discovery.call_count == 2
-        assert mock_p2p_sync.wait_for_discovery.call_args_list[0].kwargs["timeout"] == 10
+        assert mock_p2p_sync.wait_for_rendezvous.call_count == 2
+        assert mock_p2p_sync.wait_for_rendezvous.call_args_list[0].kwargs["timeout"] == 10
         run_slave.assert_called_once()
 
 
@@ -799,7 +799,7 @@ class TestRunAsSlave:
         assert PinStore(pin_file).get("master-1", "test-bucket") == "a" * 64
 
     def test_non_sha256_master_fingerprint_is_not_persisted(self, tmp_path, monkeypatch):
-        """Malformed discovery fingerprint material fails closed before TOFU."""
+        """Malformed rendezvous fingerprint material fails closed before TOFU."""
         from hsync_client.p2p_handler import _evaluate_master_pin
 
         pin_file = tmp_path / "pins.json"
@@ -976,7 +976,7 @@ class TestRunAsSlave:
         assert presence and all(pair == (2, 2) for pair in presence)
 
     def test_continuous_websocket_error_is_swallowed(self, tmp_path):
-        """A WebSocket failure is logged but still re-enters the discovery loop."""
+        """A WebSocket failure is logged but still re-enters the rendezvous loop."""
         from hsync_client.p2p_handler import _run_as_slave
 
         config = _make_p2p_config(tmp_path, ONE_SHOT=False)
@@ -1003,7 +1003,7 @@ class TestRunAsSlave:
 
         When the connection to the master ends, the slave must immediately
         expire a master whose heartbeat already stopped so the surviving peers
-        elect the successor instead of waiting for the next discovery wake. A
+        elect the successor instead of waiting for the next rendezvous wake. A
         master whose record is still fresh is left untouched (no split-brain).
         """
         from hsync_client.p2p_handler import _run_as_slave
@@ -1029,7 +1029,7 @@ class TestRunAsSlave:
         """A transport failure in continuous mode must not terminate the run.
 
         When the master goes offline mid-sync, ``sync()`` raises a transport
-        error; a continuous run must re-enter the discovery loop (return True)
+        error; a continuous run must re-enter the rendezvous loop (return True)
         so the peer stays alive and re-detects the master (or a newly elected
         one) on the next iteration instead of exiting with "P2P mode stopped".
         """
@@ -1429,7 +1429,7 @@ class TestMasterElection:
         mock_ws_server = MagicMock()
 
         with (
-            patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
+            patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous", return_value=mock_p2p_sync),
             patch("hsync_client.p2p_handler.P2PServer", return_value=mock_p2p_server),
             patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=mock_ws_server),
             patch(

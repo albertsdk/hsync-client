@@ -9,8 +9,8 @@ Real-world usage examples for the `hsync` binary in **p2p peer-to-peer** deploym
 All examples assume the binary has been built (`./compile.sh`) and the
 `hsync` executable is on your `$PATH`. No server and no API key is needed —
 peers discover each other automatically via mDNS on a local network, or by
-registering with a bootnode for a group spread across networks (see
-[Sync across networks](p2p-bootnode.md)).
+registering with a rendezvous for a group spread across networks (see
+[Sync across networks](p2p-rendezvous.md)).
 
 > **Write policy:** a keyless p2p is **read-only**. Every write-capable run
 > (the default bidirectional mode, and `upload-only`) must authorize writes with
@@ -38,7 +38,7 @@ HSYNC_DEVICE_DIR=~/.local/state/hsync/device-alt \
 > ```
 >
 > Otherwise the two instances share one device ID and ignore each other during
-> discovery.
+> rendezvous.
 
 ## 2.1 Sync a folder between two devices on the same Wi-Fi
 
@@ -128,10 +128,10 @@ HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b shared -p ~/Shared --
 The client serves the REST API (HTTPS) and the real-time event stream (WSS) on
 the same port 8080. Set firewall rules for that single port accordingly.
 
-## 2.9 Cross-network group with a bootnode
+## 2.9 Cross-network group with a rendezvous
 
 Devices on different networks (different sites, home ↔ office) meet through a
-`boot/1` bootstrap node instead of mDNS. Point every device of the group at the
+`rdv/1` rendezvous node instead of mDNS. Point every device of the group at the
 same node and opt in to UPnP so this device can publish its master port when it
 serves:
 
@@ -144,32 +144,32 @@ HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p ~/Sync \
 On a terminal the first contact is SSH-like: the client prints the node's
 SHA-256 fingerprint and asks to confirm it once (answer `yes`), then remembers
 it and reconnects silently. Read the fingerprint without trusting it at any
-time with `hsync trust discovery-server fingerprint boot.example.net`.
+time with `hsync trust rendezvous-server fingerprint boot.example.net`.
 
 A run with no terminal (cron, systemd, CI) cannot answer the prompt, so it must
 state the trust decision explicitly. Accept the first sighting:
 
 ```bash
 HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p ~/Sync \
-  boot.example.net --discovery-server-tofu
+  boot.example.net --rendezvous-server-tofu
 ```
 
 Once the operator has published the stable `sha256:<hex>` fingerprint
-(`hsync-bootnode identity show`), pin it — the hardened form:
+(`hsync-rendezvous identity show`), pin it — the hardened form:
 
 ```bash
 HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p ~/Sync \
-  boot.example.net --discovery-server-fingerprint YOUR_BOOTNODE_FINGERPRINT
+  boot.example.net --rendezvous-server-fingerprint YOUR_RENDEZVOUS_FINGERPRINT
 ```
 
 The `ask` trust prompt only appears on a terminal, so it is not enough for a
-service run: pin the fingerprint (as above) or use `--discovery-server-trust accept-new`.
+service run: pin the fingerprint (as above) or use `--rendezvous-server-trust accept-new`.
 `--insecure` skips verification and is for loopback tests only.
 
 A device that cannot map its port stays **slave-only** (it still syncs, it just
-never serves). Verify the plan in the log: `Discovery: mDNS on the local network
-+ bootnode boot.example.net:443 (cross-network; UPnP on)`. Details, fingerprint
-rotation and troubleshooting: [Sync across networks](p2p-bootnode.md).
+never serves). Verify the plan in the log: `Rendezvous: mDNS on the local network
++ rendezvous boot.example.net:443 (cross-network; UPnP on)`. Details, fingerprint
+rotation and troubleshooting: [Sync across networks](p2p-rendezvous.md).
 
 ## Authentication (shared key)
 

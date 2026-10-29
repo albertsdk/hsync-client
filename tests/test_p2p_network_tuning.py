@@ -1,9 +1,9 @@
 """
-Tests for P2P post-discovery network tuning refresh.
+Tests for P2P post-rendezvous network tuning refresh.
 
 Covers:
 - ``p2p_handler._refresh_p2p_network_tuning`` — RTT re-derivation after master
-  discovery, CLI/env precedence via ``AUTOTUNE_MANAGED_KEYS``, dual-write to
+  rendezvous, CLI/env precedence via ``AUTOTUNE_MANAGED_KEYS``, dual-write to
   the global ``CONFIG`` and the local config dict.
 - ``_run_as_slave`` ordering: pin check -> tuning refresh -> clock offset.
 - ``run_sync`` P2P-placeholder behaviour: startup RTT probe skipped and no
@@ -53,7 +53,7 @@ def _make_config(tmp_path, **overrides: Any) -> HsyncConfig:
         "SYNC_DIRECTION": "bidirectional",
         "LOCAL_BUCKET": str(tmp_path),
         "P2P_KEY": None,
-        "PEER_DISCOVERY_TIMEOUT": 1,
+        "PEER_RENDEZVOUS_TIMEOUT": 1,
         "DRYRUN": False,
         "ONE_SHOT": True,
         "REQUEST_HEADERS": {"X-Client-Id": "test-cid"},

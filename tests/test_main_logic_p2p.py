@@ -33,7 +33,7 @@ def _make_p2p_config(tmp_path: object, **overrides: object) -> HsyncConfig:
         "SYNC_DIRECTION": "bidirectional",
         "LOCAL_BUCKET": str(tmp_path),
         "P2P_KEY": None,
-        "PEER_DISCOVERY_TIMEOUT": 1,
+        "PEER_RENDEZVOUS_TIMEOUT": 1,
         "DRYRUN": False,
         "ONE_SHOT": True,
         "REQUEST_HEADERS": {"X-Client-Id": "test-cid"},
@@ -63,17 +63,17 @@ class TestRunLanMode:
         mock_p2p_sync.start.return_value = mock_peer_mgr
         mock_p2p_sync.port = 9000
 
-        with patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync):
+        with patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous", return_value=mock_p2p_sync):
             run_p2p_mode(config, mock_log)
 
         assert any("alone" in str(c) for c in mock_log.warning.call_args_list)
-        assert any("Discovery: mDNS" in str(c) for c in mock_log.info.call_args_list)
+        assert any("Rendezvous: mDNS" in str(c) for c in mock_log.info.call_args_list)
         mock_p2p_sync.stop.assert_called_once()
 
-    def test_discovery_event_reports_the_active_plan(self, tmp_path):
+    def test_rendezvous_event_reports_the_active_plan(self, tmp_path):
         """The plan is surfaced on the structured-events channel at startup."""
         config = _make_p2p_config(
-            tmp_path, DISCOVERY_SERVER_ENDPOINTS=(HostPort("boot.example.net", 443),)
+            tmp_path, RENDEZVOUS_SERVER_ENDPOINTS=(HostPort("boot.example.net", 443),)
         )
         mock_log = MagicMock()
         mock_peer_mgr = MagicMock()
@@ -87,32 +87,32 @@ class TestRunLanMode:
 
         with (
             patch(
-                "hsync_client.p2p_discovery_bootnode.BootnodeDiscovery",
+                "hsync_client.p2p_rendezvous_rendezvous.RendezvousRendezvous",
                 return_value=mock_p2p_sync,
             ),
             patch(
-                "hsync_client.p2p_discovery_hybrid.HybridDiscovery",
+                "hsync_client.p2p_rendezvous_hybrid.HybridRendezvous",
                 return_value=mock_p2p_sync,
             ),
             patch("hsync_client.p2p_handler.emit_event") as emit,
         ):
             run_p2p_mode(config, mock_log)
 
-        discovery_calls = [
+        rendezvous_calls = [
             call
             for call in emit.call_args_list
-            if call.args and call.args[0] == UiEventName.discovery
+            if call.args and call.args[0] == UiEventName.rendezvous
         ]
-        assert len(discovery_calls) == 1
-        assert discovery_calls[0].kwargs == {
-            "plan": "mdns+bootnode",
-            "bootnode": "boot.example.net:443",
+        assert len(rendezvous_calls) == 1
+        assert rendezvous_calls[0].kwargs == {
+            "plan": "mdns+rendezvous",
+            "rendezvous": "boot.example.net:443",
         }
 
-    def test_bootnode_banner_and_plan_selection(self, tmp_path):
-        """A configured bootnode selects the combined mDNS + bootnode plan."""
+    def test_rendezvous_banner_and_plan_selection(self, tmp_path):
+        """A configured rendezvous selects the combined mDNS + rendezvous plan."""
         config = _make_p2p_config(
-            tmp_path, DISCOVERY_SERVER_ENDPOINTS=(HostPort("boot.example.net", 443),)
+            tmp_path, RENDEZVOUS_SERVER_ENDPOINTS=(HostPort("boot.example.net", 443),)
         )
         mock_log = MagicMock()
 
@@ -128,11 +128,11 @@ class TestRunLanMode:
 
         with (
             patch(
-                "hsync_client.p2p_discovery_bootnode.BootnodeDiscovery",
+                "hsync_client.p2p_rendezvous_rendezvous.RendezvousRendezvous",
                 return_value=mock_p2p_sync,
             ) as mock_plan,
             patch(
-                "hsync_client.p2p_discovery_hybrid.HybridDiscovery",
+                "hsync_client.p2p_rendezvous_hybrid.HybridRendezvous",
                 return_value=mock_p2p_sync,
             ),
         ):
@@ -140,10 +140,10 @@ class TestRunLanMode:
 
         mock_plan.assert_called_once()
         kwargs = mock_plan.call_args.kwargs
-        assert kwargs["bootnode_host"] == "boot.example.net"
-        assert kwargs["bootnode_port"] == 443
+        assert kwargs["rendezvous_host"] == "boot.example.net"
+        assert kwargs["rendezvous_port"] == 443
         assert any(
-            "Discovery: mDNS on the local network + discovery server(s) boot.example.net:443"
+            "Rendezvous: mDNS on the local network + rendezvous server(s) boot.example.net:443"
             in str(c)
             for c in mock_log.info.call_args_list
         )
@@ -170,7 +170,7 @@ class TestRunLanMode:
         mock_ws_server.connected_clients = 0
 
         with (
-            patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
+            patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous", return_value=mock_p2p_sync),
             patch("hsync_client.p2p_handler.P2PServer", return_value=mock_p2p_server),
             patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=mock_ws_server),
             patch("time.sleep", side_effect=KeyboardInterrupt),
@@ -207,7 +207,7 @@ class TestRunLanMode:
         mock_p2p_sync.port = 9000
 
         with (
-            patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
+            patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous", return_value=mock_p2p_sync),
             patch("hsync_client.p2p_handler.set_config"),
             patch("hsync_client.p2p_handler._evaluate_master_pin", return_value=True),
             patch("hsync_client.p2p_handler.sync", new=MagicMock()),
@@ -242,7 +242,7 @@ class TestRunLanMode:
         mock_p2p_sync.port = 9000
 
         with (
-            patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
+            patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous", return_value=mock_p2p_sync),
             patch("hsync_client.p2p_handler.set_config"),
             patch("hsync_client.p2p_handler.sync", new=MagicMock()),
             patch("asyncio.run") as mock_run,
@@ -276,7 +276,7 @@ class TestRunLanMode:
         mock_p2p_sync.port = 9000
 
         with (
-            patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
+            patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous", return_value=mock_p2p_sync),
             patch("hsync_client.p2p_handler.set_config"),
             patch("hsync_client.p2p_handler._evaluate_master_pin", return_value=True),
             patch("hsync_client.p2p_handler._master_endpoint_reachable", return_value=True),
@@ -309,7 +309,7 @@ class TestRunLanMode:
         mock_p2p_sync.port = 9000
 
         with (
-            patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
+            patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous", return_value=mock_p2p_sync),
             patch("hsync_client.p2p_handler.set_config"),
             patch("hsync_client.p2p_handler._evaluate_master_pin", return_value=True),
             patch("hsync_client.p2p_handler._master_endpoint_reachable", return_value=False),
@@ -333,10 +333,10 @@ class TestRunLanMode:
         mock_p2p_sync = MagicMock()
         mock_p2p_sync.start.return_value = mock_peer_mgr
         mock_p2p_sync.port = 9000
-        # Make wait_for_discovery raise to simulate Ctrl+C
-        mock_p2p_sync.wait_for_discovery.side_effect = KeyboardInterrupt
+        # Make wait_for_rendezvous raise to simulate Ctrl+C
+        mock_p2p_sync.wait_for_rendezvous.side_effect = KeyboardInterrupt
 
-        with patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync):
+        with patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous", return_value=mock_p2p_sync):
             run_p2p_mode(config, mock_log)
 
         mock_p2p_sync.stop.assert_called_once()
@@ -366,7 +366,7 @@ class TestRunLanMode:
         listener_server.websocket_server = listener_ws
 
         with (
-            patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
+            patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous", return_value=mock_p2p_sync),
             patch("hsync_client.p2p_handler.P2PServer", return_value=listener_server),
             patch("hsync_client.p2p_handler.P2PWebSocketServer", return_value=listener_ws),
             patch(
@@ -381,7 +381,7 @@ class TestRunLanMode:
         mock_load.assert_called_once()
 
     def test_slave_waits_for_master_server_ready(self, tmp_path):
-        """Client re-enters discovery loop when master not ready."""
+        """Client re-enters rendezvous loop when master not ready."""
         config = _make_p2p_config(tmp_path)
         mock_log = MagicMock()
 
@@ -414,7 +414,7 @@ class TestRunLanMode:
         mock_p2p_sync.port = 9000
 
         with (
-            patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery", return_value=mock_p2p_sync),
+            patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous", return_value=mock_p2p_sync),
             patch("hsync_client.p2p_handler.set_config"),
             patch("hsync_client.p2p_handler._evaluate_master_pin", return_value=True),
             patch("hsync_client.p2p_handler.sync", new=MagicMock()),
@@ -422,5 +422,5 @@ class TestRunLanMode:
         ):
             run_p2p_mode(config, mock_log)
 
-        # wait_for_discovery should be called twice (first loop: not ready, second: ready)
-        assert mock_p2p_sync.wait_for_discovery.call_count == 2
+        # wait_for_rendezvous should be called twice (first loop: not ready, second: ready)
+        assert mock_p2p_sync.wait_for_rendezvous.call_count == 2

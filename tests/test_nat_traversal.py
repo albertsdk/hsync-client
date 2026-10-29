@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""Unit tests for the bootnode endpoint candidates (NAT traversal)."""
+"""Unit tests for the rendezvous endpoint candidates (NAT traversal)."""
 
 from __future__ import annotations
 

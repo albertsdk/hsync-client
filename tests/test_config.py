@@ -123,7 +123,7 @@ class TestEnvSettings:
         assert settings.p2p_key is None
         assert settings.p2p_group is None
         assert settings.p2p_listen_port is None
-        assert settings.peer_discovery_timeout is None
+        assert settings.peer_rendezvous_timeout is None
         assert settings.deletion_policy == "propagate"
         assert settings.compression_enabled is True
         assert settings.p2p_peer_download is True
@@ -138,73 +138,73 @@ class TestEnvSettings:
         settings = EnvSettings()
         assert not hasattr(settings, "p2p_persistent")
 
-    def test_bootnode_default_none(self):
-        """Unset HSYNC_DISCOVERY_SERVER_ENDPOINTS means the mDNS discovery plan."""
+    def test_rendezvous_default_none(self):
+        """Unset HSYNC_RENDEZVOUS_SERVER_ENDPOINTS means the mDNS rendezvous plan."""
         get_env_settings.cache_clear()
-        assert EnvSettings().discovery_server_endpoints is None
+        assert EnvSettings().rendezvous_server_endpoints is None
 
-    def test_bootnode_accepts_bare_host(self, monkeypatch):
-        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_ENDPOINTS", "boot.example.net")
+    def test_rendezvous_accepts_bare_host(self, monkeypatch):
+        monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_ENDPOINTS", "boot.example.net")
         get_env_settings.cache_clear()
-        assert EnvSettings().discovery_server_endpoints == "boot.example.net"
+        assert EnvSettings().rendezvous_server_endpoints == "boot.example.net"
 
-    def test_bootnode_rejects_scheme_and_path(self, monkeypatch):
-        """The bootnode channel is QUIC/UDP: no scheme, no path."""
+    def test_rendezvous_rejects_scheme_and_path(self, monkeypatch):
+        """The rendezvous channel is QUIC/UDP: no scheme, no path."""
         for bad in (
             "https://boot.example.net",
             "boot.example.net/path",
         ):
-            monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_ENDPOINTS", bad)
+            monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_ENDPOINTS", bad)
             get_env_settings.cache_clear()
             with pytest.raises(ValueError):
                 EnvSettings()
 
-    def test_bootnode_accepts_host_port(self, monkeypatch):
-        """``HSYNC_DISCOVERY_SERVER_ENDPOINTS`` accepts ``HOST[:PORT]``; the host is unbracketed."""
-        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_ENDPOINTS", "boot.example.net:8443")
+    def test_rendezvous_accepts_host_port(self, monkeypatch):
+        """``HSYNC_RENDEZVOUS_SERVER_ENDPOINTS`` accepts ``HOST[:PORT]``; the host is unbracketed."""
+        monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_ENDPOINTS", "boot.example.net:8443")
         get_env_settings.cache_clear()
-        assert EnvSettings().discovery_server_endpoints == "boot.example.net:8443"
+        assert EnvSettings().rendezvous_server_endpoints == "boot.example.net:8443"
 
-    def test_bootnode_ipv6_bracketed_with_port(self, monkeypatch):
-        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_ENDPOINTS", "[::1]:8443")
+    def test_rendezvous_ipv6_bracketed_with_port(self, monkeypatch):
+        monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_ENDPOINTS", "[::1]:8443")
         get_env_settings.cache_clear()
-        assert EnvSettings().discovery_server_endpoints == "[::1]:8443"
+        assert EnvSettings().rendezvous_server_endpoints == "[::1]:8443"
 
-    def test_bootnode_bare_ipv6_is_normalized_unbracketed(self, monkeypatch):
-        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_ENDPOINTS", "[::1]")
+    def test_rendezvous_bare_ipv6_is_normalized_unbracketed(self, monkeypatch):
+        monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_ENDPOINTS", "[::1]")
         get_env_settings.cache_clear()
-        assert EnvSettings().discovery_server_endpoints == "::1"
+        assert EnvSettings().rendezvous_server_endpoints == "::1"
 
-    def test_bootnode_ports_parsed_ordered_and_validated(self, monkeypatch):
-        """``HSYNC_DISCOVERY_SERVER_EXTRA_PORTS`` is an ordered extra-port set; bad/dupes dropped."""
-        from hsync_client.config import get_discovery_server_extra_ports
+    def test_rendezvous_ports_parsed_ordered_and_validated(self, monkeypatch):
+        """``HSYNC_RENDEZVOUS_SERVER_EXTRA_PORTS`` is an ordered extra-port set; bad/dupes dropped."""
+        from hsync_client.config import get_rendezvous_server_extra_ports
 
-        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_EXTRA_PORTS", "53, 8443, 53, nope, 0, 70000")
+        monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_EXTRA_PORTS", "53, 8443, 53, nope, 0, 70000")
         get_env_settings.cache_clear()
-        assert get_discovery_server_extra_ports() == (53, 8443)
+        assert get_rendezvous_server_extra_ports() == (53, 8443)
 
-    def test_bootnode_ports_unset_is_empty(self, monkeypatch):
-        from hsync_client.config import get_discovery_server_extra_ports
+    def test_rendezvous_ports_unset_is_empty(self, monkeypatch):
+        from hsync_client.config import get_rendezvous_server_extra_ports
 
-        monkeypatch.delenv("HSYNC_DISCOVERY_SERVER_EXTRA_PORTS", raising=False)
+        monkeypatch.delenv("HSYNC_RENDEZVOUS_SERVER_EXTRA_PORTS", raising=False)
         get_env_settings.cache_clear()
-        assert get_discovery_server_extra_ports() == ()
+        assert get_rendezvous_server_extra_ports() == ()
 
-    def test_discovery_server_pins_are_keyed_by_endpoint(self, monkeypatch):
+    def test_rendezvous_server_pins_are_keyed_by_endpoint(self, monkeypatch):
         """A pin belongs to one endpoint; two servers keep their own identity."""
-        from hsync_client.config import get_discovery_server_pins
+        from hsync_client.config import get_rendezvous_server_pins
 
         hex64 = "0" * 64
         other = "f" * 64
-        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_ENDPOINTS", "a.example:443,b.example")
+        monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_ENDPOINTS", "a.example:443,b.example")
         monkeypatch.setenv(
-            "HSYNC_DISCOVERY_SERVER_FINGERPRINTS",
+            "HSYNC_RENDEZVOUS_SERVER_FINGERPRINTS",
             f"a.example:443={hex64}|{other},b.example=sha256:{hex64}",
         )
         get_env_settings.cache_clear()
         # Keys are the dialed endpoints (the default port is applied), so a pin
         # and the endpoint it belongs to always compare equal.
-        assert get_discovery_server_pins() == {
+        assert get_rendezvous_server_pins() == {
             "a.example:443": (hex64, other),
             "b.example:443": (hex64,),
         }
@@ -213,51 +213,51 @@ class TestEnvSettings:
         """A pin with nothing to pin is a configuration error, not a traceback."""
         from hsync_common.protocol.pairing import parse_fingerprint
 
-        monkeypatch.delenv("HSYNC_DISCOVERY_SERVER_ENDPOINTS", raising=False)
-        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_FINGERPRINTS", "0" * 64)
+        monkeypatch.delenv("HSYNC_RENDEZVOUS_SERVER_ENDPOINTS", raising=False)
+        monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_FINGERPRINTS", "0" * 64)
         get_env_settings.cache_clear()
         with pytest.raises(ValueError, match="at least one"):
             EnvSettings()
         assert parse_fingerprint("0" * 64) is not None  # sanity: the pin itself is valid
 
     def test_pins_for_unknown_endpoints_fail_at_startup(self, monkeypatch):
-        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_ENDPOINTS", "a.example")
-        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_FINGERPRINTS", f"b.example={'0' * 64}")
+        monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_ENDPOINTS", "a.example")
+        monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_FINGERPRINTS", f"b.example={'0' * 64}")
         get_env_settings.cache_clear()
         with pytest.raises(ValueError, match="not a configured"):
             EnvSettings()
 
     def test_a_pin_for_an_unconfigured_server_is_refused(self, monkeypatch):
-        from hsync_client.config import get_discovery_server_pins
+        from hsync_client.config import get_rendezvous_server_pins
 
-        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_ENDPOINTS", "a.example")
-        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_FINGERPRINTS", f"other.example={'0' * 64}")
+        monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_ENDPOINTS", "a.example")
+        monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_FINGERPRINTS", f"other.example={'0' * 64}")
         get_env_settings.cache_clear()
         with pytest.raises(ValueError):
-            get_discovery_server_pins()
+            get_rendezvous_server_pins()
 
-    def test_bootnode_fingerprint_rejects_invalid(self, monkeypatch):
-        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_FINGERPRINTS", "not-a-pin")
+    def test_rendezvous_fingerprint_rejects_invalid(self, monkeypatch):
+        monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_FINGERPRINTS", "not-a-pin")
         get_env_settings.cache_clear()
         with pytest.raises(ValueError):
             EnvSettings()
 
-    def test_bootnode_fingerprint_rejects_more_than_two(self, monkeypatch):
+    def test_rendezvous_fingerprint_rejects_more_than_two(self, monkeypatch):
         monkeypatch.setenv(
-            "HSYNC_DISCOVERY_SERVER_FINGERPRINTS", ",".join("0" * 64 for _ in range(3))
+            "HSYNC_RENDEZVOUS_SERVER_FINGERPRINTS", ",".join("0" * 64 for _ in range(3))
         )
         get_env_settings.cache_clear()
         with pytest.raises(ValueError):
             EnvSettings()
 
-    def test_bootnode_tofu_default_and_override(self, monkeypatch):
-        from hsync_client.config import get_discovery_server_tofu
+    def test_rendezvous_tofu_default_and_override(self, monkeypatch):
+        from hsync_client.config import get_rendezvous_server_tofu
 
         get_env_settings.cache_clear()
-        assert get_discovery_server_tofu() is False
-        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_TOFU", "1")
+        assert get_rendezvous_server_tofu() is False
+        monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_TOFU", "1")
         get_env_settings.cache_clear()
-        assert get_discovery_server_tofu() is True
+        assert get_rendezvous_server_tofu() is True
 
     def test_upnp_enabled_default_off_and_override(self, monkeypatch):
         """Off by default; an explicit value opts in."""
@@ -270,19 +270,19 @@ class TestEnvSettings:
         get_env_settings.cache_clear()
         assert EnvSettings().map_data_port is False
 
-    def test_discovery_timeout_zero_is_valid(self):
-        """HSYNC_PEER_DISCOVERY_TIMEOUT=0 means wait indefinitely and is valid."""
+    def test_rendezvous_timeout_zero_is_valid(self):
+        """HSYNC_PEER_RENDEZVOUS_TIMEOUT=0 means wait indefinitely and is valid."""
         get_env_settings.cache_clear()
-        old = os.environ.get("HSYNC_PEER_DISCOVERY_TIMEOUT")
-        os.environ["HSYNC_PEER_DISCOVERY_TIMEOUT"] = "0"
+        old = os.environ.get("HSYNC_PEER_RENDEZVOUS_TIMEOUT")
+        os.environ["HSYNC_PEER_RENDEZVOUS_TIMEOUT"] = "0"
         try:
             settings = EnvSettings()
-            assert settings.peer_discovery_timeout == 0
+            assert settings.peer_rendezvous_timeout == 0
         finally:
             if old is not None:
-                os.environ["HSYNC_PEER_DISCOVERY_TIMEOUT"] = old
+                os.environ["HSYNC_PEER_RENDEZVOUS_TIMEOUT"] = old
             else:
-                os.environ.pop("HSYNC_PEER_DISCOVERY_TIMEOUT", None)
+                os.environ.pop("HSYNC_PEER_RENDEZVOUS_TIMEOUT", None)
             get_env_settings.cache_clear()
 
     def test_reads_from_env(self):

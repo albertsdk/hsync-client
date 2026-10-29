@@ -1,7 +1,7 @@
 # Getting Started — p2p Mode
 
 Sync files directly between devices — on the same local network (mDNS, always
-active) and, across networks, through a bootnode — with no server needed.
+active) and, across networks, through a rendezvous — with no server needed.
 
 > Back to [Getting Started](getting-started.md).
 
@@ -34,7 +34,7 @@ echo "hello hsync p2p" > /tmp/hsync-p2p-a/hello.txt
 # 3. Terminal 1 — prefer this peer as the master (it already holds the file,
 #    so no deletion-risk warning is shown) and start p2p Mode. Give it its own
 #    device identity: the two peers run on the same machine but must be two
-#    distinct devices, or discovery would ignore them as "self".
+#    distinct devices, or rendezvous would ignore them as "self".
 #    Both terminals share the same p2p key: it authorizes writes, and a
 #    write-capable run without a key is refused with [AUTH REQUIRED].
 HSYNC_P2P_PASSPHRASE="demo-shared-password" \
@@ -67,7 +67,7 @@ both terminals to stop.
 > device identity (a stable device ID) stored in `$XDG_STATE_HOME/hsync/device/`
 > (or `~/.local/state/hsync/device/` when `XDG_STATE_HOME` is unset).
 > With two peers on the *same* machine, both terminals would otherwise share one
-> identity and ignore each other as "self" during mDNS discovery — so each
+> identity and ignore each other as "self" during mDNS rendezvous — so each
 > terminal gets its own device directory here. On real devices this is not
 > needed: omit the variable and the default is used. See
 > [p2p Mode → Device Identity](p2p-mode.md#device-identity).
@@ -101,7 +101,7 @@ With a shared secret:
 - The master authenticates every slave connection and accepts mutations
 - The CID is cryptographically verified — used for echo suppression and log attribution
 
-Without a shared secret the group is **read-only**: discovery, listings, downloads
+Without a shared secret the group is **read-only**: rendezvous, listings, downloads
 and read-only deltas keep working (a lightweight **hello handshake** lets the
 master log each slave's CID with an `(unauthenticated)` qualifier), but any
 write-capable sync is refused with `[AUTH REQUIRED]`. The only exceptions are
@@ -127,14 +127,14 @@ See [Configuration — p2p Mode](configuration-p2p.md) for all p2p-mode options.
 ## Crossing networks
 
 Devices on different networks cannot see each other over mDNS, so point every
-device of the group at the same bootstrap node. mDNS stays active on the same
+device of the group at the same rendezvous node. mDNS stays active on the same
 client, so same-network peers are still found locally:
-[Sync across networks (bootnode)](p2p-bootnode.md).
+[Sync across networks (rendezvous)](p2p-rendezvous.md).
 
 ## Next Steps
 
 - [Sync on the local network](p2p-lan.md) — operate and verify the mDNS plan
-- [Sync across networks](p2p-bootnode.md) — discover peers through a bootnode
+- [Sync across networks](p2p-rendezvous.md) — discover peers through a rendezvous
 - [p2p Mode Guide](p2p-mode.md) — detailed walkthrough
 - [Configuration — p2p Mode](configuration-p2p.md) — all p2p-mode CLI options
 - [Authentication — Client-Side](authentication.md) — hello handshake + auth diagrams

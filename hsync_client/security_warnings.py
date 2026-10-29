@@ -54,7 +54,7 @@ def log_active_bypasses(
     allow_deletions: bool = False,
     allow_unauthenticated_writes: bool = False,
     allow_unauthenticated_p2p: bool = False,
-    discovery_server_trust: Any = None,
+    rendezvous_server_trust: Any = None,
     server_trust: Any = None,
 ) -> None:
     """Log one concise warning per actively-adopted security bypass."""
@@ -64,5 +64,5 @@ def log_active_bypasses(
         logger.warning(BYPASS_WARNINGS["allow_unauthenticated_writes"])
     if allow_unauthenticated_p2p:
         logger.warning(BYPASS_WARNINGS["allow_unauthenticated_p2p"])
-    if discovery_server_trust is TrustPolicy.accept_new or server_trust is TrustPolicy.accept_new:
+    if rendezvous_server_trust is TrustPolicy.accept_new or server_trust is TrustPolicy.accept_new:
         logger.warning(BYPASS_WARNINGS["accept_new"])

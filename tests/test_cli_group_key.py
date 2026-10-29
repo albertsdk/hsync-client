@@ -3,7 +3,7 @@
 
 """The ``hsync derive-group-key`` operator helper."""
 
-from hsync_common.protocol.boot_tokens import derive_group_key
+from hsync_common.protocol.rdv_tokens import derive_group_key
 from typer.testing import CliRunner
 
 from hsync_client.cli import app

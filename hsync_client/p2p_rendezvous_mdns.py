@@ -1,16 +1,16 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""mDNS/Zeroconf discovery plan for ``hsync p2p`` (LAN, no bootnode).
+"""mDNS/Zeroconf rendezvous plan for ``hsync p2p`` (LAN, no rendezvous).
 
-Owns the Zeroconf service listener/advertiser and the ``MdnsDiscovery``
+Owns the Zeroconf service listener/advertiser and the ``MdnsRendezvous``
 coordinator that browses and advertises ``_hsync._tcp.local.``, stamps the TXT
 flags (``server_ready``, ``connected``), runs the heartbeat and coalesces
 presence refreshes. Peer
 state and election live in ``p2p_peers``; this module is one of the two
-implementations of the ``p2p_discovery`` interface.
+implementations of the ``p2p_rendezvous`` interface.
 
-Consumers: ``hsync-client`` (p2p handler / CLI when no bootnode is set), tests.
+Consumers: ``hsync-client`` (p2p handler / CLI when no rendezvous is set), tests.
 """
 
 from __future__ import annotations
@@ -32,10 +32,10 @@ from zeroconf import (
 
 from hsync_client.config import CONFIG
 from hsync_client.constants import (
-    DISCOVERY_TIMEOUT_DEFAULT,
     HEARTBEAT_INTERVAL,
     HSYNC_VERSION,
     PEER_TIMEOUT,
+    RENDEZVOUS_TIMEOUT_DEFAULT,
 )
 from hsync_client.net_utils import get_local_ip
 from hsync_client.net_watch import (
@@ -44,19 +44,19 @@ from hsync_client.net_watch import (
     get_network_monitor,
     network_signature,
 )
-from hsync_client.p2p_discovery import DiscoveryPlanState
 from hsync_client.p2p_peers import (
     HSYNC_P2P_LISTEN_PORT,
     Peer,
     PeerManager,
     get_free_port,
 )
+from hsync_client.p2p_rendezvous import RendezvousPlanState
 from hsync_client.presence import record_presence, slave_connected_count
 
 HSYNC_SERVICE_TYPE = "_hsync._tcp.local."
 
-# Discovery timeout in seconds.
-DISCOVERY_TIMEOUT = DISCOVERY_TIMEOUT_DEFAULT
+# Rendezvous timeout in seconds.
+RENDEZVOUS_TIMEOUT = RENDEZVOUS_TIMEOUT_DEFAULT
 
 # Join/leave events can arrive in bursts (e.g. a slave reconnecting): instead
 # of re-registering the mDNS TXT record per event, a single refresh runs this
@@ -283,13 +283,13 @@ class HsyncServiceListener(ServiceListener):
             log.debug(f"Error parsing service name on removal: {e}")
 
 
-class MdnsDiscovery(DiscoveryPlanState):
+class MdnsRendezvous(RendezvousPlanState):
     """
     Coordinates P2P-based peer-to-peer synchronization.
 
     Handles:
     - mDNS service registration (advertising this client)
-    - mDNS service discovery (finding other clients)
+    - mDNS service rendezvous (finding other clients)
     - Master election coordination
     - Starting/stopping based on role (master vs client)
     """
@@ -360,11 +360,11 @@ class MdnsDiscovery(DiscoveryPlanState):
         self._peer_manager: PeerManager | None = None
         self._running = False
 
-        # Discovery logging state: the discovery loop polls continuously, so
+        # Rendezvous logging state: the rendezvous loop polls continuously, so
         # these guards keep the "waiting"/result messages from being repeated
         # on every iteration once nothing relevant changes.
-        self._discovery_announced = False
-        self._last_discovery_state: tuple[int, int] | None = None
+        self._rendezvous_announced = False
+        self._last_rendezvous_state: tuple[int, int] | None = None
 
         # Presence state: the number of WebSocket clients currently connected
         # to this node (only meaningful while it serves as master) and the
@@ -418,14 +418,14 @@ class MdnsDiscovery(DiscoveryPlanState):
         self, register_service: bool = True, peer_manager: PeerManager | None = None
     ) -> PeerManager:
         """
-        Start P2P discovery and optionally register service.
+        Start P2P rendezvous and optionally register service.
 
         Args:
             register_service: If True, register mDNS service immediately.
                 If False, call register_service() later (e.g., after starting
                 the HTTP server when becoming master).
             peer_manager: A pre-built :class:`PeerManager` to share with another
-                plan (the combined mDNS + bootnode discovery). Built from this
+                plan (the combined mDNS + rendezvous rendezvous). Built from this
                 plan's configuration when omitted.
 
         Returns:
@@ -453,7 +453,7 @@ class MdnsDiscovery(DiscoveryPlanState):
         self._browser = ServiceBrowser(self._zeroconf, HSYNC_SERVICE_TYPE, listener)
 
         self._running = True
-        log.info("P2P discovery started")
+        log.info("P2P rendezvous started")
 
         # Start the liveness heartbeat: peers must see a changing TXT value at
         # least every HEARTBEAT_INTERVAL or their staleness sweep falsely
@@ -518,7 +518,7 @@ class MdnsDiscovery(DiscoveryPlanState):
 
         Drives the endpoint-material TXT keys (``https``/``cert_fp``) only: whether
         this node can actually serve a peer download is advertised over the
-        authenticated WSS handshake, never on the discovery record (ADR-0030).
+        authenticated WSS handshake, never on the rendezvous record (ADR-0030).
         """
         self._refresh_service(server_ready=False, endpoint_ready=ready)
         log.info(f"Updated mDNS service: seeder endpoint={'ready' if ready else 'down'}")
@@ -585,7 +585,7 @@ class MdnsDiscovery(DiscoveryPlanState):
 
         The count feeds two consumers: the ``connected`` value advertised in
         the mDNS TXT record (so slaves can display group presence without a
-        server round-trip) and the discovery status log line. A serving master
+        server round-trip) and the rendezvous status log line. A serving master
         re-registers its record so peers observe the new value on their next
         mDNS heartbeat.
         """
@@ -595,7 +595,7 @@ class MdnsDiscovery(DiscoveryPlanState):
         self._connected_clients = count
         # Schedule one record refresh for the burst: rapid join/leave sequences
         # coalesce into a single mDNS re-registration instead of flooding the
-        # network with one TXT update per event. The discovery loop always
+        # network with one TXT update per event. The rendezvous loop always
         # reads the live count immediately, so the delay only affects the
         # record consumers on other peers (who poll mDNS anyway).
         with self._refresh_lock:
@@ -673,7 +673,7 @@ class MdnsDiscovery(DiscoveryPlanState):
         ``update_interfaces`` reconciles the per-interface sockets with the live
         adapter set — the state a bounced interface leaves behind (a socket
         bound to an address that vanished). A failed reconcile escalates to a
-        full rebuild, so one dead socket never strands discovery.
+        full rebuild, so one dead socket never strands rendezvous.
         """
         zc = self._zeroconf
         if zc is None or not self._running:
@@ -681,7 +681,7 @@ class MdnsDiscovery(DiscoveryPlanState):
         try:
             zc.update_interfaces()
         except Exception as exc:
-            log.warning(f"mDNS interface reconcile failed ({exc}); rebuilding discovery")
+            log.warning(f"mDNS interface reconcile failed ({exc}); rebuilding rendezvous")
             signature = network_signature()
             if signature.online:
                 self._rebuild_mdns(signature.source_ip)
@@ -743,10 +743,10 @@ class MdnsDiscovery(DiscoveryPlanState):
                 zc, HSYNC_SERVICE_TYPE, HsyncServiceListener(peer_manager)
             )
             peer_manager.set_local_address(local_ip)
-        log.info(f"mDNS discovery rebuilt after a network change: {previous_ip} -> {local_ip}")
+        log.info(f"mDNS rendezvous rebuilt after a network change: {previous_ip} -> {local_ip}")
 
     def stop(self) -> None:
-        """Stop P2P discovery and unregister service."""
+        """Stop P2P rendezvous and unregister service."""
         if not self._running:
             return
 
@@ -856,7 +856,7 @@ class MdnsDiscovery(DiscoveryPlanState):
             properties["group"] = self._group
         # Endpoint material is advertised only while a listener is actually
         # bound: the master's HTTP server or a slave's read-only seeder. A
-        # discovery-only node must never claim a reachable TLS endpoint.
+        # rendezvous-only node must never claim a reachable TLS endpoint.
         advertise_endpoint = server_ready or endpoint_ready
         if advertise_endpoint and self._use_https:
             properties["https"] = "true"
@@ -902,25 +902,25 @@ class MdnsDiscovery(DiscoveryPlanState):
             addresses=[socket.inet_aton(local_ip)],
         )
 
-    def wait_for_discovery(self, timeout: float = DISCOVERY_TIMEOUT) -> None:
+    def wait_for_rendezvous(self, timeout: float = RENDEZVOUS_TIMEOUT) -> None:
         """
-        Wait for peer discovery to complete.
+        Wait for peer rendezvous to complete.
 
-        The discovery loop calls this on every iteration, so the status
+        The rendezvous loop calls this on every iteration, so the status
         messages are emitted only when they carry new information: the
         "waiting" notice is announced once at the start of the countdown, and
-        the discovery result is logged only when the alive-peer count changes.
+        the rendezvous result is logged only when the alive-peer count changes.
         Steady-state polling stays silent (downgraded to ``debug``).
 
         Args:
-            timeout: Time to wait for this discovery polling window in seconds.
+            timeout: Time to wait for this rendezvous polling window in seconds.
         """
-        if not self._discovery_announced:
-            log.info(f"Waiting {timeout}s for peer discovery...")
-            self._discovery_announced = True
+        if not self._rendezvous_announced:
+            log.info(f"Waiting {timeout}s for peer rendezvous...")
+            self._rendezvous_announced = True
         else:
-            log.debug(f"Waiting {timeout}s for peer discovery...")
-        # Wake on a discovery change (peer added/updated/removed, local
+            log.debug(f"Waiting {timeout}s for peer rendezvous...")
+        # Wake on a rendezvous change (peer added/updated/removed, local
         # server_ready flip) instead of sleeping the full window: a peer that
         # is already advertising is detected in mDNS time, not after ``timeout``.
         if self._peer_manager is not None:
@@ -928,12 +928,12 @@ class MdnsDiscovery(DiscoveryPlanState):
         else:
             time.sleep(timeout)
 
-        self.emit_discovery_status()
+        self.emit_rendezvous_status()
 
-    def emit_discovery_status(self) -> None:
+    def emit_rendezvous_status(self) -> None:
         """Emit the presence pair and the peer-count log for the last window.
 
-        Called from :meth:`wait_for_discovery`, and by the combined discovery
+        Called from :meth:`wait_for_rendezvous`, and by the combined rendezvous
         plan after it waits on the shared peer manager, so the presence pair is
         reported exactly once.
         """
@@ -957,8 +957,8 @@ class MdnsDiscovery(DiscoveryPlanState):
         # currently-known total, so connected is clamped to total.
         connected = min(connected, total)
 
-        changed = (self._connected_clients, total) != self._last_discovery_state
-        self._last_discovery_state = (self._connected_clients, total)
+        changed = (self._connected_clients, total) != self._last_rendezvous_state
+        self._last_rendezvous_state = (self._connected_clients, total)
 
         record_presence(connected, total)
 

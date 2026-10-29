@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""Tests for HsyncServiceListener (mDNS discovery) in the P2P module."""
+"""Tests for HsyncServiceListener (mDNS rendezvous) in the P2P module."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 
 from hsync_common.protocol.handshake import PROTOCOL_VERSION_P2P
 
-from hsync_client.p2p_discovery_mdns import HsyncServiceListener
 from hsync_client.p2p_peers import PeerManager
+from hsync_client.p2p_rendezvous_mdns import HsyncServiceListener
 
 _TYPE = "_hsync._tcp.local."
 
@@ -56,8 +56,8 @@ def _listener_with_pm(
 
 
 def _capture_warnings(monkeypatch) -> list[str]:
-    """Collect ``p2p_discovery_mdns`` WARNING messages via the module logger."""
-    import hsync_client.p2p_discovery_mdns as mod
+    """Collect ``p2p_rendezvous_mdns`` WARNING messages via the module logger."""
+    import hsync_client.p2p_rendezvous_mdns as mod
 
     mock_log = MagicMock()
     messages: list[str] = []
@@ -229,7 +229,7 @@ class TestServiceCallbacks:
         listener._peer_manager.is_wss_connected.return_value = False
         listener._peer_manager.remove_peer.side_effect = RuntimeError("boom")
 
-        with patch("hsync_client.p2p_discovery_mdns.log") as mock_log:
+        with patch("hsync_client.p2p_rendezvous_mdns.log") as mock_log:
             # Must not raise
             listener.remove_service(MagicMock(), _TYPE, "photos-peer-cid-1." + _TYPE)
 

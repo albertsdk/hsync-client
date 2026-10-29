@@ -1601,12 +1601,12 @@ async def p2p_websocket_client(
         if inventory_publisher is not None:
             await inventory_publisher.stop()
         # Drain pending event-driven downloads before returning to the
-        # discovery loop: the reconnect's full sync must not race writes that
+        # rendezvous loop: the reconnect's full sync must not race writes that
         # are still in flight (fan-out path).
         if ctx is not None:
             await drain_file_downloads(ctx)
         # Wait for pending client→master operations to complete before
-        # returning to the discovery loop (which triggers a full sync).
+        # returning to the rendezvous loop (which triggers a full sync).
         # This prevents race conditions where a rename/upload/delete is
         # still in-flight while the full sync runs and reverts it.
         if _slave_event_handler is not None:
@@ -1619,7 +1619,7 @@ async def p2p_websocket_client(
         _slave_event_handler = None
         log.info("Client file watcher stopped")
         if connected:
-            # The link dropped; continuous mode returns to discovery and will
+            # The link dropped; continuous mode returns to rendezvous and will
             # emit "connected" again once a master is reached.
             emit_event(UiEventName.status, status="connecting")
 

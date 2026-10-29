@@ -114,12 +114,12 @@ pairing is the shared `sync.py::split_rename_pairs`; tombstone-backed
 ### Warning channel (`events.py::emit_warning`)
 
 A warning is a condition the engine keeps running through — a watcher that
-degraded to polling because inotify/descriptor limits ran out, a bootnode that
-could not be reached while discovery retried. The engine already logs each
-occurrence (`[WATCHER FALLBACK]`, `[FD EXHAUSTED]`, the bootnode line); the
+degraded to polling because inotify/descriptor limits ran out, a rendezvous that
+could not be reached while rendezvous retried. The engine already logs each
+occurrence (`[WATCHER FALLBACK]`, `[FD EXHAUSTED]`, the rendezvous line); the
 structured counterpart is `emit_warning` (`events.py::emit_warning`), which
 publishes `UiEventName.warning` with `message` and a stable `source` identifier
-(`watcher`, `bootnode`). It is **never** an `error`: a consumer must not report a
+(`watcher`, `rendezvous`). It is **never** an `error`: a consumer must not report a
 failure, and the desktop surfaces it as a warning banner/notification.
 
 The emitter deduplicates: at most one event per `(source, message)` per
@@ -139,7 +139,7 @@ Sources wired today (`emit_warning` call sites):
 | `watcher` | the file watcher degraded to `PollingObserver` (`watcher.py`, startup downgrade and runtime swap) | `polling_fallback` / the `WatcherLimit` value | persistent |
 | `watcher` | the shared folder is at or past the inotify watch limit, or the tree cannot fit it at all (`utils/resources.py::warn_if_inotify_watch_limit_low`, carries `needed`/`limit`) | `inotify_watches` | persistent |
 | `watcher` | the process is close to its soft `RLIMIT_NOFILE` (`utils/resources.py::warn_if_open_fds_high`, carries `needed`/`limit`) | `fd_exhaustion` | persistent |
-| `bootnode` | the bootnode is unreachable in the lease loop (`p2p_discovery_bootnode.py`) | `unreachable` | persistent |
+| `rendezvous` | the rendezvous is unreachable in the lease loop (`p2p_rendezvous_rendezvous.py`) | `unreachable` | persistent |
 | `sync` | a cycle outlived the resync interval, so the safety net recovers nothing (`sync.py::periodic_resync`) | `safety_net_stalled` | persistent |
 | `path` | the shared folder is not accessible at runtime — unmounted, renamed (`sync.py`) | `missing` | persistent |
 | `storage` | free space below `MIN_FREE_DISK_SPACE` (`sync.py::_warn_disk_reserve`, once per cycle) | `disk_reserve` | persistent |
@@ -348,7 +348,7 @@ awaiting it inline. Events for the **same path** are chained after the
 previous task (order preserved; `download_file` also holds `path_lock`), the
 **mark/unmark** echo suppression brackets the write inside the task, and
 distinct paths run concurrently under the semaphore. The receive loop's
-teardown drains the pending tasks before the discovery loop's full sync.
+teardown drains the pending tasks before the rendezvous loop's full sync.
 The serial `await` this replaces capped a LAN burst at ~60 files/s while the
 master serves 200+ req/s; remote-mode contexts (no semaphore) keep the
 inline behavior.

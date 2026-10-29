@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""SSH-style terminal trust prompt for the bootnode, the sync server and the P2P master.
+"""SSH-style terminal trust prompt for the rendezvous, the sync server and the P2P master.
 
 The client core is front-end agnostic: the CLI renders this prompt on a
 terminal, the desktop confirms out of band with a pre-flight, and Android
 confirms in-app. This module owns only the terminal prompt and the rule that
-decides whether one may be shown at all, so the discovery/connect paths can hand
+decides whether one may be shown at all, so the rendezvous/connect paths can hand
 the client a prompt (or ``None`` to fail closed).
 
-Consumers: ``hsync-client`` (``p2p_discovery.build_discovery_plan``, the server
+Consumers: ``hsync-client`` (``p2p_rendezvous.build_rendezvous_plan``, the server
 connect path and ``p2p_handler._evaluate_master_pin``).
 """
 
@@ -54,8 +54,8 @@ def _render_trust_prompt(subject: str, identity: str, fingerprint: str) -> bool:
 
 
 def terminal_trust_prompt(host: str, port: int, fingerprint: str) -> bool:
-    """Ask the operator to accept an unknown bootnode fingerprint (SSH-style)."""
-    return _render_trust_prompt("bootnode", format_authority(host, port), fingerprint)
+    """Ask the operator to accept an unknown rendezvous fingerprint (SSH-style)."""
+    return _render_trust_prompt("rendezvous", format_authority(host, port), fingerprint)
 
 
 def server_terminal_trust_prompt(host: str, port: int, fingerprint: str) -> bool:
@@ -80,14 +80,14 @@ def _prompt_allowed(config: Mapping[str, object], policy_key: str) -> bool:
 def build_trust_prompt(
     config: Mapping[str, object],
     *,
-    policy_key: str = "DISCOVERY_SERVER_TRUST",
+    policy_key: str = "RENDEZVOUS_SERVER_TRUST",
     prompt: TrustPrompt | None = None,
 ) -> TrustPrompt | None:
     """Return the terminal prompt to use, or ``None`` to fail closed.
 
     Only policy ``ask`` prompts, and only on a terminal: a non-interactive run
     never prompts (SSH ``BatchMode``), so the client fails closed. ``policy_key``
-    selects the bootnode or server policy and ``prompt`` overrides the rendered
+    selects the rendezvous or server policy and ``prompt`` overrides the rendered
     prompt (the server passes :func:`server_terminal_trust_prompt`).
     """
     if not _prompt_allowed(config, policy_key):

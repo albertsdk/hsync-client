@@ -38,7 +38,7 @@ on a LAN) choose one of the SSH-style policies:
 | `none` | No verification (`--insecure`; loopback/tests only) |
 
 A changed fingerprint is always refused as a possible man-in-the-middle. Pins
-live in the known-hosts store and are managed like the bootnode store:
+live in the known-hosts store and are managed like the rendezvous store:
 
 ```bash
 hsync trust server fingerprint server.example.com

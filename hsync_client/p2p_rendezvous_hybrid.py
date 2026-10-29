@@ -1,23 +1,23 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""Combined mDNS + bootnode discovery plan.
+"""Combined mDNS + rendezvous rendezvous plan.
 
-With a bootnode configured a node must be discoverable both on the local network
-(mDNS) and across networks (bootnode). ``HybridDiscovery`` runs both source plans
+With a rendezvous configured a node must be discoverable both on the local network
+(mDNS) and across networks (rendezvous). ``HybridRendezvous`` runs both source plans
 over a **single shared** :class:`~hsync_client.p2p_peers.PeerManager` and exposes
-the one :class:`~hsync_client.p2p_discovery.DiscoveryPlan` surface to the sync
+the one :class:`~hsync_client.p2p_rendezvous.RendezvousPlan` surface to the sync
 core: peer state and the master election are shared, presence is reported once,
 and each source keeps its own transport lifecycle.
 
 A node next to us on the local network is therefore found without a round trip
-through the bootnode, while a node on another network is still found through it;
+through the rendezvous, while a node on another network is still found through it;
 a peer seen by both sources updates one entry (the candidate lists merge, and the
-mDNS TXT capabilities are not cleared by the bootnode relay that does not carry
+mDNS TXT capabilities are not cleared by the rendezvous relay that does not carry
 them). Each source keeps its own transport lifecycle, so one that stops (an
-untrusted bootnode) degrades discovery to the other instead of ending the run.
+untrusted rendezvous) degrades rendezvous to the other instead of ending the run.
 
-Consumers: ``hsync-client`` (``build_discovery_plan`` when a bootnode is set).
+Consumers: ``hsync-client`` (``build_rendezvous_plan`` when a rendezvous is set).
 """
 
 from __future__ import annotations
@@ -27,105 +27,105 @@ from typing import Any
 
 from loguru import logger as log
 
-from hsync_client.p2p_discovery import BootnodeSource, DiscoveryPlanState
-from hsync_client.p2p_discovery_mdns import MdnsDiscovery
 from hsync_client.p2p_peers import PeerManager
+from hsync_client.p2p_rendezvous import RendezvousPlanState, RendezvousSource
+from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-__all__ = ["HybridDiscovery"]
+__all__ = ["HybridRendezvous"]
 
 
-class HybridDiscovery(DiscoveryPlanState):
-    """Run the mDNS plan and the discovery-server source(s) over one PeerManager."""
+class HybridRendezvous(RendezvousPlanState):
+    """Run the mDNS plan and the rendezvous-server source(s) over one PeerManager."""
 
-    def __init__(self, *, mdns: MdnsDiscovery, bootnode: BootnodeSource) -> None:
+    def __init__(self, *, mdns: MdnsRendezvous, rendezvous: RendezvousSource) -> None:
         self._mdns = mdns
-        self._bootnode = bootnode
+        self._rendezvous = rendezvous
         # The shared trivial state (port, peer manager, connected-client
         # provider) lives on the mDNS child, which is always present; the
-        # bootnode child adopts the same manager at start.
+        # rendezvous child adopts the same manager at start.
         self._port = mdns.port
         self._peer_manager: PeerManager | None = None
         self._connected_clients_provider: Callable[[], int] | None = None
-        self._discovery_announced = False
+        self._rendezvous_announced = False
 
-    # -- DiscoveryPlan surface -------------------------------------------------
+    # -- RendezvousPlan surface -------------------------------------------------
 
     def start(self, register_service: bool = True) -> PeerManager:
         """Start every source over one shared :class:`PeerManager`."""
         manager = self._mdns.create_peer_manager()
         self._peer_manager = manager
         self._mdns.start(register_service=register_service, peer_manager=manager)
-        self._bootnode.start(register_service=register_service, peer_manager=manager)
-        log.info("P2P discovery started (mDNS + discovery server)")
+        self._rendezvous.start(register_service=register_service, peer_manager=manager)
+        log.info("P2P rendezvous started (mDNS + rendezvous server)")
         return manager
 
     def stop(self) -> None:
-        """Stop every source (the discovery sources first, mDNS last)."""
-        self._bootnode.stop()
+        """Stop every source (the rendezvous sources first, mDNS last)."""
+        self._rendezvous.stop()
         self._mdns.stop()
 
-    def wait_for_discovery(self, timeout: float) -> None:
+    def wait_for_rendezvous(self, timeout: float) -> None:
         """Wait on the shared peer manager.
 
         Peers can arrive from either source, so the wait is the mDNS one (wake on
-        a discovery change, or the window elapsing); presence is emitted exactly
-        once, by the mDNS child, and the discovery result is logged once. A
-        discovery source that stopped (untrusted node) never fails the wait: it
+        a rendezvous change, or the window elapsing); presence is emitted exactly
+        once, by the mDNS child, and the rendezvous result is logged once. A
+        rendezvous source that stopped (untrusted node) never fails the wait: it
         simply delivers no more peers while the local network keeps feeding the
         shared state.
         """
         if self._peer_manager is None:
             return
-        if not self._discovery_announced:
-            log.info(f"Waiting {timeout}s for peer discovery...")
-            self._discovery_announced = True
+        if not self._rendezvous_announced:
+            log.info(f"Waiting {timeout}s for peer rendezvous...")
+            self._rendezvous_announced = True
         else:
-            log.debug(f"Waiting {timeout}s for peer discovery...")
+            log.debug(f"Waiting {timeout}s for peer rendezvous...")
         self._peer_manager.wait_for_change(timeout)
-        self._mdns.emit_discovery_status()
-        self._bootnode.log_peer_count()
+        self._mdns.emit_rendezvous_status()
+        self._rendezvous.log_peer_count()
 
     def update_endpoint_ready(self, ready: bool) -> None:
         """Publish (or retract) this node's data-plane endpoint on every source."""
         self._mdns.update_endpoint_ready(ready)
-        self._bootnode.update_endpoint_ready(ready)
+        self._rendezvous.update_endpoint_ready(ready)
 
     def endpoint_published(self) -> bool:
         """True once every source that can still carry traffic published it.
 
         The mDNS plan has no separate publication step (always ``True``); a
-        discovery source gates readiness until its endpoint register, so the
+        rendezvous source gates readiness until its endpoint register, so the
         combined plan is ready only when the node is reachable from both. A
-        disabled discovery source (untrusted node) carries no traffic at all, so
+        disabled rendezvous source (untrusted node) carries no traffic at all, so
         requiring its publication would only delay readiness for a peer that
         cannot be reached through it.
         """
-        if self._bootnode.source_disabled():
+        if self._rendezvous.source_disabled():
             return self._mdns.endpoint_published()
-        return self._mdns.endpoint_published() and self._bootnode.endpoint_published()
+        return self._mdns.endpoint_published() and self._rendezvous.endpoint_published()
 
     def update_server_ready(self) -> None:
         """Publish that the local master server is ready on every source."""
         self._mdns.update_server_ready()
-        self._bootnode.update_server_ready()
+        self._rendezvous.update_server_ready()
 
     def update_server_not_ready(self) -> None:
         """Publish that the local master server is no longer ready on every source."""
         self._mdns.update_server_not_ready()
-        self._bootnode.update_server_not_ready()
+        self._rendezvous.update_server_not_ready()
 
     def set_connected_clients(self, count: int) -> None:
         """Publish the connected-client count on every source."""
         self._mdns.set_connected_clients(count)
-        self._bootnode.set_connected_clients(count)
+        self._rendezvous.set_connected_clients(count)
 
     def relay_dialer(self, target_cid: str) -> Any:
-        """Delegate the data relay to the discovery source (mDNS has none)."""
-        return self._bootnode.relay_dialer(target_cid)
+        """Delegate the data relay to the rendezvous source (mDNS has none)."""
+        return self._rendezvous.relay_dialer(target_cid)
 
     def relay_acceptor(self, local_port: int) -> Any:
-        """Delegate the data relay listener to the discovery source."""
-        return self._bootnode.relay_acceptor(local_port)
+        """Delegate the data relay listener to the rendezvous source."""
+        return self._rendezvous.relay_acceptor(local_port)
 
     def set_master_eligibility(self, eligible: bool) -> None:
         """Withdraw or restore this node's master candidacy on every source.
@@ -135,10 +135,10 @@ class HybridDiscovery(DiscoveryPlanState):
         local election and the announcements in step.
         """
         self._mdns.set_master_eligibility(eligible)
-        self._bootnode.set_master_eligibility(eligible)
+        self._rendezvous.set_master_eligibility(eligible)
 
     def set_connected_clients_provider(self, provider: Callable[[], int] | None) -> None:
         """Install the connected-client provider on every source."""
         super().set_connected_clients_provider(provider)
         self._mdns.set_connected_clients_provider(provider)
-        self._bootnode.set_connected_clients_provider(provider)
+        self._rendezvous.set_connected_clients_provider(provider)

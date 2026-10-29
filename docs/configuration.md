@@ -4,7 +4,7 @@ Shared configuration options that apply to both Server Mode and p2p Mode.
 
 > **See also:**
 > - [Configuration — Server Mode](configuration-server.md) — server connection, SSL/TLS, API key
-> - [Configuration — p2p Mode](configuration-p2p.md) — p2p options, master election, discovery
+> - [Configuration — p2p Mode](configuration-p2p.md) — p2p options, master election, rendezvous
 
 ## Sync Options
 
@@ -197,7 +197,7 @@ offset against public SNTP servers. The offset powers the chronological
 conflict tie-break (`corrected_mtime`, see
 [Conflict Resolution](conflict-resolution.md)): the most recent
 offset-corrected edit keeps the original path. The probe runs in the
-background, so discovery never waits on an external time source. Each sync
+background, so rendezvous never waits on an external time source. Each sync
 cycle freezes whatever offset is already known: a probe that finishes during
 the cycle applies only to the next one. When every probe fails the client
 records offset 0 (raw local time) and synchronisation proceeds normally.

@@ -289,7 +289,7 @@ def _spawn_file_download(
 async def drain_file_downloads(ctx: EventDispatchContext) -> None:
     """Await every pending inbound-file download before the connection teardown.
 
-    Returning to the discovery loop (which triggers a full sync) while a
+    Returning to the rendezvous loop (which triggers a full sync) while a
     download is still writing would race the reconcile against the event path.
     """
     tasks = list(ctx.file_download_tasks)

@@ -4,7 +4,7 @@
 """Shared ``host:port`` known-hosts store, SSH ``known_hosts``-style.
 
 Two certificates are authenticated by pinning a fingerprint per ``host:port``: the
-``boot/1`` bootnode (``discovery_server_known_hosts.json``) and the sync server
+``rdv/1`` rendezvous (``rendezvous_server_known_hosts.json``) and the sync server
 (``server_known_hosts.json``). They have the exact same on-disk shape — a map of
 ``host:port`` to a record with ``current``/``updated_at``/``first_seen``/``source``
 — so this module owns the load/validate/persist contract; the two stores differ
@@ -15,7 +15,7 @@ The trust *decision* is the shared SSOT in
 live outside the synced bucket (an OS state directory, overridable via the store's
 env var) so they survive restarts and are never themselves synced.
 
-Consumers: ``hsync-client`` (``bootnode_trust.py``, ``server_trust.py``).
+Consumers: ``hsync-client`` (``rendezvous_trust.py``, ``server_trust.py``).
 """
 
 from __future__ import annotations
@@ -31,12 +31,12 @@ from hsync_client._trust_store import JsonStore
 __all__ = ["KNOWN_HOSTS_SCHEMA_VERSION", "TRUST_SOURCES", "KnownHostsStore"]
 
 # On-disk schema version (bumped only when the file shape changes). Shared by the
-# bootnode and server stores so their JSON is interchangeable in tests/fixtures.
+# rendezvous and server stores so their JSON is interchangeable in tests/fixtures.
 KNOWN_HOSTS_SCHEMA_VERSION = 1
 
 # Why a fingerprint was pinned: the interactive prompt, TOFU, an explicit
 # ``--…-fingerprint`` flag, or a ``trust add`` command. Shared vocabulary across
-# the bootnode and server stores.
+# the rendezvous and server stores.
 TRUST_SOURCES = frozenset({"prompt", "tofu", "flag", "cli"})
 
 
@@ -58,7 +58,7 @@ class KnownHostsStore(JsonStore):
     their default path to :class:`~hsync_client._trust_store.JsonStore`.
     """
 
-    # JSON key under which the records live (e.g. ``discovery_servers`` / ``servers``).
+    # JSON key under which the records live (e.g. ``rendezvous_servers`` / ``servers``).
     records_key: str
 
     def _load_unlocked(self) -> dict[str, Any]:

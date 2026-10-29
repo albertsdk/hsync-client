@@ -8,7 +8,7 @@
 
 **Q: What is HSYNC p2p Mode?**
 p2p Mode lets devices sync files directly without a central server — over the
-local network (mDNS) or, across networks, through an optional bootnode. One
+local network (mDNS) or, across networks, through an optional rendezvous. One
 device is elected **master** and serves files to all other devices (**slaves**).
 
 **Q: Is the server required for HSYNC to work?**
@@ -78,7 +78,7 @@ Two ways:
 
 5. Start the sync again — the now-pinned master is accepted.
 
-**Bootstrap on a network you already trust (simpler).**
+**Rendezvous on a network you already trust (simpler).**
 
 Run the slave once with `--p2p-trust accept-new`: it pins the master on first
 use. Then restart it with `--p2p-trust strict` — the already-pinned master is
@@ -118,14 +118,14 @@ when that field is missing or tied. The losing version is preserved as a
 
 **Q: Can I sync devices that are not on the same local network?**
 Yes. mDNS only works on one local network, so point every device of the group
-at the same **boot/1 bootstrap node** (positional hostname or
-`HSYNC_DISCOVERY_SERVER_ENDPOINTS`). Election, transport and security are unchanged — only
-discovery differs. See [Sync across networks](p2p-bootnode.md).
+at the same **rdv/1 rendezvous node** (positional hostname or
+`HSYNC_RENDEZVOUS_SERVER_ENDPOINTS`). Election, transport and security are unchanged — only
+rendezvous differs. See [Sync across networks](p2p-rendezvous.md).
 
-**Q: The client reports "Bootnode '…' trust failed: the certificate
+**Q: The client reports "Rendezvous '…' trust failed: the certificate
 fingerprint does not match the accepted pin" — what do I do?**
-The bootnode authenticates with a self-signed certificate that you **pin**: with
-`--discovery-server-tofu` the first fingerprint seen for `host:port` is remembered, and
+The rendezvous authenticates with a self-signed certificate that you **pin**: with
+`--rendezvous-server-tofu` the first fingerprint seen for `host:port` is remembered, and
 any later difference is refused as a possible man-in-the-middle. A self-hosted
 node generates a fresh certificate at every start unless the operator runs it
 with `--identity PATH`, so **a restart changes the fingerprint**.
@@ -133,18 +133,18 @@ with `--identity PATH`, so **a restart changes the fingerprint**.
 The client prints the presented fingerprint, the known-hosts file that holds the
 accepted pin and the commands that unblock the situation:
 - If the change is expected, verify the new fingerprint out of band and re-pin it
-  with `hsync trust discovery-server add HOSTNAME sha256:NEW_FINGERPRINT` (or pass
-  `--discovery-server-fingerprint NEW_FINGERPRINT` on this run).
+  with `hsync trust rendezvous-server add HOSTNAME sha256:NEW_FINGERPRINT` (or pass
+  `--rendezvous-server-fingerprint NEW_FINGERPRINT` on this run).
 - To forget the pin and be prompted again at the next connection, run
-  `hsync trust discovery-server remove HOSTNAME` (like `ssh-keygen -R`).
+  `hsync trust rendezvous-server remove HOSTNAME` (like `ssh-keygen -R`).
 - Ask the operator to persist the node identity (`--identity`) and to publish the
   stable fingerprint for clients to pin.
 
-After a trust failure the client stops using the bootnode but **keeps syncing on
-the local network**: the bootnode is an optional cross-network source, so the run
+After a trust failure the client stops using the rendezvous but **keeps syncing on
+the local network**: the rendezvous is an optional cross-network source, so the run
 degrades instead of aborting, and the node is never contacted again until you
-pin it. See [Sync across networks](p2p-bootnode.md) and the
-node's [FAQ](https://github.com/albertsdk/hsync-bootnode/blob/main/docs/faq.md).
+pin it. See [Sync across networks](p2p-rendezvous.md) and the
+node's [FAQ](https://github.com/albertsdk/hsync-rendezvous/blob/main/docs/faq.md).
 
 **Q: How does master election work?**
 A deterministic algorithm picks the master based on:
@@ -175,15 +175,15 @@ Use the `--group` flag. Only devices with the same group name will see
 each other. Devices with different groups (or no group) are isolated.
 
 **Q: Do I need to set up port forwarding on my router?**
-Not for local-network (mDNS) sync — discovery stays within the subnet and needs
-no router configuration. Cross-network groups that use a bootnode must expose
+Not for local-network (mDNS) sync — rendezvous stays within the subnet and needs
+no router configuration. Cross-network groups that use a rendezvous must expose
 the master's sync port: the client can map it with UPnP when you opt in
 (`--map-data-port` / `HSYNC_MAP_DATA_PORT=true`), otherwise forward it on the router. When
 the node runs with `--relay`, the master does not need to be reachable at all:
-the bootnode relays the data plane (see [Sync across networks](p2p-bootnode.md)).
+the rendezvous relays the data plane (see [Sync across networks](p2p-rendezvous.md)).
 
 **Q: Can two devices on mobile data (hotspot, data SIM) sync with each other?**
-Yes, through a bootnode started with `--relay`: a carrier-grade NAT accepts no
+Yes, through a rendezvous started with `--relay`: a carrier-grade NAT accepts no
 inbound connection, so the node carries the data plane and forwards the peers'
 TLS verbatim. The client logs `[RELAY]` when that path is in use; it costs an
 extra network leg and the node's uplink, so it is the last resort after every
@@ -194,9 +194,9 @@ Yes. As long as devices are on the same subnet, they will discover each other
 regardless of whether they use Wi-Fi or Ethernet.
 
 **Q: Does p2p mode work across VLANs or different subnets?**
-Not with mDNS: that discovery is subnet-local. Point every device of the group
-at the same `boot/1` bootnode to sync across subnets/VLANs (see
-[Sync across networks](p2p-bootnode.md)); Server Mode is the alternative when
+Not with mDNS: that rendezvous is subnet-local. Point every device of the group
+at the same `rdv/1` rendezvous to sync across subnets/VLANs (see
+[Sync across networks](p2p-rendezvous.md)); Server Mode is the alternative when
 you prefer a central hub.
 
 **Q: What ports does p2p mode use?**
@@ -246,8 +246,8 @@ location is correct and you never set the variable. You only need it when:
 
 **Q: Why don't two instances on the same machine discover each other?**
 Because they share one device identity: the device ID is used both as the
-discovery CID and in the mDNS service name (`{bucket}-{device_id}`), so a
-second instance with the same bucket is ignored as "self" during discovery
+rendezvous CID and in the mDNS service name (`{bucket}-{device_id}`), so a
+second instance with the same bucket is ignored as "self" during rendezvous
 (or fails mDNS registration with a name clash). Give each instance its own
 device directory:
 

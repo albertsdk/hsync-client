@@ -128,7 +128,7 @@ CID for log attribution. A lightweight **hello handshake** lets the slave declar
 its CID. The CID is **not cryptographically authenticated** — the log carries an
 explicit `(unauthenticated)` qualifier.
 
-A keyless p2p is **read-only for writes**: discovery, listings and downloads
+A keyless p2p is **read-only for writes**: rendezvous, listings and downloads
 keep working, but a write-capable sync is refused with `[AUTH REQUIRED]` unless
 it runs `--sync-direction download-only` or the dangerous
 `--allow-unauthenticated-writes` opt-in is explicit on both sides. A keyless run
@@ -196,7 +196,7 @@ Slave                                Master
 |---|---|---|
 | `HSYNC_API_KEY` | Server | Account token (`hs_<id>_<secret>`) for central server authentication |
 | `HSYNC_P2P_PASSPHRASE` | p2p | Shared password typed by users (**at least 12 characters**); the client derives the 64-hex group key with scrypt. Mutually exclusive with `HSYNC_P2P_KEY` |
-| `HSYNC_P2P_KEY` | p2p | Full raw group key (**at least 32 characters**), used as-is. With a bootnode it is also the group key: the client derives the `bucket_token` from it for protected buckets and private nodes |
+| `HSYNC_P2P_KEY` | p2p | Full raw group key (**at least 32 characters**), used as-is. With a rendezvous it is also the group key: the client derives the `bucket_token` from it for protected buckets and private nodes |
 
 The `cid` carried in the p2p auth frames is derived from the local **device
 identity** — it is not configurable via environment.

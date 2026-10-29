@@ -3,16 +3,16 @@
 
 """Shared P2P peer state, staleness and master-election glue (SSOT ``p2p/1``).
 
-This module holds the discovery-agnostic half of the peer mode: the ``Peer``
+This module holds the rendezvous-agnostic half of the peer mode: the ``Peer``
 record, its immutable ``PeerSnapshot`` projection, the ``PeerManager`` that
 tracks liveness/staleness and runs the election (ordering from
 ``hsync_common.protocol.p2p``), and the small socket helper ``get_free_port``.
 
-Both discovery plans feed it: the mDNS plan (``p2p_discovery_mdns``) and the
-bootnode plan (``p2p_discovery_bootnode``). The ``p2p_discovery`` module defines
+Both rendezvous plans feed it: the mDNS plan (``p2p_rendezvous_mdns``) and the
+rendezvous plan (``p2p_rendezvous_rendezvous``). The ``p2p_rendezvous`` module defines
 the minimal interface they expose to ``p2p_handler``.
 
-Consumers: ``hsync-client`` (p2p handler, the two discovery plans, tests).
+Consumers: ``hsync-client`` (p2p handler, the two rendezvous plans, tests).
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ from hsync_client.events import UiEventName, emit_event
 from hsync_client.net_utils import same_subnet
 
 # mDNS service type for hsync (used for the TXT-flag helpers shared with the
-# mDNS plan); the bootnode plan does not use it.
+# mDNS plan); the rendezvous plan does not use it.
 HSYNC_SERVICE_TYPE = "_hsync._tcp.local."
 
 # Default port for the embedded HTTP server (when acting as master).
@@ -120,7 +120,7 @@ class Peer:
     delta_enabled: bool = False  # rsync-style delta transfer capability
     peer_download_enabled: bool = False
     # Whether the three capability flags above were advertised by the source
-    # (the mDNS TXT record carries them; the bootnode relay does not). When two
+    # (the mDNS TXT record carries them; the rendezvous relay does not). When two
     # plans feed one PeerManager, an update that does not know the capabilities
     # must not clear the ones another source advertised.
     capabilities_known: bool = False
@@ -132,7 +132,7 @@ class Peer:
     startup_time: float = 0.0  # Unix timestamp when peer started
     sync_direction: str = "bidirectional"  # bidirectional | upload-only | download-only
     # Every dialable (host, port) candidate the peer advertised for its data
-    # plane, in advertised order (bootnode discovery relays the full list; mDNS
+    # plane, in advertised order (rendezvous rendezvous relays the full list; mDNS
     # supplies a single address and leaves this empty). ``address``/``port``
     # remain the primary endpoint for callers that need one URL.
     endpoints: tuple[tuple[str, int], ...] = ()
@@ -210,7 +210,7 @@ class PeerManager:
                 ("bidirectional", "upload-only", "download-only").
             local_cert_fingerprint: This node's own certificate fingerprint
                 (SHA-256), used to tell a duplicated device identity (same CID,
-                different cert) apart from a legitimate self-discovery.
+                different cert) apart from a legitimate self-rendezvous.
             local_address: The IP address this node advertises over mDNS. A
                 peer that presents our own CID from a different address is a
                 different host cloning our device identity.
@@ -232,7 +232,7 @@ class PeerManager:
         self._peers: dict[str, Peer] = {}
         # Peers with a live WebSocket connection to (or from) this node. mDNS
         # staleness must never demote them: the WSS channel is the authoritative
-        # liveness signal for the master<->slave links, while mDNS is discovery
+        # liveness signal for the master<->slave links, while mDNS is rendezvous
         # (and the fallback for slave<->slave failover detection).
         self._connected_cids: set[str] = set()
         # Dedicated lock for ``_connected_cids``: the WSS server feeds it from
@@ -363,14 +363,14 @@ class PeerManager:
 
         if peer.cid == self._local_cid:
             # A peer presenting our own CID is either our own mDNS record
-            # looped back (legitimate self-discovery) or a different host that
+            # looped back (legitimate self-rendezvous) or a different host that
             # cloned this installation's device identity. Distinguish the two
             # and fail loudly on the latter: two live nodes sharing a CID would
             # corrupt the causal vector clocks and tombstone attribution.
             if self._is_foreign_duplicate(peer):
                 self._report_duplicate_identity(peer)
             else:
-                log.debug("Ignoring self from peer discovery")
+                log.debug("Ignoring self from peer rendezvous")
             return
 
         with self._lock:
@@ -389,17 +389,17 @@ class PeerManager:
                     or existing.startup_time != peer.startup_time
                     or existing.sync_direction != peer.sync_direction
                 )
-                # The bootnode relay carries no capability flags, so a
-                # bootnode-sourced update must not clear capabilities learned
+                # The rendezvous relay carries no capability flags, so a
+                # rendezvous-sourced update must not clear capabilities learned
                 # from the mDNS TXT record: when one PeerManager is fed by both
                 # plans, only an update that knows the capabilities (or the
                 # first one) may set them.
                 take_capabilities = peer.capabilities_known or not existing.capabilities_known
                 # Keep the richer candidate list: mDNS supplies one address, the
-                # bootnode relays the full list. An empty list must not clear a
+                # rendezvous relays the full list. An empty list must not clear a
                 # known one.
                 take_endpoints = bool(peer.endpoints)
-                discovery_changed = election_changed or (
+                rendezvous_changed = election_changed or (
                     existing.address != peer.address
                     or existing.port != peer.port
                     or existing.use_https != peer.use_https
@@ -443,16 +443,16 @@ class PeerManager:
                 self._peers[peer.cid] = peer
                 log.info(f"Discovered new peer: {peer.cid} at {peer.address}:{peer.port}")
                 election_changed = True
-                discovery_changed = True
+                rendezvous_changed = True
 
-            # Re-run the election on a first discovery or a relevant field
+            # Re-run the election on a first rendezvous or a relevant field
             # change. The expired-peer check also covers the original
             # behaviour where a stale peer (whose heartbeat stop arriving)
             # was excluded from the candidate list at the next update.
             stale_peer = any(not self._is_peer_alive(p) for p in self._peers.values())
             if election_changed or stale_peer:
                 self._elect_master()
-            if discovery_changed or stale_peer:
+            if rendezvous_changed or stale_peer:
                 self._signal_change()
 
     def _is_foreign_duplicate(self, peer: Peer) -> bool:
@@ -513,12 +513,12 @@ class PeerManager:
     def reconcile_stale_peers(self) -> bool:
         """Expire peers whose heartbeats stopped and re-elect if needed.
 
-        Discovery normally re-elects on peer events (``add_peer`` /
+        Rendezvous normally re-elects on peer events (``add_peer`` /
         ``remove_peer`` / ``set_local_server_ready``). Those events are driven
         by mDNS announcements, so a peer that crashes *hard* (no goodbye packet,
         no further announces) produces no event on its own — with only two
         peers, the survivor would otherwise wait forever for a master whose
-        record is still present but stale. The discovery loop calls this on
+        record is still present but stale. The rendezvous loop calls this on
         every wake (and the slave path calls it on WebSocket loss) so that a
         master whose heartbeat stopped is demoted within ``peer_timeout`` and
         the deterministic election promotes the agreed successor.
@@ -541,7 +541,7 @@ class PeerManager:
     def elect(self) -> None:
         """Re-run the master election for the current candidate set.
 
-        Discovery calls this once when it starts. The election otherwise runs
+        Rendezvous calls this once when it starts. The election otherwise runs
         only on a peer add/remove, a local readiness change or a stale sweep, so
         a node with no peers yet never resolves its role: a lone
         ``--prefer-master`` node (the documented single-device master) would never
@@ -605,14 +605,14 @@ class PeerManager:
             )
 
     def _signal_change(self) -> None:
-        """Bump the discovery generation and wake waiters. Caller holds ``_lock``."""
+        """Bump the rendezvous generation and wake waiters. Caller holds ``_lock``."""
         self._change_generation += 1
         self._change_cond.notify_all()
 
     def wait_for_change(self, timeout: float) -> None:
-        """Block until a discovery change is signalled or *timeout* elapses.
+        """Block until a rendezvous change is signalled or *timeout* elapses.
 
-        The discovery loop waits on this instead of a fixed sleep: a peer
+        The rendezvous loop waits on this instead of a fixed sleep: a peer
         discovered (or a master flipping to ``server_ready``) while waiting
         wakes the loop immediately, so startup detection and master readiness
         react in mDNS time (~1 s) rather than after the full polling window.
@@ -796,8 +796,8 @@ class PeerManager:
                     master_peer = self._peers.get(new_master_cid)
                 self._on_master_change(master_peer)
 
-        # NOTE: the ``peers`` event is emitted from the discovery loop
-        # (``MdnsDiscovery.wait_for_discovery``), the single owner of the
+        # NOTE: the ``peers`` event is emitted from the rendezvous loop
+        # (``MdnsRendezvous.wait_for_rendezvous``), the single owner of the
         # display-ready connected/total pair for both roles.
 
     def is_master(self) -> bool:

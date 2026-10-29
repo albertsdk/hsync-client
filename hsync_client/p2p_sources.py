@@ -478,7 +478,7 @@ class P2PSourceResolver:
         self._p2p_key = p2p_key
         self._local_bucket = local_bucket
         self._configured_enabled = enabled
-        # TXT is the discovery-time hint. An authenticated WSS handshake may
+        # TXT is the rendezvous-time hint. An authenticated WSS handshake may
         # later override it in either direction without overriding local opt-out.
         self._master_capable = master_capable
         self._timeout = timeout

@@ -177,28 +177,28 @@ class TestWarningChannel:
     def test_a_warning_carries_its_source(self):
         read_fd = self._capture()
 
-        emit_warning("Bootnode node:443 unreachable", source="bootnode", reason="unreachable")
+        emit_warning("Rendezvous node:443 unreachable", source="rendezvous", reason="unreachable")
 
         events_out = self._warnings(read_fd)
         assert len(events_out) == 1
-        assert events_out[0]["message"] == "Bootnode node:443 unreachable"
-        assert events_out[0]["source"] == "bootnode"
+        assert events_out[0]["message"] == "Rendezvous node:443 unreachable"
+        assert events_out[0]["source"] == "rendezvous"
         assert events_out[0]["reason"] == "unreachable"
 
     def test_the_same_warning_is_reported_once_per_window(self):
         read_fd = self._capture()
 
-        emit_warning("same", source="bootnode")
-        emit_warning("same", source="bootnode")
+        emit_warning("same", source="rendezvous")
+        emit_warning("same", source="rendezvous")
 
         assert len(self._warnings(read_fd)) == 1
 
     def test_a_different_source_or_message_is_not_deduplicated(self):
         read_fd = self._capture()
 
-        emit_warning("same", source="bootnode")
+        emit_warning("same", source="rendezvous")
         emit_warning("same", source="watcher")
-        emit_warning("other", source="bootnode")
+        emit_warning("other", source="rendezvous")
 
         assert len(self._warnings(read_fd)) == 3
 

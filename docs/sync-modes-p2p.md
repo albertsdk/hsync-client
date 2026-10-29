@@ -8,8 +8,8 @@ HSYNC supports two operating topologies. This page covers **p2p Mode**.
 
 In p2p Mode, devices communicate directly without a central server. One device
 is elected **master** and serves files to all other devices (**slaves**).
-Discovery has two plans: **mDNS** on the same local network (default) and an
-optional **bootnode** for groups spread across networks; the election and the
+Rendezvous has two plans: **mDNS** on the same local network (default) and an
+optional **rendezvous** for groups spread across networks; the election and the
 data plane are the same in both.
 
 ```bash
@@ -20,8 +20,8 @@ HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p ~/Sync
 ### How it works
 
 1. Each peer announces itself — via mDNS on the local network, or by
-   registering with the configured bootnode (see
-   [Sync across networks](p2p-bootnode.md)).
+   registering with the configured rendezvous (see
+   [Sync across networks](p2p-rendezvous.md)).
 2. A deterministic **master election** picks one peer as the master.
 3. The master runs HTTPS/WSS servers; slaves connect to it.
 4. File changes are broadcast in real time: the master pushes metadata, slaves

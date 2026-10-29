@@ -229,7 +229,7 @@ def measure_bandwidth_active(
     *verify* controls TLS certificate verification (same semantics as
     ``requests``). When left at its default (``True``) the function falls back
     to :func:`hsync_client.utils.get_ssl_verify` so that late callers (e.g. the
-    P2P post-discovery refresh) benefit from the already-populated ``CONFIG``.
+    P2P post-rendezvous refresh) benefit from the already-populated ``CONFIG``.
     """
     try:
         from requests.exceptions import RequestException

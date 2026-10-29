@@ -8,8 +8,8 @@ Both transports compute the same display-ready pair — ``connected`` clients
 over ``total`` clients in the share, self included — and feed it here so the
 ``peers`` event has exactly one emission point:
 
-- P2P mode: :meth:`hsync_client.p2p.MdnsDiscovery.wait_for_discovery` polls mDNS and
-  the master's WebSocket client count on every discovery iteration.
+- P2P mode: :meth:`hsync_client.p2p.MdnsRendezvous.wait_for_rendezvous` polls mDNS and
+  the master's WebSocket client count on every rendezvous iteration.
 - Server mode: the ``presence`` WebSocket frame broadcast by the server on
   every join/leave (``hsync_client.remote_websocket``).
 
@@ -54,8 +54,8 @@ def slave_connected_count(peer_manager: PeerManager, master: Peer) -> int:
 
     A master advertises how many clients it serves (the mDNS TXT ``connected``
     value); a live WebSocket link to it proves at least this node is connected
-    even before that advertised count converges. Shared by the discovery owner
-    (``MdnsDiscovery.emit_discovery_status``) and the slave's out-of-band refresh
+    even before that advertised count converges. Shared by the rendezvous owner
+    (``MdnsRendezvous.emit_rendezvous_status``) and the slave's out-of-band refresh
     (``p2p_handler._emit_slave_presence``) so the guard cannot drift.
     """
     published = master.connected

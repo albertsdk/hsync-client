@@ -4,7 +4,7 @@
 """
 P2P Mode Handler for HSYNC Client.
 
-This module handles P2P synchronization including peer discovery,
+This module handles P2P synchronization including peer rendezvous,
 master election, and WebSocket communication.
 """
 
@@ -31,14 +31,13 @@ from hsync_common.text import safe_json_for_log
 from loguru import logger as module_log
 
 from hsync_client.autotune import classify_network, derive_managed_rtt_updates, measure_rtt
-from hsync_client.boot_relay import RelayAcceptor, RelayDialer
 from hsync_client.config import CONFIG, set_config
 from hsync_client.constants import (
-    BOOTNODE_DEFAULT_PORT,
     HEARTBEAT_INTERVAL,
     RELAY_ACCEPT_TIMEOUT_S,
     RELAY_OPEN_TIMEOUT_S,
     RELAY_RETRY_BACKOFF_S,
+    RENDEZVOUS_DEFAULT_PORT,
     WATCHER_START_RETRY_DELAY_S,
     ActionLabel,
 )
@@ -52,22 +51,23 @@ from hsync_client.exceptions import (
 from hsync_client.exitcodes import ExitCode, exit_code_for_result
 from hsync_client.master_status import NO_DEVICE_MESSAGE, MasterSyncStatus
 from hsync_client.net_utils import get_local_ip
-from hsync_client.p2p_discovery import (
-    DiscoveryPlan,
-    build_discovery_plan,
-)
 from hsync_client.p2p_inventory import (
     P2PInventoryPublisher,
     P2PInventoryStore,
     set_active_inventory_publisher,
 )
 from hsync_client.p2p_peers import dial_candidates, server_url
+from hsync_client.p2p_rendezvous import (
+    RendezvousPlan,
+    build_rendezvous_plan,
+)
 from hsync_client.p2p_server import P2PServer, P2PServerMode
 from hsync_client.p2p_sources import P2PSourceResolver, P2PSourceService
 from hsync_client.p2p_websocket import P2PWebSocketServer, SlaveCidRegistry, p2p_websocket_client
 from hsync_client.pinning import default_pin_store
 from hsync_client.presence import record_presence, slave_connected_count
 from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
+from hsync_client.rdv_relay import RelayAcceptor, RelayDialer
 from hsync_client.ssl_utils import create_fingerprint_ssl_context, verify_peer_cert_fingerprint
 from hsync_client.stdin_commands import StdinCommandHandler
 from hsync_client.sync import SyncCycleResult, log_initial_sync_start, sync
@@ -93,14 +93,14 @@ NO_MASTER_WARNING_TIMEOUT = 60.0
 # peer was discovered (exit code ``P2P_NO_PEER``).
 NO_PEERS_MESSAGE = NO_DEVICE_MESSAGE
 
-# Data relay over the bootnode: the serving role owns one acceptor (a listener
+# Data relay over the rendezvous: the serving role owns one acceptor (a listener
 # control stream plus one bridged stream per requester) and the requesting role
 # owns at most one dialer (a tunnel to the elected master). Both are process-wide
-# because the discovery loop re-enters the role functions every second and the
+# because the rendezvous loop re-enters the role functions every second and the
 # tunnel must outlive that call.
 _active_relay_acceptor: RelayAcceptor | None = None
 _active_relay_dialer: RelayDialer | None = None
-# Monotonic deadline before which no relay attempt is made. The discovery loop
+# Monotonic deadline before which no relay attempt is made. The rendezvous loop
 # runs once per second, so a node that does not offer the relay would be dialled
 # at that rate without it (and would answer ``rate_limited``).
 _relay_retry_at = 0.0
@@ -119,7 +119,7 @@ def _p2p_status(connected_clients: int) -> str:
 def _emit_master_presence(count: int, peer_manager: "PeerManager") -> None:
     """Re-emit the local ``peers`` pair while the master serves.
 
-    The discovery loop that normally owns the ``peers`` event is blocked inside
+    The rendezvous loop that normally owns the ``peers`` event is blocked inside
     ``_run_as_master``, so a client joining/leaving must refresh the master's own
     presence too (the mDNS TXT record is updated separately). ``connected``
     includes this node; ``max`` keeps ``2/2`` even when the mDNS peer entry lags
@@ -166,7 +166,7 @@ class _MasterChannel:
     def start(self) -> None:
         """Start the command reader and classify once (idempotent).
 
-        Called on every discovery iteration while the node stays master, so a
+        Called on every rendezvous iteration while the node stays master, so a
         running channel must be left alone: the inventory callback — not the
         loop — drives the re-classification.
         """
@@ -245,7 +245,7 @@ class _MasterChannel:
 def _emit_slave_presence(peer_manager: "PeerManager") -> None:
     """Re-emit the local ``peers`` pair when this slave links to the master.
 
-    The discovery loop that normally owns the ``peers`` event is blocked inside
+    The rendezvous loop that normally owns the ``peers`` event is blocked inside
     the WebSocket run for the whole connection, so a slave joining a master must
     refresh its own presence too; otherwise it keeps the ``1/N`` pair it emitted
     before connecting (the master's mDNS TXT count lags the join). ``connected``
@@ -260,7 +260,7 @@ def _emit_slave_presence(peer_manager: "PeerManager") -> None:
     record_presence(min(connected, total), total)
 
 
-# Upper bound on how long the bootnode plan may delay the master's [READY]
+# Upper bound on how long the rendezvous plan may delay the master's [READY]
 # while it waits for the endpoint publication (second register). UPnP is
 # best-effort, so publication happens even when no mapping could be created;
 # the bound only guards a wedged lease loop.
@@ -272,7 +272,7 @@ READINESS_ENDPOINT_TIMEOUT_S = 10.0
 _WS_CLOSE_GRACE_S = 5.0
 
 # Per-candidate reachability budget when a master advertises several data-plane
-# endpoints (bootnode discovery). An unreachable candidate must not stall the
+# endpoints (rendezvous rendezvous). An unreachable candidate must not stall the
 # connection for the full request timeout before the next one is tried; a
 # same-subnet candidate that fails fast falls back to the public endpoint.
 MASTER_CANDIDATE_PROBE_TIMEOUT_S = 3.0
@@ -300,7 +300,7 @@ def _master_endpoint_reachable(host: str, port: int, timeout: float | None = Non
 
 def _start_slave_inventory(
     config: "HsyncConfig",
-    p2p_sync: DiscoveryPlan,
+    p2p_sync: RendezvousPlan,
     log,
     p2p_server: P2PServer | None,
 ) -> P2PInventoryPublisher | None:
@@ -339,7 +339,7 @@ def _start_slave_inventory(
 
 
 def _stop_slave_inventory(
-    p2p_sync: DiscoveryPlan,
+    p2p_sync: RendezvousPlan,
     publisher: P2PInventoryPublisher | None = None,
     *,
     serving: bool = False,
@@ -409,7 +409,7 @@ def _refresh_p2p_network_tuning(
     the CLI > env > autotune precedence.
 
     ``host``/``port`` override the peer's primary endpoint with the actually
-    selected dial candidate (a bootnode peer may serve on a different candidate
+    selected dial candidate (a rendezvous peer may serve on a different candidate
     than its first advertised one); they default to ``master.address`` /
     ``master.port``.
 
@@ -450,7 +450,7 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
     """
     Handle P2P mode synchronization.
 
-    This function orchestrates peer discovery, master election,
+    This function orchestrates peer rendezvous, master election,
     and either runs as master or connects to a master peer.
 
     Args:
@@ -467,7 +467,7 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
 
     # Clock offset (ADR-0023): in P2P mode no server is known at startup, so
     # the public SNTP hosts (HSYNC_NTP_HOSTS) are the time authority. The probe
-    # runs on a background thread: discovery and the first sync never wait on
+    # runs on a background thread: rendezvous and the first sync never wait on
     # an external time source, and failures degrade to offset 0 (uncorrected
     # local time) without blocking anything.
     from hsync_client.timesync import start_ntp_clock_offset_probe
@@ -478,14 +478,14 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
     if not one_shot:
         log.info("Continuous mode enabled - will wait indefinitely for peers")
 
-    discovery_timeout = config["PEER_DISCOVERY_TIMEOUT"]
-    wait_indefinitely_for_peer = discovery_timeout == 0
-    # The effective heartbeat (env-overridable) sets the discovery poll cadence,
+    rendezvous_timeout = config["PEER_RENDEZVOUS_TIMEOUT"]
+    wait_indefinitely_for_peer = rendezvous_timeout == 0
+    # The effective heartbeat (env-overridable) sets the rendezvous poll cadence,
     # so staleness is re-evaluated at least once per announce cycle.
     heartbeat = config.get("HEARTBEAT_INTERVAL") or HEARTBEAT_INTERVAL
-    discovery_wait = heartbeat if wait_indefinitely_for_peer else discovery_timeout
+    rendezvous_wait = heartbeat if wait_indefinitely_for_peer else rendezvous_timeout
     if wait_indefinitely_for_peer and one_shot:
-        log.info("Discovery timeout disabled - waiting indefinitely for the first P2P peer/master")
+        log.info("Rendezvous timeout disabled - waiting indefinitely for the first P2P peer/master")
 
     from hsync_client.identity import load_or_create_device_identity
 
@@ -501,7 +501,7 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
     cid_registry = SlaveCidRegistry(master_cid=config["CID"])
 
     # The serving stack is bound ONCE for the process lifetime: the unified
-    # HTTPS/WSS listener reserves the port before discovery starts, so the
+    # HTTPS/WSS listener reserves the port before rendezvous starts, so the
     # advertised port is the real bound one (no probe/release race). The role
     # (master / read-only seeder / off) is a context swapped in place.
     p2p_ws_server = P2PWebSocketServer(
@@ -520,29 +520,29 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
     p2p_server.start()
     p2p_server.stop_serving()
 
-    # The discovery plan (mDNS or mDNS + discovery servers) is selected in one
-    # place; the core only ever sees the DiscoveryPlan surface and never branches
-    # on the plan. Discovery advertises the already-bound serving port.
-    p2p_sync = build_discovery_plan(
+    # The rendezvous plan (mDNS or mDNS + rendezvous servers) is selected in one
+    # place; the core only ever sees the RendezvousPlan surface and never branches
+    # on the plan. Rendezvous advertises the already-bound serving port.
+    p2p_sync = build_rendezvous_plan(
         config, cert_fingerprint=cert_info.fingerprint, port=p2p_server.port
     )
-    endpoints = tuple(config.get("DISCOVERY_SERVER_ENDPOINTS") or ())
+    endpoints = tuple(config.get("RENDEZVOUS_SERVER_ENDPOINTS") or ())
     if endpoints:
         listed = ", ".join(
-            format_authority(endpoint.host, endpoint.port or BOOTNODE_DEFAULT_PORT)
+            format_authority(endpoint.host, endpoint.port or RENDEZVOUS_DEFAULT_PORT)
             for endpoint in endpoints
         )
         log.info(
-            "Discovery: mDNS on the local network + discovery server(s) "
+            "Rendezvous: mDNS on the local network + rendezvous server(s) "
             f"{listed} (cross-network; UPnP "
             f"{'on' if config.get('MAP_DATA_PORT', True) else 'off'})"
         )
         # The UI event keeps its documented shape: ``plan`` names the combined
-        # plan and ``bootnode`` carries the configured endpoints.
-        emit_event(UiEventName.discovery, plan="mdns+bootnode", bootnode=listed)
+        # plan and ``rendezvous`` carries the configured endpoints.
+        emit_event(UiEventName.rendezvous, plan="mdns+rendezvous", rendezvous=listed)
     else:
-        log.info("Discovery: mDNS on the local network (no discovery server configured)")
-        emit_event(UiEventName.discovery, plan="mdns")
+        log.info("Rendezvous: mDNS on the local network (no rendezvous server configured)")
+        emit_event(UiEventName.rendezvous, plan="mdns")
     if config["P2P_NEVER_MASTER"]:
         log.info("Never-master mode enabled - this client will always remain a client/slave")
     peer_manager = p2p_sync.start(register_service=True)
@@ -553,8 +553,8 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
     master_channel: _MasterChannel | None = None
 
     last_exit = int(ExitCode.OK)
-    discovery_deadline = (
-        time.monotonic() + discovery_timeout
+    rendezvous_deadline = (
+        time.monotonic() + rendezvous_timeout
         if one_shot and not wait_indefinitely_for_peer
         else None
     )
@@ -564,44 +564,44 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
     no_master_since: float | None = None
     no_master_warned = False
 
-    # Per-(kind, cid) dedupe of the trust refusal blocks/events: the discovery
+    # Per-(kind, cid) dedupe of the trust refusal blocks/events: the rendezvous
     # loop retries continuously, so a repeating refusal must not spam the log or
     # the front-end.
     notified: dict[tuple[str, str], str] = {}
 
     try:
         while True:
-            # Wait for peer discovery
-            current_wait = float(discovery_wait)
-            if discovery_deadline is not None:
+            # Wait for peer rendezvous
+            current_wait = float(rendezvous_wait)
+            if rendezvous_deadline is not None:
                 current_wait = min(
                     current_wait,
-                    max(0.0, discovery_deadline - time.monotonic()),
+                    max(0.0, rendezvous_deadline - time.monotonic()),
                 )
-            p2p_sync.wait_for_discovery(timeout=current_wait)
+            p2p_sync.wait_for_rendezvous(timeout=current_wait)
 
             # Expire peers whose heartbeats stopped and re-elect if the master
-            # vanished. Discovery is event-driven (mDNS announcements), which a
+            # vanished. Rendezvous is event-driven (mDNS announcements), which a
             # hard-crashed peer stops sending entirely — so this periodic sweep
             # is what bounds failover detection to ``peer_timeout`` even when no
             # further event arrives (e.g. a two-node group whose master died).
             peer_manager.reconcile_stale_peers()
 
-            # A one-shot run must terminate: its discovery window is its whole
+            # A one-shot run must terminate: its rendezvous window is its whole
             # lifetime budget. Once that window expired without a single live
             # peer there is nothing to sync and nobody to serve, yet the local
             # role may be MASTER — a lone eligible node claims mastership at
-            # discovery start so a joining slave finds a serving master. Without
+            # rendezvous start so a joining slave finds a serving master. Without
             # this gate that self-conferred role would keep the continuous
             # master loop alive forever, so `--once` would never honour the
             # documented no-peer exit code. A master that does have live peers
             # (or any continuous run, which has no deadline) stays continuous.
             # A single clock read feeds both gates below so mocked and real
             # clocks advance one step per iteration.
-            now_after_discovery = time.monotonic()
+            now_after_rendezvous = time.monotonic()
             if (
-                discovery_deadline is not None
-                and now_after_discovery >= discovery_deadline
+                rendezvous_deadline is not None
+                and now_after_rendezvous >= rendezvous_deadline
                 and not peer_manager.get_alive_peers()
             ):
                 log.warning("No master elected - this client is alone, nothing to sync")
@@ -609,13 +609,13 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
                 return int(ExitCode.P2P_NO_PEER)
 
             # A finite one-shot window must not end merely because an
-            # ineligible seeder wakes discovery before the serving master is
+            # ineligible seeder wakes rendezvous before the serving master is
             # announced. Keep consuming mDNS changes until a master is elected
             # or the original deadline expires.
             if (
-                discovery_deadline is not None
+                rendezvous_deadline is not None
                 and peer_manager.get_master_cid() is None
-                and now_after_discovery < discovery_deadline
+                and now_after_rendezvous < rendezvous_deadline
             ):
                 continue
 
@@ -630,8 +630,8 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
                 inventory_publisher = None
                 seeder_attempted = False
 
-                # Wire the master's live WebSocket client count into discovery
-                # presence BEFORE serving: the provider feeds wait_for_discovery
+                # Wire the master's live WebSocket client count into rendezvous
+                # presence BEFORE serving: the provider feeds wait_for_rendezvous
                 # (the single owner of the peers event) and the callback refreshes
                 # this node's mDNS ``connected`` TXT value on every join/leave.
                 # Wiring it only after ``_run_as_master`` would let the master
@@ -646,7 +646,7 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
                     p2p_sync.set_connected_clients(count)
                     manager = p2p_sync.peer_manager
                     if manager is not None:
-                        # The discovery loop is blocked while serving; refresh the
+                        # The rendezvous loop is blocked while serving; refresh the
                         # master's own presence on join/leave.
                         _emit_master_presence(count, manager)
                     # "connected" means an active peer link: a lone serving
@@ -693,7 +693,7 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
                         f"the deterministic election picked "
                         f"{peer_manager.get_master_cid() or 'no eligible peer'}."
                     )
-                    # Back to the discovery loop: the desktop status drops to
+                    # Back to the rendezvous loop: the desktop status drops to
                     # "connecting" until the new master link is established.
                     emit_event(UiEventName.status, status="connecting")
                 # NOTE: the master role is inherently continuous: it must
@@ -774,7 +774,7 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
 def _run_as_master(
     config: "HsyncConfig",
     log,
-    p2p_sync: DiscoveryPlan,
+    p2p_sync: RendezvousPlan,
     p2p_server: P2PServer,
     p2p_ws_server: P2PWebSocketServer,
     cid_registry: SlaveCidRegistry | None = None,
@@ -784,12 +784,12 @@ def _run_as_master(
     The master role is inherently continuous: the master must stay available to
     serve any peer that joins. The one-shot flag only affects slave behaviour
     (one-shot vs. continuous sync); the master loop always yields back to the
-    outer discovery loop after a brief idle window so master/peer election can
+    outer rendezvous loop after a brief idle window so master/peer election can
     be re-evaluated.
 
     The process-wide listener is reused: installing the master role swaps the
     serving context in place (no rebind). Returns the (p2p_server,
-    p2p_ws_server) tuple so the caller keeps the same instances across discovery
+    p2p_ws_server) tuple so the caller keeps the same instances across rendezvous
     iterations.
     """
     # On every master activation the role context is (re)installed; the watcher
@@ -805,7 +805,7 @@ def _run_as_master(
 
     # The inventory store and source service live for the whole master stint:
     # create them only on the first activation and reuse them on every re-entry
-    # (the discovery loop re-enters this function roughly once a second while the
+    # (the rendezvous loop re-enters this function roughly once a second while the
     # node stays master). Recreating them would leak a SQLite handle and wipe the
     # live inventory sessions/holders with ``activate()``.
     inventory_store: P2PInventoryStore | None
@@ -853,7 +853,7 @@ def _run_as_master(
     )
 
     # Start the master watcher. A retry after a kernel-limit failure re-enters
-    # here on the next discovery iteration.
+    # here on the next rendezvous iteration.
     if not p2p_ws_server.running:
         try:
             p2p_ws_server.start(watch_path=config["LOCAL_BUCKET"])
@@ -862,7 +862,7 @@ def _run_as_master(
             # parsable [WATCHER ERROR] line was already logged at the watcher
             # start site. Back off: without the watcher the master cannot serve
             # realtime events, but the retry must be slow because a kernel limit
-            # never clears at the discovery cadence. server_ready is NOT
+            # never clears at the rendezvous cadence. server_ready is NOT
             # advertised, so slaves keep waiting instead of connecting to a
             # master that cannot watch.
             #
@@ -917,12 +917,12 @@ def _run_as_master(
             )
             return p2p_server, p2p_ws_server
         p2p_sync.update_server_ready()
-        # Serving role is live: offer the bootnode a relay listener so peers that
+        # Serving role is live: offer the rendezvous a relay listener so peers that
         # no inbound NAT mapping reaches can still reach this master. Started
         # after ``update_server_ready`` so the endpoint it bridges to is bound.
         _start_master_relay(p2p_sync, log)
-        # Bootnode plan only: the master is reachable across networks only once
-        # its endpoint has been published to the bootnode (UPnP ok or public IP
+        # Rendezvous plan only: the master is reachable across networks only once
+        # its endpoint has been published to the rendezvous (UPnP ok or public IP
         # known). mDNS reports published immediately, so its readiness timing is
         # unchanged. The wait is bounded so a wedged lease loop degrades to the
         # configured readiness timing instead of hanging.
@@ -944,7 +944,7 @@ def _run_as_master(
 
     if first_activation:
         log.info("Press Ctrl+C to stop...")
-    # Yield back to the outer discovery loop after a short idle window
+    # Yield back to the outer rendezvous loop after a short idle window
     # so master/peer election can be re-evaluated.  If we are still
     # master on the next iteration, the outer loop will call us again
     # and reuse the existing server instances.
@@ -1056,7 +1056,7 @@ def _evaluate_master_pin(
       policy refuses it (possible man-in-the-middle).
 
     ``notified`` (see :func:`_mark_trust_notice`) dedupes the refusal blocks and
-    their events: the discovery loop retries continuously, so without it the
+    their events: the rendezvous loop retries continuously, so without it the
     guidance would repeat every iteration. The entry is cleared once the
     connection proceeds (:func:`_clear_trust_notice`), so a later flip re-notifies.
     """
@@ -1135,7 +1135,7 @@ def _probe_master_endpoint(host: str, port: int, fingerprint: str, timeout: floa
 def _select_master_endpoint(master, log) -> tuple[str, int] | None:
     """Pick the first reachable master candidate, host/LAN candidates first.
 
-    A single-candidate peer (mDNS, or a bootnode peer that advertised one
+    A single-candidate peer (mDNS, or a rendezvous peer that advertised one
     address) is returned as-is: the data-plane connection is its own
     reachability check, so no extra probe is spent. A peer that advertised
     several candidates is probed in host/LAN-first order with a bounded
@@ -1164,12 +1164,12 @@ def _select_master_endpoint(master, log) -> tuple[str, int] | None:
     return None
 
 
-def _start_master_relay(p2p_sync: DiscoveryPlan, log) -> None:
-    """Ask the bootnode to relay inbound sessions to this master (once per stint).
+def _start_master_relay(p2p_sync: RendezvousPlan, log) -> None:
+    """Ask the rendezvous to relay inbound sessions to this master (once per stint).
 
-    Idempotent across the discovery loop's one-second re-entries: the acceptor is
+    Idempotent across the rendezvous loop's one-second re-entries: the acceptor is
     kept while it is alive, so a stable master holds exactly one listener control
-    stream. A node whose bootnode has no relay enabled simply keeps serving
+    stream. A node whose rendezvous has no relay enabled simply keeps serving
     direct peers (debug line, no warning: it is the node operator's choice), and
     the attempt is not repeated before ``RELAY_RETRY_BACKOFF_S``.
     """
@@ -1185,13 +1185,13 @@ def _start_master_relay(p2p_sync: DiscoveryPlan, log) -> None:
     if acceptor.start(timeout=RELAY_ACCEPT_TIMEOUT_S):
         _active_relay_acceptor = acceptor
         log.info(
-            f"{ActionLabel.RELAY} listening on the bootnode — peers without a "
+            f"{ActionLabel.RELAY} listening on the rendezvous — peers without a "
             "reachable inbound port can sync through it"
         )
         return
     acceptor.stop()
     _relay_retry_at = now + RELAY_RETRY_BACKOFF_S
-    log.debug("Bootnode data relay unavailable; serving directly reachable peers only")
+    log.debug("Rendezvous data relay unavailable; serving directly reachable peers only")
 
 
 def _stop_master_relay() -> None:
@@ -1210,13 +1210,13 @@ def _close_relay_dialer() -> None:
         dialer.close()
 
 
-def _relay_master_endpoint(plan: DiscoveryPlan | None, master: Any, log) -> tuple[str, int] | None:
+def _relay_master_endpoint(plan: RendezvousPlan | None, master: Any, log) -> tuple[str, int] | None:
     """Open a relayed tunnel to the master; return the loopback endpoint.
 
     This is the last resort after every advertised candidate failed: two peers
     behind carrier-grade NAT have no dialable address at all, so the only
-    remaining path is through the bootnode that already introduced them. ``None``
-    keeps the caller's normal "no reachable endpoint, retry discovery" behaviour.
+    remaining path is through the rendezvous that already introduced them. ``None``
+    keeps the caller's normal "no reachable endpoint, retry rendezvous" behaviour.
     """
     global _active_relay_dialer, _relay_retry_at
     _close_relay_dialer()
@@ -1235,7 +1235,7 @@ def _relay_master_endpoint(plan: DiscoveryPlan | None, master: Any, log) -> tupl
     _active_relay_dialer = dialer
     log.info(
         f"{ActionLabel.RELAY} master {master.cid} has no reachable inbound port; "
-        "relaying the data plane through the bootnode"
+        "relaying the data plane through the rendezvous"
     )
     return endpoint
 
@@ -1248,12 +1248,12 @@ def _run_as_slave(
     wait_indefinitely_for_peer: bool = False,
     inventory_publisher: P2PInventoryPublisher | None = None,
     notified: dict[tuple[str, str], str] | None = None,
-    plan: DiscoveryPlan | None = None,
+    plan: RendezvousPlan | None = None,
 ) -> tuple[bool, int]:
     """Run as client (connect to master).
 
     Returns a ``(continue_loop, exit_code)`` tuple: ``continue_loop`` tells
-    the discovery loop whether to keep running, ``exit_code`` is the process
+    the rendezvous loop whether to keep running, ``exit_code`` is the process
     exit status to report when the loop terminates.
     """
     from asyncio import run
@@ -1266,13 +1266,13 @@ def _run_as_slave(
         # Wait for master to be ready (server_ready=true in mDNS)
         if not master.server_ready:
             log.info(f"Waiting for master {master.cid} to start server...")
-            return True, int(ExitCode.OK)  # Continue discovery loop
+            return True, int(ExitCode.OK)  # Continue rendezvous loop
 
         # Secure-only P2P: a master must serve over HTTPS and advertise a
         # certificate fingerprint we can pin. Anything else is refused; there is
         # no plain-HTTP downgrade path. We do NOT self-promote on refusal (that
         # would create a second master and split-brain); we stay in the
-        # discovery loop and warn.
+        # rendezvous loop and warn.
         if not (master.use_https and master.cert_fingerprint):
             log.warning(
                 f"{ActionLabel.INSECURE_MASTER} master {master.cid} does not advertise an HTTPS "
@@ -1294,14 +1294,14 @@ def _run_as_slave(
             return (not one_shot) or wait_indefinitely_for_peer, int(ExitCode.OK)
 
         if not _evaluate_master_pin(config, master, log, notified=notified):
-            # Stay in the discovery loop (continuous) rather than connecting to
+            # Stay in the rendezvous loop (continuous) rather than connecting to
             # a master whose identity can no longer be verified or which has not
             # yet been paired out of band.
             return (not one_shot) or wait_indefinitely_for_peer, int(ExitCode.OK)
         log.info(f"Master using HTTPS, fingerprint: {master.cert_fingerprint[:32]}...")
         config["MASTER_CERT_FINGERPRINT"] = master.cert_fingerprint
 
-        # Pick the reachable data-plane endpoint: a bootnode peer advertises
+        # Pick the reachable data-plane endpoint: a rendezvous peer advertises
         # several candidates, so the local one is preferred over the NATed
         # public one. A single-candidate peer keeps its endpoint unchanged.
         endpoint = _select_master_endpoint(master, log)
@@ -1310,7 +1310,7 @@ def _run_as_slave(
             endpoint = _relay_master_endpoint(plan, master, log)
             relayed = endpoint is not None
         if endpoint is None:
-            log.warning(f"No reachable endpoint for master {master.cid}; retrying discovery.")
+            log.warning(f"No reachable endpoint for master {master.cid}; retrying rendezvous.")
             return (not one_shot) or wait_indefinitely_for_peer, int(ExitCode.OK)
         master_host, master_port = endpoint
 
@@ -1366,12 +1366,12 @@ def _run_as_slave(
             # record can still look fresh, and the automatic preview would run
             # against a dead endpoint, burning the full retry budget and
             # surfacing a spurious error notification. Probe the data endpoint
-            # first; when it fails, demote the master and go back to discovery
+            # first; when it fails, demote the master and go back to rendezvous
             # so the election can pick a reachable node.
             if not _master_endpoint_reachable(master_host, master_port):
                 log.warning(
                     f"Master {master.cid} at {master_host}:{master_port} is "
-                    "unreachable; skipping the preview and re-entering discovery."
+                    "unreachable; skipping the preview and re-entering rendezvous."
                 )
                 peer_manager.remove_peer(master.cid)
                 return (not one_shot) or wait_indefinitely_for_peer, int(ExitCode.OK)
@@ -1384,7 +1384,7 @@ def _run_as_slave(
             # elected master: it withdraws its candidacy both locally and on the
             # wire (a peer that elected it would wait forever for its
             # ``server_ready``). It is restored when the dry run ends (SYNC or
-            # stdin EOF) and the node returns to the discovery loop.
+            # stdin EOF) and the node returns to the rendezvous loop.
             log.info("Dry-run mode: waiting for commands (stdin) or Ctrl+C to exit...")
             if plan is not None:
                 plan.set_master_eligibility(False)
@@ -1444,7 +1444,7 @@ def _run_as_slave(
                 # sync() already logged the failure and emitted the structured
                 # event. A one-shot run maps a transport failure to a fatal
                 # exit; a continuous run must survive a transient failure (e.g.
-                # the master going offline mid-sync) and re-enter the discovery
+                # the master going offline mid-sync) and re-enter the rendezvous
                 # loop so the master is re-detected or a new one is elected.
                 peer_manager.mark_peer_disconnected(master.cid)
                 if (not one_shot) or wait_indefinitely_for_peer:
@@ -1478,7 +1478,7 @@ def _run_as_slave(
         # falsely demote it while the WebSocket link is healthy. Mark the master
         # live via the WebSocket channel for the whole connection lifetime.
         peer_manager.mark_peer_connected(master.cid)
-        # Refresh our own presence now the link is live: the discovery loop that
+        # Refresh our own presence now the link is live: the rendezvous loop that
         # owns the ``peers`` event is blocked for the whole WebSocket run, so
         # without this a connected slave keeps the pre-connect ``1/N`` pair.
         _emit_slave_presence(peer_manager)
@@ -1501,7 +1501,7 @@ def _run_as_slave(
             # The slave's local watcher could not start (inotify kernel
             # limits). The parsable [WATCHER ERROR] line and remediation hint
             # were already logged at the watcher start site. Re-entering the
-            # discovery loop at its normal cadence would immediately retry
+            # rendezvous loop at its normal cadence would immediately retry
             # the full initial sync + watcher against the same saturated
             # limit, so back off once before returning to the loop: another
             # process may free inotify resources in the meantime.
@@ -1515,21 +1515,21 @@ def _run_as_slave(
         except Exception as e:
             log.warning(f"WebSocket connection ended: {type(e).__name__}: {e}")
         # The WebSocket is down: clear the liveness mark so a master that died
-        # mid-session is demoted by the sweep below, then re-enter discovery.
+        # mid-session is demoted by the sweep below, then re-enter rendezvous.
         peer_manager.mark_peer_disconnected(master.cid)
-        # If WebSocket disconnects, re-enter discovery loop. Expire any peer
+        # If WebSocket disconnects, re-enter rendezvous loop. Expire any peer
         # whose heartbeat already stopped so a master that died mid-session is
-        # demoted immediately instead of waiting for the next discovery wake:
+        # demoted immediately instead of waiting for the next rendezvous wake:
         # the surviving peers then elect the pre-agreed successor. A master
         # whose record is still fresh (a local link blip) is left untouched,
         # so a transient drop never triggers a needless takeover/split-brain.
         peer_manager.reconcile_stale_peers()
-        log.info("WebSocket disconnected, re-entering discovery loop...")
+        log.info("WebSocket disconnected, re-entering rendezvous loop...")
         return True, int(ExitCode.OK)
     # No master and no peers
     if (not one_shot) or wait_indefinitely_for_peer:
         log.info("Waiting for peers to join...")
-        return True, int(ExitCode.OK)  # Continue the discovery loop
+        return True, int(ExitCode.OK)  # Continue the rendezvous loop
     log.warning("No master elected - this client is alone, nothing to sync")
     emit_event(UiEventName.no_peers, message=NO_PEERS_MESSAGE)
     return False, int(ExitCode.P2P_NO_PEER)

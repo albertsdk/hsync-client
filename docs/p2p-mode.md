@@ -1,9 +1,9 @@
 # HSYNC p2p Mode (P2P Synchronization)
 
 p2p Mode lets devices synchronize files directly, peer-to-peer, without a
-centralized HSYNC server. Discovery uses **mDNS on the local network always**,
-plus an optional `boot/1` bootstrap node for devices on different networks:
-with no bootnode configured only mDNS runs; with a bootnode configured both run
+centralized HSYNC server. Rendezvous uses **mDNS on the local network always**,
+plus an optional `rdv/1` rendezvous node for devices on different networks:
+with no rendezvous configured only mDNS runs; with a rendezvous configured both run
 together, so a node next to you is still found locally without a round trip
 through the node.
 
@@ -11,17 +11,17 @@ through the node.
 > - Full option & environment-variable reference → [Configuration — p2p Mode](configuration-p2p.md#p2p-mode-options)
 > - Ready-to-use recipes → [Examples](examples.md)
 > - Sync on the local network (mDNS) → [p2p on the local network](p2p-lan.md)
-> - Sync across networks (bootnode) → [p2p across networks](p2p-bootnode.md)
+> - Sync across networks (rendezvous) → [p2p across networks](p2p-rendezvous.md)
 > - Server vs p2p comparison → [Sync Modes](sync-modes.md)
 > - Protocol internals (diagrams, HTTP/WS API, echo suppression) → [p2p Internals](internal/p2p-internals.md)
 
 ## Overview
 
 p2p Mode enables direct peer-to-peer file synchronization between devices on the
-same network, without requiring a centralized HSYNC server. Discovery always uses
-mDNS on the local network; cross-network groups add a bootnode, which runs
+same network, without requiring a centralized HSYNC server. Rendezvous always uses
+mDNS on the local network; cross-network groups add a rendezvous, which runs
 alongside mDNS on the same client. Everything below (election, transport,
-security) is identical whether mDNS runs alone or alongside the bootnode.
+security) is identical whether mDNS runs alone or alongside the rendezvous.
 
 ```mermaid
 flowchart TB
@@ -41,7 +41,7 @@ flowchart TB
 
 | Feature | Description |
 |---------|-------------|
-| **Zero Configuration** | Automatic peer discovery via mDNS/Bonjour |
+| **Zero Configuration** | Automatic peer rendezvous via mDNS/Bonjour |
 | **No Server Required** | Works without internet or central server |
 | **Automatic Master Election** | Priority: `server_ready` (incumbent) > `prefer_master` > bidirectional preference > earliest startup > lowest CID |
 | **Passive Peers** | `--never-master` keeps a peer out of the election; it syncs but never becomes master |
@@ -57,7 +57,7 @@ flowchart TB
 
 In plain terms, p2p mode works in three steps:
 
-1. **Discovery** — every device announces itself on the local network (mDNS), so
+1. **Rendezvous** — every device announces itself on the local network (mDNS), so
    peers find each other automatically with no IP addresses to configure.
 2. **Election** — the peers agree on a single **master** that coordinates sync.
    The choice is automatic (see [Master Election](#master-election)).
@@ -88,7 +88,7 @@ In plain terms, p2p mode works in three steps:
 > [Sync Modes — p2p](sync-modes-p2p.md) and
 > [Conflict Resolution](conflict-resolution.md).
 
-> The architecture and discovery/election/sync **sequence diagrams**, the full
+> The architecture and rendezvous/election/sync **sequence diagrams**, the full
 > bidirectional operations table and the WebSocket event format are in
 > [p2p Internals](internal/p2p-internals.md).
 
@@ -101,7 +101,7 @@ In plain terms, p2p mode works in three steps:
 
 ## Continuous Mode (Default)
 
-Continuous mode is the default in p2p mode. The client stays active indefinitely, even when no peers are found, and automatically starts a file system watcher that propagates events in real time. Discovery waits indefinitely by default (`--peer-discovery-timeout 0`), mirroring the server-mode default of retrying an unreachable server forever.
+Continuous mode is the default in p2p mode. The client stays active indefinitely, even when no peers are found, and automatically starts a file system watcher that propagates events in real time. Rendezvous waits indefinitely by default (`--peer-rendezvous-timeout 0`), mirroring the server-mode default of retrying an unreachable server forever.
 
 This is useful for:
 
@@ -140,11 +140,11 @@ suggested moment — a busy peer is never treated as a broken one.
 
 | Scenario | Message | Action |
 |----------|---------|--------|
-| No peers ever found | "Waiting for peers to join..." | Retry discovery |
-| Peers disconnected | "All peers disconnected, waiting for new peers..." | Retry discovery |
-| Peer found | Normal sync flow | Sync, then continue discovery |
+| No peers ever found | "Waiting for peers to join..." | Retry rendezvous |
+| Peers disconnected | "All peers disconnected, waiting for new peers..." | Retry rendezvous |
+| Peer found | Normal sync flow | Sync, then continue rendezvous |
 | Master role change | "No longer master, switching to client mode..." | Restart as client |
-| Network changed (new local address) | `Network link restored: local address …` | Automatic: the mDNS record is rebuilt on the new address and the bootnode endpoint republished; no restart |
+| Network changed (new local address) | `Network link restored: local address …` | Automatic: the mDNS record is rebuilt on the new address and the rendezvous endpoint republished; no restart |
 
 ### Example Flow
 
@@ -166,7 +166,7 @@ HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b photos -p ~/Pictures
 ## Options & Environment Variables
 
 All p2p command-line options and `HSYNC_*` environment variables — including the
-master-election flags `--prefer-master`/`--never-master`, the discovery/heartbeat
+master-election flags `--prefer-master`/`--never-master`, the rendezvous/heartbeat
 timeouts, `HSYNC_P2P_PASSPHRASE`/`HSYNC_P2P_KEY`, `HSYNC_DEVICE_DIR` and persistence — are documented
 in the single reference:
 [Configuration — p2p Mode](configuration-p2p.md).
@@ -204,7 +204,7 @@ connection that carries the data.
   hsync p2p -b photos -p ~/Pictures
   ```
 
-- **No-key mode is read-only by default** — discovery, listings, downloads,
+- **No-key mode is read-only by default** — rendezvous, listings, downloads,
   exact-hash source lookup, and download delta remain available, but any
   write-capable sync is refused and mutating HTTP endpoints return `403`.
 - **Keyless runs are confirmed** — without a shared password or key the client asks for
@@ -238,9 +238,9 @@ connection that carries the data.
 
   `hsync trust peer add` accepts a `sha256:<hex>` or bare-hex fingerprint and
   refuses anything else; `remove` forgets the pin so the peer is prompted again
-  at the next connection. The bootnode known-hosts store has its own parallel
-  group, `hsync trust discovery-server {list,show,add,remove,fingerprint}`, documented in
-  [Sync across networks](p2p-bootnode.md).
+  at the next connection. The rendezvous known-hosts store has its own parallel
+  group, `hsync trust rendezvous-server {list,show,add,remove,fingerprint}`, documented in
+  [Sync across networks](p2p-rendezvous.md).
 
 > The certificate flow, fingerprint-pinning details and key parameters are in
 > [p2p Internals → Transport Security](internal/p2p-internals.md#transport-security-internals).
@@ -284,7 +284,7 @@ Consequences:
 - **Different buckets** — works out of the box: the mDNS service name is
   `{bucket}-{device_id}`, so instances never clash.
 - **Same bucket** — not possible with one device identity (the instances are
-  the *same device* and ignore each other in discovery; the second mDNS
+  the *same device* and ignore each other in rendezvous; the second mDNS
   registration fails with a clear error). Give the second instance its own
   identity:
 
@@ -367,7 +367,7 @@ The master is elected using a **multi-criteria priority system**. Each peer inde
 > [p2p Internals → Master Election Algorithm](internal/p2p-internals.md#master-election-algorithm).
 
 **Rules:**
-- The `sync_direction`, `never_master`, `prefer_master`, `server_ready` and `startup_time` flags of each peer are shared during discovery — through mDNS TXT records on a local network, and through the bootnode when the group uses one — so the same election runs in both cases
+- The `sync_direction`, `never_master`, `prefer_master`, `server_ready` and `startup_time` flags of each peer are shared during rendezvous — through mDNS TXT records on a local network, and through the rendezvous when the group uses one — so the same election runs in both cases
 - A serving master (`server_ready`) keeps the role over a newcomer even if the newcomer sets `--prefer-master`; the preference wins once both are at parity on readiness
 - `--prefer-master` is **incompatible** with `--sync-direction upload-only` or `download-only` — the client will refuse to start
 - `--never-master` peers are removed from the candidate pool, so they are never elected (locally or by other peers)
@@ -449,8 +449,8 @@ See also: [Architecture > Pre-Sync Safety Check](internal/architecture.md#pre-sy
 ### Peers Not Discovering Each Other
 
 1. **Check firewall**: Ensure mDNS (UDP port 5353) is allowed
-2. **Check network**: All devices must be on the same subnet (or point the whole group at the same bootnode for cross-network discovery)
-3. **Increase timeout**: Use `--peer-discovery-timeout 15` for slower networks, or `--peer-discovery-timeout 0` to wait indefinitely for the first peer/master
+2. **Check network**: All devices must be on the same subnet (or point the whole group at the same rendezvous for cross-network rendezvous)
+3. **Increase timeout**: Use `--peer-rendezvous-timeout 15` for slower networks, or `--peer-rendezvous-timeout 0` to wait indefinitely for the first peer/master
 4. **Running in a container?**: mDNS multicast cannot cross the NAT boundary of
    the default bridge network used by container runtimes, so peers will never
    be found. Run the client with host networking (e.g.

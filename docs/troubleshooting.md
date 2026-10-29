@@ -8,19 +8,19 @@ behaviour. Symptom → cause → remedy, with copy-paste commands.
 
 ## No peers are discovered
 
-**Symptom.** The client starts, logs `Discovery: mDNS on the local network` (or
-a bootnode banner), but the peer list stays empty and no sync happens.
+**Symptom.** The client starts, logs `Rendezvous: mDNS on the local network` (or
+a rendezvous banner), but the peer list stays empty and no sync happens.
 
 **Cause & remedy.**
 
 - Devices on **different networks** cannot see each other over mDNS → configure
-  a bootstrap node on every device: [Sync across networks](p2p-bootnode.md).
+  a rendezvous node on every device: [Sync across networks](p2p-rendezvous.md).
 - Same network but still nothing: mDNS is blocked (guest Wi-Fi, some container
   or VPN interfaces) or devices sit on different VLANs. Run the mDNS plan
   checklist in [Sync on the local network](p2p-lan.md).
 - Peers listed but no sync → different `HSYNC_P2P_PASSPHRASE`/`HSYNC_P2P_KEY`, bucket or `--group`.
-- The log shows `Discovery: mDNS on the local network + bootnode …` although only
-  mDNS was intended → a bootnode is configured; unset `HSYNC_DISCOVERY_SERVER_ENDPOINTS` (or drop
+- The log shows `Rendezvous: mDNS on the local network + rendezvous …` although only
+  mDNS was intended → a rendezvous is configured; unset `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS` (or drop
   the positional).
 
 ## After a network change a device stays "waiting"
@@ -30,7 +30,7 @@ another network) and regained it a while ago, but hsync-desktop keeps showing
 **Waiting…** even though the other device is online. Stopping and starting the
 sync makes it work again.
 
-**Cause.** Discovery advertises the host's local address and holds sockets bound
+**Cause.** Rendezvous advertises the host's local address and holds sockets bound
 to the live interface. An older client keeps announcing the pre-outage address (a
 DHCP reassignment replaces it) and never reconciles those sockets, so peers keep
 dialing an endpoint that no longer exists until the process is restarted.
@@ -39,8 +39,8 @@ dialing an endpoint that no longer exists until the process is restarted.
 
 - Current builds recover on their own and say so in the log:
   `Network link restored: local address …`, then
-  `mDNS discovery rebuilt after a network change: OLD -> NEW` and/or
-  `Local address changed from OLD to NEW; republishing the bootnode endpoint`.
+  `mDNS rendezvous rebuilt after a network change: OLD -> NEW` and/or
+  `Local address changed from OLD to NEW; republishing the rendezvous endpoint`.
   No restart is needed.
 - A serving node with no connected device is legitimately **Waiting…** (the label
   is localized): check the role shown in the window. A **Primary node** waits for

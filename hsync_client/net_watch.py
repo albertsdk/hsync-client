@@ -9,7 +9,7 @@ desktop's "waiting" state until the process is restarted:
 
 * an announced record keeps carrying the pre-outage address (a DHCP
   reassignment replaces it), so peers dial a dead endpoint;
-* the sockets the discovery stack opened before the outage can be bound to an
+* the sockets the rendezvous stack opened before the outage can be bound to an
   address that no longer exists, and nothing reconciles them.
 
 The OS exposes no portable "network changed" callback, so one daemon thread
@@ -20,9 +20,9 @@ interface without sending a packet.
 ``get_network_monitor`` owns the single process-wide instance; the consumers
 subscribe instead of each running its own timer:
 
-* ``p2p_discovery_mdns`` — rebuilds the Zeroconf stack and re-registers the
+* ``p2p_rendezvous_mdns`` — rebuilds the Zeroconf stack and re-registers the
   record on the fresh address;
-* ``p2p_discovery_bootnode`` — wakes the lease loop so a changed address is
+* ``p2p_rendezvous_rendezvous`` — wakes the lease loop so a changed address is
   republished immediately;
 * ``remote_websocket`` — ends the reconnect backoff as soon as the link is back.
 

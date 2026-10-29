@@ -153,7 +153,7 @@ class TestPeer:
 
 
 class TestDialCandidates:
-    """The dial-time endpoint ordering (NAT-hairpin avoidance, ADR boot/1)."""
+    """The dial-time endpoint ordering (NAT-hairpin avoidance, ADR rdv/1)."""
 
     def test_same_subnet_candidate_is_tried_first(self):
         """A LAN candidate must outrank the public one for a same-NAT peer."""

@@ -516,7 +516,7 @@ def _p2p_config(tmp_path, **overrides: Any) -> HsyncConfig:
         "P2P_GROUP": None,
         "LOCAL_BUCKET": str(tmp_path),
         "P2P_KEY": None,
-        "PEER_DISCOVERY_TIMEOUT": 1,
+        "PEER_RENDEZVOUS_TIMEOUT": 1,
         "DRYRUN": False,
         "ONE_SHOT": True,
         "REQUEST_HEADERS": {},
@@ -576,7 +576,7 @@ class TestRunAsMasterWatcherBackoff:
         ws_instance.stop.assert_called_once()
         existing_server.stop_serving.assert_any_call()
         assert sleep_calls == [WATCHER_START_RETRY_DELAY_S], (
-            "the retry must use the dedicated slow backoff, not the discovery cadence"
+            "the retry must use the dedicated slow backoff, not the rendezvous cadence"
         )
 
     def test_watcher_failure_retires_http_role_before_ws_stop(self, tmp_path):
@@ -657,7 +657,7 @@ class TestRunAsMasterWatcherBackoff:
 
 
 class TestRunAsSlaveWatcherBackoff:
-    """A slave whose watcher cannot start backs off before re-entering discovery."""
+    """A slave whose watcher cannot start backs off before re-entering rendezvous."""
 
     def test_slave_watcher_failure_backs_off_and_loops(self, tmp_path):
         from hsync_client.p2p_handler import _run_as_slave
@@ -683,7 +683,7 @@ class TestRunAsSlaveWatcherBackoff:
 
         assert result == (True, 0), "continuous mode must survive the watcher failure"
         assert sleep_calls == [WATCHER_START_RETRY_DELAY_S], (
-            "the retry must use the dedicated slow backoff, not the discovery cadence"
+            "the retry must use the dedicated slow backoff, not the rendezvous cadence"
         )
         warnings = [str(c.args[0]) for c in mock_log.warning.call_args_list if c.args]
         assert not any("WebSocket connection ended" in w for w in warnings), (

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""Unit tests for the bootnode discovery plan (no network).
+"""Unit tests for the rendezvous rendezvous plan (no network).
 
 A fake client records the frames the plan sends and returns canned ``ack``/
 ``response`` frames, so the lease semantics (first register without endpoint,
@@ -15,29 +15,29 @@ import threading
 import time
 
 import pytest
-from hsync_common.protocol.bootnode import (
-    validate_boot_frame,
-    validate_boot_response,
+from hsync_common.protocol.rendezvous import (
+    validate_rdv_frame,
+    validate_rdv_response,
 )
 
-from hsync_client.boot_client import (
-    BootnodeFingerprintMismatch,
-    BootnodeNotTrusted,
-    BootnodeRefused,
-    BootnodeUnreachable,
-)
-from hsync_client.p2p_discovery_bootnode import (
-    _TEST_ADVERTISED_ENDPOINTS_ENV,
-    BootnodeDiscovery,
-)
 from hsync_client.p2p_peers import Peer, PeerManager
+from hsync_client.p2p_rendezvous_rendezvous import (
+    _TEST_ADVERTISED_ENDPOINTS_ENV,
+    RendezvousRendezvous,
+)
+from hsync_client.rdv_client import (
+    RendezvousFingerprintMismatch,
+    RendezvousNotTrusted,
+    RendezvousRefused,
+    RendezvousUnreachable,
+)
 from hsync_client.stun import ObservedAddress
 
 CID = "A1b2C3d4E5f6G7h8I9j0K"
 OTHER = "B2c3D4e5F6g7H8i9J0k1L"
 FP = "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
 ACK = {
-    "protocol_version": "boot/1",
+    "protocol_version": "rdv/1",
     "type": "ack",
     "observed_endpoint": {"proto": "udp", "ip": "203.0.113.9", "port": 51000},
     "ttl": 60,
@@ -48,7 +48,7 @@ ACK = {
 def relayed_peer(
     cid, *, ip, port, proto="tcp", capacity=0, reachable=True, endpoints=None, **advert
 ):
-    """A relayed ``peers[]`` entry: every field the bootnode always echoes.
+    """A relayed ``peers[]`` entry: every field the rendezvous always echoes.
 
     The election advertisement keys are required on the wire (the node always
     relays them); ``advert`` overrides the defaults for a test. ``endpoints``
@@ -76,7 +76,7 @@ def relayed_peer(
 
 
 RESPONSE = {
-    "protocol_version": "boot/1",
+    "protocol_version": "rdv/1",
     "type": "response",
     "peers": [
         # A serving, prefer-master peer: every election input is relayed.
@@ -92,7 +92,7 @@ RESPONSE = {
         ),
         # Not dialable over the p2p data plane (UDP): skipped.
         relayed_peer("C3d4E5f6G7h8I9j0K1l2M", ip="203.0.113.11", port=60000, proto="udp"),
-        # No published endpoint yet (bootstrap-only register): skipped.
+        # No published endpoint yet (rendezvous-only register): skipped.
         relayed_peer("D4e5F6g7H8i9J0k1L2m3N", ip="203.0.113.12", port=8443, reachable=False),
     ],
     "count": 3,
@@ -118,7 +118,7 @@ class FakeClient:
 
     def query(self, frame):
         self.calls.append(("query", frame))
-        return validate_boot_response(dict(RESPONSE))
+        return validate_rdv_response(dict(RESPONSE))
 
 
 class FakeUpnp:
@@ -139,8 +139,8 @@ def make_plan(**overrides):
     kwargs = {
         "cid": CID,
         "bucket": "shared",
-        "bootnode_host": "boot.example.net",
-        "bootnode_port": 443,
+        "rendezvous_host": "boot.example.net",
+        "rendezvous_port": 443,
         "port": 8443,
         "group": "home",
         "cert_fingerprint": FP,
@@ -151,7 +151,7 @@ def make_plan(**overrides):
         "upnp_factory": lambda: fake_upnp,
     }
     kwargs.update(overrides)
-    plan = BootnodeDiscovery(**kwargs)
+    plan = RendezvousRendezvous(**kwargs)
     return plan, fake_upnp
 
 
@@ -163,7 +163,7 @@ class TestLease:
         assert kind == "register"
         assert frame["endpoints"] == []
         assert frame["capacity"] == 0
-        assert validate_boot_frame(frame) is not None
+        assert validate_rdv_frame(frame) is not None
         assert plan._observed == ObservedAddress(host="203.0.113.9", port=51000)
 
     def test_withdrawn_master_candidacy_is_advertised(self):
@@ -185,7 +185,7 @@ class TestLease:
         assert kind == "register"
         assert frame["capacity"] == 7
         assert frame["endpoints"], "the second register must publish endpoints"
-        assert validate_boot_frame(frame) is not None
+        assert validate_rdv_frame(frame) is not None
 
     def test_capacity_is_zero_without_peer_download(self):
         plan, _ = make_plan(peer_download_enabled=False)
@@ -224,9 +224,9 @@ class TestEndpointPublication:
 
     def test_mdns_plan_is_always_published(self):
         """The mDNS plan keeps today's readiness timing (no publication step)."""
-        from hsync_client.p2p_discovery_mdns import MdnsDiscovery
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 
-        assert MdnsDiscovery(cid=CID, bucket="shared").endpoint_published() is True
+        assert MdnsRendezvous(cid=CID, bucket="shared").endpoint_published() is True
 
 
 class TestPeerFeed:
@@ -260,12 +260,12 @@ class TestPeerFeed:
         """A LAN candidate must become the primary dial address.
 
         Regression for the NAT-hairpin failure: two peers behind one NAT cannot
-        reach each other's public endpoint (no NAT loopback), so the bootnode
+        reach each other's public endpoint (no NAT loopback), so the rendezvous
         relays the full candidate list and the requester must dial the
         same-subnet candidate instead of the publicly advertised one.
         """
         monkeypatch.setattr(
-            "hsync_client.p2p_discovery_bootnode.get_local_ip",
+            "hsync_client.p2p_rendezvous_rendezvous.get_local_ip",
             lambda: "192.168.1.50",
         )
         plan, _ = make_plan()
@@ -289,7 +289,7 @@ class TestPeerFeed:
     def test_remote_candidate_keeps_the_advertised_order(self, monkeypatch):
         """With no same-subnet candidate the first advertised endpoint stays primary."""
         monkeypatch.setattr(
-            "hsync_client.p2p_discovery_bootnode.get_local_ip",
+            "hsync_client.p2p_rendezvous_rendezvous.get_local_ip",
             lambda: "10.0.0.5",
         )
         plan, _ = make_plan()
@@ -337,7 +337,7 @@ class TestAdvertisement:
         assert frame["never_master"] is False
         assert frame["startup_time"] == 1760000001.0
         assert frame["sync_direction"] == "upload-only"
-        assert validate_boot_frame(frame) is not None
+        assert validate_rdv_frame(frame) is not None
 
     def test_startup_time_defaults_to_the_process_start(self):
         plan, _ = make_plan()
@@ -349,7 +349,7 @@ class TestAdvertisement:
         """A serving master must win its own election (regression).
 
         The mDNS plan publishes the incumbent flag into the shared
-        ``PeerManager`` (``_refresh_service``); the bootnode plan used to update
+        ``PeerManager`` (``_refresh_service``); the rendezvous plan used to update
         only its own lease state, so the next relayed ``server_ready`` peer
         demoted the local master and the roles ping-ponged until the data plane
         looped on the other node's read-only seeder endpoint.
@@ -409,18 +409,18 @@ class TestAdvertisement:
         plan, _ = make_plan()
 
         def refuse(frame):
-            raise BootnodeRefused("rate_limited", 30)
+            raise RendezvousRefused("rate_limited", 30)
 
         plan._client.register = refuse
         plan.update_server_ready()
-        with pytest.raises(BootnodeRefused):
+        with pytest.raises(RendezvousRefused):
             plan._republish_advert()
         assert plan._sent_advert_generation != plan._advert_generation
 
     def test_lease_loop_survives_a_uniform_refusal(self):
         """A refusal is not a transport failure: the loop keeps its lease state.
 
-        Regression: the client used to raise ``BootnodeProtocolError`` ("expected
+        Regression: the client used to raise ``RendezvousProtocolError`` ("expected
         a 'ack' frame, got 'response'"), which the lease loop treated as an
         unreachable node — resetting to a full first register on every wake and
         deepening the node's rate limit instead of backing off.
@@ -430,7 +430,7 @@ class TestAdvertisement:
 
         def refuse(frame):
             registrations.append(frame)
-            raise BootnodeRefused("rate_limited", 30)
+            raise RendezvousRefused("rate_limited", 30)
 
         plan._client.register = refuse
         plan._client.query = lambda frame: None
@@ -461,7 +461,7 @@ class TestAdvertisement:
         assert known == [OTHER]
 
         refused = {
-            "protocol_version": "boot/1",
+            "protocol_version": "rdv/1",
             "type": "response",
             "peers": [],
             "count": 0,
@@ -473,7 +473,7 @@ class TestAdvertisement:
 
         def refused_query(frame):
             queries.append(frame)
-            return validate_boot_response(dict(refused))
+            return validate_rdv_response(dict(refused))
 
         plan._client.query = refused_query
         plan._next_query_at = 0.0  # bypass the cadence gate; exercise the refusal
@@ -494,7 +494,7 @@ class TestAdvertisement:
         assert known == [OTHER]
 
         refused = {
-            "protocol_version": "boot/1",
+            "protocol_version": "rdv/1",
             "type": "response",
             "peers": [],
             "count": 0,
@@ -504,7 +504,7 @@ class TestAdvertisement:
         }
 
         def refused_query(frame):
-            return validate_boot_response(dict(refused))
+            return validate_rdv_response(dict(refused))
 
         plan._client.query = refused_query
         plan._next_query_at = 0.0  # bypass the cadence gate; exercise the refusal
@@ -529,17 +529,17 @@ class TestQueryBudget:
         assert len([c for c in plan._client.calls if c[0] == "query"]) == first + 1
 
 
-class TestWaitForDiscovery:
-    def test_wait_never_queries_the_bootnode(self):
+class TestWaitForRendezvous:
+    def test_wait_never_queries_the_rendezvous(self):
         """Regression: the wait must not poll ``query`` (1 s poll → refusal storm).
 
-        The bootnode rate-limits ``query`` to 5/min per (IP, bucket); a discovery
+        The rendezvous rate-limits ``query`` to 5/min per (IP, bucket); a rendezvous
         wait that queries itself exhausts the budget and is refused for the rest
         of the window. The lease loop owns the network cadence.
         """
         plan, _ = make_plan()
         plan._peer_manager = PeerManager(local_cid=CID, bucket="shared", group="home")
-        plan.wait_for_discovery(timeout=0.05)
+        plan.wait_for_rendezvous(timeout=0.05)
         assert [c for c in plan._client.calls if c[0] == "query"] == []
 
     def test_wait_returns_as_soon_as_a_peer_is_known(self):
@@ -548,32 +548,32 @@ class TestWaitForDiscovery:
         plan._peer_manager = manager
         manager.add_peer(plan._peer_from_wire(RESPONSE["peers"][0]))
         start = time.monotonic()
-        plan.wait_for_discovery(timeout=5.0)
+        plan.wait_for_rendezvous(timeout=5.0)
         assert time.monotonic() - start < 1.0, "must wake on the peer-change event"
         assert [c for c in plan._client.calls if c[0] == "query"] == []
 
-    def test_unreachable_bootnode_does_not_abort_the_wait(self):
-        """The wait never touches the network, so a dead bootnode cannot break it."""
+    def test_unreachable_rendezvous_does_not_abort_the_wait(self):
+        """The wait never touches the network, so a dead rendezvous cannot break it."""
         plan, _ = make_plan()
         plan._peer_manager = PeerManager(local_cid=CID, bucket="shared", group="home")
 
         def boom(frame):
-            raise BootnodeUnreachable("bootnode boot.example.net:443: ConnectionError")
+            raise RendezvousUnreachable("rendezvous boot.example.net:443: ConnectionError")
 
         plan._client.query = boom
-        plan.wait_for_discovery(timeout=0.05)
+        plan.wait_for_rendezvous(timeout=0.05)
 
     def test_lease_loop_reports_an_unreachable_node_as_a_warning(self, monkeypatch):
         """A dead node is retried (warning only), never disabled like a refusal."""
         warnings: list[dict] = []
         monkeypatch.setattr(
-            "hsync_client.p2p_discovery_bootnode.emit_warning",
+            "hsync_client.p2p_rendezvous_rendezvous.emit_warning",
             lambda message, **kwargs: warnings.append({"message": message, **kwargs}),
         )
         plan, _ = make_plan(refresh_interval=1.0)
 
         def unreachable(_frame):
-            raise BootnodeUnreachable("ConnectionError")
+            raise RendezvousUnreachable("ConnectionError")
 
         plan._client.register = unreachable
         plan._running = True
@@ -588,7 +588,7 @@ class TestWaitForDiscovery:
             plan._wake.set()
             thread.join(timeout=5.0)
         assert not thread.is_alive()
-        assert [(w["source"], w["reason"]) for w in warnings] == [("bootnode", "unreachable")]
+        assert [(w["source"], w["reason"]) for w in warnings] == [("rendezvous", "unreachable")]
         # A source that may come back is retried, not disabled.
         assert plan.source_disabled() is False
 
@@ -602,18 +602,18 @@ class TestWaitForDiscovery:
         plan._peer_manager = PeerManager(local_cid=CID, bucket="shared", group="home")
         plan._disable_source("pin mismatch")
 
-        plan.wait_for_discovery(timeout=0.05)
+        plan.wait_for_rendezvous(timeout=0.05)
 
         assert plan.source_disabled() is True
 
 
 class TestUntrustedNodeDisablesTheSource:
     def test_lease_loop_disables_the_source_on_a_pin_mismatch(self):
-        """A ``BootnodeFingerprintMismatch`` stops this source, not the run."""
+        """A ``RendezvousFingerprintMismatch`` stops this source, not the run."""
         plan, _ = make_plan(refresh_interval=1.0)
 
         def mismatch(frame):
-            raise BootnodeFingerprintMismatch("pin mismatch")
+            raise RendezvousFingerprintMismatch("pin mismatch")
 
         plan._client.register = mismatch
         plan._running = True
@@ -625,14 +625,14 @@ class TestUntrustedNodeDisablesTheSource:
         # The remaining sources are untouched: the shared peer state still
         # delivers whatever the local network found.
         plan._peer_manager = PeerManager(local_cid=CID, bucket="shared", group="home")
-        plan.wait_for_discovery(timeout=0.05)
+        plan.wait_for_rendezvous(timeout=0.05)
 
     def test_lease_loop_disables_the_source_on_a_refused_prompt(self):
         """A declined/unpromptable trust disables the source: never re-prompt."""
         plan, _ = make_plan(refresh_interval=1.0)
 
         def refuse(frame):
-            raise BootnodeNotTrusted("fingerprint not accepted")
+            raise RendezvousNotTrusted("fingerprint not accepted")
 
         plan._client.register = refuse
         plan._running = True
@@ -647,12 +647,12 @@ class TestUntrustedNodeDisablesTheSource:
         from loguru import logger as log
 
         plan, _ = make_plan(refresh_interval=1.0)
-        reason = "bootnode boot.example.net:443: certificate fingerprint does not match"
+        reason = "rendezvous boot.example.net:443: certificate fingerprint does not match"
 
         def mismatch(_frame):
-            raise BootnodeFingerprintMismatch(
+            raise RendezvousFingerprintMismatch(
                 reason,
-                guidance="Bootnode 'boot.example.net:443' trust failed: GUIDANCE",
+                guidance="Rendezvous 'boot.example.net:443' trust failed: GUIDANCE",
             )
 
         plan._client.register = mismatch
@@ -672,21 +672,21 @@ class TestUntrustedNodeDisablesTheSource:
         """The front-end learns the source degraded (one line, not the guidance)."""
         warnings: list[dict] = []
         monkeypatch.setattr(
-            "hsync_client.p2p_discovery_bootnode.emit_warning",
+            "hsync_client.p2p_rendezvous_rendezvous.emit_warning",
             lambda message, **kwargs: warnings.append({"message": message, **kwargs}),
         )
         plan, _ = make_plan()
 
         plan._disable_source(
-            "bootnode boot.example.net:443: certificate fingerprint does not match",
-            guidance="Bootnode 'boot.example.net:443' trust failed: GUIDANCE",
+            "rendezvous boot.example.net:443: certificate fingerprint does not match",
+            guidance="Rendezvous 'boot.example.net:443' trust failed: GUIDANCE",
         )
 
         assert warnings == [
             {
-                "message": "bootnode boot.example.net:443: certificate fingerprint does not "
-                "match — bootnode discovery stopped, local network discovery continues",
-                "source": "bootnode",
+                "message": "rendezvous boot.example.net:443: certificate fingerprint does not "
+                "match — rendezvous rendezvous stopped, local network rendezvous continues",
+                "source": "rendezvous",
                 "reason": "untrusted",
             }
         ]
@@ -714,13 +714,13 @@ class TestStop:
         assert fake_upnp.unmapped is True
 
 
-def test_bootnode_default_port_matches_the_shared_ssot() -> None:
-    """The client's bare-host default is the shared boot/1 default (spec §Transport)."""
-    from hsync_common.constants import BOOT_DEFAULT_PORT
+def test_rendezvous_default_port_matches_the_shared_ssot() -> None:
+    """The client's bare-host default is the shared rdv/1 default (spec §Transport)."""
+    from hsync_common.constants import RDV_DEFAULT_PORT
 
-    from hsync_client.constants import BOOTNODE_DEFAULT_PORT
+    from hsync_client.constants import RENDEZVOUS_DEFAULT_PORT
 
-    assert BOOTNODE_DEFAULT_PORT == BOOT_DEFAULT_PORT == 443
+    assert RENDEZVOUS_DEFAULT_PORT == RDV_DEFAULT_PORT == 443
 
 
 def test_register_is_skipped_without_a_local_fingerprint() -> None:
@@ -732,12 +732,12 @@ def test_register_is_skipped_without_a_local_fingerprint() -> None:
 
 
 class TestNetworkChange:
-    """An address change must republish the endpoints the bootnode relays."""
+    """An address change must republish the endpoints the rendezvous relays."""
 
     def test_a_changed_address_republishes_with_the_new_candidates(self, monkeypatch):
         plan, fake_upnp = make_plan(upnp_enabled=True)
         monkeypatch.setattr(
-            "hsync_client.p2p_discovery_bootnode.get_local_ip", lambda: "203.0.113.10"
+            "hsync_client.p2p_rendezvous_rendezvous.get_local_ip", lambda: "203.0.113.10"
         )
         plan.update_server_ready()
         plan._publish_endpoint()
@@ -747,7 +747,7 @@ class TestNetworkChange:
         assert plan._published_local_ip == "203.0.113.10"
 
         monkeypatch.setattr(
-            "hsync_client.p2p_discovery_bootnode.get_local_ip", lambda: "198.51.100.7"
+            "hsync_client.p2p_rendezvous_rendezvous.get_local_ip", lambda: "198.51.100.7"
         )
         assert plan._republish_stale_endpoint() is True
         assert plan._published_endpoints is False
@@ -766,7 +766,7 @@ class TestNetworkChange:
     def test_an_unchanged_address_keeps_the_publication(self, monkeypatch):
         plan, _ = make_plan()
         monkeypatch.setattr(
-            "hsync_client.p2p_discovery_bootnode.get_local_ip", lambda: "203.0.113.10"
+            "hsync_client.p2p_rendezvous_rendezvous.get_local_ip", lambda: "203.0.113.10"
         )
         plan.update_server_ready()
         plan._publish_endpoint()
@@ -777,7 +777,7 @@ class TestNetworkChange:
         """A node that never advertised an endpoint has nothing to invalidate."""
         plan, _ = make_plan()
         monkeypatch.setattr(
-            "hsync_client.p2p_discovery_bootnode.get_local_ip", lambda: "198.51.100.7"
+            "hsync_client.p2p_rendezvous_rendezvous.get_local_ip", lambda: "198.51.100.7"
         )
         assert plan._republish_stale_endpoint() is False
 
@@ -832,7 +832,7 @@ class TestAdvertisedEndpointsOverride:
             {"proto": "tcp", "host": "198.51.100.7", "port": 8443},
             {"proto": "tcp", "host": "198.51.100.8", "port": 8443},
         ]
-        assert validate_boot_frame(frame) is not None
+        assert validate_rdv_frame(frame) is not None
 
     def test_malformed_override_fails_fast(self, monkeypatch):
         monkeypatch.setenv(_TEST_ADVERTISED_ENDPOINTS_ENV, "not-an-endpoint")

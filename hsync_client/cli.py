@@ -38,12 +38,9 @@ from hsync_common.protocol.pairing import (
 from hsync_common.protocol.tls_trust import TrustPolicy, resolve_self_signed_policy
 from hsync_common.runtime import ColorMode
 
-from hsync_client.bootnode_trust import BootnodeTrustStore
 from hsync_client.constants import (
     BANDWIDTH_MAX,
     BANDWIDTH_MIN,
-    BOOTNODE_DEFAULT_PORT,
-    DISCOVERY_TIMEOUT_DEFAULT,
     HSYNC_VERSION,
     HTTP_TIMEOUT_MAX,
     HTTP_TIMEOUT_MIN,
@@ -61,6 +58,8 @@ from hsync_client.constants import (
     MIN_FREE_DISK_SPACE_MIN,
     RECONNECT_DELAY_MAX,
     RECONNECT_DELAY_MIN,
+    RENDEZVOUS_DEFAULT_PORT,
+    RENDEZVOUS_TIMEOUT_DEFAULT,
     RESYNC_MAX,
     RESYNC_MIN,
     SERVER_DEFAULT_PORT,
@@ -70,6 +69,7 @@ from hsync_client.constants import (
     SYNC_DIRECTIONS,
 )
 from hsync_client.pinning import PinStore
+from hsync_client.rendezvous_trust import RendezvousTrustStore
 from hsync_client.server_trust import ServerTrustStore, fetch_server_fingerprint
 
 # =============================================================================
@@ -196,10 +196,10 @@ def _build_server_url(url: str | None) -> str | None:
     return build_https_url(_parse_host_port(raw), SERVER_DEFAULT_PORT)
 
 
-def _build_discovery_server_pins(
+def _build_rendezvous_server_pins(
     values: list[str] | None, endpoints: tuple[HostPort, ...]
 ) -> FingerprintPins:
-    """Resolve ``--discovery-server-fingerprint`` into a per-endpoint pin map.
+    """Resolve ``--rendezvous-server-fingerprint`` into a per-endpoint pin map.
 
     ``ENDPOINT=FINGERPRINT[|FINGERPRINT]`` binds a pin to the server it belongs
     to, which is the only safe form with several servers (a shared pin would tie
@@ -210,42 +210,42 @@ def _build_discovery_server_pins(
         return {}
     if not endpoints:
         raise typer.BadParameter(
-            "--discovery-server-fingerprint requires at least one --discovery-server endpoint."
+            "--rendezvous-server-fingerprint requires at least one --rendezvous-server endpoint."
         )
     # Imported here: the config module pulls the pydantic models, which the CLI
     # must not load at import time (see tests/test_startup_imports.py).
-    from hsync_client.config import resolve_discovery_server_pins
+    from hsync_client.config import resolve_rendezvous_server_pins
 
     try:
         pins = parse_pin_map(",".join(values), strict=True)
-        return resolve_discovery_server_pins(pins, endpoints, default_port=BOOTNODE_DEFAULT_PORT)
+        return resolve_rendezvous_server_pins(pins, endpoints, default_port=RENDEZVOUS_DEFAULT_PORT)
     except ValueError as exc:
-        raise typer.BadParameter(f"invalid --discovery-server-fingerprint: {exc}") from exc
+        raise typer.BadParameter(f"invalid --rendezvous-server-fingerprint: {exc}") from exc
 
 
-def _build_discovery_servers(
+def _build_rendezvous_servers(
     values: list[str] | None,
     *,
     use_env: bool = False,
 ) -> tuple[HostPort, ...]:
-    """Resolve the discovery-server endpoints; return them ordered and deduplicated.
+    """Resolve the rendezvous-server endpoints; return them ordered and deduplicated.
 
-    ``--discovery-server`` is repeatable and each value may itself carry a
+    ``--rendezvous-server`` is repeatable and each value may itself carry a
     comma-separated list, so the option accepts exactly the grammar of
-    ``HSYNC_DISCOVERY_SERVER_ENDPOINTS`` (one parser, one grammar). An entry that
+    ``HSYNC_RENDEZVOUS_SERVER_ENDPOINTS`` (one parser, one grammar). An entry that
     omits the port gets the channel default, so ``a`` and ``a:443`` are one
     destination. When ``use_env`` is set (the ``p2p`` command) a missing CLI
     value falls back to the environment. An empty tuple selects the mDNS plan.
     """
     raw = ",".join(value for value in (values or ()) if value.strip())
     try:
-        endpoints = parse_endpoint_list(raw, strict=True, default_port=BOOTNODE_DEFAULT_PORT)
+        endpoints = parse_endpoint_list(raw, strict=True, default_port=RENDEZVOUS_DEFAULT_PORT)
     except ValueError as exc:
-        raise typer.BadParameter(f"invalid discovery server: {exc}") from exc
+        raise typer.BadParameter(f"invalid rendezvous server: {exc}") from exc
     if not endpoints and use_env:
-        from hsync_client.config import get_discovery_server_endpoints
+        from hsync_client.config import get_rendezvous_server_endpoints
 
-        endpoints = get_discovery_server_endpoints()
+        endpoints = get_rendezvous_server_endpoints()
     return tuple(endpoints)
 
 
@@ -942,17 +942,17 @@ ListenPortOpt = Annotated[
     ),
 ]
 
-BootnodeArg = Annotated[
+RendezvousArg = Annotated[
     list[str] | None,
     typer.Option(
-        "--discovery-server",
+        "--rendezvous-server",
         help=(
-            "Discovery server (the hsync-bootnode daemon speaking boot/1) for "
-            "cross-network discovery: HOST[:PORT], QUIC/UDP, no scheme. Repeatable, "
+            "Rendezvous server (the hsync-rendezvous daemon speaking rdv/1) for "
+            "cross-network rendezvous: HOST[:PORT], QUIC/UDP, no scheme. Repeatable, "
             "and each value may carry a comma-separated list (the same grammar as "
-            "HSYNC_DISCOVERY_SERVER_ENDPOINTS); the client leases and queries every "
+            "HSYNC_RENDEZVOUS_SERVER_ENDPOINTS); the client leases and queries every "
             "reachable entry. Omit to stay on mDNS only. Extra UDP ports to try on "
-            "each endpoint go in HSYNC_DISCOVERY_SERVER_EXTRA_PORTS."
+            "each endpoint go in HSYNC_RENDEZVOUS_SERVER_EXTRA_PORTS."
         ),
         metavar="ENDPOINT",
         rich_help_panel="P2P Mode",
@@ -965,42 +965,42 @@ UpnpOpt = Annotated[
         "--map-data-port",
         help=(
             "Map the p2p data-plane TCP port with UPnP (opt-in; off by default). "
-            "Only meaningful with a discovery server: without one, mDNS already "
-            "keeps discovery on the local network."
+            "Only meaningful with a rendezvous server: without one, mDNS already "
+            "keeps rendezvous on the local network."
         ),
         rich_help_panel="P2P Mode",
     ),
 ]
-BootnodeFingerprintOpt = Annotated[
+RendezvousFingerprintOpt = Annotated[
     list[str] | None,
     typer.Option(
-        "--discovery-server-fingerprint",
+        "--rendezvous-server-fingerprint",
         help=(
-            "Pin a discovery server's certificate fingerprint ('sha256:<hex>' or "
+            "Pin a rendezvous server's certificate fingerprint ('sha256:<hex>' or "
             "bare hex). May be repeated (up to two per server) for a rotation window."
         ),
         metavar="FINGERPRINT",
         rich_help_panel="P2P Mode",
     ),
 ]
-BootnodeTofuOpt = Annotated[
+RendezvousTofuOpt = Annotated[
     bool,
     typer.Option(
-        "--discovery-server-tofu",
+        "--rendezvous-server-tofu",
         help=(
-            "Trust a discovery server's certificate on first use (TOFU); a later "
+            "Trust a rendezvous server's certificate on first use (TOFU); a later "
             "mismatch is refused as a possible man-in-the-middle."
         ),
         show_default=False,
         rich_help_panel="P2P Mode",
     ),
 ]
-BootnodeTrustOpt = Annotated[
+RendezvousTrustOpt = Annotated[
     str | None,
     typer.Option(
-        "--discovery-server-trust",
+        "--rendezvous-server-trust",
         help=(
-            "Discovery-server TLS trust policy: 'ask' (default: confirm an unknown "
+            "Rendezvous-server TLS trust policy: 'ask' (default: confirm an unknown "
             "fingerprint on a terminal, fail closed without one), 'accept-new' "
             "(pin the first sighting silently), 'strict' (require a pin) or "
             "'none' (no verification; loopback/tests only)."
@@ -1010,13 +1010,13 @@ BootnodeTrustOpt = Annotated[
         rich_help_panel="P2P Mode",
     ),
 ]
-DiscoveryTimeoutOpt = Annotated[
+RendezvousTimeoutOpt = Annotated[
     int | None,
     typer.Option(
-        "--peer-discovery-timeout",
+        "--peer-rendezvous-timeout",
         help=(
-            "Time to wait for initial P2P peer discovery in seconds "
-            f"(default: {DISCOVERY_TIMEOUT_DEFAULT}; 0 = wait indefinitely)."
+            "Time to wait for initial P2P peer rendezvous in seconds "
+            f"(default: {RENDEZVOUS_TIMEOUT_DEFAULT}; 0 = wait indefinitely)."
         ),
         metavar="SEC",
         show_default=False,
@@ -1206,10 +1206,10 @@ def main(
 @app.command()
 def p2p(
     bucket: BucketOpt,
-    discovery_server: BootnodeArg = None,
+    rendezvous_server: RendezvousArg = None,
     http_timeout: HttpTimeoutOpt = None,
     p2p_listen_port: ListenPortOpt = 0,
-    peer_discovery_timeout: DiscoveryTimeoutOpt = None,
+    peer_rendezvous_timeout: RendezvousTimeoutOpt = None,
     p2p_group: GroupOpt = None,
     prefer_master: PreferMasterOpt = False,
     never_master: NeverMasterOpt = False,
@@ -1221,9 +1221,9 @@ def p2p(
     map_data_port: UpnpOpt = False,
     insecure: InsecureOpt = False,
     ca_cert: CaCertOpt = None,
-    discovery_server_fingerprint: BootnodeFingerprintOpt = None,
-    discovery_server_tofu: BootnodeTofuOpt = False,
-    discovery_server_trust: BootnodeTrustOpt = None,
+    rendezvous_server_fingerprint: RendezvousFingerprintOpt = None,
+    rendezvous_server_tofu: RendezvousTofuOpt = False,
+    rendezvous_server_trust: RendezvousTrustOpt = None,
     events_json_fd: EventsJsonFdOpt = None,
     local_path: PathOpt = _DEFAULT_LOCAL_PATH,
     once: OnceOpt = False,
@@ -1277,11 +1277,11 @@ def p2p(
         [dim]# Advanced: a full raw group key instead of a password (32+ chars)[/dim]
         $ HSYNC_P2P_KEY=YOUR_SHARED_KEY_AT_LEAST_32_CHARACTERS hsync p2p -b shared --group home
 
-        [dim]# Discover peers across networks through a discovery server[/dim]
+        [dim]# Discover peers across networks through a rendezvous server[/dim]
         $ hsync p2p boot.example.net -b shared
 
-        [dim]# Bootnode extra ports when your egress firewall blocks UDP 443[/dim]
-        $ HSYNC_DISCOVERY_SERVER_EXTRA_PORTS=53 hsync p2p boot.example.net -b shared
+        [dim]# Rendezvous extra ports when your egress firewall blocks UDP 443[/dim]
+        $ HSYNC_RENDEZVOUS_SERVER_EXTRA_PORTS=53 hsync p2p boot.example.net -b shared
 
     [bold]Environment Variables:[/bold]
 
@@ -1296,9 +1296,9 @@ def p2p(
     ) = _validate_shared_options(locals())
 
     # P2P-only validation
-    if peer_discovery_timeout is not None and peer_discovery_timeout < 0:
+    if peer_rendezvous_timeout is not None and peer_rendezvous_timeout < 0:
         raise typer.BadParameter(
-            "Peer discovery timeout must be 0 or greater (0 = wait indefinitely)."
+            "Peer rendezvous timeout must be 0 or greater (0 = wait indefinitely)."
         )
 
     # --prefer-master is incompatible with directional sync (upload/download-only)
@@ -1315,7 +1315,7 @@ def p2p(
             "cannot both prefer the master role and be forbidden from it."
         )
 
-    # Resolve the discovery-server endpoints from the CLI option, then the env
+    # Resolve the rendezvous-server endpoints from the CLI option, then the env
     # (loaded here so an --env-file value is visible before run_sync loads it
     # again later). One grammar on both surfaces.
     if env_file:
@@ -1327,7 +1327,7 @@ def p2p(
             print(f"Error: {e}", file=sys.stderr)
             raise typer.Exit(1)
 
-    discovery_endpoints = _build_discovery_servers(discovery_server, use_env=True)
+    rendezvous_endpoints = _build_rendezvous_servers(rendezvous_server, use_env=True)
     if map_data_port:
         effective_map_data_port = True
     else:
@@ -1335,30 +1335,30 @@ def p2p(
 
         effective_map_data_port = get_map_data_port()
 
-    # Discovery-server TLS trust (ADR-0034): --ca-cert is a server-mode knob, not
-    # a discovery-channel knob, so refuse it rather than silently ignore it.
+    # Rendezvous-server TLS trust (ADR-0034): --ca-cert is a server-mode knob, not
+    # a rendezvous-channel knob, so refuse it rather than silently ignore it.
     if ca_cert:
         raise typer.BadParameter(
-            "--ca-cert is not used for the discovery-server channel; pin the server "
-            "with --discovery-server-fingerprint (or use --discovery-server-tofu) instead."
+            "--ca-cert is not used for the rendezvous-server channel; pin the server "
+            "with --rendezvous-server-fingerprint (or use --rendezvous-server-tofu) instead."
         )
 
     # Pins are per endpoint (``ENDPOINT=FINGERPRINT[|FINGERPRINT]``, repeatable;
     # a bare fingerprint is the unambiguous single-endpoint shorthand). The map
     # is bound to the configured endpoints here, so a pin for a server the client
     # never dials is a usage error rather than a silently ignored value.
-    pins = _build_discovery_server_pins(discovery_server_fingerprint, discovery_endpoints)
+    pins = _build_rendezvous_server_pins(rendezvous_server_fingerprint, rendezvous_endpoints)
 
-    if insecure and (pins or discovery_server_tofu):
+    if insecure and (pins or rendezvous_server_tofu):
         raise typer.BadParameter(
             "--insecure is mutually exclusive with "
-            "--discovery-server-fingerprint/--discovery-server-tofu."
+            "--rendezvous-server-fingerprint/--rendezvous-server-tofu."
         )
 
-    if (pins or discovery_server_tofu) and not discovery_endpoints:
+    if (pins or rendezvous_server_tofu) and not rendezvous_endpoints:
         raise typer.BadParameter(
-            "--discovery-server-fingerprint/--discovery-server-tofu require at least "
-            "one --discovery-server endpoint."
+            "--rendezvous-server-fingerprint/--rendezvous-server-tofu require at least "
+            "one --rendezvous-server endpoint."
         )
 
     if p2p_trust is not None:
@@ -1377,12 +1377,12 @@ def p2p(
         p2p_passphrase_fd=p2p_passphrase_fd,
         p2p_mode=True,
         p2p_listen_port=p2p_listen_port,
-        discovery_server_endpoints=discovery_endpoints,
+        rendezvous_server_endpoints=rendezvous_endpoints,
         map_data_port=effective_map_data_port,
-        discovery_server_pins=pins,
-        discovery_server_tofu=bool(discovery_server_tofu),
-        discovery_server_trust=discovery_server_trust,
-        peer_discovery_timeout=peer_discovery_timeout,
+        rendezvous_server_pins=pins,
+        rendezvous_server_tofu=bool(rendezvous_server_tofu),
+        rendezvous_server_trust=rendezvous_server_trust,
+        peer_rendezvous_timeout=peer_rendezvous_timeout,
         p2p_group=p2p_group,
         prefer_master=prefer_master,
         never_master=never_master,
@@ -1407,12 +1407,12 @@ def derive_group_key_command(
 ) -> None:
     """Print the P2P group key (64 hex) derived from a shared password.
 
-    Use the output to populate a discovery-server key file. Treat it as a secret: it is
-    the raw group key the discovery server derives bucket tokens from.
+    Use the output to populate a rendezvous-server key file. Treat it as a secret: it is
+    the raw group key the rendezvous server derives bucket tokens from.
     """
     import os
 
-    from hsync_common.protocol.boot_tokens import (
+    from hsync_common.protocol.rdv_tokens import (
         WeakGroupPassphrase,
         derive_group_key,
         validate_group_passphrase,
@@ -1438,21 +1438,21 @@ def derive_group_key_command(
 
 
 # =============================================================================
-# trust management (P2P peers, discovery server, sync server) — one ``hsync trust``
+# trust management (P2P peers, rendezvous server, sync server) — one ``hsync trust``
 # namespace
 # =============================================================================
 # ``hsync trust …`` mirrors OpenSSH's known-hosts workflow so an operator can
 # inspect, pre-pin and forget fingerprints without editing the JSON stores by
 # hand. One namespace covers the three certificate-pinning transports: the P2P
-# master/seeders (``known_peers``), the discovery server and the sync server
+# master/seeders (``known_peers``), the rendezvous server and the sync server
 # (``known_hosts``). ``hsync server``/``hsync p2p`` stay actions, so the trust
 # surface lives here rather than under them (ADR-0036).
 _trust_root = typer.Typer(
-    help="Inspect and manage certificate trust for the P2P peers, discovery server and server.",
+    help="Inspect and manage certificate trust for the P2P peers, rendezvous server and server.",
     no_args_is_help=True,
 )
-_trust_bootnode_app = typer.Typer(
-    help="Manage the discovery-server known-hosts store.",
+_trust_rendezvous_app = typer.Typer(
+    help="Manage the rendezvous-server known-hosts store.",
     no_args_is_help=True,
 )
 _trust_peer_app = typer.Typer(
@@ -1464,12 +1464,12 @@ _trust_server_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(_trust_root, name="trust")
-_trust_root.add_typer(_trust_bootnode_app, name="discovery-server")
+_trust_root.add_typer(_trust_rendezvous_app, name="rendezvous-server")
 _trust_root.add_typer(_trust_peer_app, name="peer")
 _trust_root.add_typer(_trust_server_app, name="server")
 
 
-_TrustStore = BootnodeTrustStore | ServerTrustStore
+_TrustStore = RendezvousTrustStore | ServerTrustStore
 
 
 def _trust_list(store: _TrustStore, none_message: str, as_json: bool) -> None:
@@ -1523,53 +1523,53 @@ def _trust_host_port(hostname: str | None) -> tuple[str, int]:
     name the same node.
     """
     if hostname is None:
-        raise typer.BadParameter("a discovery-server host[:port] is required")
+        raise typer.BadParameter("a rendezvous-server host[:port] is required")
     endpoint = _parse_host_port(hostname)
-    return endpoint.host, endpoint.port if endpoint.port is not None else BOOTNODE_DEFAULT_PORT
+    return endpoint.host, endpoint.port if endpoint.port is not None else RENDEZVOUS_DEFAULT_PORT
 
 
-@_trust_bootnode_app.command("list")
-def bootnode_trust_list(
+@_trust_rendezvous_app.command("list")
+def rendezvous_trust_list(
     as_json: bool = typer.Option(False, "--json", help="Emit entries as JSON."),
 ) -> None:
-    """List the pinned discovery-server fingerprints (like ``known_hosts``)."""
-    _trust_list(BootnodeTrustStore(), "No discovery servers are trusted yet.", as_json)
+    """List the pinned rendezvous-server fingerprints (like ``known_hosts``)."""
+    _trust_list(RendezvousTrustStore(), "No rendezvous servers are trusted yet.", as_json)
 
 
-@_trust_bootnode_app.command("show")
-def bootnode_trust_show(hostname: HostArg) -> None:
-    """Show the pinned fingerprint for one discovery server."""
+@_trust_rendezvous_app.command("show")
+def rendezvous_trust_show(hostname: HostArg) -> None:
+    """Show the pinned fingerprint for one rendezvous server."""
     host, resolved_port = _trust_host_port(hostname)
-    _trust_show(BootnodeTrustStore(), host, resolved_port)
+    _trust_show(RendezvousTrustStore(), host, resolved_port)
 
 
-@_trust_bootnode_app.command("add")
-def bootnode_trust_add(
+@_trust_rendezvous_app.command("add")
+def rendezvous_trust_add(
     hostname: HostArg,
     fingerprint: str = typer.Argument(..., metavar="FINGERPRINT"),
 ) -> None:
-    """Pin a discovery-server fingerprint (verify it out of band first)."""
+    """Pin a rendezvous-server fingerprint (verify it out of band first)."""
     host, resolved_port = _trust_host_port(hostname)
-    _trust_add(BootnodeTrustStore(), host, resolved_port, fingerprint)
+    _trust_add(RendezvousTrustStore(), host, resolved_port, fingerprint)
 
 
-@_trust_bootnode_app.command("remove")
-def bootnode_trust_remove(hostname: HostArg) -> None:
-    """Forget a pinned discovery server (like ``ssh-keygen -R``)."""
+@_trust_rendezvous_app.command("remove")
+def rendezvous_trust_remove(hostname: HostArg) -> None:
+    """Forget a pinned rendezvous server (like ``ssh-keygen -R``)."""
     host, resolved_port = _trust_host_port(hostname)
-    _trust_remove(BootnodeTrustStore(), host, resolved_port)
+    _trust_remove(RendezvousTrustStore(), host, resolved_port)
 
 
-@_trust_bootnode_app.command("fingerprint")
-def bootnode_trust_fingerprint(hostname: HostArg) -> None:
-    """Print a discovery server's certificate fingerprint without trusting it."""
-    from hsync_client.boot_client import BootnodeClient, BootnodeError
+@_trust_rendezvous_app.command("fingerprint")
+def rendezvous_trust_fingerprint(hostname: HostArg) -> None:
+    """Print a rendezvous server's certificate fingerprint without trusting it."""
+    from hsync_client.rdv_client import RendezvousClient, RendezvousError
 
     host, resolved_port = _trust_host_port(hostname)
-    client = BootnodeClient(host, resolved_port, policy=TrustPolicy.none)
+    client = RendezvousClient(host, resolved_port, policy=TrustPolicy.none)
     try:
         observed = client.fetch_fingerprint()
-    except BootnodeError as exc:
+    except RendezvousError as exc:
         typer.echo(f"Could not read the fingerprint: {exc}", err=True)
         raise typer.Exit(code=1) from exc
     typer.echo(observed)
@@ -1811,7 +1811,7 @@ def server(
         server_trust=server_trust,
         p2p_mode=False,
         p2p_listen_port=0,
-        peer_discovery_timeout=None,
+        peer_rendezvous_timeout=None,
         p2p_group=None,
         prefer_master=False,
         never_master=False,

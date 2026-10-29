@@ -13,7 +13,7 @@ from typer.testing import CliRunner
 
 from hsync_client.cli import app
 from hsync_client.config import get_env_settings
-from hsync_client.constants import BOOTNODE_DEFAULT_PORT
+from hsync_client.constants import RENDEZVOUS_DEFAULT_PORT
 
 runner = CliRunner()
 
@@ -377,17 +377,17 @@ class TestTyperCli:
         assert call_kwargs["logfile"] is None
         assert call_kwargs["resync"] is None
         assert call_kwargs["env_file"] is None
-        assert call_kwargs["peer_discovery_timeout"] is None
+        assert call_kwargs["peer_rendezvous_timeout"] is None
 
     @patch("hsync_client.main_logic.run_sync")
-    def test_discovery_timeout_accepts_zero(self, mock_run_sync):
-        """--peer-discovery-timeout 0 is accepted as wait-indefinitely."""
-        result = runner.invoke(app, ["p2p", "-b", "test", "--peer-discovery-timeout", "0"])
+    def test_rendezvous_timeout_accepts_zero(self, mock_run_sync):
+        """--peer-rendezvous-timeout 0 is accepted as wait-indefinitely."""
+        result = runner.invoke(app, ["p2p", "-b", "test", "--peer-rendezvous-timeout", "0"])
         assert result.exit_code == 0
-        assert mock_run_sync.call_args.kwargs["peer_discovery_timeout"] == 0
+        assert mock_run_sync.call_args.kwargs["peer_rendezvous_timeout"] == 0
 
     @patch("hsync_client.main_logic.run_sync")
-    def test_bootnode_fingerprint_and_tofu_flow(self, mock_run_sync):
+    def test_rendezvous_fingerprint_and_tofu_flow(self, mock_run_sync):
         hex64 = "0" * 64
         result = runner.invoke(
             app,
@@ -395,27 +395,27 @@ class TestTyperCli:
                 "p2p",
                 "-b",
                 "test",
-                "--discovery-server",
+                "--rendezvous-server",
                 "boot.example.net",
-                "--discovery-server-fingerprint",
+                "--rendezvous-server-fingerprint",
                 f"boot.example.net:443={hex64}",
-                "--discovery-server-tofu",
+                "--rendezvous-server-tofu",
             ],
         )
         assert result.exit_code == 0
         kwargs = mock_run_sync.call_args.kwargs
-        assert kwargs["discovery_server_pins"] == {"boot.example.net:443": (hex64,)}
-        assert kwargs["discovery_server_tofu"] is True
+        assert kwargs["rendezvous_server_pins"] == {"boot.example.net:443": (hex64,)}
+        assert kwargs["rendezvous_server_tofu"] is True
 
-    def test_bootnode_ca_cert_is_refused(self):
-        """--ca-cert has no bootnode-channel meaning: refuse it, not silently ignore."""
+    def test_rendezvous_ca_cert_is_refused(self):
+        """--ca-cert has no rendezvous-channel meaning: refuse it, not silently ignore."""
         result = runner.invoke(
             app,
             [
                 "p2p",
                 "-b",
                 "test",
-                "--discovery-server",
+                "--rendezvous-server",
                 "boot.example.net",
                 "--ca-cert",
                 "/tmp/ca.pem",
@@ -424,26 +424,26 @@ class TestTyperCli:
         assert result.exit_code != 0
         assert "ca-cert" in result.output
 
-    def test_insecure_conflicts_with_bootnode_fingerprint(self):
+    def test_insecure_conflicts_with_rendezvous_fingerprint(self):
         result = runner.invoke(
             app,
             [
                 "p2p",
                 "-b",
                 "test",
-                "--discovery-server",
+                "--rendezvous-server",
                 "boot.example.net",
                 "--insecure",
-                "--discovery-server-fingerprint",
+                "--rendezvous-server-fingerprint",
                 "0" * 64,
             ],
         )
         assert result.exit_code != 0
         assert "mutually exclusive" in result.output
 
-    def test_bootnode_fingerprint_requires_bootnode(self):
+    def test_rendezvous_fingerprint_requires_rendezvous(self):
         result = runner.invoke(
-            app, ["p2p", "-b", "test", "--discovery-server-fingerprint", "0" * 64]
+            app, ["p2p", "-b", "test", "--rendezvous-server-fingerprint", "0" * 64]
         )
         assert result.exit_code != 0
         assert "at least one" in result.output
@@ -456,9 +456,9 @@ class TestTyperCli:
                 "p2p",
                 "-b",
                 "test",
-                "--discovery-server",
+                "--rendezvous-server",
                 "a.example",
-                "--discovery-server-fingerprint",
+                "--rendezvous-server-fingerprint",
                 f"b.example={'0' * 64}",
             ],
         )
@@ -473,9 +473,9 @@ class TestTyperCli:
                 "p2p",
                 "-b",
                 "test",
-                "--discovery-server",
+                "--rendezvous-server",
                 "a.example,b.example",
-                "--discovery-server-fingerprint",
+                "--rendezvous-server-fingerprint",
                 "0" * 64,
             ],
         )
@@ -494,36 +494,36 @@ class TestTyperCli:
                     "p2p",
                     "-b",
                     "test",
-                    "--discovery-server",
+                    "--rendezvous-server",
                     "a.example,b.example:8443",
-                    "--discovery-server-fingerprint",
+                    "--rendezvous-server-fingerprint",
                     f"a.example:443={fp_a}",
-                    "--discovery-server-fingerprint",
+                    "--rendezvous-server-fingerprint",
                     f"b.example:8443={fp_b}",
                 ],
             )
         assert result.exit_code == 0, result.output
-        pins = run_sync.call_args.kwargs["discovery_server_pins"]
+        pins = run_sync.call_args.kwargs["rendezvous_server_pins"]
         assert pins["a.example:443"] == (fp_a,)
         assert pins["b.example:8443"] == (fp_b,)
 
-    def test_bootnode_fingerprint_rejects_invalid(self):
+    def test_rendezvous_fingerprint_rejects_invalid(self):
         result = runner.invoke(
             app,
             [
                 "p2p",
                 "-b",
                 "test",
-                "--discovery-server",
+                "--rendezvous-server",
                 "boot.example.net",
-                "--discovery-server-fingerprint",
+                "--rendezvous-server-fingerprint",
                 "zzz",
             ],
         )
         assert result.exit_code != 0
-        assert "invalid --discovery-server-fingerprint" in result.output
+        assert "invalid --rendezvous-server-fingerprint" in result.output
 
-    def test_help_documents_discovery_timeout_zero(self):
+    def test_help_documents_rendezvous_timeout_zero(self):
         """Help output documents the 0 = wait indefinitely convention."""
         # Force a wide terminal so Rich does not word-wrap the help text and
         # split the documented sentinel across lines.
@@ -792,11 +792,11 @@ class TestCLIValidation:
         assert result.exit_code != 0
         assert "max wait" in result.output.lower() or "timeout" in result.output.lower()
 
-    def test_rejects_negative_discovery_timeout(self):
-        """CLI rejects negative --peer-discovery-timeout values."""
-        result = runner.invoke(app, ["p2p", "-b", "test", "--peer-discovery-timeout", "-1"])
+    def test_rejects_negative_rendezvous_timeout(self):
+        """CLI rejects negative --peer-rendezvous-timeout values."""
+        result = runner.invoke(app, ["p2p", "-b", "test", "--peer-rendezvous-timeout", "-1"])
         assert result.exit_code != 0
-        assert "discovery timeout" in result.output.lower()
+        assert "rendezvous timeout" in result.output.lower()
 
     def test_rejects_invalid_sync_direction(self):
         """CLI rejects invalid --sync-direction value."""
@@ -1006,10 +1006,10 @@ class TestCapabilitiesJson:
         for flag in ("--server-url", "--insecure", "--ca-cert"):
             assert flag in doc["cli_options"]["server"]
         assert "--listen-port" not in doc["cli_options"]["server"]
-        # C2: the p2p subcommand owns --port (the bootnode UDP port) and
+        # C2: the p2p subcommand owns --port (the rendezvous UDP port) and
         # --map-data-port; --listen-port is the master TCP port and stays p2p-only.
         for flag in (
-            "--discovery-server",
+            "--rendezvous-server",
             "--map-data-port",
             "--insecure",
             "--ca-cert",
@@ -1036,67 +1036,67 @@ class TestCapabilitiesJson:
         assert "--limit-upload" in options["p2p"]
         assert "--server-url" in options["server"]
         assert "--listen-port" not in options["server"]
-        assert "--discovery-server" in options["p2p"]
+        assert "--rendezvous-server" in options["p2p"]
         assert "--map-data-port" in options["p2p"]
 
 
-class TestBuildDiscoveryServers:
-    """The discovery-server resolution rules: one option, one grammar."""
+class TestBuildRendezvousServers:
+    """The rendezvous-server resolution rules: one option, one grammar."""
 
     def test_no_server_selects_the_mdns_plan(self):
-        from hsync_client.cli import _build_discovery_servers
+        from hsync_client.cli import _build_rendezvous_servers
 
-        assert _build_discovery_servers(None) == ()
+        assert _build_rendezvous_servers(None) == ()
 
     def test_default_port_is_the_channel_default(self):
         from hsync_common.endpoint import HostPort
 
-        from hsync_client.cli import _build_discovery_servers
+        from hsync_client.cli import _build_rendezvous_servers
 
-        assert _build_discovery_servers(["boot.example.net"]) == (
-            HostPort("boot.example.net", BOOTNODE_DEFAULT_PORT),
+        assert _build_rendezvous_servers(["boot.example.net"]) == (
+            HostPort("boot.example.net", RENDEZVOUS_DEFAULT_PORT),
         )
 
     def test_endpoint_port_is_preserved(self):
         from hsync_common.endpoint import HostPort
 
-        from hsync_client.cli import _build_discovery_servers
+        from hsync_client.cli import _build_rendezvous_servers
 
-        assert _build_discovery_servers(["boot.example.net:8443"]) == (
+        assert _build_rendezvous_servers(["boot.example.net:8443"]) == (
             HostPort("boot.example.net", 8443),
         )
 
     def test_repeatable_option_lists_every_server_in_order(self):
         from hsync_common.endpoint import HostPort
 
-        from hsync_client.cli import _build_discovery_servers
+        from hsync_client.cli import _build_rendezvous_servers
 
-        assert _build_discovery_servers(["a.example", "b.example:8443"]) == (
-            HostPort("a.example", BOOTNODE_DEFAULT_PORT),
+        assert _build_rendezvous_servers(["a.example", "b.example:8443"]) == (
+            HostPort("a.example", RENDEZVOUS_DEFAULT_PORT),
             HostPort("b.example", 8443),
         )
 
     def test_a_value_may_carry_the_env_comma_list(self):
         from hsync_common.endpoint import HostPort
 
-        from hsync_client.cli import _build_discovery_servers
+        from hsync_client.cli import _build_rendezvous_servers
 
-        assert _build_discovery_servers(["a.example,b.example:53"]) == (
-            HostPort("a.example", BOOTNODE_DEFAULT_PORT),
+        assert _build_rendezvous_servers(["a.example,b.example:53"]) == (
+            HostPort("a.example", RENDEZVOUS_DEFAULT_PORT),
             HostPort("b.example", 53),
         )
 
     def test_listing_the_same_endpoint_twice_is_refused(self):
         """One destination listed twice is a config error, not two leases."""
-        from hsync_client.cli import _build_discovery_servers
+        from hsync_client.cli import _build_rendezvous_servers
 
         with pytest.raises(typer.BadParameter):
-            _build_discovery_servers(["a.example", "a.example:443"])
+            _build_rendezvous_servers(["a.example", "a.example:443"])
 
     def test_blank_value_is_ignored(self):
-        from hsync_client.cli import _build_discovery_servers
+        from hsync_client.cli import _build_rendezvous_servers
 
-        assert _build_discovery_servers(["   "]) == ()
+        assert _build_rendezvous_servers(["   "]) == ()
 
     @pytest.mark.parametrize(
         "bad",
@@ -1108,98 +1108,100 @@ class TestBuildDiscoveryServers:
         ],
     )
     def test_invalid_input_is_refused(self, bad):
-        from hsync_client.cli import _build_discovery_servers
+        from hsync_client.cli import _build_rendezvous_servers
 
         with pytest.raises(typer.BadParameter):
-            _build_discovery_servers([bad])
+            _build_rendezvous_servers([bad])
 
     def test_ipv6_bracketed_is_returned_unbracketed(self):
         from hsync_common.endpoint import HostPort
 
-        from hsync_client.cli import _build_discovery_servers
+        from hsync_client.cli import _build_rendezvous_servers
 
-        assert _build_discovery_servers(["[::1]"]) == (HostPort("::1", BOOTNODE_DEFAULT_PORT),)
+        assert _build_rendezvous_servers(["[::1]"]) == (HostPort("::1", RENDEZVOUS_DEFAULT_PORT),)
 
     def test_env_is_resolved_when_use_env(self, monkeypatch):
         from hsync_common.endpoint import HostPort
 
-        from hsync_client.cli import _build_discovery_servers
+        from hsync_client.cli import _build_rendezvous_servers
         from hsync_client.config import get_env_settings
 
-        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_ENDPOINTS", "a.example,b.example:8443")
+        monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_ENDPOINTS", "a.example,b.example:8443")
         get_env_settings.cache_clear()
         try:
-            assert _build_discovery_servers(None, use_env=True) == (
-                HostPort("a.example", BOOTNODE_DEFAULT_PORT),
+            assert _build_rendezvous_servers(None, use_env=True) == (
+                HostPort("a.example", RENDEZVOUS_DEFAULT_PORT),
                 HostPort("b.example", 8443),
             )
         finally:
             get_env_settings.cache_clear()
 
     def test_env_is_not_used_without_use_env(self, monkeypatch):
-        from hsync_client.cli import _build_discovery_servers
+        from hsync_client.cli import _build_rendezvous_servers
         from hsync_client.config import get_env_settings
 
         monkeypatch.setenv(
-            "HSYNC_DISCOVERY_SERVER_ENDPOINTS", "--discovery-server", "boot.example.net"
+            "HSYNC_RENDEZVOUS_SERVER_ENDPOINTS", "--rendezvous-server", "boot.example.net"
         )
         get_env_settings.cache_clear()
         try:
-            assert _build_discovery_servers(None) == ()
+            assert _build_rendezvous_servers(None) == ()
         finally:
             get_env_settings.cache_clear()
 
 
-class TestBootnodeTrustCommands:
-    """``hsync trust discovery-server`` manages the known-hosts store (ADR-0035)."""
+class TestRendezvousTrustCommands:
+    """``hsync trust rendezvous-server`` manages the known-hosts store (ADR-0035)."""
 
     def test_add_list_show_remove(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_TRUST_FILE", str(tmp_path / "trust.json"))
+        monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_TRUST_FILE", str(tmp_path / "trust.json"))
         fingerprint = "a" * 64
 
-        empty = runner.invoke(app, ["trust", "discovery-server", "list"])
+        empty = runner.invoke(app, ["trust", "rendezvous-server", "list"])
         assert empty.exit_code == 0
-        assert "No discovery servers" in empty.output
+        assert "No rendezvous servers" in empty.output
 
         added = runner.invoke(
-            app, ["trust", "discovery-server", "add", "boot.example.net:1443", fingerprint]
+            app, ["trust", "rendezvous-server", "add", "boot.example.net:1443", fingerprint]
         )
         assert added.exit_code == 0, added.output
         assert str(tmp_path / "trust.json") in added.output
 
-        listed = runner.invoke(app, ["trust", "discovery-server", "list"])
+        listed = runner.invoke(app, ["trust", "rendezvous-server", "list"])
         assert fingerprint in listed.output
         assert "boot.example.net:1443" in listed.output
 
-        shown = runner.invoke(app, ["trust", "discovery-server", "show", "boot.example.net:1443"])
+        shown = runner.invoke(app, ["trust", "rendezvous-server", "show", "boot.example.net:1443"])
         assert shown.exit_code == 0
         assert fingerprint in shown.output
 
         removed = runner.invoke(
-            app, ["trust", "discovery-server", "remove", "boot.example.net:1443"]
+            app, ["trust", "rendezvous-server", "remove", "boot.example.net:1443"]
         )
         assert removed.exit_code == 0
 
-        missing = runner.invoke(app, ["trust", "discovery-server", "show", "boot.example.net:1443"])
+        missing = runner.invoke(
+            app, ["trust", "rendezvous-server", "show", "boot.example.net:1443"]
+        )
         assert missing.exit_code == 1
 
     def test_add_rejects_an_invalid_fingerprint(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_TRUST_FILE", str(tmp_path / "trust.json"))
+        monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_TRUST_FILE", str(tmp_path / "trust.json"))
         result = runner.invoke(
-            app, ["trust", "discovery-server", "add", "boot.example.net", "nope"]
+            app, ["trust", "rendezvous-server", "add", "boot.example.net", "nope"]
         )
         assert result.exit_code == 1
 
     def test_list_json(self, tmp_path, monkeypatch):
         import json
 
-        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_TRUST_FILE", str(tmp_path / "trust.json"))
+        monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_TRUST_FILE", str(tmp_path / "trust.json"))
         result = runner.invoke(
             app,
-            ["trust", "discovery-server", "add", "boot.example.net:1443", "a" * 64],
+            ["trust", "rendezvous-server", "add", "boot.example.net:1443", "a" * 64],
         )
         assert result.exit_code == 0
-        listed = runner.invoke(app, ["trust", "discovery-server", "list", "--json"])
+        listed = runner.invoke(app, ["trust", "rendezvous-server", "list", "--json"])
         assert listed.exit_code == 0
         payload = json.loads(listed.output)
         assert payload == [
@@ -1215,7 +1217,7 @@ class TestBootnodeTrustCommands:
 
 
 class TestPeerTrustCommands:
-    """``hsync trust peer`` manages the known-peers store (mirrors bootnode trust)."""
+    """``hsync trust peer`` manages the known-peers store (mirrors rendezvous trust)."""
 
     def test_list_add_remove(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HSYNC_P2P_PIN_FILE", str(tmp_path / "pins.json"))

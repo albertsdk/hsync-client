@@ -14,14 +14,13 @@ throughout the application, making them easy to find and modify.
 from typing import Final, Literal
 
 from hsync_common import defaults as _defaults
-from hsync_common.constants import BOOT_DEFAULT_PORT as BOOTNODE_DEFAULT_PORT  # noqa: F401
 
 # Re-export shared constants from hsync-common. The plain names keep the
 # module's public re-export API consumed across hsync_client (HSYNC_VERSION,
 # HSYNCKEEP_FILENAME, PARTIAL_DOWNLOAD_SUFFIX, WS_MAX_MESSAGE_BYTES); the
 # aliased header names are re-typed below as string literals because mypy
-# requires literal keys for TypedDicts. BOOTNODE_DEFAULT_PORT (above) is the
-# boot/1 UDP default (QUIC, not HTTPS) — one SSOT with the bootnode's `--port`.
+# requires literal keys for TypedDicts. RENDEZVOUS_DEFAULT_PORT (above) is the
+# rdv/1 UDP default (QUIC, not HTTPS) — one SSOT with the rendezvous's `--port`.
 from hsync_common.constants import (  # noqa: F401
     CORRECTED_MTIME_MAX_FUTURE_SKEW,
     HOSTNAME_PATTERN,
@@ -35,6 +34,7 @@ from hsync_common.constants import HEADER_CLIENT_VERSION as _HEADER_CLIENT_VERSI
 from hsync_common.constants import (
     HEADER_PROTOCOL_VERSION as _HEADER_PROTOCOL_VERSION,
 )
+from hsync_common.constants import RDV_DEFAULT_PORT as RENDEZVOUS_DEFAULT_PORT  # noqa: F401
 from hsync_common.constants import (
     SERVER_DEFAULT_PORT as _SERVER_DEFAULT_PORT,
 )
@@ -229,18 +229,18 @@ HEARTBEAT_INTERVAL_MAX = 60
 PEER_TIMEOUT_MIN = 3
 PEER_TIMEOUT_MAX = 600
 
-# boot/1 lease cadence (spec ``boot-1.md``: TTL 60 s, client refresh every 30 s).
-# The bootnode rate-limits ``query`` to 5/min per (IP, bucket) and
+# rdv/1 lease cadence (spec ``rdv-1.md``: TTL 60 s, client refresh every 30 s).
+# The rendezvous rate-limits ``query`` to 5/min per (IP, bucket) and
 # ``register``/``refresh`` to 10/min, so the client must not poll faster than
 # ~12 s; 30 s matches the spec refresh and stays comfortably inside both.
-# Distinct from ``HEARTBEAT_INTERVAL`` (mDNS liveness, 5 s): the bootnode cadence
+# Distinct from ``HEARTBEAT_INTERVAL`` (mDNS liveness, 5 s): the rendezvous cadence
 # has its own rate-limit budget, overridable via
-# ``HSYNC_DISCOVERY_SERVER_REFRESH_INTERVAL``.
-BOOTNODE_REFRESH_INTERVAL = 30
-BOOTNODE_REFRESH_INTERVAL_MIN = 1
-BOOTNODE_REFRESH_INTERVAL_MAX = 300
+# ``HSYNC_RENDEZVOUS_SERVER_REFRESH_INTERVAL``.
+RENDEZVOUS_REFRESH_INTERVAL = 30
+RENDEZVOUS_REFRESH_INTERVAL_MIN = 1
+RENDEZVOUS_REFRESH_INTERVAL_MAX = 300
 
-# Data relay over boot/1 (peers behind CGNAT). The forwarding chunk is fixed so
+# Data relay over rdv/1 (peers behind CGNAT). The forwarding chunk is fixed so
 # a session's memory is bounded; the idle timeout has to stay well above the
 # WebSocket heartbeat cadence (an idle-but-open control plane is normal traffic),
 # and the keepalive keeps the listener's QUIC connection alive between sessions.
@@ -248,20 +248,20 @@ RELAY_BUFFER_BYTES = 64 * 1024
 RELAY_IDLE_TIMEOUT_S = 180.0
 RELAY_KEEPALIVE_INTERVAL = 20.0
 # How long a slave waits for the node to pair a relay session before giving up
-# and returning to the discovery loop.
+# and returning to the rendezvous loop.
 RELAY_OPEN_TIMEOUT_S = 15.0
 # Bounded per-candidate probe budget the relay replaces only as a last resort.
 RELAY_ACCEPT_TIMEOUT_S = 10.0
 # After a refused/failed relay attempt, wait this long before trying again: the
-# discovery loop re-enters the role functions every second, and a node without
+# rendezvous loop re-enters the role functions every second, and a node without
 # the relay enabled would otherwise be re-dialled once per second.
 RELAY_RETRY_BACKOFF_S = 30.0
 
-# P2P discovery timeout (seconds). Default is 0 = "wait indefinitely",
+# P2P rendezvous timeout (seconds). Default is 0 = "wait indefinitely",
 # mirroring the client-server behaviour (the client keeps retrying the
 # connection forever by default). A finite positive value bounds how long
-# the client waits for the initial peer discovery before reporting no peer.
-DISCOVERY_TIMEOUT_DEFAULT = 0
+# the client waits for the initial peer rendezvous before reporting no peer.
+RENDEZVOUS_TIMEOUT_DEFAULT = 0
 
 # Free-space reserve, in bytes (the unit every consumer stores). The operator
 # surfaces accept a size string such as "500MB" (``hsync_common.format.parse_size``).
@@ -324,7 +324,7 @@ INOTIFY_WATCH_WARN_RATIO = 0.9
 # Seconds to back off before attempting to start the file watcher again after a
 # WatcherStartError (kernel inotify limits exhausted — Errno 24 instances /
 # Errno 28 watches — or descriptor exhaustion that also defeated the polling
-# fallback). Retrying at the normal discovery cadence cannot clear a per-user
+# fallback). Retrying at the normal rendezvous cadence cannot clear a per-user
 # kernel limit, and each attempt re-runs an initial sync against the
 # master/server, so a long bounded wait keeps the log readable and avoids
 # hammering the peer while another process frees resources.

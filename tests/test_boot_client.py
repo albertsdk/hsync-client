@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""Unit tests for the ``boot/1`` QUIC client and the STUN-echo extraction.
+"""Unit tests for the ``rdv/1`` QUIC client and the STUN-echo extraction.
 
 These tests never open a socket: they cover the frame builders (validated
 against the ``hsync-common`` mirror), the fail-fast refusal of an invalid frame
@@ -18,21 +18,21 @@ import pytest
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 from hsync_common import ssl_utils
-from hsync_common.protocol.bootnode import (
-    BOOT_ALPN,
+from hsync_common.protocol.rendezvous import (
     CAPACITY_MAX,
-    validate_boot_ack,
-    validate_boot_frame,
+    RDV_ALPN,
+    validate_rdv_ack,
+    validate_rdv_frame,
 )
 from hsync_common.protocol.tls_trust import TrustPolicy
 
-from hsync_client.boot_client import (
-    BootnodeClient,
-    BootnodeFingerprintMismatch,
-    BootnodeNotTrusted,
-    BootnodeProtocolError,
-    BootnodeRefused,
-    BootnodeUnreachable,
+from hsync_client.rdv_client import (
+    RendezvousClient,
+    RendezvousFingerprintMismatch,
+    RendezvousNotTrusted,
+    RendezvousProtocolError,
+    RendezvousRefused,
+    RendezvousUnreachable,
     build_leave_frame,
     build_query_frame,
     build_refresh_frame,
@@ -43,7 +43,7 @@ from hsync_client.stun import ObservedAddress, observed_address
 CID = "A1b2C3d4E5f6G7h8I9j0K"
 TOKEN = "a" * 64
 ACK = {
-    "protocol_version": "boot/1",
+    "protocol_version": "rdv/1",
     "type": "ack",
     "observed_endpoint": {"proto": "udp", "ip": "198.51.100.7", "port": 54321},
     "ttl": 60,
@@ -64,7 +64,7 @@ class TestFrameBuilders:
             endpoints=[{"proto": "tcp", "host": "198.51.100.7", "port": 8443}],
             connected=3,
         )
-        assert validate_boot_frame(frame) is not None
+        assert validate_rdv_frame(frame) is not None
         assert frame["capacity"] == 5
         # The election advertisement is always part of the frame (defaults).
         assert frame["server_ready"] is False
@@ -84,7 +84,7 @@ class TestFrameBuilders:
             startup_time=1760000000.5,
             sync_direction="upload-only",
         )
-        assert validate_boot_frame(frame) is not None
+        assert validate_rdv_frame(frame) is not None
         assert frame["server_ready"] is True
         assert frame["never_master"] is True
         assert frame["startup_time"] == 1760000000.5
@@ -92,16 +92,16 @@ class TestFrameBuilders:
 
     def test_refresh_frame_validates(self):
         frame = build_refresh_frame(cid=CID, bucket="shared", group="home", connected=2)
-        assert validate_boot_frame(frame) is not None
+        assert validate_rdv_frame(frame) is not None
         assert "endpoints" not in frame  # refresh is TTL + connected only
 
     def test_leave_frame_validates(self):
         frame = build_leave_frame(cid=CID, bucket="shared", bucket_token=TOKEN)
-        assert validate_boot_frame(frame) is not None
+        assert validate_rdv_frame(frame) is not None
 
     def test_query_frame_validates(self):
         frame = build_query_frame(bucket="shared", group="home", limit=10)
-        assert validate_boot_frame(frame) is not None
+        assert validate_rdv_frame(frame) is not None
         assert frame["limit"] == 10
 
     def test_optional_fields_omitted_when_none(self):
@@ -121,7 +121,7 @@ class TestFrameBuilders:
 class TestFailFast:
     def test_invalid_register_is_refused_before_connecting(self):
         """An out-of-range capacity never reaches the network."""
-        client = BootnodeClient("127.0.0.1", 1)
+        client = RendezvousClient("127.0.0.1", 1)
         frame = build_register_frame(
             cid=CID,
             bucket="shared",
@@ -129,25 +129,25 @@ class TestFailFast:
             version="1.0.0",
             capacity=CAPACITY_MAX + 1,
         )
-        with pytest.raises(BootnodeProtocolError):
+        with pytest.raises(RendezvousProtocolError):
             client.register(frame)
 
     def test_unknown_frame_type_is_refused(self):
-        client = BootnodeClient("127.0.0.1", 1)
-        with pytest.raises(BootnodeProtocolError):
-            client._exchange({"protocol_version": "boot/1", "type": "bogus"}, expect=None)
+        client = RendezvousClient("127.0.0.1", 1)
+        with pytest.raises(RendezvousProtocolError):
+            client._exchange({"protocol_version": "rdv/1", "type": "bogus"}, expect=None)
 
 
 class TestUnreachableError:
     def test_textless_connection_error_yields_a_non_empty_message(self, monkeypatch):
         """aioquic raises ``ConnectionError`` with no text; the message must still identify it."""
-        client = BootnodeClient("boot.example.net", 443)
+        client = RendezvousClient("boot.example.net", 443)
 
         async def boom(self, payload, *, expect):
             raise ConnectionError()
 
-        monkeypatch.setattr(BootnodeClient, "_exchange_async", boom)
-        with pytest.raises(BootnodeUnreachable) as excinfo:
+        monkeypatch.setattr(RendezvousClient, "_exchange_async", boom)
+        with pytest.raises(RendezvousUnreachable) as excinfo:
             client.query(build_query_frame(bucket="shared"))
         message = str(excinfo.value)
         assert "boot.example.net:443" in message
@@ -190,10 +190,10 @@ class TestLeave:
             async def create_stream(self):
                 return _Reader(), writer
 
-        monkeypatch.setattr("hsync_client.boot_client.connect", lambda *_a, **_k: _Manager())
+        monkeypatch.setattr("hsync_client.rdv_client.connect", lambda *_a, **_k: _Manager())
         # ``insecure`` (policy ``none``) skips the trust check so this test stays
         # focused on the reply contract; trust is covered by its own tests.
-        client = BootnodeClient("127.0.0.1", 4433, policy=TrustPolicy.none, timeout=5.0)
+        client = RendezvousClient("127.0.0.1", 4433, policy=TrustPolicy.none, timeout=5.0)
         client.leave(build_leave_frame(cid=CID, bucket="shared"))
         assert writer.closed is True
         assert b'"type":"leave"' in writer.written
@@ -202,9 +202,9 @@ class TestLeave:
 
 class TestMultiPort:
     def test_candidate_ports_primary_first_deduped(self):
-        client = BootnodeClient("127.0.0.1", 443, ports=(53, 443, 80), policy=TrustPolicy.none)
+        client = RendezvousClient("127.0.0.1", 443, ports=(53, 443, 80), policy=TrustPolicy.none)
         assert client._candidate_ports() == (443, 53, 80)
-        assert BootnodeClient("127.0.0.1", 443, policy=TrustPolicy.none)._candidate_ports() == (
+        assert RendezvousClient("127.0.0.1", 443, policy=TrustPolicy.none)._candidate_ports() == (
             443,
         )
 
@@ -238,8 +238,10 @@ class TestMultiPort:
                 raise OSError("blocked by the egress firewall")
             return _Manager()
 
-        monkeypatch.setattr("hsync_client.boot_client.connect", _connect)
-        client = BootnodeClient("127.0.0.1", 443, ports=(53,), policy=TrustPolicy.none, timeout=5.0)
+        monkeypatch.setattr("hsync_client.rdv_client.connect", _connect)
+        client = RendezvousClient(
+            "127.0.0.1", 443, ports=(53,), policy=TrustPolicy.none, timeout=5.0
+        )
         client.leave(build_leave_frame(cid=CID, bucket="shared"))
         assert attempts == [443, 53]
 
@@ -274,8 +276,10 @@ class TestMultiPort:
                 raise OSError("blocked by the egress firewall")
             return _Manager()
 
-        monkeypatch.setattr("hsync_client.boot_client.connect", _connect)
-        client = BootnodeClient("127.0.0.1", 443, ports=(53,), policy=TrustPolicy.none, timeout=5.0)
+        monkeypatch.setattr("hsync_client.rdv_client.connect", _connect)
+        client = RendezvousClient(
+            "127.0.0.1", 443, ports=(53,), policy=TrustPolicy.none, timeout=5.0
+        )
         client.leave(build_leave_frame(cid=CID, bucket="shared"))
         client.leave(build_leave_frame(cid=CID, bucket="shared"))
         # first exchange: 443 blocked then 53; second: 53 first (remembered)
@@ -316,11 +320,11 @@ class TestMultiPort:
             attempts.append(port)
             return _Manager()
 
-        monkeypatch.setattr("hsync_client.boot_client.connect", _connect)
-        client = BootnodeClient(
+        monkeypatch.setattr("hsync_client.rdv_client.connect", _connect)
+        client = RendezvousClient(
             "127.0.0.1", 443, ports=(53,), policy=TrustPolicy.none, timeout=0.05
         )
-        with pytest.raises(BootnodeUnreachable) as exc:
+        with pytest.raises(RendezvousUnreachable) as exc:
             client.query(build_query_frame(bucket="shared"))
         assert attempts == [443]  # handshake succeeded: no fallback re-dial
         assert "timed out waiting for a response" in str(exc.value)
@@ -332,25 +336,25 @@ class TestMultiPort:
         def _connect(_host, port, **_kwargs):
             raise TimeoutError("handshake timed out")
 
-        monkeypatch.setattr("hsync_client.boot_client.connect", _connect)
-        client = BootnodeClient("127.0.0.1", 443, ports=(53,), policy=TrustPolicy.none)
-        with pytest.raises(BootnodeUnreachable) as exc:
+        monkeypatch.setattr("hsync_client.rdv_client.connect", _connect)
+        client = RendezvousClient("127.0.0.1", 443, ports=(53,), policy=TrustPolicy.none)
+        with pytest.raises(RendezvousUnreachable) as exc:
             client.query(build_query_frame(bucket="shared"))
         assert ":53:" in str(exc.value)
 
 
 class TestQuicConfiguration:
     def test_alpn_and_no_verification_mode(self):
-        # The bootnode is self-signed by contract: the handshake never verifies
+        # The rendezvous is self-signed by contract: the handshake never verifies
         # WebPKI, trust comes from the fingerprint policy.
-        config = BootnodeClient(
+        config = RendezvousClient(
             "boot.example.net", 443, policy=TrustPolicy.none
         )._quic_configuration()
-        assert config.alpn_protocols == [BOOT_ALPN]
+        assert config.alpn_protocols == [RDV_ALPN]
         assert config.verify_mode == ssl.CERT_NONE
 
     def test_default_policy_is_ask(self):
-        client = BootnodeClient("boot.example.net", 443)
+        client = RendezvousClient("boot.example.net", 443)
         assert client.policy is TrustPolicy.ask
         assert client._quic_configuration().verify_mode == ssl.CERT_NONE
 
@@ -379,54 +383,54 @@ class _FakePeer:
 class TestPinVerify:
     def test_explicit_pin_match(self):
         cert, fp = _fake_cert()
-        client = BootnodeClient(
+        client = RendezvousClient(
             "boot.example.net", 443, fingerprints=(fp,), policy=TrustPolicy.strict
         )
         client._verify_peer(_FakePeer(cert))  # no raise
 
     def test_explicit_pin_mismatch_raises(self, tmp_path, monkeypatch):
-        from hsync_client.bootnode_trust import BOOTNODE_TRUST_FILE_ENV
+        from hsync_client.rendezvous_trust import RENDEZVOUS_TRUST_FILE_ENV
 
-        monkeypatch.setenv(BOOTNODE_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
+        monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
         cert, _ = _fake_cert()
-        client = BootnodeClient(
+        client = RendezvousClient(
             "boot.example.net", 443, fingerprints=("f" * 64,), policy=TrustPolicy.strict
         )
-        with pytest.raises(BootnodeFingerprintMismatch):
+        with pytest.raises(RendezvousFingerprintMismatch):
             client._verify_peer(_FakePeer(cert))
 
     def test_rotation_accepts_second_pin(self):
         cert, fp = _fake_cert()
-        client = BootnodeClient(
+        client = RendezvousClient(
             "boot.example.net", 443, fingerprints=("0" * 64, fp), policy=TrustPolicy.strict
         )
         client._verify_peer(_FakePeer(cert))  # second pin matches
 
     def test_tofu_first_use_records(self, tmp_path, monkeypatch):
-        from hsync_client.bootnode_trust import BOOTNODE_TRUST_FILE_ENV, BootnodeTrustStore
+        from hsync_client.rendezvous_trust import RENDEZVOUS_TRUST_FILE_ENV, RendezvousTrustStore
 
-        monkeypatch.setenv(BOOTNODE_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
+        monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
         cert, fp = _fake_cert()
-        client = BootnodeClient("boot.example.net", 443, policy=TrustPolicy.accept_new)
+        client = RendezvousClient("boot.example.net", 443, policy=TrustPolicy.accept_new)
         client._verify_peer(_FakePeer(cert))  # first use: trusted
-        assert BootnodeTrustStore(tmp_path / "trust.json").get("boot.example.net", 443) == fp
+        assert RendezvousTrustStore(tmp_path / "trust.json").get("boot.example.net", 443) == fp
 
     def test_tofu_changed_raises(self, tmp_path, monkeypatch):
-        from hsync_client.bootnode_trust import BOOTNODE_TRUST_FILE_ENV, BootnodeTrustStore
+        from hsync_client.rendezvous_trust import RENDEZVOUS_TRUST_FILE_ENV, RendezvousTrustStore
 
-        monkeypatch.setenv(BOOTNODE_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
-        store = BootnodeTrustStore(tmp_path / "trust.json")
+        monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
+        store = RendezvousTrustStore(tmp_path / "trust.json")
         store.set("boot.example.net", 443, "0" * 64, source="cli")
         cert, _ = _fake_cert()
-        client = BootnodeClient("boot.example.net", 443, policy=TrustPolicy.accept_new)
-        with pytest.raises(BootnodeFingerprintMismatch):
+        client = RendezvousClient("boot.example.net", 443, policy=TrustPolicy.accept_new)
+        with pytest.raises(RendezvousFingerprintMismatch):
             client._verify_peer(_FakePeer(cert))
 
     def test_ask_unknown_prompts_and_pins(self, tmp_path, monkeypatch):
         """Policy ``ask`` prompts on an unknown node and records the source."""
-        from hsync_client.bootnode_trust import BOOTNODE_TRUST_FILE_ENV, BootnodeTrustStore
+        from hsync_client.rendezvous_trust import RENDEZVOUS_TRUST_FILE_ENV, RendezvousTrustStore
 
-        monkeypatch.setenv(BOOTNODE_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
+        monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
         cert, fp = _fake_cert()
         prompts: list[tuple[str, int, str]] = []
 
@@ -434,68 +438,68 @@ class TestPinVerify:
             prompts.append((host, port, observed))
             return True
 
-        client = BootnodeClient("boot.example.net", 443, policy=TrustPolicy.ask, prompt=prompt)
+        client = RendezvousClient("boot.example.net", 443, policy=TrustPolicy.ask, prompt=prompt)
         client._verify_peer(_FakePeer(cert))  # accepted
         assert prompts == [("boot.example.net", 443, fp)]
-        entry = BootnodeTrustStore(tmp_path / "trust.json").entries()[0]
+        entry = RendezvousTrustStore(tmp_path / "trust.json").entries()[0]
         assert entry["fingerprint"] == fp
         assert entry["source"] == "prompt"
 
     def test_ask_unknown_without_a_terminal_fails_closed(self, tmp_path, monkeypatch):
         """Non-interactive ``ask`` never auto-accepts (SSH ``BatchMode``)."""
-        from hsync_client.bootnode_trust import BOOTNODE_TRUST_FILE_ENV
+        from hsync_client.rendezvous_trust import RENDEZVOUS_TRUST_FILE_ENV
 
-        monkeypatch.setenv(BOOTNODE_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
+        monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
         cert, _ = _fake_cert()
-        client = BootnodeClient("boot.example.net", 443, policy=TrustPolicy.ask)
-        with pytest.raises(BootnodeNotTrusted) as excinfo:
+        client = RendezvousClient("boot.example.net", 443, policy=TrustPolicy.ask)
+        with pytest.raises(RendezvousNotTrusted) as excinfo:
             client._verify_peer(_FakePeer(cert))
         assert excinfo.value.non_interactive is True
 
     def test_ask_declined_prompt_refuses(self, tmp_path, monkeypatch):
         """A declined prompt is fatal and does not pin the fingerprint."""
-        from hsync_client.bootnode_trust import BOOTNODE_TRUST_FILE_ENV, BootnodeTrustStore
+        from hsync_client.rendezvous_trust import RENDEZVOUS_TRUST_FILE_ENV, RendezvousTrustStore
 
-        monkeypatch.setenv(BOOTNODE_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
+        monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
         cert, _ = _fake_cert()
-        client = BootnodeClient(
+        client = RendezvousClient(
             "boot.example.net", 443, policy=TrustPolicy.ask, prompt=lambda *_a: False
         )
-        with pytest.raises(BootnodeNotTrusted) as excinfo:
+        with pytest.raises(RendezvousNotTrusted) as excinfo:
             client._verify_peer(_FakePeer(cert))
         assert excinfo.value.non_interactive is False
-        assert BootnodeTrustStore(tmp_path / "trust.json").entries() == []
+        assert RendezvousTrustStore(tmp_path / "trust.json").entries() == []
 
     def test_ask_matched_stored_proceeds_without_prompting(self, tmp_path, monkeypatch):
-        from hsync_client.bootnode_trust import BOOTNODE_TRUST_FILE_ENV, BootnodeTrustStore
+        from hsync_client.rendezvous_trust import RENDEZVOUS_TRUST_FILE_ENV, RendezvousTrustStore
 
-        monkeypatch.setenv(BOOTNODE_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
+        monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
         cert, fp = _fake_cert()
-        BootnodeTrustStore(tmp_path / "trust.json").set("boot.example.net", 443, fp, source="cli")
+        RendezvousTrustStore(tmp_path / "trust.json").set("boot.example.net", 443, fp, source="cli")
 
         def _never(*_a):
             raise AssertionError("must not prompt when the pin matches")
 
-        client = BootnodeClient("boot.example.net", 443, policy=TrustPolicy.ask, prompt=_never)
+        client = RendezvousClient("boot.example.net", 443, policy=TrustPolicy.ask, prompt=_never)
         client._verify_peer(_FakePeer(cert))  # no raise
 
     def test_missing_peer_certificate_fails_closed(self):
-        client = BootnodeClient(
+        client = RendezvousClient(
             "boot.example.net", 443, fingerprints=("a" * 64,), policy=TrustPolicy.strict
         )
         peer = type(
             "_NoCert", (), {"_quic": type("_Quic", (), {"tls": type("_Tls", (), {})()})()}
         )()
-        with pytest.raises(BootnodeFingerprintMismatch):
+        with pytest.raises(RendezvousFingerprintMismatch):
             client._verify_peer(peer)
 
     def test_verify_runs_before_create_stream(self, monkeypatch, tmp_path):
         """A fingerprint mismatch must close before any frame is written."""
-        from hsync_client.bootnode_trust import BOOTNODE_TRUST_FILE_ENV
+        from hsync_client.rendezvous_trust import RENDEZVOUS_TRUST_FILE_ENV
 
-        monkeypatch.setenv(BOOTNODE_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
+        monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
         cert, fp = _fake_cert()
-        client = BootnodeClient(
+        client = RendezvousClient(
             "boot.example.net", 443, fingerprints=("f" * 64,), policy=TrustPolicy.strict
         )
         calls: dict[str, bool] = {}
@@ -514,8 +518,8 @@ class TestPinVerify:
                 calls["create_stream"] = True
                 raise AssertionError("create_stream must not be reached")
 
-        monkeypatch.setattr("hsync_client.boot_client.connect", lambda *_a, **_k: _Manager())
-        with pytest.raises(BootnodeFingerprintMismatch):
+        monkeypatch.setattr("hsync_client.rdv_client.connect", lambda *_a, **_k: _Manager())
+        with pytest.raises(RendezvousFingerprintMismatch):
             client.register(
                 build_register_frame(
                     cid=CID,
@@ -536,75 +540,75 @@ class TestTrustFailureGuidance:
     """
 
     def test_changed_pin_names_store_and_recovery_commands(self, tmp_path, monkeypatch):
-        from hsync_client.bootnode_trust import BOOTNODE_TRUST_FILE_ENV, BootnodeTrustStore
+        from hsync_client.rendezvous_trust import RENDEZVOUS_TRUST_FILE_ENV, RendezvousTrustStore
 
         trust_file = tmp_path / "trust.json"
-        monkeypatch.setenv(BOOTNODE_TRUST_FILE_ENV, str(trust_file))
-        BootnodeTrustStore(trust_file).set("boot.example.net", 443, "f" * 64, source="cli")
+        monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(trust_file))
+        RendezvousTrustStore(trust_file).set("boot.example.net", 443, "f" * 64, source="cli")
         cert, fp = _fake_cert()
-        client = BootnodeClient("boot.example.net", 443, policy=TrustPolicy.accept_new)
-        with pytest.raises(BootnodeFingerprintMismatch) as excinfo:
+        client = RendezvousClient("boot.example.net", 443, policy=TrustPolicy.accept_new)
+        with pytest.raises(RendezvousFingerprintMismatch) as excinfo:
             client._verify_peer(_FakePeer(cert))
         message = str(excinfo.value)
         guidance = excinfo.value.guidance
         assert "does not match the pinned fingerprint (possible man-in-the-middle)" in message
         assert guidance is not None
         assert guidance.startswith(
-            "Discovery server 'boot.example.net:443' trust failed: the certificate fingerprint "
+            "Rendezvous server 'boot.example.net:443' trust failed: the certificate fingerprint "
             "does not match the accepted pin (possible man-in-the-middle)."
         )
         assert f"sha256:{fp}" in guidance
         assert str(trust_file) in guidance
-        assert f"hsync trust discovery-server add boot.example.net:443 sha256:{fp}" in guidance
-        assert "hsync trust discovery-server remove boot.example.net:443" in guidance
+        assert f"hsync trust rendezvous-server add boot.example.net:443 sha256:{fp}" in guidance
+        assert "hsync trust rendezvous-server remove boot.example.net:443" in guidance
         assert "ssh-keygen -R" in guidance
 
     def test_strict_unknown_node_offers_pinning_and_tofu(self, tmp_path, monkeypatch):
-        from hsync_client.bootnode_trust import BOOTNODE_TRUST_FILE_ENV
+        from hsync_client.rendezvous_trust import RENDEZVOUS_TRUST_FILE_ENV
 
-        monkeypatch.setenv(BOOTNODE_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
+        monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
         cert, fp = _fake_cert()
-        client = BootnodeClient("boot.example.net", 443, policy=TrustPolicy.strict)
-        with pytest.raises(BootnodeFingerprintMismatch) as excinfo:
+        client = RendezvousClient("boot.example.net", 443, policy=TrustPolicy.strict)
+        with pytest.raises(RendezvousFingerprintMismatch) as excinfo:
             client._verify_peer(_FakePeer(cert))
         assert "is not pinned and the trust policy is 'strict'" in str(excinfo.value)
         guidance = excinfo.value.guidance or ""
-        assert f"hsync trust discovery-server add boot.example.net:443 sha256:{fp}" in guidance
-        assert "--discovery-server-tofu" in guidance
+        assert f"hsync trust rendezvous-server add boot.example.net:443 sha256:{fp}" in guidance
+        assert "--rendezvous-server-tofu" in guidance
 
     def test_explicit_pin_mismatch_points_at_the_flag(self, tmp_path, monkeypatch):
-        from hsync_client.bootnode_trust import BOOTNODE_TRUST_FILE_ENV
+        from hsync_client.rendezvous_trust import RENDEZVOUS_TRUST_FILE_ENV
 
-        monkeypatch.setenv(BOOTNODE_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
+        monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
         cert, _ = _fake_cert()
-        client = BootnodeClient(
+        client = RendezvousClient(
             "boot.example.net", 443, fingerprints=("0" * 64,), policy=TrustPolicy.strict
         )
-        with pytest.raises(BootnodeFingerprintMismatch) as excinfo:
+        with pytest.raises(RendezvousFingerprintMismatch) as excinfo:
             client._verify_peer(_FakePeer(cert))
-        assert "--discovery-server-fingerprint" in str(excinfo.value)
+        assert "--rendezvous-server-fingerprint" in str(excinfo.value)
         guidance = excinfo.value.guidance or ""
-        assert "hsync trust discovery-server fingerprint boot.example.net:443" in guidance
-        assert "--discovery-server-fingerprint" in guidance
+        assert "hsync trust rendezvous-server fingerprint boot.example.net:443" in guidance
+        assert "--rendezvous-server-fingerprint" in guidance
 
     def test_prompt_accept_reports_where_the_pin_was_saved(self, tmp_path, monkeypatch):
         from loguru import logger as log
 
-        from hsync_client.bootnode_trust import BOOTNODE_TRUST_FILE_ENV, BootnodeTrustStore
+        from hsync_client.rendezvous_trust import RENDEZVOUS_TRUST_FILE_ENV, RendezvousTrustStore
 
         trust_file = tmp_path / "trust.json"
-        monkeypatch.setenv(BOOTNODE_TRUST_FILE_ENV, str(trust_file))
+        monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(trust_file))
         cert, fp = _fake_cert()
         messages: list[str] = []
         sink_id = log.add(messages.append, level="INFO", format="{message}")
         try:
-            client = BootnodeClient(
+            client = RendezvousClient(
                 "boot.example.net", 443, policy=TrustPolicy.ask, prompt=lambda *_a: True
             )
             client._verify_peer(_FakePeer(cert))
         finally:
             log.remove(sink_id)
-        assert BootnodeTrustStore(trust_file).get("boot.example.net", 443) == fp
+        assert RendezvousTrustStore(trust_file).get("boot.example.net", 443) == fp
         assert any(
             "Permanently added 'boot.example.net:443' (SHA256) to the list of known "
             f"hosts ({trust_file})." in message
@@ -614,15 +618,15 @@ class TestTrustFailureGuidance:
     def test_tofu_reports_where_the_pin_was_saved(self, tmp_path, monkeypatch):
         from loguru import logger as log
 
-        from hsync_client.bootnode_trust import BOOTNODE_TRUST_FILE_ENV
+        from hsync_client.rendezvous_trust import RENDEZVOUS_TRUST_FILE_ENV
 
         trust_file = tmp_path / "trust.json"
-        monkeypatch.setenv(BOOTNODE_TRUST_FILE_ENV, str(trust_file))
+        monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(trust_file))
         cert, _ = _fake_cert()
         messages: list[str] = []
         sink_id = log.add(messages.append, level="INFO", format="{message}")
         try:
-            client = BootnodeClient("boot.example.net", 443, policy=TrustPolicy.accept_new)
+            client = RendezvousClient("boot.example.net", 443, policy=TrustPolicy.accept_new)
             client._verify_peer(_FakePeer(cert))
         finally:
             log.remove(sink_id)
@@ -633,34 +637,34 @@ class TestTrustFailureGuidance:
         )
 
     def test_declined_prompt_says_nothing_was_saved(self, tmp_path, monkeypatch):
-        from hsync_client.bootnode_trust import BOOTNODE_TRUST_FILE_ENV
+        from hsync_client.rendezvous_trust import RENDEZVOUS_TRUST_FILE_ENV
 
-        monkeypatch.setenv(BOOTNODE_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
+        monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
         cert, _ = _fake_cert()
-        client = BootnodeClient(
+        client = RendezvousClient(
             "boot.example.net", 443, policy=TrustPolicy.ask, prompt=lambda *_a: False
         )
-        with pytest.raises(BootnodeNotTrusted) as excinfo:
+        with pytest.raises(RendezvousNotTrusted) as excinfo:
             client._verify_peer(_FakePeer(cert))
         message = str(excinfo.value)
         assert "nothing was saved" in message
-        assert "--discovery-server-tofu" in message
-        assert "--discovery-server-fingerprint" in message
+        assert "--rendezvous-server-tofu" in message
+        assert "--rendezvous-server-fingerprint" in message
 
 
 class TestRefusals:
-    """A uniform refusal is a valid boot/1 answer, not a contract violation.
+    """A uniform refusal is a valid rdv/1 answer, not a contract violation.
 
     The node replies to a rate-limited (or token-refused) ``register``/
     ``refresh`` with the same ``response`` frame it uses for ``query`` refusals;
-    the client must surface it as :class:`BootnodeRefused` so the lease loop can
+    the client must surface it as :class:`RendezvousRefused` so the lease loop can
     keep its state instead of resetting to a full register.
     """
 
     @staticmethod
     def _refusal_frame(error: str, retry_after: int | None = None) -> dict:
         frame = {
-            "protocol_version": "boot/1",
+            "protocol_version": "rdv/1",
             "type": "response",
             "peers": [],
             "count": 0,
@@ -671,18 +675,18 @@ class TestRefusals:
             frame["retry_after"] = retry_after
         return frame
 
-    def _client_returning(self, monkeypatch, reply: dict) -> BootnodeClient:
+    def _client_returning(self, monkeypatch, reply: dict) -> RendezvousClient:
         async def fake_exchange(self, payload, *, expect):
             return reply
 
-        # ``BootnodeClient`` is a frozen dataclass: patch the class, not the
+        # ``RendezvousClient`` is a frozen dataclass: patch the class, not the
         # instance (the network layer is what is being stubbed out).
-        monkeypatch.setattr(BootnodeClient, "_exchange_async", fake_exchange)
-        return BootnodeClient("127.0.0.1", 1)
+        monkeypatch.setattr(RendezvousClient, "_exchange_async", fake_exchange)
+        return RendezvousClient("127.0.0.1", 1)
 
     def test_register_rate_limit_is_a_refusal(self, monkeypatch):
         client = self._client_returning(monkeypatch, self._refusal_frame("rate_limited", 42))
-        with pytest.raises(BootnodeRefused) as excinfo:
+        with pytest.raises(RendezvousRefused) as excinfo:
             client.register(
                 build_register_frame(
                     cid=CID,
@@ -696,7 +700,7 @@ class TestRefusals:
 
     def test_refresh_token_refusal_is_a_refusal(self, monkeypatch):
         client = self._client_returning(monkeypatch, self._refusal_frame("token_required"))
-        with pytest.raises(BootnodeRefused) as excinfo:
+        with pytest.raises(RendezvousRefused) as excinfo:
             client.refresh(build_refresh_frame(cid=CID, bucket="shared"))
         assert excinfo.value.error == "token_required"
         assert excinfo.value.retry_after is None
@@ -704,7 +708,7 @@ class TestRefusals:
     def test_register_capacity_refusal_is_a_refusal(self, monkeypatch):
         """``overloaded`` (node capacity) is a refusal, not a contract error."""
         client = self._client_returning(monkeypatch, self._refusal_frame("overloaded", 60))
-        with pytest.raises(BootnodeRefused) as excinfo:
+        with pytest.raises(RendezvousRefused) as excinfo:
             client.register(
                 build_register_frame(
                     cid=CID,
@@ -717,16 +721,16 @@ class TestRefusals:
         assert excinfo.value.retry_after == 60
 
     def test_response_without_an_error_is_still_a_protocol_error(self, monkeypatch):
-        """A ``response`` to ``register`` without ``error`` violates boot/1."""
+        """A ``response`` to ``register`` without ``error`` violates rdv/1."""
         malformed = {
-            "protocol_version": "boot/1",
+            "protocol_version": "rdv/1",
             "type": "response",
             "peers": [],
             "count": 0,
             "ttl": 60,
         }
         client = self._client_returning(monkeypatch, malformed)
-        with pytest.raises(BootnodeProtocolError):
+        with pytest.raises(RendezvousProtocolError):
             client.register(
                 build_register_frame(
                     cid=CID,
@@ -738,16 +742,16 @@ class TestRefusals:
 
     def test_another_frame_type_is_still_a_protocol_error(self, monkeypatch):
         client = self._client_returning(monkeypatch, {"type": "leave"})
-        with pytest.raises(BootnodeProtocolError):
+        with pytest.raises(RendezvousProtocolError):
             client.refresh(build_refresh_frame(cid=CID, bucket="shared"))
 
 
 class TestStunEcho:
     def test_observed_address(self):
-        ack = validate_boot_ack(ACK)
+        ack = validate_rdv_ack(ACK)
         assert ack is not None
         assert observed_address(ack) == ObservedAddress(host="198.51.100.7", port=54321)
 
     def test_malformed_ack_is_rejected_by_the_mirror(self):
         bad = {**ACK, "observed_endpoint": {"proto": "udp", "ip": "198.51.100.7"}}
-        assert validate_boot_ack(bad) is None
+        assert validate_rdv_ack(bad) is None

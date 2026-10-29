@@ -1,28 +1,28 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""Minimal discovery-plan interface for ``hsync p2p``.
+"""Minimal rendezvous-plan interface for ``hsync p2p``.
 
 ``hsync p2p`` discovers peers over two orthogonal sources:
 
-* the **mDNS plan** (``p2p_discovery_mdns.MdnsDiscovery``) — Zeroconf browse +
+* the **mDNS plan** (``p2p_rendezvous_mdns.MdnsRendezvous``) — Zeroconf browse +
   advertise on the local network, always active;
-* the **bootnode plan** (``p2p_discovery_bootnode.BootnodeDiscovery``) —
-  registration/query against a ``boot/1`` bootstrap node for cross-network
-  discovery, added when a bootnode is configured.
+* the **rendezvous plan** (``p2p_rendezvous_rendezvous.RendezvousRendezvous``) —
+  registration/query against a ``rdv/1`` rendezvous node for cross-network
+  rendezvous, added when a rendezvous is configured.
 
-With no bootnode the mDNS plan runs alone. With a bootnode configured both run
-together (``p2p_discovery_hybrid.HybridDiscovery``) over **one shared**
+With no rendezvous the mDNS plan runs alone. With a rendezvous configured both run
+together (``p2p_rendezvous_hybrid.HybridRendezvous``) over **one shared**
 :class:`~hsync_client.p2p_peers.PeerManager`, so a node is reachable both on the
 local network and across networks and the two sources never double-count peers
 or split the election.
 
-Every source feeds the same discovery-agnostic peer state in ``p2p_peers`` and
+Every source feeds the same rendezvous-agnostic peer state in ``p2p_peers`` and
 exposes the same surface to the sync core (``p2p_handler.run_p2p_mode``). The
 core receives a plan instance already built — it never branches on which plan is
 active, so the implementations are interchangeable by construction.
 
-Consumers: ``hsync-client`` (p2p handler, the two discovery plans, tests).
+Consumers: ``hsync-client`` (p2p handler, the two rendezvous plans, tests).
 """
 
 from __future__ import annotations
@@ -36,10 +36,10 @@ from hsync_common.protocol.tls_trust import TrustPolicy
 from loguru import logger as log
 
 from hsync_client.constants import (
-    BOOTNODE_DEFAULT_PORT,
-    BOOTNODE_REFRESH_INTERVAL,
     HEARTBEAT_INTERVAL,
     PEER_TIMEOUT,
+    RENDEZVOUS_DEFAULT_PORT,
+    RENDEZVOUS_REFRESH_INTERVAL,
 )
 from hsync_client.net_utils import get_local_ip
 from hsync_client.p2p_peers import PeerManager
@@ -50,16 +50,16 @@ if TYPE_CHECKING:
 
 
 __all__ = [
-    "BootnodeSource",
-    "DiscoveryPlan",
-    "DiscoveryPlanState",
-    "build_discovery_plan",
+    "RendezvousSource",
+    "RendezvousPlan",
+    "RendezvousPlanState",
+    "build_rendezvous_plan",
 ]
 
 
 @runtime_checkable
-class DiscoveryPlan(Protocol):
-    """Discovery-agnostic surface consumed by the p2p sync core."""
+class RendezvousPlan(Protocol):
+    """Rendezvous-agnostic surface consumed by the p2p sync core."""
 
     @property
     def port(self) -> int:
@@ -72,20 +72,20 @@ class DiscoveryPlan(Protocol):
         ...
 
     def start(self, register_service: bool = True) -> PeerManager:
-        """Start discovery and return the shared :class:`PeerManager`."""
+        """Start rendezvous and return the shared :class:`PeerManager`."""
         ...
 
     def stop(self) -> None:
-        """Stop discovery and release all resources."""
+        """Stop rendezvous and release all resources."""
         ...
 
-    def wait_for_discovery(self, timeout: float) -> None:
-        """Block until the discovery plan turns up peers (or ``timeout``).
+    def wait_for_rendezvous(self, timeout: float) -> None:
+        """Block until the rendezvous plan turns up peers (or ``timeout``).
 
         Never raises for a failing source: a source that cannot deliver peers
-        (an unreachable or untrusted bootnode) is disabled while the remaining
+        (an unreachable or untrusted rendezvous) is disabled while the remaining
         sources keep feeding the shared peer state, so the wait always ends on
-        its own timeout or a discovery change.
+        its own timeout or a rendezvous change.
         """
         ...
 
@@ -97,7 +97,7 @@ class DiscoveryPlan(Protocol):
         """True once the plan has advertised this node's data-plane endpoint.
 
         The mDNS plan has no separate publication step (readiness is unchanged)
-        and returns ``True``; the bootnode plan returns ``True`` only after the
+        and returns ``True``; the rendezvous plan returns ``True`` only after the
         second ``register`` that publishes ``endpoints[]``.
         """
         ...
@@ -120,7 +120,7 @@ class DiscoveryPlan(Protocol):
         ...
 
     def refresh_election_advertisement(self) -> None:
-        """Re-announce the election flags on every discovery source."""
+        """Re-announce the election flags on every rendezvous source."""
         ...
 
     def set_connected_clients(self, count: int) -> None:
@@ -134,9 +134,9 @@ class DiscoveryPlan(Protocol):
     def relay_dialer(self, target_cid: str) -> Any:
         """A data-relay tunnel factory towards *target_cid*, or ``None``.
 
-        Discovery plans that cannot relay (mDNS) return ``None``; a discovery
+        Rendezvous plans that cannot relay (mDNS) return ``None``; a rendezvous
         source returns a ready-to-open
-        :class:`hsync_client.boot_relay.RelayDialer`. The caller owns the
+        :class:`hsync_client.rdv_relay.RelayDialer`. The caller owns the
         returned object and must close it.
         """
         ...
@@ -144,19 +144,19 @@ class DiscoveryPlan(Protocol):
     def relay_acceptor(self, local_port: int) -> Any:
         """A data-relay listener for this node, or ``None`` when unsupported.
 
-        Only a discovery source can ask the node to relay inbound sessions; the
+        Only a rendezvous source can ask the node to relay inbound sessions; the
         caller starts and stops the returned acceptor with the serving role.
         """
         ...
 
 
 @runtime_checkable
-class BootnodeSource(Protocol):
-    """The ``boot/1`` surface a combined plan drives, for one node or several.
+class RendezvousSource(Protocol):
+    """The ``rdv/1`` surface a combined plan drives, for one node or several.
 
-    One implementation is a single :class:`~hsync_client.p2p_discovery_bootnode.BootnodeDiscovery`;
-    :class:`~hsync_client.p2p_discovery_bootnode.MultiBootnodeDiscovery` is the
-    fan-out over N of them. ``HybridDiscovery`` depends only on this surface, so
+    One implementation is a single :class:`~hsync_client.p2p_rendezvous_rendezvous.RendezvousRendezvous`;
+    :class:`~hsync_client.p2p_rendezvous_rendezvous.MultiRendezvousRendezvous` is the
+    fan-out over N of them. ``HybridRendezvous`` depends only on this surface, so
     mDNS plus one node and mDNS plus N nodes are the same composition.
     """
 
@@ -171,7 +171,7 @@ class BootnodeSource(Protocol):
         ...
 
     def log_peer_count(self) -> None:
-        """Log the alive-peer count once per discovery window."""
+        """Log the alive-peer count once per rendezvous window."""
         ...
 
     def update_endpoint_ready(self, ready: bool) -> None:
@@ -219,17 +219,17 @@ class BootnodeSource(Protocol):
         ...
 
 
-class DiscoveryPlanState:
-    """Shared trivial state for the concrete discovery plans.
+class RendezvousPlanState:
+    """Shared trivial state for the concrete rendezvous plans.
 
-    ``MdnsDiscovery`` and ``BootnodeDiscovery`` expose the same
-    :class:`DiscoveryPlan` surface and keep the same trivial state: the serving
+    ``MdnsRendezvous`` and ``RendezvousRendezvous`` expose the same
+    :class:`RendezvousPlan` surface and keep the same trivial state: the serving
     port, the shared :class:`PeerManager` and the connected-client provider.
     Holding that here keeps the two plans aligned on the interface without
     merging their transport-specific logic (each keeps its own
     ``start``/``stop``/refresh behavior).
 
-    Consumers: the two discovery plans only.
+    Consumers: the two rendezvous plans only.
     """
 
     _port: int
@@ -267,7 +267,7 @@ class DiscoveryPlanState:
         sync_direction: str,
         peer_timeout: float,
     ) -> None:
-        """Set the election-advertisement fields shared by every discovery plan.
+        """Set the election-advertisement fields shared by every rendezvous plan.
 
         Single definition of the values both plans carry identically (also the
         ones :meth:`create_peer_manager` reads), so they cannot drift.
@@ -344,53 +344,55 @@ class DiscoveryPlanState:
         self.refresh_election_advertisement()
 
     def refresh_election_advertisement(self) -> None:
-        """Re-announce the election flags on every discovery source."""
+        """Re-announce the election flags on every rendezvous source."""
         raise NotImplementedError
 
 
-def build_discovery_plan(
+def build_rendezvous_plan(
     config: HsyncConfig,
     *,
     cert_fingerprint: str | None,
     port: int | None = None,
-) -> DiscoveryPlan:
-    """Select the discovery plan from ``CONFIG`` — the single decision point.
+) -> RendezvousPlan:
+    """Select the rendezvous plan from ``CONFIG`` — the single decision point.
 
-    No bootnode configured → the mDNS plan (historical behavior); a bootnode
-    endpoint set (`--discovery-server` or ``HSYNC_DISCOVERY_SERVER_ENDPOINTS``)
-    → the discovery plan. The
+    No rendezvous configured → the mDNS plan (historical behavior); a rendezvous
+    endpoint set (`--rendezvous-server` or ``HSYNC_RENDEZVOUS_SERVER_ENDPOINTS``)
+    → the rendezvous plan. The
     sync core (``p2p_handler.run_p2p_mode``) never branches on the plan: it
-    receives the adapter here and only uses the :class:`DiscoveryPlan` surface.
+    receives the adapter here and only uses the :class:`RendezvousPlan` surface.
 
     ``port`` overrides ``CONFIG["P2P_LISTEN_PORT"]`` with the already-bound
-    serving port, so discovery advertises the real port instead of probing for
+    serving port, so rendezvous advertises the real port instead of probing for
     one (no probe/release race).
     """
-    from hsync_client.p2p_discovery_bootnode import (
-        BootnodeDiscovery,
-        MultiBootnodeDiscovery,
+    from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
+    from hsync_client.p2p_rendezvous_rendezvous import (
+        MultiRendezvousRendezvous,
+        RendezvousRendezvous,
         SharedUpnpMapping,
     )
-    from hsync_client.p2p_discovery_mdns import MdnsDiscovery
 
     resolved_port = config["P2P_LISTEN_PORT"] if port is None else port
-    endpoints = tuple(config.get("DISCOVERY_SERVER_ENDPOINTS") or ())
-    discovery_refresh = config.get("DISCOVERY_SERVER_REFRESH_INTERVAL") or BOOTNODE_REFRESH_INTERVAL
+    endpoints = tuple(config.get("RENDEZVOUS_SERVER_ENDPOINTS") or ())
+    rendezvous_refresh = (
+        config.get("RENDEZVOUS_SERVER_REFRESH_INTERVAL") or RENDEZVOUS_REFRESH_INTERVAL
+    )
     peer_timeout: float = float(config.get("PEER_TIMEOUT") or PEER_TIMEOUT)
-    # A discovery-server peer is only re-seen when its CID is drawn in the
+    # A rendezvous-server peer is only re-seen when its CID is drawn in the
     # node's random sample, and samples arrive at the lease cadence
-    # (``DISCOVERY_SERVER_REFRESH_INTERVAL``, spec ``boot-1.md``: 30 s). The
+    # (``RENDEZVOUS_SERVER_REFRESH_INTERVAL``, spec ``rdv-1.md``: 30 s). The
     # shared PeerManager holds ONE liveness window for every source, so with a
-    # discovery server that window must span at least two query cycles —
+    # rendezvous server that window must span at least two query cycles —
     # mirroring the mDNS rule ``PEER_TIMEOUT >= 2 * HEARTBEAT_INTERVAL`` — or a
     # live cross-network peer is declared stale between two samples and the
     # election churns. An explicit larger ``HSYNC_PEER_TIMEOUT`` is preserved.
     if endpoints:
-        required_timeout = 2.0 * float(discovery_refresh)
+        required_timeout = 2.0 * float(rendezvous_refresh)
         if peer_timeout < required_timeout:
             log.warning(
                 f"Raising the peer liveness timeout to {required_timeout:.0f}s: "
-                f"discovery-server sampling runs every {discovery_refresh}s"
+                f"rendezvous-server sampling runs every {rendezvous_refresh}s"
             )
             peer_timeout = required_timeout
     shared: dict[str, object] = {
@@ -407,29 +409,29 @@ def build_discovery_plan(
         "heartbeat_interval": config.get("HEARTBEAT_INTERVAL") or HEARTBEAT_INTERVAL,
     }
     if not endpoints:
-        return MdnsDiscovery(**shared)  # type: ignore[arg-type]
-    # Every discovery source follows the boot/1 lease cadence (spec: refresh
+        return MdnsRendezvous(**shared)  # type: ignore[arg-type]
+    # Every rendezvous source follows the rdv/1 lease cadence (spec: refresh
     # every 30 s), sized against the node's query/register rate limits; it must
     # not reuse the mDNS heartbeat, which is far faster.
-    bootnode_shared = {key: value for key, value in shared.items() if key != "heartbeat_interval"}
-    pins = dict(config.get("DISCOVERY_SERVER_PINS") or {})
+    rendezvous_shared = {key: value for key, value in shared.items() if key != "heartbeat_interval"}
+    pins = dict(config.get("RENDEZVOUS_SERVER_PINS") or {})
     map_data_port = bool(config.get("MAP_DATA_PORT", False))
     # One UPnP mapping for the whole process: N sources publish the same
     # data-plane port, so a mapper per source would create N mappings. With a
     # single source the child owns the mapping it creates.
     shared_upnp = SharedUpnpMapping() if map_data_port and len(endpoints) > 1 else None
     sources = [
-        BootnodeDiscovery(
-            **bootnode_shared,  # type: ignore[arg-type]
-            refresh_interval=discovery_refresh,
-            bootnode_host=endpoint.host,
-            bootnode_port=endpoint.port or BOOTNODE_DEFAULT_PORT,
-            bootnode_ports=tuple(config.get("DISCOVERY_SERVER_EXTRA_PORTS") or ()),
+        RendezvousRendezvous(
+            **rendezvous_shared,  # type: ignore[arg-type]
+            refresh_interval=rendezvous_refresh,
+            rendezvous_host=endpoint.host,
+            rendezvous_port=endpoint.port or RENDEZVOUS_DEFAULT_PORT,
+            rendezvous_ports=tuple(config.get("RENDEZVOUS_SERVER_EXTRA_PORTS") or ()),
             p2p_key=config.get("P2P_KEY"),
             # Pins are per endpoint: each child only ever sees its own server's
             # digests, so two independent identities never share a pin.
             fingerprints=pins.get(endpoint_pin_key(endpoint.host, endpoint.port), ()),
-            policy=config.get("DISCOVERY_SERVER_TRUST", TrustPolicy.ask),
+            policy=config.get("RENDEZVOUS_SERVER_TRUST", TrustPolicy.ask),
             prompt=build_trust_prompt(config),
             upnp_enabled=map_data_port,
             shared_upnp=shared_upnp,
@@ -438,14 +440,14 @@ def build_discovery_plan(
         )
         for endpoint in endpoints
     ]
-    bootnode_plan = (
+    rendezvous_plan = (
         sources[0]
         if len(sources) == 1
-        else MultiBootnodeDiscovery(sources, shared_upnp=shared_upnp)
+        else MultiRendezvousRendezvous(sources, shared_upnp=shared_upnp)
     )
-    # mDNS stays active alongside the discovery servers: a node next to us on the
+    # mDNS stays active alongside the rendezvous servers: a node next to us on the
     # local network is found without a round trip through a server, and the
     # sources share one PeerManager so the election stays single.
-    from hsync_client.p2p_discovery_hybrid import HybridDiscovery
+    from hsync_client.p2p_rendezvous_hybrid import HybridRendezvous
 
-    return HybridDiscovery(mdns=MdnsDiscovery(**shared), bootnode=bootnode_plan)  # type: ignore[arg-type]
+    return HybridRendezvous(mdns=MdnsRendezvous(**shared), rendezvous=rendezvous_plan)  # type: ignore[arg-type]

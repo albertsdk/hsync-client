@@ -1,16 +1,16 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""Small network helpers shared by the discovery plans.
+"""Small network helpers shared by the rendezvous plans.
 
 Extracted because the local-source-IP probe is needed in several places (the
-mDNS advertiser, the bootnode endpoint candidates and the p2p handler);
+mDNS advertiser, the rendezvous endpoint candidates and the p2p handler);
 keeping one implementation avoids subtly different answers. ``same_subnet`` is
 the shared LAN-adjacency test used by the peer-source ranking and by the
 dial-time candidate ordering (a same-subnet candidate is preferred over a NATed
 public one).
 
-Consumers: ``hsync-client`` (p2p_discovery_mdns, p2p_discovery_bootnode,
+Consumers: ``hsync-client`` (p2p_rendezvous_mdns, p2p_rendezvous_rendezvous,
 p2p_handler, p2p_sources, p2p_peers).
 """
 

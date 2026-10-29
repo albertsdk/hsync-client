@@ -162,11 +162,11 @@ class TestP2PMasterRestart:
                 # When the master is killed
                 _terminate(master1)
 
-                # Then the slave detects the disconnection and re-enters discovery
+                # Then the slave detects the disconnection and re-enters rendezvous
                 assert _wait_for_text_in_stderr(
-                    slave, "discovery", timeout=30
+                    slave, "rendezvous", timeout=30
                 ) or _wait_for_text_in_stderr(slave, "Waiting for peers", timeout=5), (
-                    "Slave did not re-enter discovery after master crash"
+                    "Slave did not re-enter rendezvous after master crash"
                 )
 
                 # When the master is restarted on the same directory
@@ -229,7 +229,7 @@ class TestP2PSlaveRestart:
                 slave2 = _p2p_start(p2p_slave_dir, p2p_bucket, never_master=True)
                 try:
                     # Then the restarted slave reconnects and resumes syncing:
-                    # a new file on the master is pulled after rediscovery
+                    # a new file on the master is pulled after rerendezvous
                     content = b"post-restart\n"
                     (Path(p2p_master_dir) / "post_restart.txt").write_bytes(content)
                     assert _wait_for_file(

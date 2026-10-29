@@ -1,20 +1,20 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""Client for the ``boot/1`` bootstrap protocol (QUIC via aioquic).
+"""Client for the ``rdv/1`` rendezvous protocol (QUIC via aioquic).
 
-Wire contract (SSOT: ``hsync-bootnode/protocol-spec/boot-1.md``, mirrored and
-validated in ``hsync_common.protocol.bootnode``): one QUIC/TLS 1.3 connection
-with ALPN ``hsync-boot/1``; every bidirectional stream is one session; frames
+Wire contract (SSOT: ``hsync-rendezvous/protocol-spec/rdv-1.md``, mirrored and
+validated in ``hsync_common.protocol.rendezvous``): one QUIC/TLS 1.3 connection
+with ALPN ``hsync-rdv/1``; every bidirectional stream is one session; frames
 are newline-terminated JSON (NDJSON). A request writes one frame and reads the
 single response line (or ``None`` when the node silently drops it).
 
 This module exposes a synchronous API (the client is thread-based) around a
-private asyncio loop, and keeps the framing/validation here so the discovery
-plan (``p2p_discovery_bootnode``) only deals with peer state. It never treats a
+private asyncio loop, and keeps the framing/validation here so the rendezvous
+plan (``p2p_rendezvous_rendezvous``) only deals with peer state. It never treats a
 response as authoritative beyond the wire contract.
 
-Consumers: ``hsync-client`` (p2p_discovery_bootnode), tests.
+Consumers: ``hsync-client`` (p2p_rendezvous_rendezvous), tests.
 """
 
 from __future__ import annotations
@@ -29,24 +29,24 @@ from typing import Any, TypeVar
 from aioquic.asyncio.client import connect
 from aioquic.quic.configuration import QuicConfiguration
 from hsync_common.endpoint import format_authority
-from hsync_common.protocol.bootnode import (
-    BOOT_ALPN,
-    PROTOCOL_VERSION_BOOT,
-    BootAck,
-    BootLeave,
-    BootQuery,
-    BootRefresh,
-    BootRegister,
-    BootRelayAttach,
-    BootRelayConnect,
-    BootRelayListen,
-    BootRelayPing,
-    BootResponse,
-    validate_boot_ack,
-    validate_boot_frame,
-    validate_boot_response,
-)
 from hsync_common.protocol.pairing import fingerprint_matches
+from hsync_common.protocol.rendezvous import (
+    PROTOCOL_VERSION_RDV,
+    RDV_ALPN,
+    RdvAck,
+    RdvLeave,
+    RdvQuery,
+    RdvRefresh,
+    RdvRegister,
+    RdvRelayAttach,
+    RdvRelayConnect,
+    RdvRelayListen,
+    RdvRelayPing,
+    RdvResponse,
+    validate_rdv_ack,
+    validate_rdv_frame,
+    validate_rdv_response,
+)
 from hsync_common.protocol.tls_trust import (
     TrustAction,
     TrustPolicy,
@@ -56,20 +56,20 @@ from hsync_common.ssl_utils import compute_cert_fingerprint
 from hsync_common.text import compact_json_bytes
 from loguru import logger as log
 
-from hsync_client.bootnode_trust import BootnodeTrustStore, default_bootnode_trust_store
 from hsync_client.constants import RELAY_IDLE_TIMEOUT_S
 from hsync_client.events import UiEventName, emit_event
+from hsync_client.rendezvous_trust import RendezvousTrustStore, default_rendezvous_trust_store
 from hsync_client.trust_messages import known_hosts_added_message, mismatch_guidance
 
 __all__ = [
     "DEFAULT_QUIC_IDLE_TIMEOUT",
-    "BootnodeClient",
-    "BootnodeError",
-    "BootnodeFingerprintMismatch",
-    "BootnodeNotTrusted",
-    "BootnodeProtocolError",
-    "BootnodeRefused",
-    "BootnodeUnreachable",
+    "RendezvousClient",
+    "RendezvousError",
+    "RendezvousFingerprintMismatch",
+    "RendezvousNotTrusted",
+    "RendezvousProtocolError",
+    "RendezvousRefused",
+    "RendezvousUnreachable",
     "TrustPrompt",
     "build_leave_frame",
     "build_query_frame",
@@ -93,22 +93,22 @@ DEFAULT_QUIC_IDLE_TIMEOUT = 30.0
 TrustPrompt = Callable[[str, int, str], bool]
 
 
-class BootnodeError(Exception):
-    """Base class for bootnode client failures."""
+class RendezvousError(Exception):
+    """Base class for rendezvous client failures."""
 
 
-class BootnodeUnreachable(BootnodeError):
-    """The bootnode could not be reached (DNS, timeout, TLS, connection)."""
+class RendezvousUnreachable(RendezvousError):
+    """The rendezvous could not be reached (DNS, timeout, TLS, connection)."""
 
 
-class BootnodeProtocolError(BootnodeError):
-    """The bootnode answered with something that violates ``boot/1``."""
+class RendezvousProtocolError(RendezvousError):
+    """The rendezvous answered with something that violates ``rdv/1``."""
 
 
-class BootnodeRefused(BootnodeError):
+class RendezvousRefused(RendezvousError):
     """The node answered ``register``/``refresh`` with a uniform refusal frame.
 
-    ``boot/1`` replies to a rate-limited, token-refused or capacity-refused
+    ``rdv/1`` replies to a rate-limited, token-refused or capacity-refused
     ``register``/``refresh`` with the same ``response`` frame it uses for
     ``query`` refusals
     (``{peers: [], count: 0, error: "token_required"|"rate_limited"|"overloaded"}``).
@@ -126,15 +126,15 @@ class BootnodeRefused(BootnodeError):
         self.retry_after = retry_after
 
 
-class BootnodeFingerprintMismatch(BootnodeError):
-    """The bootnode certificate fingerprint did not match the accepted pin(s).
+class RendezvousFingerprintMismatch(RendezvousError):
+    """The rendezvous certificate fingerprint did not match the accepted pin(s).
 
-    Fatal: the connection is closed before any frame is sent, and the discovery
+    Fatal: the connection is closed before any frame is sent, and the rendezvous
     lease loop must not retry it. ``str`` keeps the concise case-specific reason
     (changed pin, node not pinned under ``strict``, no explicit-pin match), while
     ``guidance`` carries the SSH-style recovery block the front-end logs once:
     the presented fingerprint, the known-hosts file and the exact
-    ``hsync trust discovery-server`` commands that unblock the situation.
+    ``hsync trust rendezvous-server`` commands that unblock the situation.
     """
 
     def __init__(self, message: str, *, guidance: str | None = None) -> None:
@@ -142,10 +142,10 @@ class BootnodeFingerprintMismatch(BootnodeError):
         self.guidance = guidance
 
 
-class BootnodeNotTrusted(BootnodeError):
+class RendezvousNotTrusted(RendezvousError):
     """Policy ``ask`` could not establish trust: the user declined or cannot prompt.
 
-    Fatal, like :class:`BootnodeFingerprintMismatch`: the node is not contacted,
+    Fatal, like :class:`RendezvousFingerprintMismatch`: the node is not contacted,
     the lease loop stops and the sync core exits non-zero. ``non_interactive``
     distinguishes "no terminal to ask" (fail closed) from an explicit decline.
     """
@@ -155,18 +155,18 @@ class BootnodeNotTrusted(BootnodeError):
         self.non_interactive = non_interactive
 
 
-def _unreachable(host: str, port: int, exc: BaseException) -> BootnodeUnreachable:
+def _unreachable(host: str, port: int, exc: BaseException) -> RendezvousUnreachable:
     """Build the unreachable error; aioquic's ``ConnectionError`` has no text."""
     detail = str(exc) or type(exc).__name__
-    return BootnodeUnreachable(f"bootnode {format_authority(host, port)}: {detail}")
+    return RendezvousUnreachable(f"rendezvous {format_authority(host, port)}: {detail}")
 
 
 _T = TypeVar("_T")
 
 
 @dataclass(frozen=True)
-class BootnodeClient:
-    """Synchronous ``boot/1`` client for one bootnode.
+class RendezvousClient:
+    """Synchronous ``rdv/1`` client for one rendezvous.
 
     Trust follows the shared policy in
     :mod:`hsync_common.protocol.tls_trust` (ADR-0035): ``policy`` selects
@@ -189,7 +189,7 @@ class BootnodeClient:
     idle_timeout: float = DEFAULT_QUIC_IDLE_TIMEOUT
     # Ordered additional UDP ports to try for the SAME node (multi-port dial
     # fallback): a client egress firewall may block one UDP port but allow
-    # another (BOOT_PORT_SET). ``port`` is always tried first; empty means
+    # another (RDV_PORT_SET). ``port`` is always tried first; empty means
     # single-port (unchanged behaviour). Declared last so the field order of the
     # existing parameters is unchanged.
     ports: tuple[int, ...] = ()
@@ -207,26 +207,26 @@ class BootnodeClient:
                 seen.append(candidate)
         return tuple(seen)
 
-    def register(self, frame: BootRegister) -> BootAck | None:
+    def register(self, frame: RdvRegister) -> RdvAck | None:
         """Send ``register``; return the ``ack`` (STUN-echo) or ``None`` if dropped."""
         return self._ack_exchange(frame)
 
-    def refresh(self, frame: BootRefresh) -> BootAck | None:
+    def refresh(self, frame: RdvRefresh) -> RdvAck | None:
         """Renew the TTL; return the ``ack`` or ``None`` if the node dropped it."""
         return self._ack_exchange(frame)
 
-    def leave(self, frame: BootLeave) -> None:
+    def leave(self, frame: RdvLeave) -> None:
         """Announce departure. ``leave`` has no response frame."""
         self._exchange(frame, expect=None)
 
-    def query(self, frame: BootQuery) -> BootResponse | None:
+    def query(self, frame: RdvQuery) -> RdvResponse | None:
         """Ask for a random peer sample; return the ``response`` or ``None``."""
         raw = self._exchange(frame, expect="response")
         if raw is None:
             return None
-        parsed = validate_boot_response(raw)
+        parsed = validate_rdv_response(raw)
         if parsed is None:
-            raise BootnodeProtocolError("malformed response frame")
+            raise RendezvousProtocolError("malformed response frame")
         return parsed
 
     def fetch_fingerprint(self) -> str:
@@ -234,12 +234,12 @@ class BootnodeClient:
 
         Connects, reads the certificate during the handshake and closes without
         sending any frame (like ``ssh-keyscan``). Used by
-        ``hsync trust discovery-server fingerprint`` so an operator can verify a node out
+        ``hsync trust rendezvous-server fingerprint`` so an operator can verify a node out
         of band before pinning it.
         """
         try:
             return asyncio.run(self._fetch_fingerprint_async())
-        except BootnodeError:
+        except RendezvousError:
             raise
         except OSError as exc:
             raise _unreachable(self.host, self.port, exc) from exc
@@ -259,7 +259,7 @@ class BootnodeClient:
 
         The port on which *action* succeeds is remembered so a later exchange
         skips a blocked one; a trust/protocol failure is never a fallback signal
-        either, because :class:`BootnodeError` is not ``OSError``/``TimeoutError``.
+        either, because :class:`RendezvousError` is not ``OSError``/``TimeoutError``.
         """
         configuration = self._quic_configuration()
         candidates = self._candidate_ports()
@@ -283,8 +283,8 @@ class BootnodeClient:
                     # fall back; keep the concise timeout message the caller had
                     # before multi-port (a bare TimeoutError would lose ``what``).
                     if isinstance(exc, TimeoutError):
-                        raise BootnodeUnreachable(
-                            f"bootnode {format_authority(self.host, port)}: "
+                        raise RendezvousUnreachable(
+                            f"rendezvous {format_authority(self.host, port)}: "
                             f"timed out waiting for a {what}"
                         ) from exc
                     raise
@@ -295,13 +295,13 @@ class BootnodeClient:
             return result
         # Every candidate failed at the connection phase.
         if last_exc is None:  # defensive: ``candidates`` always holds ``self.port``
-            raise BootnodeUnreachable(
-                f"bootnode {format_authority(self.host, self.port)}: no reachable port"
+            raise RendezvousUnreachable(
+                f"rendezvous {format_authority(self.host, self.port)}: no reachable port"
             )
         if isinstance(last_exc, TimeoutError):
             port = failed_port if failed_port is not None else self.port
-            raise BootnodeUnreachable(
-                f"bootnode {format_authority(self.host, port)}: timed out waiting for a {what}"
+            raise RendezvousUnreachable(
+                f"rendezvous {format_authority(self.host, port)}: timed out waiting for a {what}"
             ) from last_exc
         raise last_exc
 
@@ -309,25 +309,25 @@ class BootnodeClient:
         async def _read(client: Any) -> str:
             cert = _peer_certificate(client)
             if cert is None:
-                raise BootnodeFingerprintMismatch(
-                    f"bootnode {format_authority(self.host, self.port)}: "
+                raise RendezvousFingerprintMismatch(
+                    f"rendezvous {format_authority(self.host, self.port)}: "
                     "could not read the peer certificate"
                 )
             return compute_cert_fingerprint(cert)
 
         return await self._with_connection(_read)
 
-    def _ack_exchange(self, frame: BootRegister | BootRefresh) -> BootAck | None:
+    def _ack_exchange(self, frame: RdvRegister | RdvRefresh) -> RdvAck | None:
         raw = self._exchange(frame, expect="ack", refusal=True)
         if raw is None:
             return None
         if raw["type"] == "response":
-            # A uniform refusal (token / rate limit / capacity) is a valid boot/1
+            # A uniform refusal (token / rate limit / capacity) is a valid rdv/1
             # answer to register/refresh — surface it instead of a contract error.
-            raise BootnodeRefused(raw["error"], raw.get("retry_after"))
-        parsed = validate_boot_ack(raw)
+            raise RendezvousRefused(raw["error"], raw.get("retry_after"))
+        parsed = validate_rdv_ack(raw)
         if parsed is None:
-            raise BootnodeProtocolError("malformed ack frame")
+            raise RendezvousProtocolError("malformed ack frame")
         return parsed
 
     def _exchange(
@@ -341,16 +341,18 @@ class BootnodeClient:
 
         ``refusal`` accepts the uniform ``response`` refusal frame the node uses
         for token-refused / rate-limited / overloaded ``register``/``refresh``
-        (the caller maps it to :class:`BootnodeRefused`); any other unexpected
+        (the caller maps it to :class:`RendezvousRefused`); any other unexpected
         reply type is still a contract violation.
         """
-        validated = validate_boot_frame(frame)
+        validated = validate_rdv_frame(frame)
         if validated is None:
-            raise BootnodeProtocolError(f"refusing to send an invalid {frame.get('type')!r} frame")
+            raise RendezvousProtocolError(
+                f"refusing to send an invalid {frame.get('type')!r} frame"
+            )
         payload = compact_json_bytes(validated)
         try:
             raw = asyncio.run(self._exchange_async(payload, expect=expect))
-        except BootnodeError:
+        except RendezvousError:
             raise
         except OSError as exc:
             # ConnectionError/TimeoutError/ssl.SSLError are all OSError subclasses;
@@ -363,9 +365,9 @@ class BootnodeClient:
         """Enforce the reply contract of one exchange (pure, no network).
 
         An unexpected reply type is a contract violation, with one exception: a
-        *validated* uniform refusal ``response``, which ``boot/1`` also uses to
+        *validated* uniform refusal ``response``, which ``rdv/1`` also uses to
         answer a rate-limited / token-refused ``register``/``refresh`` (the
-        caller maps it to :class:`BootnodeRefused`). A malformed ``response`` is
+        caller maps it to :class:`RendezvousRefused`). A malformed ``response`` is
         still rejected.
         """
         if raw is None:
@@ -373,10 +375,10 @@ class BootnodeClient:
         reply_type = raw.get("type")
         if reply_type != expect:
             refusal_frame = (
-                validate_boot_response(raw) if refusal and reply_type == "response" else None
+                validate_rdv_response(raw) if refusal and reply_type == "response" else None
             )
             if refusal_frame is None or "error" not in refusal_frame:
-                raise BootnodeProtocolError(f"expected a {expect!r} frame, got {reply_type!r}")
+                raise RendezvousProtocolError(f"expected a {expect!r} frame, got {reply_type!r}")
             return refusal_frame
         return raw
 
@@ -401,9 +403,9 @@ class BootnodeClient:
             try:
                 decoded = json.loads(line)
             except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-                raise BootnodeProtocolError("reply is not valid JSON") from exc
+                raise RendezvousProtocolError("reply is not valid JSON") from exc
             if not isinstance(decoded, dict):
-                raise BootnodeProtocolError("reply is not a JSON object")
+                raise RendezvousProtocolError("reply is not a JSON object")
             return decoded
 
         return await self._with_connection(_run, what=expect or "reply")
@@ -411,10 +413,10 @@ class BootnodeClient:
     def _quic_configuration(self) -> QuicConfiguration:
         configuration = QuicConfiguration(
             is_client=True,
-            alpn_protocols=[BOOT_ALPN],
+            alpn_protocols=[RDV_ALPN],
             idle_timeout=self.idle_timeout,
         )
-        # The bootnode is self-signed by contract, so WebPKI can never validate
+        # The rendezvous is self-signed by contract, so WebPKI can never validate
         # it: trust comes from the pinned/prompted fingerprint (or ``none``
         # disables verification entirely). The handshake therefore never rejects
         # the certificate before we can read it in ``_verify_peer``.
@@ -424,7 +426,7 @@ class BootnodeClient:
     def relay_configuration(self) -> QuicConfiguration:
         """QUIC/TLS configuration for a long-lived **relay** connection.
 
-        Same trust model as discovery; only the idle timeout differs, because a
+        Same trust model as rendezvous; only the idle timeout differs, because a
         relay connection carries a whole sync session (the effective value is
         still the minimum of the two peers' advertised timeouts).
         """
@@ -454,14 +456,14 @@ class BootnodeClient:
             return
         cert = _peer_certificate(client)
         if cert is None:
-            raise BootnodeFingerprintMismatch(
-                f"bootnode {format_authority(self.host, self.port)}: could not read the peer "
+            raise RendezvousFingerprintMismatch(
+                f"rendezvous {format_authority(self.host, self.port)}: could not read the peer "
                 "certificate to verify its fingerprint"
             )
         observed = compute_cert_fingerprint(cert)
-        store = default_bootnode_trust_store()
+        store = default_rendezvous_trust_store()
 
-        # Explicit pins (``--discovery-server-fingerprint``) are accepted directly and are
+        # Explicit pins (``--rendezvous-server-fingerprint``) are accepted directly and are
         # the source of truth for a ``strict`` run; a non-match falls through so
         # ``strict`` refuses and ``ask`` prompts.
         if self.fingerprints and fingerprint_matches(observed, list(self.fingerprints)):
@@ -481,26 +483,26 @@ class BootnodeClient:
         # refuse: unknown under strict, or a changed fingerprint
         raise self._mismatch(observed, stored=stored, store=store)
 
-    def _prompt_and_pin(self, store: BootnodeTrustStore, observed: str) -> None:
+    def _prompt_and_pin(self, store: RendezvousTrustStore, observed: str) -> None:
         """Run the interactive trust prompt; pin on acceptance, refuse otherwise."""
         if self.prompt is None:
-            raise BootnodeNotTrusted(
-                f"bootnode {format_authority(self.host, self.port)}: certificate fingerprint {observed} "
+            raise RendezvousNotTrusted(
+                f"rendezvous {format_authority(self.host, self.port)}: certificate fingerprint {observed} "
                 "is not trusted and there is no terminal to confirm it; pass "
-                "--discovery-server-tofu (accept new) or --discovery-server-fingerprint <fp> to trust it",
+                "--rendezvous-server-tofu (accept new) or --rendezvous-server-fingerprint <fp> to trust it",
                 non_interactive=True,
             )
         if self.prompt(self.host, self.port, observed):
             store.set(self.host, self.port, observed, source="prompt")
             self._announce_known_host(store)
             return
-        raise BootnodeNotTrusted(
-            f"bootnode {format_authority(self.host, self.port)}: certificate fingerprint {observed} "
-            "was not accepted; nothing was saved. Pass --discovery-server-tofu to trust the "
-            "first sighting or --discovery-server-fingerprint <fp> to pin it"
+        raise RendezvousNotTrusted(
+            f"rendezvous {format_authority(self.host, self.port)}: certificate fingerprint {observed} "
+            "was not accepted; nothing was saved. Pass --rendezvous-server-tofu to trust the "
+            "first sighting or --rendezvous-server-fingerprint <fp> to pin it"
         )
 
-    def _announce_known_host(self, store: BootnodeTrustStore) -> None:
+    def _announce_known_host(self, store: RendezvousTrustStore) -> None:
         """Report a just-pinned fingerprint together with the store that holds it."""
         log.info(known_hosts_added_message(self.host, self.port, store.path))
 
@@ -509,8 +511,8 @@ class BootnodeClient:
         observed: str,
         *,
         stored: str | None,
-        store: BootnodeTrustStore,
-    ) -> BootnodeFingerprintMismatch:
+        store: RendezvousTrustStore,
+    ) -> RendezvousFingerprintMismatch:
         """Build the fatal refusal: concise reason plus SSH-style recovery guidance.
 
         The structured event mirrors the master path: a node that is not pinned
@@ -520,23 +522,23 @@ class BootnodeClient:
         """
         if stored is not None:
             reason = (
-                f"bootnode {format_authority(self.host, self.port)}: certificate fingerprint {observed} "
+                f"rendezvous {format_authority(self.host, self.port)}: certificate fingerprint {observed} "
                 "does not match the pinned fingerprint (possible man-in-the-middle)"
             )
         elif self.fingerprints:
             reason = (
-                f"bootnode {format_authority(self.host, self.port)}: certificate fingerprint {observed} "
-                "does not match any fingerprint passed with --discovery-server-fingerprint"
+                f"rendezvous {format_authority(self.host, self.port)}: certificate fingerprint {observed} "
+                "does not match any fingerprint passed with --rendezvous-server-fingerprint"
             )
         else:
             reason = (
-                f"bootnode {format_authority(self.host, self.port)}: certificate fingerprint {observed} "
+                f"rendezvous {format_authority(self.host, self.port)}: certificate fingerprint {observed} "
                 "is not pinned and the trust policy is 'strict'"
             )
         if stored is None and not self.fingerprints:
             emit_event(
                 UiEventName.pairing_needed,
-                scope="bootnode",
+                scope="rendezvous",
                 peer_address=f"{format_authority(self.host, self.port)}",
                 fingerprint=observed,
                 message=reason,
@@ -544,12 +546,12 @@ class BootnodeClient:
         else:
             emit_event(
                 UiEventName.fingerprint_changed,
-                scope="bootnode",
+                scope="rendezvous",
                 peer_address=f"{format_authority(self.host, self.port)}",
                 fingerprint=observed,
                 message=reason,
             )
-        return BootnodeFingerprintMismatch(
+        return RendezvousFingerprintMismatch(
             reason,
             guidance=mismatch_guidance(
                 self.host,
@@ -621,17 +623,17 @@ def build_register_frame(
     never_master: bool = False,
     startup_time: float = 0.0,
     sync_direction: str = "bidirectional",
-) -> BootRegister:
+) -> RdvRegister:
     """Build a ``register`` frame (validated against the mirror before send).
 
     ``server_ready``/``prefer_master``/``never_master``/``startup_time``/
     ``sync_direction`` are the election advertisement the node relays verbatim
     in its ``query`` peers (the same values the mDNS TXT record carries), so a
-    bootnode-discovered peer ranks in the master election exactly like a
+    rendezvous-discovered peer ranks in the master election exactly like a
     LAN-discovered one.
     """
-    frame = BootRegister(
-        protocol_version=PROTOCOL_VERSION_BOOT,
+    frame = RdvRegister(
+        protocol_version=PROTOCOL_VERSION_RDV,
         type="register",
         cid=cid,
         bucket=bucket,
@@ -656,10 +658,10 @@ def build_refresh_frame(
     group: str | None = None,
     bucket_token: str | None = None,
     connected: int | None = None,
-) -> BootRefresh:
+) -> RdvRefresh:
     """Build a ``refresh`` frame (TTL + ``connected`` only; no endpoints)."""
-    frame = BootRefresh(
-        protocol_version=PROTOCOL_VERSION_BOOT,
+    frame = RdvRefresh(
+        protocol_version=PROTOCOL_VERSION_RDV,
         type="refresh",
         cid=cid,
         bucket=bucket,
@@ -673,10 +675,10 @@ def build_leave_frame(
     cid: str,
     bucket: str,
     bucket_token: str | None = None,
-) -> BootLeave:
+) -> RdvLeave:
     """Build a ``leave`` frame."""
-    frame = BootLeave(
-        protocol_version=PROTOCOL_VERSION_BOOT,
+    frame = RdvLeave(
+        protocol_version=PROTOCOL_VERSION_RDV,
         type="leave",
         cid=cid,
         bucket=bucket,
@@ -691,10 +693,10 @@ def build_query_frame(
     group: str | None = None,
     bucket_token: str | None = None,
     limit: int | None = None,
-) -> BootQuery:
+) -> RdvQuery:
     """Build a ``query`` frame (generic sample request; no file targeting)."""
-    frame = BootQuery(
-        protocol_version=PROTOCOL_VERSION_BOOT,
+    frame = RdvQuery(
+        protocol_version=PROTOCOL_VERSION_RDV,
         type="query",
         bucket=bucket,
     )
@@ -708,10 +710,10 @@ def build_relay_listen_frame(
     bucket: str,
     group: str | None = None,
     bucket_token: str | None = None,
-) -> BootRelayListen:
+) -> RdvRelayListen:
     """Build a ``relay_listen`` frame (the serving peer's control stream)."""
-    frame = BootRelayListen(
-        protocol_version=PROTOCOL_VERSION_BOOT,
+    frame = RdvRelayListen(
+        protocol_version=PROTOCOL_VERSION_RDV,
         type="relay_listen",
         cid=cid,
         bucket=bucket,
@@ -720,10 +722,10 @@ def build_relay_listen_frame(
     return frame
 
 
-def build_relay_ping_frame(*, cid: str, bucket: str) -> BootRelayPing:
+def build_relay_ping_frame(*, cid: str, bucket: str) -> RdvRelayPing:
     """Build a ``relay_ping`` keepalive (control stream, no reply)."""
-    return BootRelayPing(
-        protocol_version=PROTOCOL_VERSION_BOOT,
+    return RdvRelayPing(
+        protocol_version=PROTOCOL_VERSION_RDV,
         type="relay_ping",
         cid=cid,
         bucket=bucket,
@@ -737,10 +739,10 @@ def build_relay_connect_frame(
     target_cid: str,
     group: str | None = None,
     bucket_token: str | None = None,
-) -> BootRelayConnect:
+) -> RdvRelayConnect:
     """Build a ``relay_connect`` frame (requester side of one session)."""
-    frame = BootRelayConnect(
-        protocol_version=PROTOCOL_VERSION_BOOT,
+    frame = RdvRelayConnect(
+        protocol_version=PROTOCOL_VERSION_RDV,
         type="relay_connect",
         cid=cid,
         bucket=bucket,
@@ -756,10 +758,10 @@ def build_relay_attach_frame(
     bucket: str,
     relay_id: str,
     bucket_token: str | None = None,
-) -> BootRelayAttach:
+) -> RdvRelayAttach:
     """Build a ``relay_attach`` frame (serving peer's per-session stream)."""
-    frame = BootRelayAttach(
-        protocol_version=PROTOCOL_VERSION_BOOT,
+    frame = RdvRelayAttach(
+        protocol_version=PROTOCOL_VERSION_RDV,
         type="relay_attach",
         cid=cid,
         bucket=bucket,
@@ -770,14 +772,14 @@ def build_relay_attach_frame(
 
 
 def frame_line(frame: Mapping[str, Any]) -> bytes:
-    """Serialize one validated ``boot/1`` frame as an NDJSON line.
+    """Serialize one validated ``rdv/1`` frame as an NDJSON line.
 
     Validation runs before serialization, so a builder bug fails here instead of
     making the node drop the frame silently (unknown fields are fatal on the
     wire). Relay data streams reuse this for their single framed line; every
     following byte on those streams is opaque TLS.
     """
-    validated = validate_boot_frame(frame)
+    validated = validate_rdv_frame(frame)
     if validated is None:
-        raise BootnodeProtocolError(f"refusing to send an invalid {frame.get('type')!r} frame")
+        raise RendezvousProtocolError(f"refusing to send an invalid {frame.get('type')!r} frame")
     return compact_json_bytes(validated) + b"\n"

@@ -3,7 +3,7 @@
 HSYNC is a file-synchronization client. It keeps a local directory in sync in
 real-time either with a central **HSYNC server** (Server Mode) or directly with
 other devices (peer-to-peer **p2p Mode**) — on the same local network via mDNS,
-or across networks through an optional bootnode. It ships as a
+or across networks through an optional rendezvous. It ships as a
 single self-contained binary — no Python runtime is required to run it.
 
 ## Start here
@@ -28,7 +28,7 @@ chooser picks the right path; each path is a complete, copy-paste walkthrough:
 | Mode | Walkthrough | Best for |
 |------|-------------|----------|
 | **Server Mode** (central server) | [Getting Started — Server Mode](getting-started-server.md) | remote / internet sync, multiple sites |
-| **p2p Mode** (peer-to-peer) | [Getting Started — p2p Mode](getting-started-p2p.md) | devices on the same network (mDNS) or across networks via a bootnode; no server |
+| **p2p Mode** (peer-to-peer) | [Getting Started — p2p Mode](getting-started-p2p.md) | devices on the same network (mDNS) or across networks via a rendezvous; no server |
 
 For the concepts behind each mode (how they work, security, master election),
 see [Server Mode](server-mode.md) and [p2p Mode](p2p-mode.md).
@@ -37,18 +37,18 @@ see [Server Mode](server-mode.md) and [p2p Mode](p2p-mode.md).
 
 - [Configuration](configuration.md) — shared options: sync, compression, delta, logging, auto-tuning.
 - [Configuration — Server Mode](configuration-server.md) — server URL, API key, SSL/TLS, env vars.
-- [Configuration — p2p Mode](configuration-p2p.md) — discovery, master election, `HSYNC_P2P_PASSPHRASE`/`HSYNC_P2P_KEY`, stability.
+- [Configuration — p2p Mode](configuration-p2p.md) — rendezvous, master election, `HSYNC_P2P_PASSPHRASE`/`HSYNC_P2P_KEY`, stability.
 - [Sync Modes](sync-modes.md) — server vs p2p topologies and how to combine flags.
 
-### 4. Choose the p2p discovery scope
+### 4. Choose the p2p rendezvous scope
 
-mDNS discovery on the local network is **always on**; a bootnode only adds
-cross-network discovery on top of it.
+mDNS rendezvous on the local network is **always on**; a rendezvous only adds
+cross-network rendezvous on top of it.
 
 | Task | Guide |
 |------|-------|
-| Sync devices on the **same network** (mDNS only, no bootnode) | [Sync on the local network](p2p-lan.md) |
-| Sync across networks through a **bootnode** (mDNS stays on) | [Sync across networks](p2p-bootnode.md) |
+| Sync devices on the **same network** (mDNS only, no rendezvous) | [Sync on the local network](p2p-lan.md) |
+| Sync across networks through a **rendezvous** (mDNS stays on) | [Sync across networks](p2p-rendezvous.md) |
 
 ### 5. Operate
 
@@ -75,7 +75,7 @@ cross-network discovery on top of it.
 - [Developer Guide](internal/developer.md) — for contributors.
 - [Test Suite Guide](internal/testing.md) — test structure, fixtures, cross-project testing.
 - [Stress Test Plan](internal/stress-test-plan.md) — load/replication stress harness for p2p and server mode (design + resume checklist).
-- [Relay Discovery Plan](internal/relay-discovery-plan.md) — public third-party discovery services as a bootnode alternative: feasibility study, go/no-go gates and the measurement-harness spec (plan only, not implemented).
+- [Relay Rendezvous Plan](internal/relay-rendezvous-plan.md) — public third-party rendezvous services as a rendezvous alternative: feasibility study, go/no-go gates and the measurement-harness spec (plan only, not implemented).
 
 ## Associated Ecosystem Components
 

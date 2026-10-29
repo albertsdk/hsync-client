@@ -43,9 +43,9 @@ _P2P_REASON = (
 )
 
 BB_ADMIN_SECRET = "bb0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd"
-BB_API_KEY = f"hs_HsyncAdminBootstrap01_{BB_ADMIN_SECRET}"
+BB_API_KEY = f"hs_HsyncAdminRendezvous01_{BB_ADMIN_SECRET}"
 # The shared LAN key the P2P black-box pairs use. It must satisfy the client's
-# raw-key floor (``hsync_common.protocol.boot_tokens::MIN_GROUP_KEY_CHARS``):
+# raw-key floor (``hsync_common.protocol.rdv_tokens::MIN_GROUP_KEY_CHARS``):
 # a shorter value is rejected at startup, so the pair would never connect.
 _P2P_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 _HSYNC_COMMON_DIR = str(Path(__file__).resolve().parent.parent.parent / "hsync-common")
@@ -84,7 +84,7 @@ def _p2p_device_dir(local_path: str) -> str:
     *local_path* reuses the same device ID and certificate (TOFU pins survive
     the restart). Distinct peers get distinct device identities — mandatory:
     same host + same bucket + same device ID would be ignored as "self" in
-    discovery.
+    rendezvous.
     """
     path = Path(local_path)
     return str(path.parent / f"{path.name}_device")
@@ -183,7 +183,7 @@ def _p2p_start(
         "--min-free-disk-space",
         "0",
         "--no-autotune",
-        "--peer-discovery-timeout",
+        "--peer-rendezvous-timeout",
         "10",
         "--retry-delay",
         "1",
@@ -479,7 +479,7 @@ def _wait_for_master(
 
     The master only emits ``"MASTER"`` after ``add_peer`` triggers
     ``_elect_master``, so we must have at least one slave running before
-    waiting for the log line. ``slave_extra_args`` must mirror any discovery
+    waiting for the log line. ``slave_extra_args`` must mirror any rendezvous
     partition flags the master was started with (e.g. ``--group``) or the
     two would never discover each other.
 
@@ -764,50 +764,50 @@ def thread_cpu_totals(pid: int) -> dict[str, float]:
     return totals
 
 
-def _bootnode_env() -> dict[str, str]:
-    """Scrubbed environment for the sibling bootnode process.
+def _rendezvous_env() -> dict[str, str]:
+    """Scrubbed environment for the sibling rendezvous process.
 
-    Like :func:`_p2p_env` but without the client wiring: the bootnode must start
+    Like :func:`_p2p_env` but without the client wiring: the rendezvous must start
     from a clean slate (no ``HSYNC_*`` leakage from the developer's shell).
     """
     return {k: v for k, v in os.environ.items() if not k.startswith("HSYNC_")}
 
 
-def _bootnode_bin() -> str | None:
-    """Path to the sibling ``hsync-bootnode`` console script, or ``None``.
+def _rendezvous_bin() -> str | None:
+    """Path to the sibling ``hsync-rendezvous`` console script, or ``None``.
 
-    The bootnode is a separate repository; integration tests skip when it is
+    The rendezvous is a separate repository; integration tests skip when it is
     not built instead of failing the client suite.
     """
     candidate = (
         Path(__file__).resolve().parents[2]
-        / "hsync-bootnode"
+        / "hsync-rendezvous"
         / "python"
         / ".venv"
         / "bin"
-        / "hsync-bootnode"
+        / "hsync-rendezvous"
     )
     return str(candidate) if candidate.exists() else None
 
 
 def _reserve_udp_port() -> int:
-    """Pick a free UDP port for the bootnode's QUIC listener."""
+    """Pick a free UDP port for the rendezvous's QUIC listener."""
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
         probe.bind(("127.0.0.1", 0))
         return int(probe.getsockname()[1])
 
 
-def _bootnode_start(port: int, ready_file: Path, *, relay: bool = False) -> subprocess.Popen:
-    """Spawn the sibling bootnode on loopback (scrubbed env + ready file).
+def _rendezvous_start(port: int, ready_file: Path, *, relay: bool = False) -> subprocess.Popen:
+    """Spawn the sibling rendezvous on loopback (scrubbed env + ready file).
 
     ``relay=True`` enables the data relay (``--relay``), so two peers that no
     inbound NAT mapping reaches can sync through the node. Raises
     ``FileNotFoundError`` when the sibling repo is not built; callers translate
     that into a skip.
     """
-    binary = _bootnode_bin()
+    binary = _rendezvous_bin()
     if binary is None:
-        raise FileNotFoundError("hsync-bootnode is not built (sibling repo venv missing)")
+        raise FileNotFoundError("hsync-rendezvous is not built (sibling repo venv missing)")
     args = [
         binary,
         "run",
@@ -822,15 +822,15 @@ def _bootnode_start(port: int, ready_file: Path, *, relay: bool = False) -> subp
         args.append("--relay")
     return subprocess.Popen(
         args,
-        env=_bootnode_env(),
+        env=_rendezvous_env(),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
     )
 
 
-def _wait_for_bootnode(proc: subprocess.Popen, ready_file: Path, timeout: float = 20.0) -> bool:
-    """Wait until the bootnode writes its ready file (or exits)."""
+def _wait_for_rendezvous(proc: subprocess.Popen, ready_file: Path, timeout: float = 20.0) -> bool:
+    """Wait until the rendezvous writes its ready file (or exits)."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if ready_file.exists():
@@ -841,8 +841,8 @@ def _wait_for_bootnode(proc: subprocess.Popen, ready_file: Path, timeout: float 
     return False
 
 
-def _stop_bootnode(proc: subprocess.Popen) -> None:
-    """Terminate the bootnode, escalating to SIGKILL, and reap it."""
+def _stop_rendezvous(proc: subprocess.Popen) -> None:
+    """Terminate the rendezvous, escalating to SIGKILL, and reap it."""
     proc.terminate()
     try:
         proc.wait(timeout=5.0)

@@ -4,14 +4,14 @@
 """Shared SSH-style trust messages for the durable trust stores.
 
 Three transports pin a certificate fingerprint and refuse a mismatch as a possible
-man-in-the-middle: the bootnode (``discovery_server_known_hosts.json``, keyed ``host:port``),
+man-in-the-middle: the rendezvous (``rendezvous_server_known_hosts.json``, keyed ``host:port``),
 the sync server (``server_known_hosts.json``, keyed ``host:port``) and the P2P
 master/seeders (``p2p_known_peers.json``, keyed ``cid|bucket``). This module owns the
 operator-facing prose for those moments — the "permanently added" announcement and
 the SSH-style recovery guidance with the exact ``hsync trust …`` commands — so the
 paths stay consistent and a recovery command is never duplicated inline.
 
-Consumers: ``hsync-client`` (``boot_client.py``, ``main_logic.py``,
+Consumers: ``hsync-client`` (``rdv_client.py``, ``main_logic.py``,
 ``p2p_handler.py``, ``p2p_sources.py``), tests.
 """
 
@@ -38,7 +38,7 @@ __all__ = [
 # Human labels for the two ``host:port`` trust namespaces the guidance covers.
 # They double as the ``hsync trust <kind>`` subcommand names, so a command the
 # operator copies from the message is exactly the one the CLI accepts.
-_HOST_KIND_LABELS = {"discovery-server": "Discovery server", "server": "Sync server"}
+_HOST_KIND_LABELS = {"rendezvous-server": "Rendezvous server", "server": "Sync server"}
 
 
 def _permanently_added_line(identity: str, store_kind: str, store_path: Path) -> str:
@@ -61,12 +61,12 @@ def _presented_fingerprint_lines(subject: str, observed: str) -> list[str]:
 
 
 def known_hosts_added_message(host: str, port: int, store_path: Path) -> str:
-    """SSH-style confirmation that a discovery-server fingerprint was just pinned, and where.
+    """SSH-style confirmation that a rendezvous-server fingerprint was just pinned, and where.
 
     Mirrors OpenSSH's ``Warning: Permanently added '…' (…) to the list of known
     hosts`` and names the effective store path, which OpenSSH leaves implicit.
 
-    Consumers: ``hsync-client`` (discovery-server connect path: prompt acceptance and TOFU).
+    Consumers: ``hsync-client`` (rendezvous-server connect path: prompt acceptance and TOFU).
     """
     return _permanently_added_line(format_authority(host, port), "hosts", store_path)
 
@@ -99,7 +99,7 @@ def _host_mismatch_guidance(
     flag_name: str,
     env_var: str,
 ) -> str:
-    """SSH-style recovery block for a refused ``host:port`` pin (discovery/sync server).
+    """SSH-style recovery block for a refused ``host:port`` pin (rendezvous/sync server).
 
     Three variants: a pin that changed (possible man-in-the-middle), a host that is
     not pinned under ``strict``, and a fingerprint that matches none of the explicit
@@ -170,20 +170,20 @@ def mismatch_guidance(
     store_path: Path,
     explicit_pins: bool,
 ) -> str:
-    """SSH-style recovery block for a refused discovery-server fingerprint (English).
+    """SSH-style recovery block for a refused rendezvous-server fingerprint (English).
 
-    Consumers: ``hsync-client`` (``BootnodeClient._mismatch``), tests.
+    Consumers: ``hsync-client`` (``RendezvousClient._mismatch``), tests.
     """
     return _host_mismatch_guidance(
-        "discovery-server",
+        "rendezvous-server",
         host,
         port,
         observed,
         stored=stored,
         store_path=store_path,
         explicit_pins=explicit_pins,
-        flag_name="discovery-server-fingerprint",
-        env_var="HSYNC_DISCOVERY_SERVER_FINGERPRINTS",
+        flag_name="rendezvous-server-fingerprint",
+        env_var="HSYNC_RENDEZVOUS_SERVER_FINGERPRINTS",
     )
 
 

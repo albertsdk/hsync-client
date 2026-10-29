@@ -326,7 +326,7 @@ class TestP2PLogfile:
 
 # =============================================================================
 # Parity with the server-mode safety-guard suite (test_bb_server_safety_guards).
-# The guards fire during run_sync startup, BEFORE P2P mDNS discovery, so the
+# The guards fire during run_sync startup, BEFORE P2P mDNS rendezvous, so the
 # abort cases can be driven in-process without ever needing a second peer.
 # =============================================================================
 
@@ -381,7 +381,7 @@ class TestP2PDiskSpaceGuard:
             p2p_key="test-lan-key",
         )
 
-        # Then the disk-space guard aborts (non-zero exit) before discovery, and
+        # Then the disk-space guard aborts (non-zero exit) before rendezvous, and
         # the guard-specific diagnostic is surfaced (logged or via the raised
         # exception), proving it was this guard — not an unrelated failure.
         assert result.exit_code != 0
