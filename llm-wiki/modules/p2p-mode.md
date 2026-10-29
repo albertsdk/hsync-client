@@ -404,7 +404,11 @@ parked delta payload (`p2p_delta.py::handle_delta_data`), samples while it
 receives a peer's upload or delta-apply (`progress.py::ProgressWriter`), and one
 terminal `transfer` per committed file (`progress.py::emit_completed_transfer`,
 file size). `op` follows the local direction — served bytes are an `upload`, a
-push received from a peer is a `download`. Samples use the best-effort
+push received from a peer is a `download`. A serve that aborts mid-stream (the
+peer goes away, the file changes under the reader, a socket error) emits the
+terminal counterpart `transfer_failed` (`progress.py::emit_failed_transfer`) with
+`op="upload"`, so the Desktop resets the row instead of leaving a bar frozen at
+its last sample. Samples use the best-effort
 non-blocking emitter path (`events.py::EventEmitter.emit_progress`), so a slow
 consumer can never stall the server's worker threads; the terminal events keep
 the lossless path. Covered by `tests/test_p2p_server_progress.py`,

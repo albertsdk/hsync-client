@@ -102,6 +102,7 @@ from hsync_client.progress import (
     ProgressReporter,
     ProgressWriter,
     emit_completed_transfer,
+    emit_failed_transfer,
     progress_reporter,
 )
 from hsync_client.utils import (
@@ -1903,9 +1904,15 @@ class P2PEndpointMixin(_HTTPTransportBase):
                         chunk = stream.read(min(_P2P_UPLOAD_CHUNK_SIZE, remaining))
                         if not chunk:
                             self.close_connection = True
+                            emit_failed_transfer(
+                                "upload", display_path, "connection lost while serving"
+                            )
                             return
                         if not _same_open_file(opened, os.fstat(stream.fileno())):
                             self.close_connection = True
+                            emit_failed_transfer(
+                                "upload", display_path, "file changed while serving"
+                            )
                             return
                         sent = _write_served_chunk(self.wfile, chunk, range_reporter, sent)
                         _throttle_upload(len(chunk))
@@ -1954,6 +1961,9 @@ class P2PEndpointMixin(_HTTPTransportBase):
                                 chunk = compressed_body.read(min(_P2P_UPLOAD_CHUNK_SIZE, remaining))
                                 if not chunk:
                                     self.close_connection = True
+                                    emit_failed_transfer(
+                                        "upload", display_path, "connection lost while serving"
+                                    )
                                     return
                                 sent = _write_served_chunk(
                                     self.wfile, chunk, compressed_reporter, sent
@@ -1985,11 +1995,13 @@ class P2PEndpointMixin(_HTTPTransportBase):
                         break
                     if not _same_open_file(opened, os.fstat(stream.fileno())):
                         self.close_connection = True
+                        emit_failed_transfer("upload", display_path, "file changed while serving")
                         return
                     sent = _write_served_chunk(self.wfile, chunk, identity_reporter, sent)
                     _throttle_upload(len(chunk))
                 if not _same_open_file(opened, os.fstat(stream.fileno())):
                     self.close_connection = True
+                    emit_failed_transfer("upload", display_path, "file changed while serving")
                 else:
                     # Completed identity serve: report the outgoing transfer so
                     # the serving side's Sent counter (files and bytes) updates.
@@ -2004,6 +2016,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
             log.error(f"Error reading file {display_path}: {exc}")
             if response_started:
                 self.close_connection = True
+                emit_failed_transfer("upload", display_path, f"serving failed: {exc}")
             else:
                 self._send_error_response(HTTP_INTERNAL_ERROR, "Error reading file")
 

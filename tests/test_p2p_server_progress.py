@@ -155,6 +155,57 @@ class TestServeProgress:
         transfers = [e for e in events if e["event"] == "transfer"]
         assert [e["size"] for e in transfers] == [len(_PAYLOAD)]
 
+    def test_an_aborted_serve_reports_transfer_failed(self, server, tmp_path, events, monkeypatch):
+        """A serve that dies mid-stream must publish ``transfer_failed``.
+
+        No terminal event would leave the Desktop row frozen at its last sample
+        (a bar stuck at 100% once the bytes reached the socket), because only a
+        terminal event resets an in-flight row.
+        """
+        import http.client
+
+        from hsync_client import p2p_server as server_mod
+
+        _, port = server
+        (tmp_path / "served.bin").write_bytes(_PAYLOAD)
+
+        real = server_mod._write_served_chunk
+        calls = {"n": 0}
+
+        def _boom(wfile, chunk, reporter, sent):
+            calls["n"] += 1
+            if calls["n"] >= 2:  # first chunk streams, then the peer is gone
+                raise BrokenPipeError("client went away")
+            return real(wfile, chunk, reporter, sent)
+
+        monkeypatch.setattr(server_mod, "_write_served_chunk", _boom)
+
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        try:
+            with patch(
+                "hsync_client.p2p_server.CONFIG",
+                unauth_write_config(tmp_path, COMPRESSION_ENABLED=False),
+            ):
+                conn.request(
+                    "GET",
+                    "/api/v1/buckets/test/files/download?filename=served.bin",
+                    headers={"Accept-Encoding": "identity"},
+                )
+                response = conn.getresponse()
+                try:
+                    response.read()
+                except http.client.IncompleteRead:
+                    pass  # the master aborted the truncated body on purpose
+        finally:
+            conn.close()
+
+        _wait_for_events(events, event="transfer_failed", op="upload")
+        failed = [e for e in events if e["event"] == "transfer_failed"]
+        assert len(failed) == 1
+        assert failed[0]["op"] == "upload"
+        assert failed[0]["file"].endswith("served.bin")
+        assert not [e for e in events if e["event"] == "transfer"]
+
 
 class TestReceivedUploadProgress:
     """An upload pushed by a slave is reported as a local download."""

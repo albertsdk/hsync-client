@@ -179,6 +179,14 @@ the file and its bytes only from that event, so a progress stream without it
 would leave the row open. Engine sentinels (`.hsynckeep`) are skipped at the
 source (`progress.py::progress_reporter`).
 
+An **aborted** transfer ends with exactly one `UiEventName.transfer_failed`
+instead (`progress.py::emit_failed_transfer`, `transfer.py::_emit_transfer_failed`).
+Every path that started moving bytes and then gave up must publish a terminal
+event: the retry-exhausted upload/download, and the serving-side aborts in
+`p2p_server.py` (peer gone, file changed mid-serve, socket error). Without it the
+desktop row keeps its last progress sample — a bar frozen at its last percentage,
+at 100% once the bytes reached the socket — until the process ends.
+
 `progress` samples travel on a non-blocking, lock-free path
 (`events.py::EventEmitter.emit_progress`: one `os.write` on a duplicated
 non-blocking fd, atomic up to `PIPE_BUF`, sample dropped on `EAGAIN`), so a
