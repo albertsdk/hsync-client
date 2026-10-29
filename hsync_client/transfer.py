@@ -1177,9 +1177,16 @@ def _download_from_source_attempt(
                             "Body exceeds listing size",
                             discard_partial=True,
                         )
+                        # Distinct from the absolute-cap check above
+                        # ("maximum download size"): here the body outgrew the
+                        # size the remote listing declared, i.e. the remote
+                        # copy changed while it was being transferred. The
+                        # wording must say so, or the user reads the declared
+                        # size as their --max-inbound-size limit.
                         raise PermanentDownloadError(
-                            f'"{file.filepath}" exceeds the maximum download size '
-                            f"({write_cap} bytes)"
+                            f'"{file.filepath}" received more bytes than the size '
+                            f"declared by the remote ({write_cap} bytes); "
+                            "the remote copy changed while transferring"
                         )
                     output.write(chunk)
                     sha256.update(chunk)

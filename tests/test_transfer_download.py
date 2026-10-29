@@ -841,6 +841,38 @@ class TestDownloadSizeCap:
         assert not (tmp_path / "big.txt").exists()
         assert not (tmp_path / "big.txt.part").exists()
 
+    def test_body_beyond_declared_size_has_a_distinct_message(self, tmp_path):
+        """A body that outgrows the declared size is not reported as the cap."""
+        content = b"A" * 2000
+        # The listing declares 1000 bytes; the peer actually streams 2000.
+        file = File(
+            filepath="grew.bin",
+            sha256sum="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            size=1000,
+        )
+        # The absolute cap is far above the declared size, so only the
+        # declared-size body guard can fire.
+        big_cap = self._config(tmp_path, 1_000_000_000)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.iter_content.return_value = [content]
+
+        with (
+            patch("hsync_client.transfer.CONFIG", big_cap),
+            patch("hsync_client.transfer.get", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
+            with pytest.raises(
+                PermanentDownloadError,
+                match="received more bytes than the size declared by the remote",
+            ):
+                download_file(file)
+
+        assert not (tmp_path / "grew.bin").exists()
+        assert not (tmp_path / "grew.bin.part").exists()
+
     def test_download_within_cap_succeeds(self, tmp_path):
         """A download under the absolute cap is unaffected."""
         import hashlib

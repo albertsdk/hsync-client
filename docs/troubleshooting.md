@@ -201,6 +201,26 @@ If the command fails, the hard limit is lower — raise the hard limit (or use
 connections/transfers (see the bandwidth and connection
 settings in [Configuration](configuration.md)).
 
+## An inbound transfer reports "exceeds the maximum download size (N bytes)"
+
+**Symptom.** A download is aborted with `… received more bytes than the size
+declared by the remote (N bytes)` — or, on an older build, the misleading
+`exceeds the maximum download size (N bytes)` — even though `--max-inbound-size`
+is set much higher than `N`.
+
+**Cause.** `N` is **not** the configured cap: it is the size the remote party
+declared for that file in its listing. The transfer aborts because the bytes
+actually received exceed that declared size — the remote copy changed while it
+was being transferred (or a peer served a copy inconsistent with the listing).
+The absolute `--max-inbound-size` cap is a *different* check and would print a
+number equal to your configured MB value × 1 MiB.
+
+**Remedy.** Nothing is wrong with the limit configuration. The file arrives on
+the next sync cycle once the source copy is stable (a file still being written,
+e.g. by an acquisition or export job, cannot be transferred consistently).
+The stale number self-resolves: re-run the sync after the writing process
+finishes.
+
 ## A folder keeps re-syncing or reports phantom conflicts
 
 **Symptom.** The same files keep flipping between devices, deletions come back,

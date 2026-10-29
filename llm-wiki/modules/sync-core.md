@@ -318,7 +318,11 @@ expand a bomb up to it on disk before the SHA-256 check discards the content.
 The same cap also bounds uncompressed bodies, so an over-cap download (hostile
 or simply larger than the configured maximum) is aborted and the `.part`
 dropped. `MAX_INBOUND_SIZE` defaults to 10 GB (`--max-inbound-size`,
-mirroring the server's `max_upload_size`; `0` = declared size only). Wire-supplied permissions go through
+mirroring the server's `max_upload_size`; `0` = declared size only). The
+declared-size guard is a *separate* check with a distinct message: if the
+streamed body exceeds the size the remote listing declared (`file.size`
+printed as the number), the remote copy changed while it was being transferred
+— never read that number as the configured cap. Wire-supplied permissions go through
 `utils.set_permissions` (`utils/permissions.py::set_permissions`) which strips setuid/setgid/sticky bits
 (`sanitize_remote_permissions`).
 
