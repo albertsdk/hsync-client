@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""Combined mDNS + rendezvous rendezvous plan.
+"""Combined mDNS + rdv rendezvous plan.
 
 With a rendezvous configured a node must be discoverable both on the local network
 (mDNS) and across networks (rendezvous). ``HybridRendezvous`` runs both source plans
@@ -56,7 +56,7 @@ class HybridRendezvous(RendezvousPlanState):
         self._peer_manager = manager
         self._mdns.start(register_service=register_service, peer_manager=manager)
         self._rendezvous.start(register_service=register_service, peer_manager=manager)
-        log.info("P2P rendezvous started (mDNS + rendezvous server)")
+        log.info("P2P rendezvous started (mDNS + discovery servers)")
         return manager
 
     def stop(self) -> None:

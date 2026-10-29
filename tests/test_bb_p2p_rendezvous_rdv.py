@@ -5,7 +5,7 @@
 
 The sibling ``hsync-rendezvous`` runs on loopback; both clients point at it
 (``RENDEZVOUS 127.0.0.1 --port <p> --insecure``) instead of mDNS, so
-this exercises the whole rendezvous rendezvous plan: register/lease, query, peer
+this exercises the whole rdv rendezvous plan: register/lease, query, peer
 feed, endpoint publication and the readiness gate. Requires ``HSYNC_BB_P2P=1``
 and skips when the sibling rendezvous is not built.
 """
@@ -32,7 +32,7 @@ _P2P_REASON = "rendezvous e2e needs the sibling rendezvous + two live clients; s
 pytestmark = pytest.mark.skipif(not _P2P_ENABLED, reason=_P2P_REASON)
 
 
-class TestRendezvousRendezvous:
+class TestRdvRendezvous:
     @pytest.mark.flaky(reruns=3, reruns_delay=5)
     def test_peers_discover_and_sync_through_rendezvous(
         self, p2p_master_dir, p2p_slave_dir, p2p_bucket, tmp_path
@@ -59,7 +59,7 @@ class TestRendezvousRendezvous:
                 # The banner proves the rendezvous plan is the active one.
                 assert _wait_for_text_in_stderr(
                     master,
-                    "Rendezvous: mDNS on the local network + rendezvous server(s)",
+                    "Discovery: mDNS on the local network + discovery server(s)",
                     timeout=15,
                 ), "the master did not select the rendezvous plan"
                 slave = _p2p_start(
@@ -68,7 +68,7 @@ class TestRendezvousRendezvous:
                 try:
                     assert _wait_for_text_in_stderr(
                         slave,
-                        "Rendezvous: mDNS on the local network + rendezvous server(s)",
+                        "Discovery: mDNS on the local network + discovery server(s)",
                         timeout=15,
                     )
                     became_master = _wait_for_text_in_stderr(
@@ -101,7 +101,7 @@ class TestRendezvousRendezvous:
 _NAT_ENABLED = os.environ.get("HSYNC_BB_P2P_NAT") == "1"
 
 
-class TestRendezvousRendezvousNat:
+class TestRdvRendezvousNat:
     """Opt-in real-NAT checks (``HSYNC_BB_P2P_NAT=1``; skipped in CI/loopback)."""
 
     @pytest.mark.skipif(

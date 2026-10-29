@@ -3,7 +3,7 @@
 
 """Durable rendezvous-server trust store (``rendezvous_server_known_hosts.json``), SSH-style.
 
-A self-hosted rendezvous server authenticates its QUIC/TLS transport with a self-signed
+A self-hosted discovery server authenticates its QUIC/TLS transport with a self-signed
 certificate, so the only trust anchor is the certificate fingerprint the operator
 pins. This store is the client's ``known_hosts``: it remembers the accepted
 fingerprint per ``host:port`` and is the persistence half of the shared policy

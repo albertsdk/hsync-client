@@ -490,9 +490,9 @@ def _check_p2p_keyless_policy(
 
 
 def _warn_if_p2p_in_container(logger: Any) -> None:
-    """Warn that mDNS peer rendezvous usually fails under container networking.
+    """Warn that mDNS peer discovery usually fails under container networking.
 
-    P2P rendezvous relies on multicast, which does not cross the NAT boundary
+    P2P discovery relies on multicast, which does not cross the NAT boundary
     of the default bridge network used by container runtimes; P2P mode inside
     a container therefore requires host networking to find peers.
     """

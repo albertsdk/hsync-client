@@ -10,7 +10,7 @@ at least the same public IP with the local listen port. Candidates are advisory:
 the rendezvous relays them and a requester falls back to the master handshake, so
 an unreachable candidate wastes at most one attempt.
 
-Consumers: ``hsync-client`` (p2p_rendezvous_rendezvous), tests.
+Consumers: ``hsync-client`` (p2p_rendezvous_rdv), tests.
 """
 
 from __future__ import annotations

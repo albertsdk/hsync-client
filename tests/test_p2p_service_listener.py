@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""Tests for HsyncServiceListener (mDNS rendezvous) in the P2P module."""
+"""Tests for HsyncServiceListener (mDNS discovery) in the P2P module."""
 
 from __future__ import annotations
 

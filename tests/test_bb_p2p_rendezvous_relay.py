@@ -39,7 +39,7 @@ from .p2p_helpers import (
 _P2P_ENABLED = os.environ.get("HSYNC_BB_P2P") == "1"
 _P2P_REASON = "rendezvous relay e2e needs the sibling rendezvous + two live clients; set HSYNC_BB_P2P=1 to enable"
 # Test-only seam that makes the master publish undialable candidates (see
-# hsync_client/p2p_rendezvous_rendezvous.py::_TEST_ADVERTISED_ENDPOINTS_ENV).
+# hsync_client/p2p_rendezvous_rdv.py::_TEST_ADVERTISED_ENDPOINTS_ENV).
 _ADV_ENV = "HSYNC_P2P_TEST_ADVERTISED_ENDPOINTS"
 
 pytestmark = pytest.mark.skipif(not _P2P_ENABLED, reason=_P2P_REASON)
@@ -84,7 +84,7 @@ class TestRendezvousRelay:
             try:
                 assert _wait_for_text_in_stderr(
                     master,
-                    "Rendezvous: mDNS on the local network + rendezvous server(s)",
+                    "Discovery: mDNS on the local network + discovery server(s)",
                     timeout=15,
                 ), "the master did not select the rendezvous plan"
                 # The serving role registers a relay listener with the node: this
@@ -99,7 +99,7 @@ class TestRendezvousRelay:
                 try:
                     assert _wait_for_text_in_stderr(
                         slave,
-                        "Rendezvous: mDNS on the local network + rendezvous server(s)",
+                        "Discovery: mDNS on the local network + discovery server(s)",
                         timeout=15,
                     )
                     became_master = _wait_for_text_in_stderr(

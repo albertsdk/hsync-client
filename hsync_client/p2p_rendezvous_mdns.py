@@ -425,7 +425,7 @@ class MdnsRendezvous(RendezvousPlanState):
                 If False, call register_service() later (e.g., after starting
                 the HTTP server when becoming master).
             peer_manager: A pre-built :class:`PeerManager` to share with another
-                plan (the combined mDNS + rendezvous rendezvous). Built from this
+                plan (the combined mDNS + rdv rendezvous). Built from this
                 plan's configuration when omitted.
 
         Returns:
@@ -743,7 +743,7 @@ class MdnsRendezvous(RendezvousPlanState):
                 zc, HSYNC_SERVICE_TYPE, HsyncServiceListener(peer_manager)
             )
             peer_manager.set_local_address(local_ip)
-        log.info(f"mDNS rendezvous rebuilt after a network change: {previous_ip} -> {local_ip}")
+        log.info(f"mDNS discovery rebuilt after a network change: {previous_ip} -> {local_ip}")
 
     def stop(self) -> None:
         """Stop P2P rendezvous and unregister service."""

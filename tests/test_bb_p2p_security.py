@@ -326,7 +326,7 @@ class TestP2PLogfile:
 
 # =============================================================================
 # Parity with the server-mode safety-guard suite (test_bb_server_safety_guards).
-# The guards fire during run_sync startup, BEFORE P2P mDNS rendezvous, so the
+# The guards fire during run_sync startup, BEFORE P2P mDNS discovery, so the
 # abort cases can be driven in-process without ever needing a second peer.
 # =============================================================================
 

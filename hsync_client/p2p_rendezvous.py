@@ -7,7 +7,7 @@
 
 * the **mDNS plan** (``p2p_rendezvous_mdns.MdnsRendezvous``) — Zeroconf browse +
   advertise on the local network, always active;
-* the **rendezvous plan** (``p2p_rendezvous_rendezvous.RendezvousRendezvous``) —
+* the **rendezvous plan** (``p2p_rendezvous_rdv.RdvRendezvous``) —
   registration/query against a ``rdv/1`` rendezvous node for cross-network
   rendezvous, added when a rendezvous is configured.
 
@@ -154,8 +154,8 @@ class RendezvousPlan(Protocol):
 class RendezvousSource(Protocol):
     """The ``rdv/1`` surface a combined plan drives, for one node or several.
 
-    One implementation is a single :class:`~hsync_client.p2p_rendezvous_rendezvous.RendezvousRendezvous`;
-    :class:`~hsync_client.p2p_rendezvous_rendezvous.MultiRendezvousRendezvous` is the
+    One implementation is a single :class:`~hsync_client.p2p_rendezvous_rdv.RdvRendezvous`;
+    :class:`~hsync_client.p2p_rendezvous_rdv.MultiRdvRendezvous` is the
     fan-out over N of them. ``HybridRendezvous`` depends only on this surface, so
     mDNS plus one node and mDNS plus N nodes are the same composition.
     """
@@ -222,7 +222,7 @@ class RendezvousSource(Protocol):
 class RendezvousPlanState:
     """Shared trivial state for the concrete rendezvous plans.
 
-    ``MdnsRendezvous`` and ``RendezvousRendezvous`` expose the same
+    ``MdnsRendezvous`` and ``RdvRendezvous`` expose the same
     :class:`RendezvousPlan` surface and keep the same trivial state: the serving
     port, the shared :class:`PeerManager` and the connected-client provider.
     Holding that here keeps the two plans aligned on the interface without
@@ -367,9 +367,9 @@ def build_rendezvous_plan(
     one (no probe/release race).
     """
     from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
-    from hsync_client.p2p_rendezvous_rendezvous import (
-        MultiRendezvousRendezvous,
-        RendezvousRendezvous,
+    from hsync_client.p2p_rendezvous_rdv import (
+        MultiRdvRendezvous,
+        RdvRendezvous,
         SharedUpnpMapping,
     )
 
@@ -383,7 +383,7 @@ def build_rendezvous_plan(
     # node's random sample, and samples arrive at the lease cadence
     # (``RENDEZVOUS_SERVER_REFRESH_INTERVAL``, spec ``rdv-1.md``: 30 s). The
     # shared PeerManager holds ONE liveness window for every source, so with a
-    # rendezvous server that window must span at least two query cycles —
+    # a discovery server that window must span at least two query cycles —
     # mirroring the mDNS rule ``PEER_TIMEOUT >= 2 * HEARTBEAT_INTERVAL`` — or a
     # live cross-network peer is declared stale between two samples and the
     # election churns. An explicit larger ``HSYNC_PEER_TIMEOUT`` is preserved.
@@ -421,7 +421,7 @@ def build_rendezvous_plan(
     # single source the child owns the mapping it creates.
     shared_upnp = SharedUpnpMapping() if map_data_port and len(endpoints) > 1 else None
     sources = [
-        RendezvousRendezvous(
+        RdvRendezvous(
             **rendezvous_shared,  # type: ignore[arg-type]
             refresh_interval=rendezvous_refresh,
             rendezvous_host=endpoint.host,
@@ -441,11 +441,9 @@ def build_rendezvous_plan(
         for endpoint in endpoints
     ]
     rendezvous_plan = (
-        sources[0]
-        if len(sources) == 1
-        else MultiRendezvousRendezvous(sources, shared_upnp=shared_upnp)
+        sources[0] if len(sources) == 1 else MultiRdvRendezvous(sources, shared_upnp=shared_upnp)
     )
-    # mDNS stays active alongside the rendezvous servers: a node next to us on the
+    # mDNS stays active alongside the discovery servers: a node next to us on the
     # local network is found without a round trip through a server, and the
     # sources share one PeerManager so the election stays single.
     from hsync_client.p2p_rendezvous_hybrid import HybridRendezvous

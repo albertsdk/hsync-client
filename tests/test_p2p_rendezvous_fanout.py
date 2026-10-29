@@ -1,6 +1,6 @@
-"""Fan-out over several rendezvous servers (``MultiRendezvousRendezvous``).
+"""Fan-out over several discovery servers (``MultiRdvRendezvous``).
 
-The per-server lease is covered by ``test_p2p_rendezvous_rendezvous``; here the
+The per-server lease is covered by ``test_p2p_rendezvous_rdv``; here the
 composition contract is pinned: one shared ``PeerManager``, readiness that does
 not depend on a dead server, per-source failure isolation, and the composite
 relay wiring (the relay is per node, so a dialer must try them and an acceptor
@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from hsync_client.p2p_rendezvous_rendezvous import MultiRendezvousRendezvous, SharedUpnpMapping
+from hsync_client.p2p_rendezvous_rdv import MultiRdvRendezvous, SharedUpnpMapping
 from hsync_client.rdv_relay import FailoverRelayDialer, GroupRelayAcceptor
 
 
@@ -34,11 +34,11 @@ def _source(**overrides) -> MagicMock:
 class TestComposition:
     def test_an_empty_source_list_is_refused(self):
         with pytest.raises(ValueError):
-            MultiRendezvousRendezvous([])
+            MultiRdvRendezvous([])
 
     def test_start_shares_one_peer_manager_across_every_source(self):
         first, second = _source(), _source()
-        plan = MultiRendezvousRendezvous([first, second])
+        plan = MultiRdvRendezvous([first, second])
 
         manager = plan.start(register_service=True)
 
@@ -51,7 +51,7 @@ class TestComposition:
     def test_stop_stops_every_source_and_drops_the_shared_mapping(self):
         first, second = _source(), _source()
         shared = MagicMock(name="shared_upnp")
-        plan = MultiRendezvousRendezvous([first, second], shared_upnp=shared)
+        plan = MultiRdvRendezvous([first, second], shared_upnp=shared)
 
         plan.stop()
 
@@ -62,13 +62,13 @@ class TestComposition:
     def test_the_composite_refuses_to_build_a_second_peer_manager(self):
         """One manager or none: building another would split the election."""
         with pytest.raises(RuntimeError, match="single shared PeerManager"):
-            MultiRendezvousRendezvous([_source()]).create_peer_manager()
+            MultiRdvRendezvous([_source()]).create_peer_manager()
 
     def test_the_serving_port_comes_from_the_first_source(self):
         first, second = _source(), _source()
         second.port = 9999
 
-        assert MultiRendezvousRendezvous([first, second]).port == 8443
+        assert MultiRdvRendezvous([first, second]).port == 8443
 
 
 class TestReadiness:
@@ -76,7 +76,7 @@ class TestReadiness:
         published, pending = _source(), _source()
         pending.endpoint_published.return_value = False
 
-        plan = MultiRendezvousRendezvous([published, pending])
+        plan = MultiRdvRendezvous([published, pending])
 
         assert plan.endpoint_published() is True
 
@@ -86,7 +86,7 @@ class TestReadiness:
         disabled.endpoint_published.return_value = False
         pending.endpoint_published.return_value = True
 
-        plan = MultiRendezvousRendezvous([disabled, pending])
+        plan = MultiRdvRendezvous([disabled, pending])
 
         assert plan.endpoint_published() is True
 
@@ -95,7 +95,7 @@ class TestReadiness:
         first.source_disabled.return_value = True
         second.source_disabled.return_value = False
 
-        plan = MultiRendezvousRendezvous([first, second])
+        plan = MultiRdvRendezvous([first, second])
         assert plan.source_disabled() is False
 
         second.source_disabled.return_value = True
@@ -106,7 +106,7 @@ class TestReadiness:
 class TestBroadcast:
     def test_lifecycle_and_publication_calls_reach_every_source(self):
         first, second = _source(), _source()
-        plan = MultiRendezvousRendezvous([first, second])
+        plan = MultiRdvRendezvous([first, second])
 
         plan.update_endpoint_ready(True)
         plan.update_server_ready()
@@ -128,7 +128,7 @@ class TestBroadcast:
     def test_the_peer_count_is_logged_once_not_once_per_source(self):
         first, second = _source(), _source()
 
-        MultiRendezvousRendezvous([first, second]).log_peer_count()
+        MultiRdvRendezvous([first, second]).log_peer_count()
 
         first.log_peer_count.assert_called_once_with()
         second.log_peer_count.assert_not_called()
@@ -144,7 +144,7 @@ class TestRelay:
         refused.relay_dialer.return_value = refused_dialer
         accepted.relay_dialer.return_value = accepted_dialer
 
-        dialer = MultiRendezvousRendezvous([refused, accepted]).relay_dialer("peer-cid")
+        dialer = MultiRdvRendezvous([refused, accepted]).relay_dialer("peer-cid")
 
         assert isinstance(dialer, FailoverRelayDialer)
         assert dialer.open() == ("127.0.0.1", 5555)
@@ -155,15 +155,15 @@ class TestRelay:
         accepted_dialer.close.assert_called_once()
 
     def test_no_source_supporting_the_relay_yields_none(self):
-        assert MultiRendezvousRendezvous([_source(), _source()]).relay_dialer("cid") is None
-        assert MultiRendezvousRendezvous([_source()]).relay_acceptor(8443) is None
+        assert MultiRdvRendezvous([_source(), _source()]).relay_dialer("cid") is None
+        assert MultiRdvRendezvous([_source()]).relay_acceptor(8443) is None
 
     def test_the_acceptor_registers_on_every_server(self):
         first, second = _source(), _source()
         first.relay_acceptor.return_value = MagicMock(name="acceptor_a")
         second.relay_acceptor.return_value = MagicMock(name="acceptor_b")
 
-        acceptor = MultiRendezvousRendezvous([first, second]).relay_acceptor(8443)
+        acceptor = MultiRdvRendezvous([first, second]).relay_acceptor(8443)
 
         assert isinstance(acceptor, GroupRelayAcceptor)
         assert acceptor.start() is True

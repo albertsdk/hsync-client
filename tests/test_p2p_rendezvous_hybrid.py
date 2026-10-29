@@ -1,4 +1,4 @@
-"""Combined mDNS + rendezvous rendezvous (``p2p_rendezvous_hybrid``).
+"""Combined mDNS + rdv rendezvous (``p2p_rendezvous_hybrid``).
 
 The rendezvous tests cover plan selection and the shared-manager fan-out; the
 source-specific behaviour lives in the two plan test files.
@@ -46,10 +46,10 @@ class TestBuildRendezvousPlan:
         assert plan is mdns.return_value
 
     def test_hybrid_when_a_rendezvous_server_is_set(self):
-        """A configured rendezvous server adds its source next to mDNS."""
+        """A configured discovery server adds its source next to mDNS."""
         with (
             patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous") as mdns,
-            patch("hsync_client.p2p_rendezvous_rendezvous.RendezvousRendezvous") as rendezvous,
+            patch("hsync_client.p2p_rendezvous_rdv.RdvRendezvous") as rendezvous,
         ):
             plan = build_rendezvous_plan(
                 _config(RENDEZVOUS_SERVER_ENDPOINTS=(HostPort("node.example", 443),)),
@@ -75,7 +75,7 @@ class TestBuildRendezvousPlan:
         """
         with (
             patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous") as mdns,
-            patch("hsync_client.p2p_rendezvous_rendezvous.RendezvousRendezvous") as rendezvous,
+            patch("hsync_client.p2p_rendezvous_rdv.RdvRendezvous") as rendezvous,
         ):
             build_rendezvous_plan(
                 _config(RENDEZVOUS_SERVER_ENDPOINTS=(HostPort("node.example", 443),)),
@@ -90,7 +90,7 @@ class TestBuildRendezvousPlan:
     def test_rendezvous_mode_floor_follows_a_custom_refresh_interval(self):
         with (
             patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous") as mdns,
-            patch("hsync_client.p2p_rendezvous_rendezvous.RendezvousRendezvous") as rendezvous,
+            patch("hsync_client.p2p_rendezvous_rdv.RdvRendezvous") as rendezvous,
         ):
             build_rendezvous_plan(
                 _config(
@@ -107,7 +107,7 @@ class TestBuildRendezvousPlan:
     def test_rendezvous_mode_preserves_an_explicitly_larger_timeout(self):
         with (
             patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous") as mdns,
-            patch("hsync_client.p2p_rendezvous_rendezvous.RendezvousRendezvous") as rendezvous,
+            patch("hsync_client.p2p_rendezvous_rdv.RdvRendezvous") as rendezvous,
         ):
             build_rendezvous_plan(
                 _config(

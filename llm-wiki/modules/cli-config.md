@@ -90,8 +90,8 @@ flag), applies the channel default port, and falls back to
 `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS` when the option is omitted. The sources are
 selected in `p2p_rendezvous.build_rendezvous_plan`: no endpoints → mDNS only;
 one or more → `HybridRendezvous` running mDNS **and** one
-`RendezvousRendezvous` per endpoint (wrapped in
-`MultiRendezvousRendezvous` when there is more than one) over one shared
+`RdvRendezvous` per endpoint (wrapped in
+`MultiRdvRendezvous` when there is more than one) over one shared
 `PeerManager`, so `p2p_handler.run_p2p_mode` only sees the `RendezvousPlan`
 surface and the election stays single.
 

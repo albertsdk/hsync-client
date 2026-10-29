@@ -144,15 +144,15 @@ class TestEnvSettings:
         assert EnvSettings().rendezvous_server_endpoints is None
 
     def test_rendezvous_accepts_bare_host(self, monkeypatch):
-        monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_ENDPOINTS", "boot.example.net")
+        monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_ENDPOINTS", "rdv.example.net")
         get_env_settings.cache_clear()
-        assert EnvSettings().rendezvous_server_endpoints == "boot.example.net"
+        assert EnvSettings().rendezvous_server_endpoints == "rdv.example.net"
 
     def test_rendezvous_rejects_scheme_and_path(self, monkeypatch):
         """The rendezvous channel is QUIC/UDP: no scheme, no path."""
         for bad in (
-            "https://boot.example.net",
-            "boot.example.net/path",
+            "https://rdv.example.net",
+            "rdv.example.net/path",
         ):
             monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_ENDPOINTS", bad)
             get_env_settings.cache_clear()
@@ -161,9 +161,9 @@ class TestEnvSettings:
 
     def test_rendezvous_accepts_host_port(self, monkeypatch):
         """``HSYNC_RENDEZVOUS_SERVER_ENDPOINTS`` accepts ``HOST[:PORT]``; the host is unbracketed."""
-        monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_ENDPOINTS", "boot.example.net:8443")
+        monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_ENDPOINTS", "rdv.example.net:8443")
         get_env_settings.cache_clear()
-        assert EnvSettings().rendezvous_server_endpoints == "boot.example.net:8443"
+        assert EnvSettings().rendezvous_server_endpoints == "rdv.example.net:8443"
 
     def test_rendezvous_ipv6_bracketed_with_port(self, monkeypatch):
         monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_ENDPOINTS", "[::1]:8443")

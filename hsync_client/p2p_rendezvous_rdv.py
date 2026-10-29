@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""Rendezvous rendezvous plan for ``hsync p2p`` (cross-network, ``rdv/1``).
+"""rdv rendezvous plan for ``hsync p2p`` (cross-network, ``rdv/1``).
 
 The second implementation of the :class:`~hsync_client.p2p_rendezvous.RendezvousPlan`
 interface: instead of browsing mDNS, it keeps a lease on a ``rdv/1`` rendezvous
@@ -81,7 +81,7 @@ from hsync_client.rdv_relay import (
 from hsync_client.stun import ObservedAddress, observed_address
 from hsync_client.upnp import UpnpMapper
 
-__all__ = ["RendezvousRendezvous", "MultiRendezvousRendezvous", "SharedUpnpMapping"]
+__all__ = ["RdvRendezvous", "MultiRdvRendezvous", "SharedUpnpMapping"]
 
 # How often the lease loop wakes to register/refresh/query. The rendezvous
 # rate-limits ``query`` to 5/min per (IP, bucket) and ``register``/``refresh`` to
@@ -162,7 +162,7 @@ class SharedUpnpMapping:
                 log.debug(f"UPnP unmap failed: {exc}")
 
 
-class RendezvousRendezvous(RendezvousPlanState):
+class RdvRendezvous(RendezvousPlanState):
     """``RendezvousPlan`` backed by a ``rdv/1`` rendezvous node."""
 
     def __init__(
@@ -372,12 +372,12 @@ class RendezvousRendezvous(RendezvousPlanState):
         return self._source_disabled
 
     def log_peer_count(self) -> None:
-        """Log the rendezvous rendezvous result when the alive-peer count changes."""
+        """Log the rdv rendezvous result when the alive-peer count changes."""
         peers = self._peer_manager.get_alive_peers() if self._peer_manager else []
         if len(peers) != self._last_peer_count:
             self._last_peer_count = len(peers)
             if peers:
-                log.info(f"Rendezvous rendezvous: found {len(peers)} peer(s)")
+                log.info(f"rdv rendezvous: found {len(peers)} peer(s)")
 
     def update_endpoint_ready(self, ready: bool) -> None:
         """Publish (or retract) this node's data-plane endpoint."""
@@ -623,7 +623,7 @@ class RendezvousRendezvous(RendezvousPlanState):
         self._untrusted = True
         log.error(guidance or message)
         emit_warning(
-            f"{message} — rendezvous rendezvous stopped, local network rendezvous continues",
+            f"{message} — rdv rendezvous stopped, local network discovery continues",
             source="rendezvous",
             reason="untrusted",
         )
@@ -835,8 +835,8 @@ def _client_version() -> str:
     return HSYNC_VERSION
 
 
-class MultiRendezvousRendezvous(RendezvousPlanState):
-    """Lease and query several rendezvous servers over one shared ``PeerManager``.
+class MultiRdvRendezvous(RendezvousPlanState):
+    """Lease and query several discovery servers over one shared ``PeerManager``.
 
     Each child keeps its own transport, trust policy and lease state (the
     observed endpoint and the published candidates are per node), while peer
@@ -855,7 +855,7 @@ class MultiRendezvousRendezvous(RendezvousPlanState):
 
     def __init__(
         self,
-        sources: Sequence[RendezvousRendezvous],
+        sources: Sequence[RdvRendezvous],
         *,
         shared_upnp: SharedUpnpMapping | None = None,
     ) -> None:
@@ -879,7 +879,7 @@ class MultiRendezvousRendezvous(RendezvousPlanState):
         misuse loud instead of silent.
         """
         raise RuntimeError(
-            "MultiRendezvousRendezvous.start() creates the single shared PeerManager; "
+            "MultiRdvRendezvous.start() creates the single shared PeerManager; "
             "the composite cannot build another one"
         )
 
@@ -889,7 +889,7 @@ class MultiRendezvousRendezvous(RendezvousPlanState):
         self._peer_manager = manager
         for source in self._sources:
             source.start(register_service=register_service, peer_manager=manager)
-        log.info(f"P2P rendezvous started ({len(self._sources)} rendezvous server(s))")
+        log.info(f"P2P rendezvous started ({len(self._sources)} discovery server(s))")
         return manager
 
     def stop(self) -> None:

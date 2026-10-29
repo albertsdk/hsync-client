@@ -3,7 +3,7 @@
 p2p Mode lets devices synchronize files directly, peer-to-peer, without a
 centralized HSYNC server. Rendezvous uses **mDNS on the local network always**,
 plus an optional `rdv/1` rendezvous node for devices on different networks:
-with no rendezvous configured only mDNS runs; with a rendezvous configured both run
+with no discovery server configured only mDNS runs; with a discovery server configured both run
 together, so a node next to you is still found locally without a round trip
 through the node.
 
@@ -19,7 +19,7 @@ through the node.
 
 p2p Mode enables direct peer-to-peer file synchronization between devices on the
 same network, without requiring a centralized HSYNC server. Rendezvous always uses
-mDNS on the local network; cross-network groups add a rendezvous, which runs
+mDNS on the local network; cross-network groups add a discovery server, which runs
 alongside mDNS on the same client. Everything below (election, transport,
 security) is identical whether mDNS runs alone or alongside the rendezvous.
 

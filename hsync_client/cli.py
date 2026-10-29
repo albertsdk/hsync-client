@@ -241,7 +241,7 @@ def _build_rendezvous_servers(
     try:
         endpoints = parse_endpoint_list(raw, strict=True, default_port=RENDEZVOUS_DEFAULT_PORT)
     except ValueError as exc:
-        raise typer.BadParameter(f"invalid rendezvous server: {exc}") from exc
+        raise typer.BadParameter(f"invalid discovery server: {exc}") from exc
     if not endpoints and use_env:
         from hsync_client.config import get_rendezvous_server_endpoints
 
@@ -947,7 +947,7 @@ RendezvousArg = Annotated[
     typer.Option(
         "--rendezvous-server",
         help=(
-            "Rendezvous server (the hsync-rendezvous daemon speaking rdv/1) for "
+            "Discovery servers (the hsync-rendezvous daemon speaking rdv/1) for "
             "cross-network rendezvous: HOST[:PORT], QUIC/UDP, no scheme. Repeatable, "
             "and each value may carry a comma-separated list (the same grammar as "
             "HSYNC_RENDEZVOUS_SERVER_ENDPOINTS); the client leases and queries every "
@@ -965,7 +965,7 @@ UpnpOpt = Annotated[
         "--map-data-port",
         help=(
             "Map the p2p data-plane TCP port with UPnP (opt-in; off by default). "
-            "Only meaningful with a rendezvous server: without one, mDNS already "
+            "Only meaningful with a discovery server: without one, mDNS already "
             "keeps rendezvous on the local network."
         ),
         rich_help_panel="P2P Mode",
@@ -976,7 +976,7 @@ RendezvousFingerprintOpt = Annotated[
     typer.Option(
         "--rendezvous-server-fingerprint",
         help=(
-            "Pin a rendezvous server's certificate fingerprint ('sha256:<hex>' or "
+            "Pin a discovery server's certificate fingerprint ('sha256:<hex>' or "
             "bare hex). May be repeated (up to two per server) for a rotation window."
         ),
         metavar="FINGERPRINT",
@@ -988,7 +988,7 @@ RendezvousTofuOpt = Annotated[
     typer.Option(
         "--rendezvous-server-tofu",
         help=(
-            "Trust a rendezvous server's certificate on first use (TOFU); a later "
+            "Trust a discovery server's certificate on first use (TOFU); a later "
             "mismatch is refused as a possible man-in-the-middle."
         ),
         show_default=False,
@@ -1277,11 +1277,11 @@ def p2p(
         [dim]# Advanced: a full raw group key instead of a password (32+ chars)[/dim]
         $ HSYNC_P2P_KEY=YOUR_SHARED_KEY_AT_LEAST_32_CHARACTERS hsync p2p -b shared --group home
 
-        [dim]# Discover peers across networks through a rendezvous server[/dim]
-        $ hsync p2p boot.example.net -b shared
+        [dim]# Discover peers across networks through a discovery server[/dim]
+        $ hsync p2p rdv.example.net -b shared
 
         [dim]# Rendezvous extra ports when your egress firewall blocks UDP 443[/dim]
-        $ HSYNC_RENDEZVOUS_SERVER_EXTRA_PORTS=53 hsync p2p boot.example.net -b shared
+        $ HSYNC_RENDEZVOUS_SERVER_EXTRA_PORTS=53 hsync p2p rdv.example.net -b shared
 
     [bold]Environment Variables:[/bold]
 
@@ -1408,7 +1408,7 @@ def derive_group_key_command(
     """Print the P2P group key (64 hex) derived from a shared password.
 
     Use the output to populate a rendezvous-server key file. Treat it as a secret: it is
-    the raw group key the rendezvous server derives bucket tokens from.
+    the raw group key the discovery server derives bucket tokens from.
     """
     import os
 
@@ -1438,17 +1438,17 @@ def derive_group_key_command(
 
 
 # =============================================================================
-# trust management (P2P peers, rendezvous server, sync server) — one ``hsync trust``
+# trust management (P2P peers, discovery servers, sync server) — one ``hsync trust``
 # namespace
 # =============================================================================
 # ``hsync trust …`` mirrors OpenSSH's known-hosts workflow so an operator can
 # inspect, pre-pin and forget fingerprints without editing the JSON stores by
 # hand. One namespace covers the three certificate-pinning transports: the P2P
-# master/seeders (``known_peers``), the rendezvous server and the sync server
+# master/seeders (``known_peers``), the discovery servers and the sync server
 # (``known_hosts``). ``hsync server``/``hsync p2p`` stay actions, so the trust
 # surface lives here rather than under them (ADR-0036).
 _trust_root = typer.Typer(
-    help="Inspect and manage certificate trust for the P2P peers, rendezvous server and server.",
+    help="Inspect and manage certificate trust for the P2P peers, discovery servers and server.",
     no_args_is_help=True,
 )
 _trust_rendezvous_app = typer.Typer(
@@ -1533,12 +1533,12 @@ def rendezvous_trust_list(
     as_json: bool = typer.Option(False, "--json", help="Emit entries as JSON."),
 ) -> None:
     """List the pinned rendezvous-server fingerprints (like ``known_hosts``)."""
-    _trust_list(RendezvousTrustStore(), "No rendezvous servers are trusted yet.", as_json)
+    _trust_list(RendezvousTrustStore(), "No discovery servers are trusted yet.", as_json)
 
 
 @_trust_rendezvous_app.command("show")
 def rendezvous_trust_show(hostname: HostArg) -> None:
-    """Show the pinned fingerprint for one rendezvous server."""
+    """Show the pinned fingerprint for one discovery server."""
     host, resolved_port = _trust_host_port(hostname)
     _trust_show(RendezvousTrustStore(), host, resolved_port)
 
@@ -1555,14 +1555,14 @@ def rendezvous_trust_add(
 
 @_trust_rendezvous_app.command("remove")
 def rendezvous_trust_remove(hostname: HostArg) -> None:
-    """Forget a pinned rendezvous server (like ``ssh-keygen -R``)."""
+    """Forget a pinned discovery server (like ``ssh-keygen -R``)."""
     host, resolved_port = _trust_host_port(hostname)
     _trust_remove(RendezvousTrustStore(), host, resolved_port)
 
 
 @_trust_rendezvous_app.command("fingerprint")
 def rendezvous_trust_fingerprint(hostname: HostArg) -> None:
-    """Print a rendezvous server's certificate fingerprint without trusting it."""
+    """Print a discovery server's certificate fingerprint without trusting it."""
     from hsync_client.rdv_client import RendezvousClient, RendezvousError
 
     host, resolved_port = _trust_host_port(hostname)

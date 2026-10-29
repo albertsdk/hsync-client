@@ -10,7 +10,7 @@ the shared LAN-adjacency test used by the peer-source ranking and by the
 dial-time candidate ordering (a same-subnet candidate is preferred over a NATed
 public one).
 
-Consumers: ``hsync-client`` (p2p_rendezvous_mdns, p2p_rendezvous_rendezvous,
+Consumers: ``hsync-client`` (p2p_rendezvous_mdns, p2p_rendezvous_rdv,
 p2p_handler, p2p_sources, p2p_peers).
 """
 

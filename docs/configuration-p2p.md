@@ -11,9 +11,9 @@ p2p configuration for peer-to-peer synchronization without a central server.
 |---|---|---|
 | `p2p` subcommand | Enable p2p mode (selected with `hsync p2p`) | — (CLI only) |
 | `--rendezvous-server` | Rendezvous-server endpoint for cross-network rendezvous: `HOST[:PORT]`, QUIC/UDP, no scheme (optional; omit for mDNS only). Repeatable, and each value may carry a comma-separated list; the client leases and queries every listed server and merges the peers | — |
-| `--map-data-port` | Map the p2p data-plane TCP port with UPnP when a rendezvous server is used (opt-in) | `false` (UPnP off; enable explicitly) |
-| `--rendezvous-server-fingerprint` | Pin a rendezvous server's certificate fingerprint (`sha256:<hex>` or bare hex); repeatable up to two per server for a rotation window; refused without `--rendezvous-server` | — (`ask`: confirm at the prompt on a terminal, fail closed without one) |
-| `--rendezvous-server-tofu` | Trust a rendezvous server's certificate on first use; a later mismatch is refused | `false` |
+| `--map-data-port` | Map the p2p data-plane TCP port with UPnP when a discovery server is used (opt-in) | `false` (UPnP off; enable explicitly) |
+| `--rendezvous-server-fingerprint` | Pin a discovery server's certificate fingerprint (`sha256:<hex>` or bare hex); repeatable up to two per server for a rotation window; refused without `--rendezvous-server` | — (`ask`: confirm at the prompt on a terminal, fail closed without one) |
+| `--rendezvous-server-tofu` | Trust a discovery server's certificate on first use; a later mismatch is refused | `false` |
 | `--rendezvous-server-trust` | Rendezvous-server TLS trust policy: `ask` (prompt on a terminal and remember, fail closed without one), `accept-new`, `strict`, `none` | `ask` |
 | `--group` | p2p group name (only peers in the same group see each other) | — (all peers visible) |
 | `--listen-port` | Port when acting as p2p master; `0` = pick a free port | `0` (auto) |
@@ -103,7 +103,7 @@ Both must be explicit: a TTY or `--allow-deletions` never grants them.
 | `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS` | Ordered, comma-separated rendezvous-server endpoints for cross-network rendezvous (`host`, `host:port`, `[IPv6]`, `[IPv6]:port`; QUIC/UDP, no scheme). The client leases **and queries every reachable entry** and merges the peers. Unset = mDNS-only | — |
 | `HSYNC_RENDEZVOUS_SERVER_EXTRA_PORTS` | Extra UDP ports tried on **each** endpoint, comma-separated and ordered (dial fallback); e.g. `53` so a client whose **egress firewall** blocks UDP 443 can still reach the same node on 53. Tried after the endpoint's own/default port | — |
 | `HSYNC_RENDEZVOUS_SERVER_FINGERPRINTS` | Pins **per endpoint**: `ENDPOINT=FINGERPRINT[|FINGERPRINT]`, comma-separated (`sha256:<hex>` or bare hex; `|` separates the rotation window). A pin must name a configured endpoint; a bare fingerprint is accepted only with one endpoint. With several servers each keeps its own identity | — |
-| `HSYNC_RENDEZVOUS_SERVER_TOFU` | Trust a rendezvous server's certificate on first use (`1` = on) | `false` |
+| `HSYNC_RENDEZVOUS_SERVER_TOFU` | Trust a discovery server's certificate on first use (`1` = on) | `false` |
 | `HSYNC_RENDEZVOUS_SERVER_TRUST` | Rendezvous-server TLS trust policy: `ask` (prompt on a terminal and remember, fail closed without one), `accept-new`, `strict` (each configured server needs its pin), `none` | `ask` |
 | `HSYNC_MAP_DATA_PORT` | Map the master TCP port with UPnP (`true`/`false`); off by default | `false` |
 | `HSYNC_NEVER_MASTER` | Never become master | `false` |
@@ -115,7 +115,7 @@ Both must be explicit: a TTY or `--allow-deletions` never grants them.
 | `HSYNC_PEER_RENDEZVOUS_TIMEOUT` | p2p peer rendezvous timeout in seconds (`0` = indefinitely) | `0` |
 | `HSYNC_HEARTBEAT_INTERVAL` | LAN mDNS re-announce / liveness-evaluation cadence in seconds (`1`–`60`) | `5` |
 | `HSYNC_RENDEZVOUS_SERVER_REFRESH_INTERVAL` | `rdv/1` lease/query cadence in seconds (`1`–`300`): how often the client registers, refreshes and queries the rendezvous. Sized against the node's rate limits (spec refresh: 30 s) | `30` |
-| `HSYNC_PEER_TIMEOUT` | Seconds without a peer's heartbeat before it is considered dead and excluded from election (`3`–`600`); must be ≥ 2× the heartbeat, and with a rendezvous configured the client raises it to at least 2× `HSYNC_RENDEZVOUS_SERVER_REFRESH_INTERVAL` (default 60 s) so a relayed peer is not expired between two random samples | `15` |
+| `HSYNC_PEER_TIMEOUT` | Seconds without a peer's heartbeat before it is considered dead and excluded from election (`3`–`600`); must be ≥ 2× the heartbeat, and with a discovery server configured the client raises it to at least 2× `HSYNC_RENDEZVOUS_SERVER_REFRESH_INTERVAL` (default 60 s) so a relayed peer is not expired between two random samples | `15` |
 | `HSYNC_STABILITY_DELAY` | Seconds a file must stay unchanged before upload (already-idle files skip the wait) | `5` |
 | `HSYNC_DELTA_MIN_FILE_SIZE_P2P` | Min file size for delta transfer in p2p mode | `1048576` (1 MB) |
 

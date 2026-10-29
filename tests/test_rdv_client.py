@@ -141,7 +141,7 @@ class TestFailFast:
 class TestUnreachableError:
     def test_textless_connection_error_yields_a_non_empty_message(self, monkeypatch):
         """aioquic raises ``ConnectionError`` with no text; the message must still identify it."""
-        client = RendezvousClient("boot.example.net", 443)
+        client = RendezvousClient("rdv.example.net", 443)
 
         async def boom(self, payload, *, expect):
             raise ConnectionError()
@@ -150,7 +150,7 @@ class TestUnreachableError:
         with pytest.raises(RendezvousUnreachable) as excinfo:
             client.query(build_query_frame(bucket="shared"))
         message = str(excinfo.value)
-        assert "boot.example.net:443" in message
+        assert "rdv.example.net:443" in message
         assert message.rstrip().endswith("ConnectionError")
 
 
@@ -348,13 +348,13 @@ class TestQuicConfiguration:
         # The rendezvous is self-signed by contract: the handshake never verifies
         # WebPKI, trust comes from the fingerprint policy.
         config = RendezvousClient(
-            "boot.example.net", 443, policy=TrustPolicy.none
+            "rdv.example.net", 443, policy=TrustPolicy.none
         )._quic_configuration()
         assert config.alpn_protocols == [RDV_ALPN]
         assert config.verify_mode == ssl.CERT_NONE
 
     def test_default_policy_is_ask(self):
-        client = RendezvousClient("boot.example.net", 443)
+        client = RendezvousClient("rdv.example.net", 443)
         assert client.policy is TrustPolicy.ask
         assert client._quic_configuration().verify_mode == ssl.CERT_NONE
 
@@ -384,7 +384,7 @@ class TestPinVerify:
     def test_explicit_pin_match(self):
         cert, fp = _fake_cert()
         client = RendezvousClient(
-            "boot.example.net", 443, fingerprints=(fp,), policy=TrustPolicy.strict
+            "rdv.example.net", 443, fingerprints=(fp,), policy=TrustPolicy.strict
         )
         client._verify_peer(_FakePeer(cert))  # no raise
 
@@ -394,7 +394,7 @@ class TestPinVerify:
         monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
         cert, _ = _fake_cert()
         client = RendezvousClient(
-            "boot.example.net", 443, fingerprints=("f" * 64,), policy=TrustPolicy.strict
+            "rdv.example.net", 443, fingerprints=("f" * 64,), policy=TrustPolicy.strict
         )
         with pytest.raises(RendezvousFingerprintMismatch):
             client._verify_peer(_FakePeer(cert))
@@ -402,7 +402,7 @@ class TestPinVerify:
     def test_rotation_accepts_second_pin(self):
         cert, fp = _fake_cert()
         client = RendezvousClient(
-            "boot.example.net", 443, fingerprints=("0" * 64, fp), policy=TrustPolicy.strict
+            "rdv.example.net", 443, fingerprints=("0" * 64, fp), policy=TrustPolicy.strict
         )
         client._verify_peer(_FakePeer(cert))  # second pin matches
 
@@ -411,18 +411,18 @@ class TestPinVerify:
 
         monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
         cert, fp = _fake_cert()
-        client = RendezvousClient("boot.example.net", 443, policy=TrustPolicy.accept_new)
+        client = RendezvousClient("rdv.example.net", 443, policy=TrustPolicy.accept_new)
         client._verify_peer(_FakePeer(cert))  # first use: trusted
-        assert RendezvousTrustStore(tmp_path / "trust.json").get("boot.example.net", 443) == fp
+        assert RendezvousTrustStore(tmp_path / "trust.json").get("rdv.example.net", 443) == fp
 
     def test_tofu_changed_raises(self, tmp_path, monkeypatch):
         from hsync_client.rendezvous_trust import RENDEZVOUS_TRUST_FILE_ENV, RendezvousTrustStore
 
         monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
         store = RendezvousTrustStore(tmp_path / "trust.json")
-        store.set("boot.example.net", 443, "0" * 64, source="cli")
+        store.set("rdv.example.net", 443, "0" * 64, source="cli")
         cert, _ = _fake_cert()
-        client = RendezvousClient("boot.example.net", 443, policy=TrustPolicy.accept_new)
+        client = RendezvousClient("rdv.example.net", 443, policy=TrustPolicy.accept_new)
         with pytest.raises(RendezvousFingerprintMismatch):
             client._verify_peer(_FakePeer(cert))
 
@@ -438,9 +438,9 @@ class TestPinVerify:
             prompts.append((host, port, observed))
             return True
 
-        client = RendezvousClient("boot.example.net", 443, policy=TrustPolicy.ask, prompt=prompt)
+        client = RendezvousClient("rdv.example.net", 443, policy=TrustPolicy.ask, prompt=prompt)
         client._verify_peer(_FakePeer(cert))  # accepted
-        assert prompts == [("boot.example.net", 443, fp)]
+        assert prompts == [("rdv.example.net", 443, fp)]
         entry = RendezvousTrustStore(tmp_path / "trust.json").entries()[0]
         assert entry["fingerprint"] == fp
         assert entry["source"] == "prompt"
@@ -451,7 +451,7 @@ class TestPinVerify:
 
         monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
         cert, _ = _fake_cert()
-        client = RendezvousClient("boot.example.net", 443, policy=TrustPolicy.ask)
+        client = RendezvousClient("rdv.example.net", 443, policy=TrustPolicy.ask)
         with pytest.raises(RendezvousNotTrusted) as excinfo:
             client._verify_peer(_FakePeer(cert))
         assert excinfo.value.non_interactive is True
@@ -463,7 +463,7 @@ class TestPinVerify:
         monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
         cert, _ = _fake_cert()
         client = RendezvousClient(
-            "boot.example.net", 443, policy=TrustPolicy.ask, prompt=lambda *_a: False
+            "rdv.example.net", 443, policy=TrustPolicy.ask, prompt=lambda *_a: False
         )
         with pytest.raises(RendezvousNotTrusted) as excinfo:
             client._verify_peer(_FakePeer(cert))
@@ -475,17 +475,17 @@ class TestPinVerify:
 
         monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
         cert, fp = _fake_cert()
-        RendezvousTrustStore(tmp_path / "trust.json").set("boot.example.net", 443, fp, source="cli")
+        RendezvousTrustStore(tmp_path / "trust.json").set("rdv.example.net", 443, fp, source="cli")
 
         def _never(*_a):
             raise AssertionError("must not prompt when the pin matches")
 
-        client = RendezvousClient("boot.example.net", 443, policy=TrustPolicy.ask, prompt=_never)
+        client = RendezvousClient("rdv.example.net", 443, policy=TrustPolicy.ask, prompt=_never)
         client._verify_peer(_FakePeer(cert))  # no raise
 
     def test_missing_peer_certificate_fails_closed(self):
         client = RendezvousClient(
-            "boot.example.net", 443, fingerprints=("a" * 64,), policy=TrustPolicy.strict
+            "rdv.example.net", 443, fingerprints=("a" * 64,), policy=TrustPolicy.strict
         )
         peer = type(
             "_NoCert", (), {"_quic": type("_Quic", (), {"tls": type("_Tls", (), {})()})()}
@@ -500,7 +500,7 @@ class TestPinVerify:
         monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
         cert, fp = _fake_cert()
         client = RendezvousClient(
-            "boot.example.net", 443, fingerprints=("f" * 64,), policy=TrustPolicy.strict
+            "rdv.example.net", 443, fingerprints=("f" * 64,), policy=TrustPolicy.strict
         )
         calls: dict[str, bool] = {}
 
@@ -544,9 +544,9 @@ class TestTrustFailureGuidance:
 
         trust_file = tmp_path / "trust.json"
         monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(trust_file))
-        RendezvousTrustStore(trust_file).set("boot.example.net", 443, "f" * 64, source="cli")
+        RendezvousTrustStore(trust_file).set("rdv.example.net", 443, "f" * 64, source="cli")
         cert, fp = _fake_cert()
-        client = RendezvousClient("boot.example.net", 443, policy=TrustPolicy.accept_new)
+        client = RendezvousClient("rdv.example.net", 443, policy=TrustPolicy.accept_new)
         with pytest.raises(RendezvousFingerprintMismatch) as excinfo:
             client._verify_peer(_FakePeer(cert))
         message = str(excinfo.value)
@@ -554,13 +554,13 @@ class TestTrustFailureGuidance:
         assert "does not match the pinned fingerprint (possible man-in-the-middle)" in message
         assert guidance is not None
         assert guidance.startswith(
-            "Rendezvous server 'boot.example.net:443' trust failed: the certificate fingerprint "
+            "Discovery server 'rdv.example.net:443' trust failed: the certificate fingerprint "
             "does not match the accepted pin (possible man-in-the-middle)."
         )
         assert f"sha256:{fp}" in guidance
         assert str(trust_file) in guidance
-        assert f"hsync trust rendezvous-server add boot.example.net:443 sha256:{fp}" in guidance
-        assert "hsync trust rendezvous-server remove boot.example.net:443" in guidance
+        assert f"hsync trust rendezvous-server add rdv.example.net:443 sha256:{fp}" in guidance
+        assert "hsync trust rendezvous-server remove rdv.example.net:443" in guidance
         assert "ssh-keygen -R" in guidance
 
     def test_strict_unknown_node_offers_pinning_and_tofu(self, tmp_path, monkeypatch):
@@ -568,12 +568,12 @@ class TestTrustFailureGuidance:
 
         monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
         cert, fp = _fake_cert()
-        client = RendezvousClient("boot.example.net", 443, policy=TrustPolicy.strict)
+        client = RendezvousClient("rdv.example.net", 443, policy=TrustPolicy.strict)
         with pytest.raises(RendezvousFingerprintMismatch) as excinfo:
             client._verify_peer(_FakePeer(cert))
         assert "is not pinned and the trust policy is 'strict'" in str(excinfo.value)
         guidance = excinfo.value.guidance or ""
-        assert f"hsync trust rendezvous-server add boot.example.net:443 sha256:{fp}" in guidance
+        assert f"hsync trust rendezvous-server add rdv.example.net:443 sha256:{fp}" in guidance
         assert "--rendezvous-server-tofu" in guidance
 
     def test_explicit_pin_mismatch_points_at_the_flag(self, tmp_path, monkeypatch):
@@ -582,13 +582,13 @@ class TestTrustFailureGuidance:
         monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
         cert, _ = _fake_cert()
         client = RendezvousClient(
-            "boot.example.net", 443, fingerprints=("0" * 64,), policy=TrustPolicy.strict
+            "rdv.example.net", 443, fingerprints=("0" * 64,), policy=TrustPolicy.strict
         )
         with pytest.raises(RendezvousFingerprintMismatch) as excinfo:
             client._verify_peer(_FakePeer(cert))
         assert "--rendezvous-server-fingerprint" in str(excinfo.value)
         guidance = excinfo.value.guidance or ""
-        assert "hsync trust rendezvous-server fingerprint boot.example.net:443" in guidance
+        assert "hsync trust rendezvous-server fingerprint rdv.example.net:443" in guidance
         assert "--rendezvous-server-fingerprint" in guidance
 
     def test_prompt_accept_reports_where_the_pin_was_saved(self, tmp_path, monkeypatch):
@@ -603,14 +603,14 @@ class TestTrustFailureGuidance:
         sink_id = log.add(messages.append, level="INFO", format="{message}")
         try:
             client = RendezvousClient(
-                "boot.example.net", 443, policy=TrustPolicy.ask, prompt=lambda *_a: True
+                "rdv.example.net", 443, policy=TrustPolicy.ask, prompt=lambda *_a: True
             )
             client._verify_peer(_FakePeer(cert))
         finally:
             log.remove(sink_id)
-        assert RendezvousTrustStore(trust_file).get("boot.example.net", 443) == fp
+        assert RendezvousTrustStore(trust_file).get("rdv.example.net", 443) == fp
         assert any(
-            "Permanently added 'boot.example.net:443' (SHA256) to the list of known "
+            "Permanently added 'rdv.example.net:443' (SHA256) to the list of known "
             f"hosts ({trust_file})." in message
             for message in messages
         )
@@ -626,12 +626,12 @@ class TestTrustFailureGuidance:
         messages: list[str] = []
         sink_id = log.add(messages.append, level="INFO", format="{message}")
         try:
-            client = RendezvousClient("boot.example.net", 443, policy=TrustPolicy.accept_new)
+            client = RendezvousClient("rdv.example.net", 443, policy=TrustPolicy.accept_new)
             client._verify_peer(_FakePeer(cert))
         finally:
             log.remove(sink_id)
         assert any(
-            "Permanently added 'boot.example.net:443' (SHA256) to the list of known "
+            "Permanently added 'rdv.example.net:443' (SHA256) to the list of known "
             f"hosts ({trust_file})." in message
             for message in messages
         )
@@ -642,7 +642,7 @@ class TestTrustFailureGuidance:
         monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
         cert, _ = _fake_cert()
         client = RendezvousClient(
-            "boot.example.net", 443, policy=TrustPolicy.ask, prompt=lambda *_a: False
+            "rdv.example.net", 443, policy=TrustPolicy.ask, prompt=lambda *_a: False
         )
         with pytest.raises(RendezvousNotTrusted) as excinfo:
             client._verify_peer(_FakePeer(cert))

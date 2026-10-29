@@ -194,8 +194,8 @@ class EnvSettings(BaseSettings):
         description=(
             "Ordered comma-separated list of rendezvous-server endpoints "
             "(HOST[:PORT], QUIC/UDP, no scheme), e.g. "
-            "'boot-a.example.net,boot-b.example.net:8443'. The client leases and "
-            "queries every reachable entry. Unset = mDNS-only rendezvous"
+            "'rdv-a.example.net,rdv-b.example.net:8443'. The client leases and "
+            "queries every reachable entry. Unset = mDNS-only discovery"
         ),
     )
     rendezvous_server_extra_ports: str | None = Field(
@@ -217,7 +217,7 @@ class EnvSettings(BaseSettings):
     rendezvous_server_tofu: bool = Field(
         default=False,
         description=(
-            "Trust a rendezvous server's certificate on first use (TOFU); a later "
+            "Trust a discovery server's certificate on first use (TOFU); a later "
             "mismatch is refused as a possible man-in-the-middle"
         ),
     )
@@ -225,7 +225,7 @@ class EnvSettings(BaseSettings):
         default=False,
         description=(
             "Map the p2p data-plane TCP port with UPnP (opt-in; off by default). "
-            "Only meaningful with a rendezvous server."
+            "Only meaningful with a discovery server."
         ),
     )
 
@@ -574,7 +574,7 @@ def resolve_rendezvous_server_pins(
     """
     keys = [endpoint_pin_key(endpoint.host, endpoint.port) for endpoint in endpoints]
     if not keys:
-        raise ValueError("a fingerprint requires at least one rendezvous server endpoint")
+        raise ValueError("a fingerprint requires at least one discovery server endpoint")
     resolved: FingerprintPins = {}
     for raw_key, values in pins.items():
         # A pin key is normalized the same way the endpoint list is, so
@@ -587,13 +587,13 @@ def resolve_rendezvous_server_pins(
             if len(keys) != 1:
                 raise ValueError(
                     "a fingerprint without an endpoint is ambiguous with several "
-                    "rendezvous servers; pin it as ENDPOINT=FINGERPRINT"
+                    "discovery servers; pin it as ENDPOINT=FINGERPRINT"
                 )
             resolved[keys[0]] = values
             continue
         if key not in keys:
             raise ValueError(
-                f"fingerprint pinned for {key!r}, which is not a configured rendezvous server"
+                f"fingerprint pinned for {key!r}, which is not a configured discovery server"
             )
         resolved[key] = values
     return resolved
@@ -615,7 +615,7 @@ def get_rendezvous_server_pins() -> FingerprintPins:
 
 
 def get_rendezvous_server_tofu() -> bool:
-    """Get whether a rendezvous server's certificate is trusted on first use."""
+    """Get whether a discovery server's certificate is trusted on first use."""
     return get_env_settings().rendezvous_server_tofu
 
 
@@ -948,7 +948,7 @@ class HsyncConfig(TypedDict):
     # Explicit acceptance: bypass the deletion-risk confirmation
     ALLOW_DELETIONS: bool
     # Map the p2p data-plane TCP port with UPnP (plan default: on only with a
-    # rendezvous server)
+    # discovery servers)
     MAP_DATA_PORT: bool
     # Master certificate fingerprint for HTTPS verification (set at runtime)
     MASTER_CERT_FINGERPRINT: str | None

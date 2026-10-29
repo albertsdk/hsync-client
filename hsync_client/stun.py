@@ -9,7 +9,7 @@ only way a peer behind NAT learns the public ``ip:port`` its socket is mapped
 to. This module turns the validated frame into a small typed value; the
 ``nat_traversal`` plan composes it with the local candidates.
 
-Consumers: ``hsync-client`` (p2p_rendezvous_rendezvous, nat_traversal), tests.
+Consumers: ``hsync-client`` (p2p_rendezvous_rdv, nat_traversal), tests.
 """
 
 from __future__ import annotations

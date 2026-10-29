@@ -25,12 +25,12 @@ hsync server --server-url URL -b BUCKET_NAME [OPTIONS]
 HSYNC_P2P_PASSPHRASE=a-long-shared-password hsync p2p -b BUCKET_NAME [OPTIONS]
 
 # p2p Mode across networks — discover peers through one or more rdv/1
-# rendezvous servers instead of mDNS (see "Sync across networks").
+# discovery servers instead of mDNS (see "Sync across networks").
 hsync p2p -b BUCKET_NAME --rendezvous-server ENDPOINT [--rendezvous-server ENDPOINT ...] [OPTIONS]
 ```
 
 With no `--rendezvous-server` and no `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS`, `hsync p2p`
-uses the mDNS plan on the local network; with rendezvous servers it also
+uses the mDNS plan on the local network; with discovery servers it also
 finds peers across networks. See [Sync on the local network](p2p-lan.md) and
 [Sync across networks](p2p-rendezvous.md).
 

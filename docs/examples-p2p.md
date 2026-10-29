@@ -138,20 +138,20 @@ serves:
 ```bash
 # Same command on every device of the group.
 HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p ~/Sync \
-  --map-data-port boot.example.net
+  --map-data-port rdv.example.net
 ```
 
 On a terminal the first contact is SSH-like: the client prints the node's
 SHA-256 fingerprint and asks to confirm it once (answer `yes`), then remembers
 it and reconnects silently. Read the fingerprint without trusting it at any
-time with `hsync trust rendezvous-server fingerprint boot.example.net`.
+time with `hsync trust rendezvous-server fingerprint rdv.example.net`.
 
 A run with no terminal (cron, systemd, CI) cannot answer the prompt, so it must
 state the trust decision explicitly. Accept the first sighting:
 
 ```bash
 HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p ~/Sync \
-  boot.example.net --rendezvous-server-tofu
+  rdv.example.net --rendezvous-server-tofu
 ```
 
 Once the operator has published the stable `sha256:<hex>` fingerprint
@@ -159,7 +159,7 @@ Once the operator has published the stable `sha256:<hex>` fingerprint
 
 ```bash
 HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p ~/Sync \
-  boot.example.net --rendezvous-server-fingerprint YOUR_RENDEZVOUS_FINGERPRINT
+  rdv.example.net --rendezvous-server-fingerprint YOUR_RENDEZVOUS_FINGERPRINT
 ```
 
 The `ask` trust prompt only appears on a terminal, so it is not enough for a
@@ -167,8 +167,8 @@ service run: pin the fingerprint (as above) or use `--rendezvous-server-trust ac
 `--insecure` skips verification and is for loopback tests only.
 
 A device that cannot map its port stays **slave-only** (it still syncs, it just
-never serves). Verify the plan in the log: `Rendezvous: mDNS on the local network
-+ rendezvous boot.example.net:443 (cross-network; UPnP on)`. Details, fingerprint
+never serves). Verify the plan in the log: `Discovery: mDNS on the local network
+ + discovery server rdv.example.net:443 (cross-network; UPnP on)`. Details, fingerprint
 rotation and troubleshooting: [Sync across networks](p2p-rendezvous.md).
 
 ## Authentication (shared key)

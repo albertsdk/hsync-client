@@ -67,13 +67,13 @@ class TestRunLanMode:
             run_p2p_mode(config, mock_log)
 
         assert any("alone" in str(c) for c in mock_log.warning.call_args_list)
-        assert any("Rendezvous: mDNS" in str(c) for c in mock_log.info.call_args_list)
+        assert any("Discovery: mDNS" in str(c) for c in mock_log.info.call_args_list)
         mock_p2p_sync.stop.assert_called_once()
 
     def test_rendezvous_event_reports_the_active_plan(self, tmp_path):
         """The plan is surfaced on the structured-events channel at startup."""
         config = _make_p2p_config(
-            tmp_path, RENDEZVOUS_SERVER_ENDPOINTS=(HostPort("boot.example.net", 443),)
+            tmp_path, RENDEZVOUS_SERVER_ENDPOINTS=(HostPort("rdv.example.net", 443),)
         )
         mock_log = MagicMock()
         mock_peer_mgr = MagicMock()
@@ -87,7 +87,7 @@ class TestRunLanMode:
 
         with (
             patch(
-                "hsync_client.p2p_rendezvous_rendezvous.RendezvousRendezvous",
+                "hsync_client.p2p_rendezvous_rdv.RdvRendezvous",
                 return_value=mock_p2p_sync,
             ),
             patch(
@@ -106,13 +106,13 @@ class TestRunLanMode:
         assert len(rendezvous_calls) == 1
         assert rendezvous_calls[0].kwargs == {
             "plan": "mdns+rendezvous",
-            "rendezvous": "boot.example.net:443",
+            "rendezvous": "rdv.example.net:443",
         }
 
     def test_rendezvous_banner_and_plan_selection(self, tmp_path):
         """A configured rendezvous selects the combined mDNS + rendezvous plan."""
         config = _make_p2p_config(
-            tmp_path, RENDEZVOUS_SERVER_ENDPOINTS=(HostPort("boot.example.net", 443),)
+            tmp_path, RENDEZVOUS_SERVER_ENDPOINTS=(HostPort("rdv.example.net", 443),)
         )
         mock_log = MagicMock()
 
@@ -128,7 +128,7 @@ class TestRunLanMode:
 
         with (
             patch(
-                "hsync_client.p2p_rendezvous_rendezvous.RendezvousRendezvous",
+                "hsync_client.p2p_rendezvous_rdv.RdvRendezvous",
                 return_value=mock_p2p_sync,
             ) as mock_plan,
             patch(
@@ -140,10 +140,10 @@ class TestRunLanMode:
 
         mock_plan.assert_called_once()
         kwargs = mock_plan.call_args.kwargs
-        assert kwargs["rendezvous_host"] == "boot.example.net"
+        assert kwargs["rendezvous_host"] == "rdv.example.net"
         assert kwargs["rendezvous_port"] == 443
         assert any(
-            "Rendezvous: mDNS on the local network + rendezvous server(s) boot.example.net:443"
+            "Discovery: mDNS on the local network + discovery server(s) rdv.example.net:443"
             in str(c)
             for c in mock_log.info.call_args_list
         )

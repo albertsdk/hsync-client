@@ -272,7 +272,7 @@ READINESS_ENDPOINT_TIMEOUT_S = 10.0
 _WS_CLOSE_GRACE_S = 5.0
 
 # Per-candidate reachability budget when a master advertises several data-plane
-# endpoints (rendezvous rendezvous). An unreachable candidate must not stall the
+# endpoints (rdv rendezvous). An unreachable candidate must not stall the
 # connection for the full request timeout before the next one is tried; a
 # same-subnet candidate that fails fast falls back to the public endpoint.
 MASTER_CANDIDATE_PROBE_TIMEOUT_S = 3.0
@@ -520,7 +520,7 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
     p2p_server.start()
     p2p_server.stop_serving()
 
-    # The rendezvous plan (mDNS or mDNS + rendezvous servers) is selected in one
+    # The rendezvous plan (mDNS or mDNS + discovery servers) is selected in one
     # place; the core only ever sees the RendezvousPlan surface and never branches
     # on the plan. Rendezvous advertises the already-bound serving port.
     p2p_sync = build_rendezvous_plan(
@@ -533,7 +533,7 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
             for endpoint in endpoints
         )
         log.info(
-            "Rendezvous: mDNS on the local network + rendezvous server(s) "
+            "Discovery: mDNS on the local network + discovery server(s) "
             f"{listed} (cross-network; UPnP "
             f"{'on' if config.get('MAP_DATA_PORT', True) else 'off'})"
         )
@@ -541,7 +541,7 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
         # plan and ``rendezvous`` carries the configured endpoints.
         emit_event(UiEventName.rendezvous, plan="mdns+rendezvous", rendezvous=listed)
     else:
-        log.info("Rendezvous: mDNS on the local network (no rendezvous server configured)")
+        log.info("Discovery: mDNS on the local network (no discovery server configured)")
         emit_event(UiEventName.rendezvous, plan="mdns")
     if config["P2P_NEVER_MASTER"]:
         log.info("Never-master mode enabled - this client will always remain a client/slave")

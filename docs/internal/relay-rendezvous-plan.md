@@ -37,7 +37,7 @@ must replace with cryptography or accept losing.
 | # | Requirement | Where it lives today |
 |---|---|---|
 | 1 | A record per `(cid, bucket, group)`: `endpoints[]`, `cert_fp`, `version`, `capacity`, `connected`, `server_ready`, `prefer_master`, `never_master`, `startup_time`, `sync_direction` | `hsync_common/protocol/rendezvous.py::RdvRegister`, `::RdvPeer` |
-| 2 | Random-sample query (`limit` 1–50), TTL 60 s, client refresh 30 s | `hsync-rendezvous/protocol-spec/rdv-1.md`; `hsync_client/p2p_rendezvous_rendezvous.py::RendezvousRendezvous` |
+| 2 | Random-sample query (`limit` 1–50), TTL 60 s, client refresh 30 s | `hsync-rendezvous/protocol-spec/rdv-1.md`; `hsync_client/p2p_rendezvous_rdv.py::RdvRendezvous` |
 | 3 | Echo of the observed public address (`ack.observed_endpoint`) — the STUN-equivalent answer | `hsync_client/stun.py::observed_address`, `hsync_client/nat_traversal.py::candidate_endpoints` |
 | 4 | Bucket authentication: `HMAC-SHA256(key, "rdv/1" \|\| bucket)[:32]` | `hsync_common/protocol/rendezvous.py::derive_bucket_token` |
 | 5 | Record ownership / anti-hijack (only the source that registered a record may replace or renew it) | `hsync-rendezvous` daemon only (`routing.py`) |
@@ -69,7 +69,7 @@ The client is already structured for a new source — the seam exists:
 * `hsync_client/rdv_client.py::RendezvousClient` — QUIC/TLS client with the trust
   gate; `build_register_frame` / `build_query_frame` / `build_refresh_frame` /
   `build_leave_frame` build the `rdv/1` frames.
-* `hsync_client/p2p_rendezvous_rendezvous.py` — the `RdvPeer` → `Peer` mapping
+* `hsync_client/p2p_rendezvous_rdv.py` — the `RdvPeer` → `Peer` mapping
   lives **inside this module**; a second network backend must reuse it, not copy
   it (DRY, see §8.1).
 * Identity material for signing records already exists with no new dependency:
@@ -208,7 +208,7 @@ single point of failure; ship at least two, ideally with an SRV record.
 
 Needed only to run the rendezvous on serverless free tiers (Cloudflare Workers,
 Deno Deploy: no UDP/QUIC). That is a **new transport contract**, therefore
-`boot/2` or an ALPN-negotiated profile, with spec + fixtures + Python mirror +
+`rdv/2` or an ALPN-negotiated profile, with spec + fixtures + Python mirror +
 Kotlin mirror + trust review. Medium-high cost; benefit is cheap hosting and
 443/TCP reachability.
 
@@ -372,7 +372,7 @@ happen once regardless of which option wins.
    Tests: the existing hybrid tests must be extended, not rewritten — one child
    must behave exactly like today.
 2. **Extract the `RdvPeer` → `Peer` mapper.** The mapping currently lives inside
-   `p2p_rendezvous_rendezvous.py`; move it to a shared module (e.g.
+   `p2p_rendezvous_rdv.py`; move it to a shared module (e.g.
    `p2p_rendezvous_peer.py`) and have both backends call it. This is the
    "no copy-paste-modify" guarantee for the new backend.
 3. **Keep `build_rendezvous_plan` the only decision point.** Every new backend is
@@ -409,7 +409,7 @@ are a protocol contract — independent review plus fixtures, not only unit test
 
 ### 8.4 Option D — `rdv/1` over HTTPS/WSS (only if C is too expensive to host)
 
-Spec bump (`boot/2` or a negotiated transport profile) → fixtures →
+Spec bump (`rdv/2` or a negotiated transport profile) → fixtures →
 `hsync-common` mirror → transport abstraction in `rdv_client.py` (today
 aioquic-specific) → Kotlin mirror + parity tests → trust review (the pinning
 model is unchanged, only the transport). Highest blast radius of the four; do not
@@ -487,7 +487,7 @@ cd hsync-common && .venv/bin/python -m ruff check .
 
 * `hsync_client/p2p_rendezvous.py::RendezvousPlan`, `::RendezvousPlanState`,
   `::build_rendezvous_plan`
-* `hsync_client/p2p_rendezvous_rendezvous.py::RendezvousRendezvous`
+* `hsync_client/p2p_rendezvous_rdv.py::RdvRendezvous`
 * `hsync_client/p2p_rendezvous_hybrid.py::HybridRendezvous`
 * `hsync_client/p2p_peers.py::Peer`, `::PeerManager`, `::dial_candidates`
 * `hsync_client/rdv_client.py::RendezvousClient`, `::build_register_frame`,
@@ -503,7 +503,7 @@ cd hsync-common && .venv/bin/python -m ruff check .
 
 **ADRs**
 
-* `hsync-common/docs/internal/adr/0032-rendezvous-rendezvous.md`
+* `hsync-common/docs/internal/adr/0032-rdv-protocol.md`
 * `hsync-common/docs/internal/adr/0034-rendezvous-tls-trust.md`
 * `hsync-common/docs/internal/adr/0035-rendezvous-trust-policy.md`
 * `hsync-common/docs/internal/adr/0038-rendezvous-endpoint-candidate-list.md`
@@ -512,7 +512,7 @@ cd hsync-common && .venv/bin/python -m ruff check .
 **Protocol specs**
 
 * `hsync-rendezvous/protocol-spec/rdv-1.md`
-* `hsync-common/docs/rendezvous-protocol.md`
+* `hsync-common/docs/rdv-protocol.md`
 * `hsync-common/docs/p2p-protocol.md`
 
 **External**

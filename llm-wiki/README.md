@@ -2,7 +2,7 @@
 
 Agent-optimized knowledge base for `hsync-client`, the sync daemon/CLI. It runs in
 two mutually exclusive modes — **remote** (talks to an `hsync-server` over
-REST+WS) and **p2p** (peer-to-peer master/slave; mDNS or rendezvous rendezvous over
+REST+WS) and **p2p** (peer-to-peer master/slave; mDNS or rdv rendezvous over
 HTTPS/WSS) — sharing
 one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
 
@@ -22,7 +22,7 @@ one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
 | --- | ----- |
 | [architecture.md](architecture.md) | Entry points, the two run modes, config flow, layering, watcher/transfer core |
 | [modules/sync-core.md](modules/sync-core.md) | `watcher.py`, `sync.py`, `transfer.py`, `event_dispatch.py`, `file_event_handler.py`, `event_queue.py` |
-| [modules/net-watch.md](modules/net-watch.md) | `net_watch.py` — network-change detection shared by the mDNS/rendezvous rendezvous plans and the remote reconnect loop |
+| [modules/net-watch.md](modules/net-watch.md) | `net_watch.py` — network-change detection shared by the mDNS/rdv rendezvous plans and the remote reconnect loop |
 | [modules/remote-mode.md](modules/remote-mode.md) | server mode: `remote_websocket.py`, REST via `utils` session, `server_trust.py` server TLS trust, reconnect |
 | [modules/p2p-mode.md](modules/p2p-mode.md) | `p2p_peers.py` + `p2p_rendezvous.py` interface + `p2p_rendezvous_mdns.py` / `p2p_rendezvous_hybrid.py` (mDNS + rendezvous over one shared manager) / `rdv_client.py` + `stun.py` (rendezvous plan) rendezvous/election, `p2p_server.py`, `p2p_websocket.py`, `p2p_handler.py`, `pinning.py`, `known_hosts.py` + `rendezvous_trust.py` + `server_trust.py` (trust stores), `trust_messages.py` (shared SSH-style trust prose), `ssl_utils.py`, `identity.py` (device identity + instance lock) |
 | [modules/cli-config.md](modules/cli-config.md) | `cli.py`, `main_logic.py`, `config.py`, `constants.py` |

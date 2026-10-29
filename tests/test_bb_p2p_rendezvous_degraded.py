@@ -49,7 +49,7 @@ class TestUnreachableRendezvous:
         try:
             # The combined plan is active: mDNS runs next to the rendezvous
             assert _wait_for_text_in_stderr(
-                master, "Rendezvous: mDNS on the local network + rendezvous server(s)", timeout=15
+                master, "Discovery: mDNS on the local network + discovery server(s)", timeout=15
             ), "the hybrid rendezvous plan is not active"
             assert _wait_for_text_in_stderr(master, "Registered mDNS service", timeout=15), (
                 "Master mDNS service did not register"

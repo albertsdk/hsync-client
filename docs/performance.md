@@ -8,7 +8,7 @@ methodology, measurement pitfalls), see the
 [Test Suite Guide](internal/testing.md).
 
 > **Terminology:** in this page **LAN** denotes the p2p lane measured over mDNS
-> on the reference host. p2p mode also supports the rendezvous rendezvous plan,
+> on the reference host. p2p mode also supports the rdv rendezvous plan,
 > which reuses the same data plane (its cost is rendezvous, not the transfer
 > path measured below).
 

@@ -327,7 +327,7 @@ Hidden option intended for GUI integration.
 .SS p2p subcommand
 .TP
 .BI \-\-rendezvous\-server\fP= ENDPOINT
-Rendezvous server (the
+Discovery servers (the
 .B hsync\-rendezvous
 daemon speaking
 .IR rdv/1 )
@@ -350,11 +350,11 @@ Port to listen on when acting as p2p master (default: 0 = auto).
 .TP
 .B \-\-map\-data\-port
 Map the p2p data-plane TCP port with UPnP (opt\-in; off by default). Without a
-rendezvous server the flag has no effect (mDNS rendezvous stays on the local
+discovery server the flag has no effect (mDNS rendezvous stays on the local
 network).
 .TP
 .BI \-\-rendezvous\-server\-fingerprint\fP= ENDPOINT=FINGERPRINT
-Pin the certificate fingerprint of one rendezvous server (canonical
+Pin the certificate fingerprint of one discovery server (canonical
 .I sha256:<hex>
 or bare hex). Repeatable, with \fB|\fP separating the two digits of a rotation
 window for the same endpoint; a pin must name a configured endpoint, and a bare
@@ -367,7 +367,7 @@ Selects the
 trust policy.
 .TP
 .B \-\-rendezvous\-server\-tofu
-Trust a rendezvous server certificate on first use (accept-new); a later
+Trust a discovery server certificate on first use (accept-new); a later
 mismatch is refused as a possible man-in-the-middle. Selects the
 .I accept-new
 trust policy.
@@ -1177,15 +1177,15 @@ contact shows the certificate fingerprint and asks for confirmation (like
 then remembers it:
 .PP
 .EX
-hsync p2p boot.example.net \-b shared
+hsync p2p rdv.example.net \-b shared
 .EE
 .PP
 Non-interactive deployments accept the first sighting explicitly, or pin a
 fingerprint the operator published out of band:
 .PP
 .EX
-hsync p2p boot.example.net \-b shared \-\-rendezvous\-server\-tofu
-hsync p2p boot.example.net \-b shared \-\-rendezvous\-server\-fingerprint sha256:FINGERPRINT
+hsync p2p rdv.example.net \-b shared \-\-rendezvous\-server\-tofu
+hsync p2p rdv.example.net \-b shared \-\-rendezvous\-server\-fingerprint sha256:FINGERPRINT
 .EE
 .PP
 Read a node's fingerprint without trusting it, pin it, and manage the known
@@ -1195,10 +1195,10 @@ and
 .BR ssh\-keygen \-R ):
 .PP
 .EX
-hsync trust rendezvous\-server fingerprint boot.example.net
-hsync trust rendezvous\-server add boot.example.net sha256:FINGERPRINT
+hsync trust rendezvous\-server fingerprint rdv.example.net
+hsync trust rendezvous\-server add rdv.example.net sha256:FINGERPRINT
 hsync trust rendezvous\-server list
-hsync trust rendezvous\-server remove boot.example.net
+hsync trust rendezvous\-server remove rdv.example.net
 .EE
 .PP
 Authenticate to a private node or a protected bucket. The node holds the raw
@@ -1206,8 +1206,8 @@ derived key; the client may supply it directly or supply the password it was
 derived from:
 .PP
 .EX
-HSYNC_P2P_PASSPHRASE=a-long-shared-password hsync p2p boot.example.net \-b shared
-HSYNC_P2P_KEY=THE_DERIVED_64_HEX_KEY hsync p2p boot.example.net \-b shared
+HSYNC_P2P_PASSPHRASE=a-long-shared-password hsync p2p rdv.example.net \-b shared
+HSYNC_P2P_KEY=THE_DERIVED_64_HEX_KEY hsync p2p rdv.example.net \-b shared
 .EE
 .PP
 Print the derived key for the node from the password with:

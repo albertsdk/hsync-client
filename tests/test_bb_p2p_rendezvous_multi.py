@@ -3,7 +3,7 @@
 
 """Two independent rendezvouss: tables are per node, the union is client state.
 
-The client can be configured with several rendezvous servers and merges what it
+The client can be configured with several discovery servers and merges what it
 learns from each of them. This suite proves the contract that makes that safe and
 useful, against two *real* sibling rendezvouss on loopback:
 

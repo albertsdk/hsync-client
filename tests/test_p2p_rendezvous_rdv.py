@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""Unit tests for the rendezvous rendezvous plan (no network).
+"""Unit tests for the rdv rendezvous plan (no network).
 
 A fake client records the frames the plan sends and returns canned ``ack``/
 ``response`` frames, so the lease semantics (first register without endpoint,
@@ -21,9 +21,9 @@ from hsync_common.protocol.rendezvous import (
 )
 
 from hsync_client.p2p_peers import Peer, PeerManager
-from hsync_client.p2p_rendezvous_rendezvous import (
+from hsync_client.p2p_rendezvous_rdv import (
     _TEST_ADVERTISED_ENDPOINTS_ENV,
-    RendezvousRendezvous,
+    RdvRendezvous,
 )
 from hsync_client.rdv_client import (
     RendezvousFingerprintMismatch,
@@ -139,7 +139,7 @@ def make_plan(**overrides):
     kwargs = {
         "cid": CID,
         "bucket": "shared",
-        "rendezvous_host": "boot.example.net",
+        "rendezvous_host": "rdv.example.net",
         "rendezvous_port": 443,
         "port": 8443,
         "group": "home",
@@ -151,7 +151,7 @@ def make_plan(**overrides):
         "upnp_factory": lambda: fake_upnp,
     }
     kwargs.update(overrides)
-    plan = RendezvousRendezvous(**kwargs)
+    plan = RdvRendezvous(**kwargs)
     return plan, fake_upnp
 
 
@@ -265,7 +265,7 @@ class TestPeerFeed:
         same-subnet candidate instead of the publicly advertised one.
         """
         monkeypatch.setattr(
-            "hsync_client.p2p_rendezvous_rendezvous.get_local_ip",
+            "hsync_client.p2p_rendezvous_rdv.get_local_ip",
             lambda: "192.168.1.50",
         )
         plan, _ = make_plan()
@@ -289,7 +289,7 @@ class TestPeerFeed:
     def test_remote_candidate_keeps_the_advertised_order(self, monkeypatch):
         """With no same-subnet candidate the first advertised endpoint stays primary."""
         monkeypatch.setattr(
-            "hsync_client.p2p_rendezvous_rendezvous.get_local_ip",
+            "hsync_client.p2p_rendezvous_rdv.get_local_ip",
             lambda: "10.0.0.5",
         )
         plan, _ = make_plan()
@@ -558,7 +558,7 @@ class TestWaitForRendezvous:
         plan._peer_manager = PeerManager(local_cid=CID, bucket="shared", group="home")
 
         def boom(frame):
-            raise RendezvousUnreachable("rendezvous boot.example.net:443: ConnectionError")
+            raise RendezvousUnreachable("rendezvous rdv.example.net:443: ConnectionError")
 
         plan._client.query = boom
         plan.wait_for_rendezvous(timeout=0.05)
@@ -567,7 +567,7 @@ class TestWaitForRendezvous:
         """A dead node is retried (warning only), never disabled like a refusal."""
         warnings: list[dict] = []
         monkeypatch.setattr(
-            "hsync_client.p2p_rendezvous_rendezvous.emit_warning",
+            "hsync_client.p2p_rendezvous_rdv.emit_warning",
             lambda message, **kwargs: warnings.append({"message": message, **kwargs}),
         )
         plan, _ = make_plan(refresh_interval=1.0)
@@ -647,12 +647,12 @@ class TestUntrustedNodeDisablesTheSource:
         from loguru import logger as log
 
         plan, _ = make_plan(refresh_interval=1.0)
-        reason = "rendezvous boot.example.net:443: certificate fingerprint does not match"
+        reason = "rendezvous rdv.example.net:443: certificate fingerprint does not match"
 
         def mismatch(_frame):
             raise RendezvousFingerprintMismatch(
                 reason,
-                guidance="Rendezvous 'boot.example.net:443' trust failed: GUIDANCE",
+                guidance="Rendezvous 'rdv.example.net:443' trust failed: GUIDANCE",
             )
 
         plan._client.register = mismatch
@@ -672,20 +672,20 @@ class TestUntrustedNodeDisablesTheSource:
         """The front-end learns the source degraded (one line, not the guidance)."""
         warnings: list[dict] = []
         monkeypatch.setattr(
-            "hsync_client.p2p_rendezvous_rendezvous.emit_warning",
+            "hsync_client.p2p_rendezvous_rdv.emit_warning",
             lambda message, **kwargs: warnings.append({"message": message, **kwargs}),
         )
         plan, _ = make_plan()
 
         plan._disable_source(
-            "rendezvous boot.example.net:443: certificate fingerprint does not match",
-            guidance="Rendezvous 'boot.example.net:443' trust failed: GUIDANCE",
+            "rendezvous rdv.example.net:443: certificate fingerprint does not match",
+            guidance="Rendezvous 'rdv.example.net:443' trust failed: GUIDANCE",
         )
 
         assert warnings == [
             {
-                "message": "rendezvous boot.example.net:443: certificate fingerprint does not "
-                "match — rendezvous rendezvous stopped, local network rendezvous continues",
+                "message": "rendezvous rdv.example.net:443: certificate fingerprint does not "
+                "match — rdv rendezvous stopped, local network discovery continues",
                 "source": "rendezvous",
                 "reason": "untrusted",
             }
@@ -736,9 +736,7 @@ class TestNetworkChange:
 
     def test_a_changed_address_republishes_with_the_new_candidates(self, monkeypatch):
         plan, fake_upnp = make_plan(upnp_enabled=True)
-        monkeypatch.setattr(
-            "hsync_client.p2p_rendezvous_rendezvous.get_local_ip", lambda: "203.0.113.10"
-        )
+        monkeypatch.setattr("hsync_client.p2p_rendezvous_rdv.get_local_ip", lambda: "203.0.113.10")
         plan.update_server_ready()
         plan._publish_endpoint()
 
@@ -746,9 +744,7 @@ class TestNetworkChange:
         assert "203.0.113.10" in {endpoint["host"] for endpoint in first["endpoints"]}
         assert plan._published_local_ip == "203.0.113.10"
 
-        monkeypatch.setattr(
-            "hsync_client.p2p_rendezvous_rendezvous.get_local_ip", lambda: "198.51.100.7"
-        )
+        monkeypatch.setattr("hsync_client.p2p_rendezvous_rdv.get_local_ip", lambda: "198.51.100.7")
         assert plan._republish_stale_endpoint() is True
         assert plan._published_endpoints is False
         # The mapping belonged to the previous network: it is dropped and the
@@ -765,9 +761,7 @@ class TestNetworkChange:
 
     def test_an_unchanged_address_keeps_the_publication(self, monkeypatch):
         plan, _ = make_plan()
-        monkeypatch.setattr(
-            "hsync_client.p2p_rendezvous_rendezvous.get_local_ip", lambda: "203.0.113.10"
-        )
+        monkeypatch.setattr("hsync_client.p2p_rendezvous_rdv.get_local_ip", lambda: "203.0.113.10")
         plan.update_server_ready()
         plan._publish_endpoint()
         assert plan._republish_stale_endpoint() is False
@@ -776,9 +770,7 @@ class TestNetworkChange:
     def test_nothing_to_republish_before_the_first_publication(self, monkeypatch):
         """A node that never advertised an endpoint has nothing to invalidate."""
         plan, _ = make_plan()
-        monkeypatch.setattr(
-            "hsync_client.p2p_rendezvous_rendezvous.get_local_ip", lambda: "198.51.100.7"
-        )
+        monkeypatch.setattr("hsync_client.p2p_rendezvous_rdv.get_local_ip", lambda: "198.51.100.7")
         assert plan._republish_stale_endpoint() is False
 
     def test_a_network_change_wakes_the_lease_loop(self):

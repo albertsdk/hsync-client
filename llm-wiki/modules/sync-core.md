@@ -139,7 +139,7 @@ Sources wired today (`emit_warning` call sites):
 | `watcher` | the file watcher degraded to `PollingObserver` (`watcher.py`, startup downgrade and runtime swap) | `polling_fallback` / the `WatcherLimit` value | persistent |
 | `watcher` | the shared folder is at or past the inotify watch limit, or the tree cannot fit it at all (`utils/resources.py::warn_if_inotify_watch_limit_low`, carries `needed`/`limit`) | `inotify_watches` | persistent |
 | `watcher` | the process is close to its soft `RLIMIT_NOFILE` (`utils/resources.py::warn_if_open_fds_high`, carries `needed`/`limit`) | `fd_exhaustion` | persistent |
-| `rendezvous` | the rendezvous is unreachable in the lease loop (`p2p_rendezvous_rendezvous.py`) | `unreachable` | persistent |
+| `rendezvous` | the rendezvous is unreachable in the lease loop (`p2p_rendezvous_rdv.py`) | `unreachable` | persistent |
 | `sync` | a cycle outlived the resync interval, so the safety net recovers nothing (`sync.py::periodic_resync`) | `safety_net_stalled` | persistent |
 | `path` | the shared folder is not accessible at runtime — unmounted, renamed (`sync.py`) | `missing` | persistent |
 | `storage` | free space below `MIN_FREE_DISK_SPACE` (`sync.py::_warn_disk_reserve`, once per cycle) | `disk_reserve` | persistent |

@@ -7,7 +7,7 @@ this page covers running without a rendezvous configured.
 > First sync with two devices? Start from
 > [Getting Started — p2p Mode](getting-started-p2p.md); this page covers
 > operating and verifying the local-network plan.
-> Rendezvous through a rendezvous node instead: [Sync across networks](p2p-rendezvous.md).
+> Sync across networks through a discovery server instead: [p2p-rendezvous.md](p2p-rendezvous.md).
 
 ## Before you start
 
@@ -19,7 +19,7 @@ this page covers running without a rendezvous configured.
 ## Run the plan
 
 ```bash
-# Continuous p2p sync with mDNS rendezvous (no rendezvous configured).
+# Continuous p2p sync with mDNS discovery (no discovery server configured).
 HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p /srv/hsync
 ```
 
@@ -31,10 +31,10 @@ Nothing else is required: with no `RENDEZVOUS` hostname and no `HSYNC_RENDEZVOUS
 At startup the client logs the plan it selected:
 
 ```text
-Rendezvous: mDNS on the local network (no rendezvous configured)
+Discovery: mDNS on the local network (no discovery server configured)
 ```
 
-If you see `Rendezvous: mDNS on the local network + rendezvous HOST:PORT` instead, a
+If you see `Discovery: mDNS on the local network  + discovery server HOST:PORT` instead, a
 rendezvous is configured — unset `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS` (or drop the positional) to go
 back to mDNS-only.
 

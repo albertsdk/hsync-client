@@ -396,15 +396,15 @@ class TestTyperCli:
                 "-b",
                 "test",
                 "--rendezvous-server",
-                "boot.example.net",
+                "rdv.example.net",
                 "--rendezvous-server-fingerprint",
-                f"boot.example.net:443={hex64}",
+                f"rdv.example.net:443={hex64}",
                 "--rendezvous-server-tofu",
             ],
         )
         assert result.exit_code == 0
         kwargs = mock_run_sync.call_args.kwargs
-        assert kwargs["rendezvous_server_pins"] == {"boot.example.net:443": (hex64,)}
+        assert kwargs["rendezvous_server_pins"] == {"rdv.example.net:443": (hex64,)}
         assert kwargs["rendezvous_server_tofu"] is True
 
     def test_rendezvous_ca_cert_is_refused(self):
@@ -416,7 +416,7 @@ class TestTyperCli:
                 "-b",
                 "test",
                 "--rendezvous-server",
-                "boot.example.net",
+                "rdv.example.net",
                 "--ca-cert",
                 "/tmp/ca.pem",
             ],
@@ -432,7 +432,7 @@ class TestTyperCli:
                 "-b",
                 "test",
                 "--rendezvous-server",
-                "boot.example.net",
+                "rdv.example.net",
                 "--insecure",
                 "--rendezvous-server-fingerprint",
                 "0" * 64,
@@ -515,7 +515,7 @@ class TestTyperCli:
                 "-b",
                 "test",
                 "--rendezvous-server",
-                "boot.example.net",
+                "rdv.example.net",
                 "--rendezvous-server-fingerprint",
                 "zzz",
             ],
@@ -1053,8 +1053,8 @@ class TestBuildRendezvousServers:
 
         from hsync_client.cli import _build_rendezvous_servers
 
-        assert _build_rendezvous_servers(["boot.example.net"]) == (
-            HostPort("boot.example.net", RENDEZVOUS_DEFAULT_PORT),
+        assert _build_rendezvous_servers(["rdv.example.net"]) == (
+            HostPort("rdv.example.net", RENDEZVOUS_DEFAULT_PORT),
         )
 
     def test_endpoint_port_is_preserved(self):
@@ -1062,8 +1062,8 @@ class TestBuildRendezvousServers:
 
         from hsync_client.cli import _build_rendezvous_servers
 
-        assert _build_rendezvous_servers(["boot.example.net:8443"]) == (
-            HostPort("boot.example.net", 8443),
+        assert _build_rendezvous_servers(["rdv.example.net:8443"]) == (
+            HostPort("rdv.example.net", 8443),
         )
 
     def test_repeatable_option_lists_every_server_in_order(self):
@@ -1101,9 +1101,9 @@ class TestBuildRendezvousServers:
     @pytest.mark.parametrize(
         "bad",
         [
-            "https://boot.example.net",
-            "boot.example.net/path",
-            "boot.example.net:0",
+            "https://rdv.example.net",
+            "rdv.example.net/path",
+            "rdv.example.net:0",
             "a.example,,b.example",
         ],
     )
@@ -1141,7 +1141,7 @@ class TestBuildRendezvousServers:
         from hsync_client.config import get_env_settings
 
         monkeypatch.setenv(
-            "HSYNC_RENDEZVOUS_SERVER_ENDPOINTS", "--rendezvous-server", "boot.example.net"
+            "HSYNC_RENDEZVOUS_SERVER_ENDPOINTS", "--rendezvous-server", "rdv.example.net"
         )
         get_env_settings.cache_clear()
         try:
@@ -1159,36 +1159,34 @@ class TestRendezvousTrustCommands:
 
         empty = runner.invoke(app, ["trust", "rendezvous-server", "list"])
         assert empty.exit_code == 0
-        assert "No rendezvous servers" in empty.output
+        assert "No discovery servers" in empty.output
 
         added = runner.invoke(
-            app, ["trust", "rendezvous-server", "add", "boot.example.net:1443", fingerprint]
+            app, ["trust", "rendezvous-server", "add", "rdv.example.net:1443", fingerprint]
         )
         assert added.exit_code == 0, added.output
         assert str(tmp_path / "trust.json") in added.output
 
         listed = runner.invoke(app, ["trust", "rendezvous-server", "list"])
         assert fingerprint in listed.output
-        assert "boot.example.net:1443" in listed.output
+        assert "rdv.example.net:1443" in listed.output
 
-        shown = runner.invoke(app, ["trust", "rendezvous-server", "show", "boot.example.net:1443"])
+        shown = runner.invoke(app, ["trust", "rendezvous-server", "show", "rdv.example.net:1443"])
         assert shown.exit_code == 0
         assert fingerprint in shown.output
 
         removed = runner.invoke(
-            app, ["trust", "rendezvous-server", "remove", "boot.example.net:1443"]
+            app, ["trust", "rendezvous-server", "remove", "rdv.example.net:1443"]
         )
         assert removed.exit_code == 0
 
-        missing = runner.invoke(
-            app, ["trust", "rendezvous-server", "show", "boot.example.net:1443"]
-        )
+        missing = runner.invoke(app, ["trust", "rendezvous-server", "show", "rdv.example.net:1443"])
         assert missing.exit_code == 1
 
     def test_add_rejects_an_invalid_fingerprint(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_TRUST_FILE", str(tmp_path / "trust.json"))
         result = runner.invoke(
-            app, ["trust", "rendezvous-server", "add", "boot.example.net", "nope"]
+            app, ["trust", "rendezvous-server", "add", "rdv.example.net", "nope"]
         )
         assert result.exit_code == 1
 
@@ -1198,7 +1196,7 @@ class TestRendezvousTrustCommands:
         monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_TRUST_FILE", str(tmp_path / "trust.json"))
         result = runner.invoke(
             app,
-            ["trust", "rendezvous-server", "add", "boot.example.net:1443", "a" * 64],
+            ["trust", "rendezvous-server", "add", "rdv.example.net:1443", "a" * 64],
         )
         assert result.exit_code == 0
         listed = runner.invoke(app, ["trust", "rendezvous-server", "list", "--json"])
@@ -1206,7 +1204,7 @@ class TestRendezvousTrustCommands:
         payload = json.loads(listed.output)
         assert payload == [
             {
-                "host": "boot.example.net",
+                "host": "rdv.example.net",
                 "port": 1443,
                 "fingerprint": "a" * 64,
                 "updated_at": payload[0]["updated_at"],

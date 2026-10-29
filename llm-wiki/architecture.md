@@ -17,7 +17,7 @@ starts the watcher loop. Console script: `cli.run` (`cli.py::run`).
 | Mode | Trigger | Network role | Core entry |
 | ---- | ------- | ------------ | ---------- |
 | **Remote (server)** | `hsync server` subcommand; continuous unless `--once` | client ↔ `hsync-server` (REST + WS) | `remote_websocket.remote_events` (`remote_websocket.py::remote_events`) |
-| **p2p** | `hsync p2p` subcommand | master (serves) or slave (syncs to master) via mDNS or rendezvous rendezvous + HTTPS/WSS | `p2p_handler.run_p2p_mode` (`p2p_handler.py::run_p2p_mode`) |
+| **p2p** | `hsync p2p` subcommand | master (serves) or slave (syncs to master) via mDNS or rdv rendezvous + HTTPS/WSS | `p2p_handler.run_p2p_mode` (`p2p_handler.py::run_p2p_mode`) |
 
 p2p sub-roles: `_run_as_master` (`p2p_handler.py::_run_as_master`) starts the **single**
 `P2PServer` (`p2p_server.py::P2PServer`) — one TLS listener serving the REST data plane and

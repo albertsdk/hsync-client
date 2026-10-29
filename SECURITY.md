@@ -34,7 +34,7 @@ informed of remediation progress.
   connection-level fingerprint pinning (TOFU); optional shared-secret
   authentication (`HSYNC_P2P_PASSPHRASE`, or the raw `HSYNC_P2P_KEY`) and
   group isolation (`--group`).
-- **Rendezvous rendezvous** — the `rdv/1` QUIC/TLS channel authenticates the
+- **Rendezvous channel** — the `rdv/1` QUIC/TLS channel authenticates the
   rendezvous node by certificate fingerprint: on a terminal the first contact is
   SSH-like (the client shows the fingerprint and asks to confirm it once, then
   remembers it). A run without a terminal must decide explicitly — pin it with

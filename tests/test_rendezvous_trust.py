@@ -33,17 +33,17 @@ def test_default_path_override(tmp_path, monkeypatch):
 
 def test_set_and_get_roundtrip(tmp_path):
     store = RendezvousTrustStore(tmp_path / "trust.json")
-    store.set("boot.example.net", 443, f"sha256:{HEX}", source="cli")
-    assert store.get("boot.example.net", 443) == HEX
-    assert store.get("boot.example.net", 444) is None
+    store.set("rdv.example.net", 443, f"sha256:{HEX}", source="cli")
+    assert store.get("rdv.example.net", 443) == HEX
+    assert store.get("rdv.example.net", 444) is None
 
 
 def test_set_repins_current_and_keeps_first_seen(tmp_path):
     store = RendezvousTrustStore(tmp_path / "trust.json")
-    store.set("boot.example.net", 443, HEX, source="tofu")
+    store.set("rdv.example.net", 443, HEX, source="tofu")
     first_seen = store.entries()[0]["first_seen"]
-    store.set("boot.example.net", 443, OTHER, source="cli")
-    assert store.get("boot.example.net", 443) == OTHER
+    store.set("rdv.example.net", 443, OTHER, source="cli")
+    assert store.get("rdv.example.net", 443) == OTHER
     entry = store.entries()[0]
     assert entry["source"] == "cli"
     assert entry["first_seen"] == first_seen
@@ -51,7 +51,7 @@ def test_set_repins_current_and_keeps_first_seen(tmp_path):
 
 def test_missing_file_is_empty(tmp_path):
     store = RendezvousTrustStore(tmp_path / "trust.json")
-    assert store.get("boot.example.net", 443) is None
+    assert store.get("rdv.example.net", 443) is None
     assert store.entries() == []
 
 
@@ -69,18 +69,18 @@ def test_entries_are_sorted_and_typed(tmp_path):
 
 def test_remove_reports_whether_an_entry_existed(tmp_path):
     store = RendezvousTrustStore(tmp_path / "trust.json")
-    store.set("boot.example.net", 443, HEX, source="cli")
-    assert store.remove("boot.example.net", 443) is True
-    assert store.remove("boot.example.net", 443) is False
+    store.set("rdv.example.net", 443, HEX, source="cli")
+    assert store.remove("rdv.example.net", 443) is True
+    assert store.remove("rdv.example.net", 443) is False
     assert store.entries() == []
 
 
 def test_set_rejects_invalid_fingerprint_and_source(tmp_path):
     store = RendezvousTrustStore(tmp_path / "trust.json")
     with pytest.raises(ValueError):
-        store.set("boot.example.net", 443, "not-a-fingerprint", source="cli")
+        store.set("rdv.example.net", 443, "not-a-fingerprint", source="cli")
     with pytest.raises(ValueError):
-        store.set("boot.example.net", 443, HEX, source="bogus")
+        store.set("rdv.example.net", 443, HEX, source="bogus")
 
 
 def test_corrupt_file_fails_closed(tmp_path):
@@ -109,6 +109,6 @@ def test_unsupported_version_fails_closed(tmp_path):
 def test_file_permissions_are_owner_only(tmp_path):
     path = tmp_path / "state" / "trust.json"
     store = RendezvousTrustStore(path)
-    store.set("boot.example.net", 443, HEX, source="cli")
+    store.set("rdv.example.net", 443, HEX, source="cli")
     assert path.stat().st_mode & 0o777 == 0o600
     assert path.parent.stat().st_mode & 0o777 == 0o700

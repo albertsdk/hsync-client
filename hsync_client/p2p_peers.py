@@ -9,7 +9,7 @@ tracks liveness/staleness and runs the election (ordering from
 ``hsync_common.protocol.p2p``), and the small socket helper ``get_free_port``.
 
 Both rendezvous plans feed it: the mDNS plan (``p2p_rendezvous_mdns``) and the
-rendezvous plan (``p2p_rendezvous_rendezvous``). The ``p2p_rendezvous`` module defines
+rendezvous plan (``p2p_rendezvous_rdv``). The ``p2p_rendezvous`` module defines
 the minimal interface they expose to ``p2p_handler``.
 
 Consumers: ``hsync-client`` (p2p handler, the two rendezvous plans, tests).
@@ -132,7 +132,7 @@ class Peer:
     startup_time: float = 0.0  # Unix timestamp when peer started
     sync_direction: str = "bidirectional"  # bidirectional | upload-only | download-only
     # Every dialable (host, port) candidate the peer advertised for its data
-    # plane, in advertised order (rendezvous rendezvous relays the full list; mDNS
+    # plane, in advertised order (rdv rendezvous relays the full list; mDNS
     # supplies a single address and leaves this empty). ``address``/``port``
     # remain the primary endpoint for callers that need one URL.
     endpoints: tuple[tuple[str, int], ...] = ()
@@ -232,7 +232,7 @@ class PeerManager:
         self._peers: dict[str, Peer] = {}
         # Peers with a live WebSocket connection to (or from) this node. mDNS
         # staleness must never demote them: the WSS channel is the authoritative
-        # liveness signal for the master<->slave links, while mDNS is rendezvous
+        # liveness signal for the master<->slave links, while mDNS is discovery
         # (and the fallback for slave<->slave failover detection).
         self._connected_cids: set[str] = set()
         # Dedicated lock for ``_connected_cids``: the WSS server feeds it from

@@ -42,7 +42,7 @@ asks you to confirm it (like `ssh`); answer `yes` once and it is remembered (the
 client reports where the pin was saved):
 
 ```bash
-HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p --rendezvous-server boot.example.net \
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p --rendezvous-server rdv.example.net \
   -b mybucket -p /srv/hsync
 ```
 
@@ -54,7 +54,7 @@ Non-interactive first contact — accept the first sighting explicitly (the
 operator prints the fingerprint with `hsync-rendezvous identity show`):
 
 ```bash
-HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p --rendezvous-server boot.example.net \
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p --rendezvous-server rdv.example.net \
   -b mybucket -p /srv/hsync --rendezvous-server-tofu
 ```
 
@@ -62,14 +62,14 @@ Pinned — the hardened form, once the fingerprint is known. Replace
 `YOUR_RENDEZVOUS_FINGERPRINT` with the operator's `sha256:<hex>` value:
 
 ```bash
-HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p --rendezvous-server boot.example.net \
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p --rendezvous-server rdv.example.net \
   -b mybucket -p /srv/hsync \
   --rendezvous-server-fingerprint YOUR_RENDEZVOUS_FINGERPRINT
 ```
 
-## More than one rendezvous server
+## More than one discovery server
 
-A single rendezvous server is a single point of failure, and its routing table
+A single discovery server is a single point of failure, and its routing table
 belongs to it alone. The client therefore accepts **a list** of servers and, for
 every entry it can reach:
 
@@ -83,17 +83,17 @@ master election therefore still sees one candidate set.
 
 ```text
 hsync p2p -b shared \
-  --rendezvous-server boot-a.example.net \
-  --rendezvous-server boot-b.example.net:8443 \
-  --rendezvous-server-fingerprint boot-a.example.net:443=sha256:aaaa... \
-  --rendezvous-server-fingerprint boot-b.example.net:8443=sha256:bbbb...
+  --rendezvous-server rdv-a.example.net \
+  --rendezvous-server rdv-b.example.net:8443 \
+  --rendezvous-server-fingerprint rdv-a.example.net:443=sha256:aaaa... \
+  --rendezvous-server-fingerprint rdv-b.example.net:8443=sha256:bbbb...
 ```
 
 The same list can be given at once through
-`HSYNC_RENDEZVOUS_SERVER_ENDPOINTS=boot-a.example.net,boot-b.example.net:8443`
+`HSYNC_RENDEZVOUS_SERVER_ENDPOINTS=rdv-a.example.net,rdv-b.example.net:8443`
 (desktop and NAS UIs use this form).
 
-What this **does** give you: if one server stops answering, rendezvous continues
+What this **does** give you: if one server stops answering, discovery continues
 through the others, and a device registered on any server you reach is visible to
 you. What it does **not** give you: the servers do not share their tables. A peer
 registered only on server A is invisible to a client that can reach only server
@@ -109,19 +109,19 @@ is unset) and are managed like SSH's known hosts
 (`HSYNC_RENDEZVOUS_SERVER_TRUST_FILE` overrides the path):
 
 ```bash
-hsync trust rendezvous-server fingerprint boot.example.net   # read the node's fingerprint (no trust)
-hsync trust rendezvous-server add boot.example.net sha256:FINGERPRINT
+hsync trust rendezvous-server fingerprint rdv.example.net   # read the node's fingerprint (no trust)
+hsync trust rendezvous-server add rdv.example.net sha256:FINGERPRINT
 hsync trust rendezvous-server list        # show pinned nodes
 hsync trust rendezvous-server list --json # machine-readable
-hsync trust rendezvous-server show boot.example.net
-hsync trust rendezvous-server remove boot.example.net   # like ssh-keygen -R
+hsync trust rendezvous-server show rdv.example.net
+hsync trust rendezvous-server remove rdv.example.net   # like ssh-keygen -R
 ```
 
 Every pinned fingerprint — confirmed at the prompt or accepted on first use — is
 announced with the file that stores it, for example:
 
 ```text
-Permanently added 'boot.example.net:443' (SHA256) to the list of known hosts (~/.local/state/hsync/rendezvous_server_known_hosts.json).
+Permanently added 'rdv.example.net:443' (SHA256) to the list of known hosts (~/.local/state/hsync/rendezvous_server_known_hosts.json).
 ```
 
 `--rendezvous-server-trust` selects the policy explicitly (`ask`, `accept-new`, `strict`,
@@ -136,8 +136,8 @@ Service units pass the same inputs as environment variables
 [Configuration — p2p Mode](configuration-p2p.md#p2p-mode-options).
 
 `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS` accepts the same endpoint forms as the
-repeatable `--rendezvous-server` option: `boot.example.net`,
-`boot.example.net:8443`, `[2001:db8::1]` or `[2001:db8::1]:8443` — no scheme,
+repeatable `--rendezvous-server` option: `rdv.example.net`,
+`rdv.example.net:8443`, `[2001:db8::1]` or `[2001:db8::1]:8443` — no scheme,
 no path, one destination per comma-separated entry. A port in the value selects
 the QUIC port (UDP); an entry without one uses `443`. There is no separate port
 option: the port belongs to the endpoint.
@@ -193,7 +193,7 @@ Two consequences worth knowing:
 ## Confirm which plan is active
 
 ```text
-Rendezvous: mDNS on the local network + rendezvous boot.example.net:443 (cross-network; UPnP on)
+Discovery: mDNS on the local network + discovery server rdv.example.net:443 (cross-network; UPnP on)
 ```
 
 The master additionally logs `[READY]` only once its endpoint has been
@@ -212,7 +212,7 @@ configure; the full priority order is in
 
 ```bash
 # The other device should list this peer after a query round.
-HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p --rendezvous-server boot.example.net \
+HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p --rendezvous-server rdv.example.net \
   -b mybucket -p /srv/hsync
 ```
 
@@ -228,9 +228,9 @@ limit is negotiated on the authenticated session.
 
 | Symptom | Likely cause |
 |---|---|
-| `Rendezvous: mDNS …` although a rendezvous was intended | `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS`/positional not set, or an empty value. |
-| Client exits with `invalid rendezvous server` | An endpoint is not a `HOST[:PORT]` pair: fix it in `--rendezvous-server` or `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS`. |
-| `Rendezvous … unreachable` warning, devices still sync locally | The node cannot be reached: the client retries it every 30 s and syncs over mDNS meanwhile. The rendezvous only adds cross-network rendezvous; local sync is unaffected. |
+| `Discovery: mDNS …` although a discovery server was intended | `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS`/positional not set, or an empty value. |
+| Client exits with `invalid discovery server` | An endpoint is not a `HOST[:PORT]` pair: fix it in `--rendezvous-server` or `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS`. |
+| `Rendezvous … unreachable` warning, devices still sync locally | The node cannot be reached: the client retries it every 30 s and syncs over mDNS meanwhile. The rendezvous only adds cross-network discovery; local sync is unaffected. |
 | The rendezvous identity cannot be confirmed and cross-network peers stop appearing | The node is not trusted yet (policy `ask` with no terminal, `strict` without a pin, or a changed fingerprint). The client logs the recovery block, publishes a `pairing_needed`/`fingerprint_changed` event (`scope: "rendezvous"`) and **keeps syncing on the local network**: it stops using the rendezvous, never contacts it again, and never writes to it. Confirm the fingerprint out of band and pin it — `--rendezvous-server-fingerprint`, `hsync trust rendezvous-server add …` (the desktop pins from its trust dialog), or `--rendezvous-server-tofu`/`--insecure` (loopback only) — then restart the run to regain cross-network rendezvous. |
 | `fingerprint_changed` (rendezvous) with `ERROR: Rendezvous '…' trust failed: the certificate fingerprint does not match the accepted pin` | The rendezvous certificate does not match the pin — possible man-in-the-middle, or the operator restarted/rotated the identity. The client prints the presented fingerprint, the known-hosts file and the exact commands that unblock the situation, then drops the rendezvous source (the local network keeps syncing). Re-pin the new fingerprint after verifying it out of band (`hsync trust rendezvous-server add …`) or forget the pin with `hsync trust rendezvous-server remove …` (like `ssh-keygen -R`) to be prompted again; during a planned rotation pass both fingerprints (old + new) once. See [FAQ — p2p Mode](faq-p2p.md) and the node's [FAQ](https://github.com/albertsdk/hsync-rendezvous/blob/main/docs/faq.md). |
 | Peer listed but connection fails | The advertised TCP endpoint is not reachable (UPnP disabled/failed and no public port): see "Let the node be reachable". The client retries the other candidates, then rendezvous. |
@@ -242,4 +242,4 @@ More: [Troubleshooting](troubleshooting.md) and [FAQ — p2p Mode](faq-p2p.md).
 On the operator side, the [private node](https://github.com/albertsdk/hsync-rendezvous/blob/main/docs/usage.md#private-node-authenticated-rendezvous)
 and the [privacy and anonymity model](https://github.com/albertsdk/hsync-rendezvous/blob/main/docs/usage.md#privacy-and-anonymity-model)
 explain what a closed, pseudonymous network requires.
-The wire contract is the [rdv/1 rendezvous protocol](https://github.com/albertsdk/hsync-common/blob/main/docs/rendezvous-protocol.md).
+The wire contract is the [rdv/1 rendezvous protocol](https://github.com/albertsdk/hsync-common/blob/main/docs/rdv-protocol.md).

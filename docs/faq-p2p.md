@@ -175,7 +175,7 @@ Use the `--group` flag. Only devices with the same group name will see
 each other. Devices with different groups (or no group) are isolated.
 
 **Q: Do I need to set up port forwarding on my router?**
-Not for local-network (mDNS) sync — rendezvous stays within the subnet and needs
+Not for local-network (mDNS) sync — discovery stays within the subnet and needs
 no router configuration. Cross-network groups that use a rendezvous must expose
 the master's sync port: the client can map it with UPnP when you opt in
 (`--map-data-port` / `HSYNC_MAP_DATA_PORT=true`), otherwise forward it on the router. When
@@ -183,7 +183,7 @@ the node runs with `--relay`, the master does not need to be reachable at all:
 the rendezvous relays the data plane (see [Sync across networks](p2p-rendezvous.md)).
 
 **Q: Can two devices on mobile data (hotspot, data SIM) sync with each other?**
-Yes, through a rendezvous started with `--relay`: a carrier-grade NAT accepts no
+Yes, through a discovery server started with `--relay`: a carrier-grade NAT accepts no
 inbound connection, so the node carries the data plane and forwards the peers'
 TLS verbatim. The client logs `[RELAY]` when that path is in use; it costs an
 extra network leg and the node's uplink, so it is the last resort after every
@@ -194,7 +194,7 @@ Yes. As long as devices are on the same subnet, they will discover each other
 regardless of whether they use Wi-Fi or Ethernet.
 
 **Q: Does p2p mode work across VLANs or different subnets?**
-Not with mDNS: that rendezvous is subnet-local. Point every device of the group
+Not with mDNS: that discovery is subnet-local. Point every device of the group
 at the same `rdv/1` rendezvous to sync across subnets/VLANs (see
 [Sync across networks](p2p-rendezvous.md)); Server Mode is the alternative when
 you prefer a central hub.

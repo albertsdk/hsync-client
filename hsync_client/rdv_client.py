@@ -11,10 +11,10 @@ single response line (or ``None`` when the node silently drops it).
 
 This module exposes a synchronous API (the client is thread-based) around a
 private asyncio loop, and keeps the framing/validation here so the rendezvous
-plan (``p2p_rendezvous_rendezvous``) only deals with peer state. It never treats a
+plan (``p2p_rendezvous_rdv``) only deals with peer state. It never treats a
 response as authoritative beyond the wire contract.
 
-Consumers: ``hsync-client`` (p2p_rendezvous_rendezvous), tests.
+Consumers: ``hsync-client`` (p2p_rendezvous_rdv), tests.
 """
 
 from __future__ import annotations

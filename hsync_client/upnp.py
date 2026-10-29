@@ -9,7 +9,7 @@ The SSDP/SOAP implementation (including the SSRF hardening) is the
 Every failure degrades to the documented "no UPnP" state: the node stays
 slave-only instead of advertising an endpoint it cannot serve.
 
-Consumers: ``hsync-client`` (p2p_rendezvous_rendezvous), tests.
+Consumers: ``hsync-client`` (p2p_rendezvous_rdv), tests.
 """
 
 from __future__ import annotations

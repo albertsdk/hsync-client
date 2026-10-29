@@ -254,11 +254,11 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   the source is disabled while mDNS keeps running, ADR-0045); `--ca-cert` is
   refused in `hsync p2p`.
 
-- **Rendezvous rendezvous cadence has its own budget**: the `rdv/1` plan uses
+- **rdv/1 lease cadence has its own budget**: the `rdv/1` plan uses
   `RENDEZVOUS_REFRESH_INTERVAL` (`hsync_client.constants`, default `30`, spec
   ``rdv-1.md``: "client refresh every 30 s"; env `HSYNC_RENDEZVOUS_SERVER_REFRESH_INTERVAL`,
   range 1–300) to drive the lease loop's register/refresh/query, distinct from the
-  mDNS `HEARTBEAT_INTERVAL` (5 s). `RendezvousRendezvous.wait_for_rendezvous` is
+  mDNS `HEARTBEAT_INTERVAL` (5 s). `RdvRendezvous.wait_for_rendezvous` is
   event-based (`PeerManager.wait_for_change`, like mDNS) and never polls `query`
   itself; a refused `query` arms a `retry_after` backoff. Rationale: the node
   rate-limits `query` to 5/min per (IP, bucket) and `register`/`refresh` to
@@ -272,7 +272,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
 - **A rendezvous source failure degrades rendezvous, it never fails the run**: with
   a rendezvous configured, mDNS and the rendezvous channel run side by side
   (ADR-0039). A rendezvous that cannot confirm the node's identity disables **that
-  source** (`p2p_rendezvous_rendezvous.py::RendezvousRendezvous._disable_source`,
+  source** (`p2p_rendezvous_rdv.py::RdvRendezvous._disable_source`,
   `source_disabled()`): the lease loop stops, the node is never contacted again
   (not even for the departure frame) and a structured warning
   (`source="rendezvous"`, `reason="untrusted"`) is published; the mDNS source keeps
@@ -282,7 +282,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   (`reason="unreachable"`). Readiness (`p2p_rendezvous_hybrid.py::HybridRendezvous.endpoint_published`)
   follows the sources that can still carry traffic, so a disabled source never
   delays mastership. The desktop pre-flight mirrors the rule: an unreachable
-  rendezvous server produces a warning and the run proceeds on the local network,
+  discovery servers produces a warning and the run proceeds on the local network,
   while an unreachable/refused sync server still cancels the start (server mode
   has no alternative). See `hsync-rendezvous/docs/faq.md` and `docs/faq-p2p.md` for
   the operator/client recovery steps (stable `--identity`,
@@ -340,7 +340,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
 
 - **One naming rule for destinations, ports and bind addresses**: the sync-server
   endpoint is `--server-url`/`HSYNC_SERVER_URL` (a URL: it may carry a
-  reverse-proxy path), the rendezvous servers are the repeatable
+  reverse-proxy path), the discovery servers are the repeatable
   `--rendezvous-server`/`HSYNC_RENDEZVOUS_SERVER_ENDPOINTS` (scheme-less
   `HOST[:PORT]` endpoints, because the QUIC/UDP channel refuses a scheme), extra
   dial ports of those same endpoints are `HSYNC_RENDEZVOUS_SERVER_EXTRA_PORTS`,
@@ -350,7 +350,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   rendezvous-server surface also freed the `HSYNC_RENDEZVOUS_*` prefix: the
   peer-rendezvous wait is `HSYNC_PEER_RENDEZVOUS_TIMEOUT`, so `HSYNC_RENDEZVOUS_*`
   never describes two different objects.
-- **Several rendezvous servers are leased and merged client-side, not replicated**:
+- **Several discovery servers are leased and merged client-side, not replicated**:
   every configured endpoint gets its own lease (register/refresh/query) and its
   own trust state, and the samples merge in the shared `PeerManager` by CID. A
   node stays a single RAM-only routing table (the `rdv/1` spec forbids state

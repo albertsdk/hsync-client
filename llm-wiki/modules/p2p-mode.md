@@ -83,7 +83,7 @@ later connection — the WebSocket channel, a file download — hit `Connection
 refused`, so a cross-network sync never completed). The full chain is
 exercised end-to-end by `tests/test_bb_p2p_rendezvous_relay.py` (gated
 `HSYNC_BB_P2P=1`, sibling rendezvous with `--relay`): the test-only seam
-`p2p_rendezvous_rendezvous.py::_TEST_ADVERTISED_ENDPOINTS_ENV` makes the real master
+`p2p_rendezvous_rdv.py::_TEST_ADVERTISED_ENDPOINTS_ENV` makes the real master
 publish only undialable candidates on a single host, so the slave's probes fail
 and the file exchange must ride the relay — no real NAT isolation needed.
 
@@ -97,7 +97,7 @@ forever for its `server_ready`. `p2p_handler.py::_run_as_slave` calls
 must reach the **wire**, not only the local election: the plan re-announces
 `never_master` and no `prefer_master`
 (`MdnsRendezvous.refresh_election_advertisement` re-registers the TXT,
-`RendezvousRendezvous` bumps its advert generation, `HybridRendezvous` delegates to
+`RdvRendezvous` bumps its advert generation, `HybridRendezvous` delegates to
 both), because peers only rank the advertisement they receive.
 
 The automatic dry-run preview first probes the master's data endpoint
@@ -129,7 +129,7 @@ Rendezvous recovers on its own when the host loses and regains connectivity
 - **rendezvous.** `refresh` carries no endpoints, so a lease that survives the
   outage would keep relaying the old candidates. The monitor callback only wakes
   the lease loop; before each action the loop runs
-  `p2p_rendezvous_rendezvous.py::RendezvousRendezvous._republish_stale_endpoint`, which
+  `p2p_rendezvous_rdv.py::RdvRendezvous._republish_stale_endpoint`, which
   compares the sampled address with `_published_local_ip` (recorded by the last
   endpoint register) and, on a difference, clears `_published_endpoints`, drops
   the UPnP mapping/`_external_port` from the previous network and forces a full
@@ -212,7 +212,7 @@ both sources run against one `PeerManager` (built once via
   contributes the rendezvous log (`log_peer_count`).
 - **Per-source failure isolation**: a rendezvous that cannot confirm the node's
   identity is disabled on its own
-  (`RendezvousRendezvous.source_disabled`, ADR-0045) — its lease loop stops, the
+  (`RdvRendezvous.source_disabled`, ADR-0045) — its lease loop stops, the
   node is never contacted again (not even for the departure frame), and a
   structured warning (`source="rendezvous"`, `reason="untrusted"`) is published.
   The wait never raises for it: the mDNS source keeps the group discoverable, so
@@ -523,7 +523,7 @@ control-plane clients. A pooled connection from the seeder era therefore cannot
 be served by the retired role after promotion. See `decisions.md`
 ("retired server role") and the `TestRoleHandover` unit/BB regressions.
 
-## Rendezvous rendezvous plan (`rdv_client.py`, `stun.py` — C2)
+## rdv rendezvous plan (`rdv_client.py`, `stun.py` — C2)
 
 Cross-network rendezvous uses a `rdv/1` rendezvous node (SSOT: `hsync-rendezvous`).
 The wire contract is mirrored in `hsync_common.protocol.rendezvous` (frames +
@@ -537,8 +537,8 @@ peer state:
 | `RendezvousError` / `RendezvousUnreachable` / `RendezvousProtocolError` / `RendezvousRefused` / `RendezvousFingerprintMismatch` | `rdv_client.py::RendezvousError`–`rdv_client.py::RendezvousFingerprintMismatch` | transport failure vs contract violation vs **uniform refusal** (`token_required`/`rate_limited`/`overloaded` answered to `register`/`refresh`; `overloaded` is node capacity, not client abuse) vs pin/TOFU mismatch (disables the rendezvous source; ADR-0045) |
 | `observed_address` | `stun.py::observed_address` | server-reflexive public `ip:port` from a validated `ack` (STUN-echo) |
 
-| `RendezvousRendezvous` | `p2p_rendezvous_rendezvous.py::RendezvousRendezvous` | the `RendezvousPlan` implementation (extends `RendezvousPlanState`): lease loop (register → refresh → query) at the `rdv/1` cadence `RENDEZVOUS_SERVER_REFRESH_INTERVAL` (default 30 s, spec `rdv-1.md`; env `HSYNC_RENDEZVOUS_SERVER_REFRESH_INTERVAL`, range 1–300), peer sample → `PeerManager`, plus an **event-based** `wait_for_rendezvous` (`PeerManager.wait_for_change`, no network) so the wait never polls `query` — the node rate-limits queries to 5/min per (IP, bucket) and a refusal arms a `retry_after` backoff. A `RendezvousFingerprintMismatch` / `RendezvousNotTrusted` stops the lease loop (never retried, never contacted again) and disables **that source only** (`_disable_source`, `source_disabled()`): a structured warning (`reason="untrusted"`) is published and mDNS keeps the group discoverable, so the run continues (ADR-0045); an unreachable node keeps retrying with a transient warning (`reason="unreachable"`). Registration republishes the election advertisement on every role change (`_republish_advert`, `p2p_rendezvous_rendezvous.py::RendezvousRendezvous`) and `update_server_ready`/`update_server_not_ready` mirror the incumbency into the shared `PeerManager`; relayed peers map the advertisement verbatim (`_peer_from_wire`, `p2p_rendezvous_rendezvous.py::RendezvousRendezvous`) and keep the relayed `endpoints[]` candidates (at most four, the node's relay bound), promoting a same-subnet candidate to the peer's primary address so a same-NAT peer dials the local path (no NAT hairpin); a register is never sent without the local certificate fingerprint (the frame would carry an unusable pin) |
-| `MultiRendezvousRendezvous` | `p2p_rendezvous_rendezvous.py::MultiRendezvousRendezvous` | the fan-out over N rendezvous servers: one `RendezvousRendezvous` per endpoint (each keeps its own transport, trust policy, observed endpoint and published candidates) over **one** shared `PeerManager`, so `add_peer` merges the samples by CID and the election stays single. Readiness is *any usable source published* (a server that is down or refused must not delay the data plane); `source_disabled()` is true only when every source stopped for good. Relay wiring is composite too: `FailoverRelayDialer` tries the servers in order (the record does not say which node paired the peer) and `GroupRelayAcceptor` registers the listener on every server. `SharedUpnpMapping` (same module) keeps a single UPnP mapping for the whole process. |
+| `RdvRendezvous` | `p2p_rendezvous_rdv.py::RdvRendezvous` | the `RendezvousPlan` implementation (extends `RendezvousPlanState`): lease loop (register → refresh → query) at the `rdv/1` cadence `RENDEZVOUS_SERVER_REFRESH_INTERVAL` (default 30 s, spec `rdv-1.md`; env `HSYNC_RENDEZVOUS_SERVER_REFRESH_INTERVAL`, range 1–300), peer sample → `PeerManager`, plus an **event-based** `wait_for_rendezvous` (`PeerManager.wait_for_change`, no network) so the wait never polls `query` — the node rate-limits queries to 5/min per (IP, bucket) and a refusal arms a `retry_after` backoff. A `RendezvousFingerprintMismatch` / `RendezvousNotTrusted` stops the lease loop (never retried, never contacted again) and disables **that source only** (`_disable_source`, `source_disabled()`): a structured warning (`reason="untrusted"`) is published and mDNS keeps the group discoverable, so the run continues (ADR-0045); an unreachable node keeps retrying with a transient warning (`reason="unreachable"`). Registration republishes the election advertisement on every role change (`_republish_advert`, `p2p_rendezvous_rdv.py::RdvRendezvous`) and `update_server_ready`/`update_server_not_ready` mirror the incumbency into the shared `PeerManager`; relayed peers map the advertisement verbatim (`_peer_from_wire`, `p2p_rendezvous_rdv.py::RdvRendezvous`) and keep the relayed `endpoints[]` candidates (at most four, the node's relay bound), promoting a same-subnet candidate to the peer's primary address so a same-NAT peer dials the local path (no NAT hairpin); a register is never sent without the local certificate fingerprint (the frame would carry an unusable pin) |
+| `MultiRdvRendezvous` | `p2p_rendezvous_rdv.py::MultiRdvRendezvous` | the fan-out over N discovery servers: one `RdvRendezvous` per endpoint (each keeps its own transport, trust policy, observed endpoint and published candidates) over **one** shared `PeerManager`, so `add_peer` merges the samples by CID and the election stays single. Readiness is *any usable source published* (a server that is down or refused must not delay the data plane); `source_disabled()` is true only when every source stopped for good. Relay wiring is composite too: `FailoverRelayDialer` tries the servers in order (the record does not say which node paired the peer) and `GroupRelayAcceptor` registers the listener on every server. `SharedUpnpMapping` (same module) keeps a single UPnP mapping for the whole process. |
 | `candidate_endpoints` | `nat_traversal.py::candidate_endpoints` | ordered, de-duplicated dialable endpoints for the `register` `endpoints[]` (observed → UPnP → local) |
 | `UpnpMapper` / `discover_igd` | `hsync_client/upnp.py` / `hsync_common/upnp.py` | best-effort TCP port mapping for the master (opt-in, off by default); the SSDP/SOAP core (SSRF-hardened) is the shared `hsync_common.upnp` SSOT, the client adds only the lifecycle; every failure degrades to "no UPnP" (node stays slave-only) |
 | `get_local_ip` | `net_utils.py::get_local_ip` | shared local-source-IP probe (mDNS advertiser, rendezvous candidates, p2p handler) |
@@ -547,7 +547,7 @@ peer state:
 | `_probe_master_endpoint` / `_select_master_endpoint` | `p2p_handler.py::_probe_master_endpoint` / `p2p_handler.py::_select_master_endpoint` | pick the first reachable candidate by a fingerprint-pinned TLS handshake with a bounded per-candidate timeout (`MASTER_CANDIDATE_PROBE_TIMEOUT_S`, 3 s); single-candidate peers skip the probe |
 
 Readiness & banner: `run_p2p_mode` logs the active plan at startup
-(`Rendezvous: mDNS on the local network` vs `Rendezvous: mDNS on the local network
+(`Discovery: mDNS on the local network` vs `Discovery: mDNS on the local network
 + rendezvous HOST:PORT (cross-network; UPnP on|off)`). The **rendezvous plan only**
 adds a readiness gate: the master emits `[READY]` (and writes the ready file)
 only after `endpoint_published()` — i.e. after the second `register` that carries
@@ -625,7 +625,7 @@ is the concise case-specific reason (changed pin, node not pinned under `strict`
 no match against `--rendezvous-server-fingerprint`) and whose `guidance` carries the
 SSH-style recovery block — presented fingerprint, store path and the exact
 `hsync trust rendezvous-server add|remove` commands — logged once by `_lease_loop`
-(`p2p_rendezvous_rendezvous.py`), which then disables the rendezvous source; the
+(`p2p_rendezvous_rdv.py`), which then disables the rendezvous source; the
 structured warning repeats only the concise reason. The same refusal emits a
 structured event: a strict-unknown node emits `pairing_needed`
 (`scope="rendezvous"`), a changed pin / explicit-pin mismatch emits
@@ -652,8 +652,8 @@ the client derives from the **p2p group key** — `derive_bucket_token(P2P_KEY,
 REMOTE_BUCKET)` (SSOT `hsync_common.protocol.rendezvous`), fed from
 `config["P2P_KEY"]` (`main_logic.py`; a `HSYNC_P2P_PASSPHRASE` is derived to the
 key first, a raw `HSYNC_P2P_KEY` is used as-is; hidden `--p2p-passphrase-fd` /
-`--p2p-key-fd` pipes for a parent) into `p2p_rendezvous.py::build_rendezvous_plan` → `RendezvousRendezvous`
-(`p2p_rendezvous_rendezvous.py::RendezvousRendezvous`), so a token exists only when a key is set. The
+`--p2p-key-fd` pipes for a parent) into `p2p_rendezvous.py::build_rendezvous_plan` → `RdvRendezvous`
+(`p2p_rendezvous_rdv.py::RdvRendezvous`), so a token exists only when a key is set. The
 same key is the p2p data-plane credential (`Authorization: Bearer`): one key per
 client, which authenticates to any protected bucket whose group key equals it.
 Refusals stay uniform (`token_required` → `rate_limited`), so the client cannot

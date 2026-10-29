@@ -289,7 +289,7 @@ async def test_websocket_event(mock_ws):
 
 ## p2p mode testing
 
-p2p mode tests require special setup because they involve mDNS rendezvous and
+p2p mode tests require special setup because they involve mDNS discovery and
 peer-to-peer connections:
 
 1. Use `pytest-asyncio` for async LAN operations
@@ -369,7 +369,7 @@ files:
 | `test_bb_p2p_corrected_mtime.py` | ADR-0023 corrected‑mtime tie‑break in p2p mode: divergent edits converge on the newer corrected mtime with loser preservation; sync completes when NTP is unreachable. |
 
 | `test_bb_p2p_rendezvous_client.py` | the client's `RendezvousClient` against the **real** `hsync-rendezvous` (register → ack/STUN-echo, query relay, refresh, leave); skips when the sibling rendezvous is not built. |
-| `test_bb_p2p_rendezvous_rendezvous.py` | two clients discover **and sync through** a loopback rendezvous (`RENDEZVOUS 127.0.0.1 --port <p> --insecure`); also holds the opt-in real-NAT check. |
+| `test_bb_p2p_rendezvous_rdv.py` | two clients discover **and sync through** a loopback rendezvous (`RENDEZVOUS 127.0.0.1 --port <p> --insecure`); also holds the opt-in real-NAT check. |
 | `test_bb_p2p_rendezvous_relay.py` | the **data relay** end-to-end: a master that advertises only undialable candidates (test seam `HSYNC_P2P_TEST_ADVERTISED_ENDPOINTS`) syncs with a slave **through** a `--relay` rendezvous — both `[RELAY]` lines plus the file exchange. |
 
 **These tests are disabled by default** because they are inherently

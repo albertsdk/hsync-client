@@ -70,7 +70,7 @@ and caveats to watch for.
 |-----------|-------|
 | P2P only (no central server) | Server mode + p2p mode |
 | Custom protocol (BEP) on port 22000 | HTTP/HTTPS on port 9753 or custom port |
-| Global rendezvous via relays | Central server or mDNS p2p rendezvous |
+| Global rendezvous via relays | Central server or mDNS p2p discovery |
 | File versioning built-in | Conflict files (`_conflicted_copy_*`) |
 | Web GUI for management | CLI + desktop GUI (hsync-desktop) |
 
@@ -186,7 +186,7 @@ drives), HSYNC automates the entire process:
    real time and propagate them automatically.
 
 4. **For serverless sync**, use the `p2p` subcommand without a server — devices
-   discover each other via mDNS on the same network, or through a rendezvous
+   discover each other via mDNS on the same network, or through a discovery server
    across networks, and sync directly.
 
 ---

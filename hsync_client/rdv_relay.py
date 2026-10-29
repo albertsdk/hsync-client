@@ -153,7 +153,7 @@ async def _quic_session(client: RendezvousClient) -> AsyncIterator[Any]:
             if connected:
                 raise
             last_exc = exc
-    log.debug(f"Relay cannot reach the rendezvous server: {last_exc}")
+    log.debug(f"Relay cannot reach the discovery servers: {last_exc}")
 
 
 async def bridge(
@@ -312,7 +312,7 @@ class RelayDialer:
                     log.debug(f"Relay session refused by the node: {refusal}")
                 tcp_writer.close()
                 return
-            log.info("Relay tunnel established with the master (via the rendezvous server)")
+            log.info("Relay tunnel established with the master (via the discovery servers)")
             await bridge(tcp_reader, tcp_writer, stream_reader, stream_writer)
 
         return _handle
@@ -412,7 +412,7 @@ class RelayAcceptor:
                     raise RendezvousProtocolError("expected a 'relay_listening' frame")
                 self._registered = True
                 self._ready.set()
-                log.info("Relay listener registered with the rendezvous server")
+                log.info("Relay listener registered with the discovery servers")
                 tasks = [
                     asyncio.create_task(self._read_incoming(quic, reader, sessions)),
                     asyncio.create_task(self._keepalive(writer)),
@@ -478,9 +478,9 @@ class RelayAcceptor:
 
 
 class FailoverRelayDialer:
-    """Relay dialer that pairs through the first rendezvous server that accepts it.
+    """Relay dialer that pairs through the first discovery server that accepts it.
 
-    With several rendezvous servers configured, the peer a relay session targets
+    With several discovery servers configured, the peer a relay session targets
     may be listening on any of them and a ``query`` record does not say which
     one paired it. Each server is asked in order and the first ``relay_ok``
     wins, so the caller keeps its single "open, then close" contract.
@@ -517,7 +517,7 @@ class FailoverRelayDialer:
 
 
 class GroupRelayAcceptor:
-    """Relay listener registered on **every** rendezvous server of the group.
+    """Relay listener registered on **every** discovery server of the group.
 
     A peer reaches this node through whichever server it is paired with, so the
     serving side must be present on all of them; a single successful

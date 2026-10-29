@@ -8,7 +8,7 @@ behaviour. Symptom → cause → remedy, with copy-paste commands.
 
 ## No peers are discovered
 
-**Symptom.** The client starts, logs `Rendezvous: mDNS on the local network` (or
+**Symptom.** The client starts, logs `Discovery: mDNS on the local network` (or
 a rendezvous banner), but the peer list stays empty and no sync happens.
 
 **Cause & remedy.**
@@ -19,7 +19,7 @@ a rendezvous banner), but the peer list stays empty and no sync happens.
   or VPN interfaces) or devices sit on different VLANs. Run the mDNS plan
   checklist in [Sync on the local network](p2p-lan.md).
 - Peers listed but no sync → different `HSYNC_P2P_PASSPHRASE`/`HSYNC_P2P_KEY`, bucket or `--group`.
-- The log shows `Rendezvous: mDNS on the local network + rendezvous …` although only
+- The log shows `Discovery: mDNS on the local network  + discovery server …` although only
   mDNS was intended → a rendezvous is configured; unset `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS` (or drop
   the positional).
 

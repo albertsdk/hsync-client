@@ -14,7 +14,7 @@ side in the desktop's "waiting" state until the client was restarted.
 | `NetworkChangeMonitor` | `net_watch.py::NetworkChangeMonitor` | the polling thread (`NETWORK_POLL_INTERVAL_S`), `subscribe`/`unsubscribe`, `poll_once`, `signature` |
 | `get_network_monitor` | `net_watch.py::get_network_monitor` | process-wide singleton, thread started on first use |
 | `MdnsRendezvous._on_network_change` / `_rebuild_mdns` / `_recover_mdns` | `p2p_rendezvous_mdns.py::MdnsRendezvous._on_network_change` | rebuild the Zeroconf stack on the fresh address / repair after a failed announcement |
-| `RendezvousRendezvous._on_network_change` / `_republish_stale_endpoint` | `p2p_rendezvous_rendezvous.py::RendezvousRendezvous._republish_stale_endpoint` | wake the lease loop / force a full endpoint re-register |
+| `RdvRendezvous._on_network_change` / `_republish_stale_endpoint` | `p2p_rendezvous_rdv.py::RdvRendezvous._republish_stale_endpoint` | wake the lease loop / force a full endpoint re-register |
 | `PeerManager.set_local_address` | `p2p_peers.py::PeerManager.set_local_address` | keep the self-rendezvous check on the address we currently announce |
 | `_ReconnectWaker` | `remote_websocket.py::_ReconnectWaker` | bridges a change into the remote mode's backoff sleep |
 
@@ -46,7 +46,7 @@ record. If a heartbeat re-announce raises, `_recover_mdns` first reconciles the
 sockets (`Zeroconf.update_interfaces`, which the client never called before) and
 escalates to a rebuild when that fails.
 
-**rendezvous** (`RendezvousRendezvous.start` subscribes, `stop` unsubscribes). A
+**rendezvous** (`RdvRendezvous.start` subscribes, `stop` unsubscribes). A
 `refresh` carries no endpoints — only a full `register` does — so while a lease
 survives an outage the node would keep relaying the pre-outage candidates. The
 monitor callback only wakes the lease loop (`_wake`); the loop owns every
@@ -69,7 +69,7 @@ shorten the next backoff for no reason.
 
 `tests/test_net_watch.py` drives the probe by hand (no network).
 `tests/test_p2p_sync.py::TestNetworkChangeRecovery` covers the mDNS rebuild,
-`tests/test_p2p_rendezvous_rendezvous.py::TestNetworkChange` the endpoint
+`tests/test_p2p_rendezvous_rdv.py::TestNetworkChange` the endpoint
 republish, `tests/test_p2p_peer_manager.py::TestDuplicateIdentityDetection` the
 self-address update and
 `tests/test_websocket_events.py::TestReconnectBackoffWaker` the interruptible

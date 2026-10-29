@@ -22,7 +22,7 @@ subscribe instead of each running its own timer:
 
 * ``p2p_rendezvous_mdns`` — rebuilds the Zeroconf stack and re-registers the
   record on the fresh address;
-* ``p2p_rendezvous_rendezvous`` — wakes the lease loop so a changed address is
+* ``p2p_rendezvous_rdv`` — wakes the lease loop so a changed address is
   republished immediately;
 * ``remote_websocket`` — ends the reconnect backoff as soon as the link is back.
 

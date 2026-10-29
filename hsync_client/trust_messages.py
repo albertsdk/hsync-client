@@ -38,7 +38,7 @@ __all__ = [
 # Human labels for the two ``host:port`` trust namespaces the guidance covers.
 # They double as the ``hsync trust <kind>`` subcommand names, so a command the
 # operator copies from the message is exactly the one the CLI accepts.
-_HOST_KIND_LABELS = {"rendezvous-server": "Rendezvous server", "server": "Sync server"}
+_HOST_KIND_LABELS = {"rendezvous-server": "Discovery server", "server": "Sync server"}
 
 
 def _permanently_added_line(identity: str, store_kind: str, store_path: Path) -> str:

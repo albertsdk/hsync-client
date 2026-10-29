@@ -1,7 +1,7 @@
 # Getting Started — p2p Mode
 
 Sync files directly between devices — on the same local network (mDNS, always
-active) and, across networks, through a rendezvous — with no server needed.
+active) and, across networks, through a discovery server — with no server needed.
 
 > Back to [Getting Started](getting-started.md).
 
@@ -134,7 +134,7 @@ client, so same-network peers are still found locally:
 ## Next Steps
 
 - [Sync on the local network](p2p-lan.md) — operate and verify the mDNS plan
-- [Sync across networks](p2p-rendezvous.md) — discover peers through a rendezvous
+- [Sync across networks](p2p-rendezvous.md) — discover peers through a discovery server
 - [p2p Mode Guide](p2p-mode.md) — detailed walkthrough
 - [Configuration — p2p Mode](configuration-p2p.md) — all p2p-mode CLI options
 - [Authentication — Client-Side](authentication.md) — hello handshake + auth diagrams
