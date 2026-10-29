@@ -26,9 +26,11 @@ def _reset_relay_state() -> None:
     """Every test starts with no tunnel, no listener and no backoff deadline."""
     p2p_handler._close_relay_dialer()
     p2p_handler._relay_retry_at = 0.0
+    p2p_handler._relay_hint_masters.clear()
     yield
     p2p_handler._close_relay_dialer()
     p2p_handler._relay_retry_at = 0.0
+    p2p_handler._relay_hint_masters.clear()
 
 
 from hsync_client.p2p_handler import _close_relay_dialer, _relay_master_endpoint
@@ -37,6 +39,7 @@ from hsync_client.rdv_client import RendezvousProtocolError, frame_line
 from hsync_client.rdv_relay import (
     FailoverRelayDialer,
     GroupRelayAcceptor,
+    RelayDialer,
     bridge,
     refusal_code,
 )
@@ -60,6 +63,25 @@ class _Dialer:
 
     def close(self) -> None:
         self.closed = True
+
+
+class _RefusingDialer(_Dialer):
+    """A dialer that fails to pair and reports the node's refusal code."""
+
+    def __init__(self, refusal: str | None) -> None:
+        super().__init__(None)
+        self.refusal = refusal
+
+
+def _capture_warnings(monkeypatch) -> list[dict]:
+    """Capture the structured warnings the handler publishes, in order."""
+    warnings: list[dict] = []
+    monkeypatch.setattr(
+        p2p_handler,
+        "emit_warning",
+        lambda message, **kwargs: warnings.append({"message": message, **kwargs}),
+    )
+    return warnings
 
 
 class _Plan:
@@ -110,6 +132,134 @@ def test_a_refused_relay_is_not_retried_on_every_tick() -> None:
     assert _relay_master_endpoint(plan, _Master(), log) is None
     assert _relay_master_endpoint(plan, _Master(), log) is None
     assert plan.asked == [_Master.cid]
+
+
+def test_a_node_without_the_relay_surfaces_an_actionable_hint(monkeypatch) -> None:
+    """``relay_unavailable`` becomes a warning that names the node-side fix.
+
+    Without it the operator only sees the generic "No reachable endpoint" line
+    and cannot tell that the rendezvous needs ``--relay`` for a CGNAT pair.
+    """
+    warnings = _capture_warnings(monkeypatch)
+    dialer = _RefusingDialer("relay_unavailable")
+    plan = _Plan(dialer)
+
+    assert _relay_master_endpoint(plan, _Master(), log) is None
+
+    assert [(w["source"], w["reason"]) for w in warnings] == [("relay", "relay_unavailable")]
+    assert "--relay" in warnings[0]["message"]
+    assert _Master.cid in p2p_handler._relay_hint_masters
+
+
+def test_the_actionable_hint_is_emitted_once_per_master(monkeypatch) -> None:
+    """The rendezvous loop retries, so the hint must not repeat every attempt."""
+    warnings = _capture_warnings(monkeypatch)
+    plan = _Plan(_RefusingDialer("relay_unavailable"))
+
+    assert _relay_master_endpoint(plan, _Master(), log) is None
+    p2p_handler._relay_retry_at = 0.0  # next attempt as the loop would
+    assert _relay_master_endpoint(plan, _Master(), log) is None
+
+    assert len(warnings) == 1
+
+
+def test_a_non_relay_refusal_never_claims_the_relay_is_disabled(monkeypatch) -> None:
+    """A rate limit or protocol error must not produce the ``--relay`` advice."""
+    warnings = _capture_warnings(monkeypatch)
+
+    assert _relay_master_endpoint(_Plan(_RefusingDialer("rate_limited")), _Master(), log) is None
+    p2p_handler._relay_retry_at = 0.0
+    assert _relay_master_endpoint(_Plan(_Dialer(None)), _Master(), log) is None
+
+    assert warnings == []
+    assert p2p_handler._relay_hint_masters == set()
+
+
+def test_a_relay_dialer_reports_no_refusal_before_an_attempt() -> None:
+    """The refusal is empty until the node answers, so no false hint is raised."""
+    dialer = RelayDialer(object(), cid=_Master.cid, bucket="b", target_cid="peer")
+    assert dialer.refusal is None
+
+
+def test_the_failover_dialer_reports_the_attempt_refusal() -> None:
+    """The combined dialer surfaces why no server paired the session."""
+    dialer = FailoverRelayDialer([_RefusingDialer("relay_unavailable")])
+    assert dialer.open(timeout=1.0) is None
+    assert dialer.refusal == "relay_unavailable"
+
+
+class _FakeWriter:
+    """Minimal QUIC stream writer: records frames, never blocks on drain."""
+
+    def __init__(self) -> None:
+        self.chunks: list[bytes] = []
+
+    def write(self, data: bytes) -> None:
+        self.chunks.append(bytes(data))
+
+    async def drain(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+    def is_closing(self) -> bool:
+        return False
+
+
+class _FakeReader:
+    """Replays the given lines, then reports EOF (``b""``)."""
+
+    def __init__(self, lines: list[bytes]) -> None:
+        self._lines = list(lines)
+
+    async def readline(self) -> bytes:
+        return self._lines.pop(0) if self._lines else b""
+
+
+class _FakeQuic:
+    def __init__(self, reader: _FakeReader, writer: _FakeWriter) -> None:
+        self._stream = (reader, writer)
+
+    async def create_stream(self):
+        return self._stream
+
+
+async def test_the_relay_acceptor_stops_when_its_control_stream_dies(monkeypatch) -> None:
+    """A dropped control stream must end the acceptor, not leave a zombie.
+
+    When the node drops the listener (a QUIC reset, an idle sweep) the incoming
+    loop and the keepalive end, but ``_run`` used to keep waiting on ``stop``:
+    the thread stayed alive with ``_registered`` still True, so ``active``
+    reported a live listener that did not exist and the master could never
+    re-register it — every relay-only peer stayed stranded. The acceptor must
+    observe the dead stream and clear itself so the re-assertion can retry.
+    """
+    import contextlib
+
+    from hsync_client.rdv_relay import RelayAcceptor
+
+    listening = (
+        json.dumps({"protocol_version": "rdv/1", "type": "relay_listening", "ttl": 60}) + "\n"
+    ).encode()
+    reader = _FakeReader([listening])  # ack, then immediate EOF: the node dropped us
+
+    @contextlib.asynccontextmanager
+    async def _fake_quic_session(client):
+        yield _FakeQuic(reader, _FakeWriter())
+
+    monkeypatch.setattr("hsync_client.rdv_relay._quic_session", _fake_quic_session)
+    client = type("_Client", (), {"timeout": 5.0})()
+
+    acceptor = RelayAcceptor(client, cid="A1b2C3d4E5f6G7h8I9j0K", bucket="b", local_port=9000)
+    # ``_thread_main`` normally sets this before ``_run``; we drive ``_run``
+    # directly, so provide the stop event it waits on.
+    acceptor._stop = asyncio.Event()
+
+    await asyncio.wait_for(acceptor._run(), timeout=5.0)
+
+    assert acceptor._registered is False
+    assert acceptor.active is False
 
 
 def test_a_previous_tunnel_is_closed_before_a_new_attempt() -> None:

@@ -41,7 +41,7 @@ from hsync_client.constants import (
     WATCHER_START_RETRY_DELAY_S,
     ActionLabel,
 )
-from hsync_client.events import UiEventName, emit_event
+from hsync_client.events import UiEventName, emit_event, emit_warning
 from hsync_client.exceptions import (
     AuthenticationError,
     NetworkError,
@@ -104,6 +104,13 @@ _active_relay_dialer: RelayDialer | None = None
 # runs once per second, so a node that does not offer the relay would be dialled
 # at that rate without it (and would answer ``rate_limited``).
 _relay_retry_at = 0.0
+
+# Master CIDs for which the actionable "the node has no data relay" hint was
+# already logged. The rendezvous loop re-enters the relay fallback on every
+# backoff window, so the hint must be emitted once per master instead of on each
+# attempt; the structured channel dedups on its own (see ``emit_warning``) but
+# the log line does not.
+_relay_hint_masters: set[str] = set()
 
 
 def _p2p_status(connected_clients: int) -> str:
@@ -917,10 +924,6 @@ def _run_as_master(
             )
             return p2p_server, p2p_ws_server
         p2p_sync.update_server_ready()
-        # Serving role is live: offer the rendezvous a relay listener so peers that
-        # no inbound NAT mapping reaches can still reach this master. Started
-        # after ``update_server_ready`` so the endpoint it bridges to is bound.
-        _start_master_relay(p2p_sync, log)
         # Rendezvous plan only: the master is reachable across networks only once
         # its endpoint has been published to the rendezvous (UPnP ok or public IP
         # known). mDNS reports published immediately, so its readiness timing is
@@ -941,6 +944,19 @@ def _run_as_master(
             f"{ActionLabel.READY} Master ready — serving '{config['REMOTE_BUCKET']}' "
             f"on port {p2p_sync.port} (HTTPS), watching '{config['LOCAL_BUCKET']}'"
         )
+
+    # Re-assert the relay listener on every master re-entry, not only on the
+    # first activation: the acceptor holds its own QUIC control connection to the
+    # rendezvous, so a dropped connection (a mobile-network blip, a node restart,
+    # an idle-timeout sweep) leaves the master serving with no relay path. Without
+    # this re-assertion every relay-only slave — the two peers behind
+    # carrier-grade NAT this feature exists for — gets ``relay_unavailable`` and
+    # stays stuck on "waiting" forever while a directly reachable peer still
+    # works. The call is idempotent: it returns while the acceptor is alive and
+    # backs off ``RELAY_RETRY_BACKOFF_S`` after a failed attempt, so the
+    # one-second re-entry cannot flood the node (mDNS-only plans no-op).
+    if peer_manager.is_master():
+        _start_master_relay(p2p_sync, log)
 
     if first_activation:
         log.info("Press Ctrl+C to stop...")
@@ -1231,13 +1247,44 @@ def _relay_master_endpoint(plan: RendezvousPlan | None, master: Any, log) -> tup
     endpoint = dialer.open(RELAY_OPEN_TIMEOUT_S)
     if endpoint is None:
         _relay_retry_at = now + RELAY_RETRY_BACKOFF_S
+        _warn_relay_unavailable(master, dialer, log)
         return None
     _active_relay_dialer = dialer
+    _relay_hint_masters.discard(master.cid)
     log.info(
         f"{ActionLabel.RELAY} master {master.cid} has no reachable inbound port; "
         "relaying the data plane through the rendezvous"
     )
     return endpoint
+
+
+def _warn_relay_unavailable(master: Any, dialer: Any, log) -> None:
+    """Emit one actionable hint when the node could not pair the data relay.
+
+    Two peers behind carrier-grade NAT have no dialable address, so the relay
+    through the rendezvous is their only path. When the node answers every relay
+    frame with ``relay_unavailable`` (the common case: it was started without
+    ``--relay``), the user only sees the generic "No reachable endpoint" warning
+    and cannot act on it. This logs and publishes — through the structured
+    warning channel the desktop surfaces as a banner — one actionable message per
+    master, naming the node-side fix. Emitted at most once per master (the
+    rendezvous loop retries underneath) and never for a peer that is expected to
+    be reachable by other means: the call only fires after every direct candidate
+    failed and the relay was refused.
+    """
+    if getattr(dialer, "refusal", None) != "relay_unavailable":
+        return
+    if master.cid in _relay_hint_masters:
+        return
+    _relay_hint_masters.add(master.cid)
+    message = (
+        f"{ActionLabel.RELAY} master {master.cid} is unreachable directly and the "
+        "rendezvous node could not relay the data plane. If both devices are "
+        "behind carrier-grade NAT (mobile data, hotspot, CGNAT), start the node "
+        "with 'hsync-rendezvous run --relay'."
+    )
+    log.warning(message)
+    emit_warning(message, source="relay", reason="relay_unavailable")
 
 
 def _run_as_slave(

@@ -343,6 +343,46 @@ class TestRunAsMaster:
         assert server.configure_role.call_count == 2
         ws.start.assert_called_once()
 
+    def test_run_as_master_reasserts_the_relay_listener_each_iteration(self, tmp_path):
+        """The relay listener is re-offered on every re-entry, not only the first.
+
+        The master's relay acceptor holds its own QUIC control connection to the
+        rendezvous; if that connection drops while the master keeps serving, a
+        listener registered on the first activation only would never come back
+        and every relay-only peer (two peers behind carrier-grade NAT) would stay
+        stuck on ``relay_unavailable``. The one-second re-entry must re-assert it
+        (``_start_master_relay`` is idempotent and backs off internally).
+        """
+        from hsync_client.p2p_handler import _run_as_master
+
+        config = _make_p2p_config(tmp_path)
+        sync = self._mock_sync()
+        sync.peer_manager.is_master.return_value = True
+        server, ws = self._mock_servers()
+
+        with (
+            patch("time.sleep"),
+            patch("hsync_client.p2p_handler._start_master_relay") as start_relay,
+        ):
+            first = _run_as_master(
+                config=config,
+                log=MagicMock(),
+                p2p_sync=sync,
+                p2p_server=server,
+                p2p_ws_server=ws,
+            )
+            # Re-entry while the serving role is still running (the loop calls
+            # this every second as long as the node stays master).
+            _run_as_master(
+                config=config,
+                log=MagicMock(),
+                p2p_sync=sync,
+                p2p_server=first[0],
+                p2p_ws_server=first[1],
+            )
+
+        assert start_relay.call_count == 2
+
     def test_run_as_master_reuses_inventory_store_across_iterations(self, tmp_path):
         """The inventory store is created once per master stint, then reused.
 

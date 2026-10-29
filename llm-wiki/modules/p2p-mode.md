@@ -87,6 +87,30 @@ exercised end-to-end by `tests/test_bb_p2p_rendezvous_relay.py` (gated
 publish only undialable candidates on a single host, so the slave's probes fail
 and the file exchange must ride the relay — no real NAT isolation needed.
 
+When the node **refuses** to pair — `relay_unavailable`, the usual case for a node
+started without `--relay` — the refusal code reaches the handler
+(`rdv_relay.py::RelayDialer.refusal`, aggregated by
+`rdv_relay.py::FailoverRelayDialer.refusal`) and
+`p2p_handler.py::_warn_relay_unavailable` logs and publishes one actionable
+warning per master (`source="relay"`, `reason="relay_unavailable"`, message names
+`--relay`) instead of leaving only the generic `No reachable endpoint for master`
+line; it fires only after every direct candidate failed and is deduped per master
+so the rendezvous loop's retries do not repeat it. The structured counterpart goes
+through `events.py::emit_warning`, which the desktop surfaces as a banner.
+
+Serving side, the master's relay listener must survive the node dropping it. A
+relayed slave is seen by the master as `127.0.0.1` (the acceptor bridges to the
+local data plane over loopback), so a dropped control stream surfaces as a normal
+`WebSocket client disconnected: 127.0.0.1` and the master's status falls to
+`waiting`. `rdv_relay.py::RelayAcceptor._run` now ends as soon as its control
+stream dies (`_read_incoming`/`_keepalive` returning, not only `stop()`), clearing
+`_registered` so `active` stops reporting a zombie listener;
+`p2p_handler.py::_run_as_master` calls `_start_master_relay` on **every** re-entry
+(not only the first activation), so a listener the node dropped is re-offered on
+the next one-second tick. Without both, a mobile-network blip dissolved the relay
+listener for good and every relay-only peer stayed stranded on `waiting` while a
+directly reachable peer kept working.
+
 The local node's candidacy can also be dropped at runtime
 (`p2p_peers.py::PeerManager.set_master_candidacy`): a client parked in
 continuous dry-run, waiting for the desktop's `PREVIEW`/`SYNC` commands, cannot

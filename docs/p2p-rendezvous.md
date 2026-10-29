@@ -179,7 +179,16 @@ no file name and no content, and the master's certificate pin is still what
 authenticates it. What the node does see is which devices are paired and how much
 they exchanged. The relay is opt-in on the **node** side (`hsync-rendezvous run
 --relay`): with a node that has not enabled it the clients keep the direct-only
-behaviour and the slave keeps retrying rendezvous.
+behaviour and the slave keeps retrying rendezvous. In that case the client no
+longer stays silent — instead of only `No reachable endpoint for master <cid>`, it
+logs and publishes an actionable warning that names the fix (a front-end such as
+the desktop app surfaces it as a banner/notification):
+
+```text
+[RELAY] master <cid> is unreachable directly and the rendezvous node could not relay
+the data plane. If both devices are behind carrier-grade NAT (mobile data, hotspot,
+CGNAT), start the node with 'hsync-rendezvous run --relay'.
+```
 
 Two consequences worth knowing:
 
@@ -189,6 +198,10 @@ Two consequences worth knowing:
 - Only the **master** needs to be reachable through the relay. Peer-assisted
   download keeps using direct seeder endpoints; a seeder that cannot be reached
   directly is skipped and the block is served by the master.
+- The master keeps its relay listener alive and re-offers it whenever the node
+  drops it (a mobile-network blip, a node restart, an idle sweep), so a relayed
+  group recovers on its own instead of sitting on `Waiting…` until the master is
+  restarted.
 
 ## Confirm which plan is active
 
@@ -235,7 +248,7 @@ limit is negotiated on the authenticated session.
 | `fingerprint_changed` (rendezvous) with `ERROR: Rendezvous '…' trust failed: the certificate fingerprint does not match the accepted pin` | The rendezvous certificate does not match the pin — possible man-in-the-middle, or the operator restarted/rotated the identity. The client prints the presented fingerprint, the known-hosts file and the exact commands that unblock the situation, then drops the rendezvous source (the local network keeps syncing). Re-pin the new fingerprint after verifying it out of band (`hsync trust rendezvous-server add …`) or forget the pin with `hsync trust rendezvous-server remove …` (like `ssh-keygen -R`) to be prompted again; during a planned rotation pass both fingerprints (old + new) once. See [FAQ — p2p Mode](faq-p2p.md) and the node's [FAQ](https://github.com/albertsdk/hsync-rendezvous/blob/main/docs/faq.md). |
 | Peer listed but connection fails | The advertised TCP endpoint is not reachable (UPnP disabled/failed and no public port): see "Let the node be reachable". The client retries the other candidates, then rendezvous. |
 | Two peers on the same network (or same host) never connect | mDNS already runs alongside the rendezvous, so same-network peers are normally found directly; this symptom is for peers behind the **same NAT on different networks**, where some routers block NAT loopback (hairpinning) and the public endpoint is unreachable from inside. The client prefers the host/LAN candidate and falls back to the public one. |
-| Two peers on different networks never connect, and no `[RELAY]` line appears | The node has not enabled the data relay, so only directly reachable peers can connect: start it with `--relay` (or `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS_RELAY=1`), or give at least the elected master a routable public endpoint (UPnP/public port). |
+| Two peers on different networks never connect, and no `[RELAY]` line appears | The node has not enabled the data relay, so only directly reachable peers can connect. The slave logs a `[RELAY] … start the node with 'hsync-rendezvous run --relay'` warning naming this: enable it (`--relay`, or `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS_RELAY=1`), or give at least the elected master a routable public endpoint (UPnP/public port). |
 | Cross-network sync not needed | Go back to the [mDNS plan](p2p-lan.md) by unsetting `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS`. |
 
 More: [Troubleshooting](troubleshooting.md) and [FAQ — p2p Mode](faq-p2p.md).

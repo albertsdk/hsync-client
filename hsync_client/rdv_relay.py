@@ -216,14 +216,20 @@ class RelayDialer:
         self._stop: asyncio.Event | None = None
         self._ready = threading.Event()
         self._endpoint: tuple[str, int] | None = None
+        # Uniform refusal code from the node's last ``relay_error`` (if any), so
+        # the caller can tell "the node did not pair the relay" from a tunnel
+        # that opened; ``None`` before a refusal is seen.
+        self._refusal: str | None = None
 
     def open(self, timeout: float = 15.0) -> tuple[str, int] | None:
         """Pair the session and return the loopback ``(host, port)`` to dial.
 
         ``None`` means the node could not pair it (relay disabled, no listener
         for the target, capacity reached): the caller then keeps its normal
-        "no reachable endpoint, retry rendezvous" path.
+        "no reachable endpoint, retry rendezvous" path. The reason, when the
+        node answered one, is readable afterwards through :attr:`refusal`.
         """
+        self._refusal = None
         self._thread = threading.Thread(
             target=self._thread_main, name="hsync-relay-dialer", daemon=True
         )
@@ -233,6 +239,16 @@ class RelayDialer:
             self.close()
             return None
         return self._endpoint
+
+    @property
+    def refusal(self) -> str | None:
+        """The node's refusal code for the last pairing attempt, or ``None``.
+
+        ``relay_unavailable`` means the node did not pair the session (its data
+        relay is disabled, or the target has no listener registered); callers use
+        it to surface an actionable hint instead of only "no reachable endpoint".
+        """
+        return self._refusal
 
     def close(self) -> None:
         """Tear the tunnel down (idempotent)."""
@@ -269,6 +285,7 @@ class RelayDialer:
                 quic, self._connect_frame(), self._client.timeout
             )
             if probe_reader is None:
+                self._refusal = refusal
                 if refusal is not None:
                     log.debug(f"Relay session refused by the node: {refusal}")
                 return
@@ -388,6 +405,7 @@ class RelayAcceptor:
     async def _run(self) -> None:
         tasks: list[asyncio.Task[Any]] = []
         sessions: set[asyncio.Task[Any]] = set()
+        stop_task: asyncio.Task[Any] | None = None
         try:
             async with _quic_session(self._client) as quic:
                 reader, writer = await quic.create_stream()
@@ -417,13 +435,24 @@ class RelayAcceptor:
                     asyncio.create_task(self._read_incoming(quic, reader, sessions)),
                     asyncio.create_task(self._keepalive(writer)),
                 ]
-                await self._stop.wait()  # type: ignore[union-attr]
+                # Exit as soon as the control stream dies — the keepalive or the
+                # incoming loop returning means the node dropped the listener or
+                # the QUIC connection is gone — and not only when ``stop`` is set.
+                # Blocking on ``_stop`` alone left a zombie: the thread stayed
+                # alive with ``_registered`` still True, so ``active`` reported a
+                # live listener that no longer existed and it could never be
+                # re-registered, stranding every relay-only peer for good.
+                stop_task = asyncio.create_task(self._stop.wait())  # type: ignore[union-attr]
+                await asyncio.wait([stop_task, *tasks], return_when=asyncio.FIRST_COMPLETED)
         finally:
             self._registered = False
-            for task in (*tasks, *sessions):
+            waiters = [*tasks, *sessions]
+            if stop_task is not None:
+                waiters.append(stop_task)
+            for task in waiters:
                 task.cancel()
-            if tasks or sessions:
-                await asyncio.gather(*tasks, *sessions, return_exceptions=True)
+            if waiters:
+                await asyncio.gather(*waiters, return_exceptions=True)
 
     async def _read_incoming(
         self, quic: Any, reader: Any, sessions: set[asyncio.Task[Any]]
@@ -489,6 +518,9 @@ class FailoverRelayDialer:
     def __init__(self, dialers: Sequence[RelayDialer]) -> None:
         self._dialers = list(dialers)
         self._winner: RelayDialer | None = None
+        # Refusal of the last failed attempt, so the caller can report why the
+        # combined dial could not pair even when no single dialer is the cause.
+        self._refusal: str | None = None
 
     def open(self, timeout: float = 15.0) -> tuple[str, int] | None:
         """Try each server in order within one deadline; ``None`` when none pairs.
@@ -506,12 +538,22 @@ class FailoverRelayDialer:
             endpoint = dialer.open(remaining)
             if endpoint is not None:
                 self._winner = dialer
+                self._refusal = None
                 return endpoint
+        self._refusal = next(
+            (d.refusal for d in self._dialers if getattr(d, "refusal", None)), None
+        )
         return None
+
+    @property
+    def refusal(self) -> str | None:
+        """The refusal code of the last failed attempted server, or ``None``."""
+        return self._refusal
 
     def close(self) -> None:
         """Tear down the winning tunnel and any attempt that is still open."""
         self._winner = None
+        self._refusal = None
         for dialer in self._dialers:
             dialer.close()
 
