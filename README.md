@@ -4,6 +4,8 @@
 
 # HSYNC Client
 
+The command is `hsync`; it runs in one of two modes — **Server Mode** or **p2p Mode** (both described below).
+
 **HSYNC Client is the synchronization agent of HSYNC**: you install it on each device and it keeps a folder identical with the same folder on your other devices, in real-time, over standard HTTPS. It ships as a single self-contained binary: no Python (or any other) runtime is required on the machine.
 
 > New to HSYNC? Start with the [HSYNC Ecosystem](https://github.com/albertsdk/hsync/blob/main/README.md) for an overview of the platform before using the client.
