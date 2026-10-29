@@ -74,7 +74,18 @@ relay listener with the node as part of the serving role
 slave that failed every direct candidate asks the node for a tunnel
 (`p2p_handler.py::_relay_master_endpoint`) and dials the loopback endpoint it gets
 back. The bytes are the peers' own TLS, so certificate pinning still authenticates
-the master and the displayed master address stays the real one.
+the master and the displayed master address stays the real one. Each TCP
+connection a sync cycle opens against the loopback endpoint (REST requests plus
+the WSS channel) is paired with its **own** `relay_connect` session on the node
+(`boot_relay.py::RelayDialer`), so one tunnel outlives a single connection; the
+first connection no longer tears the whole tunnel down (the old bug made every
+later connection — the WebSocket channel, a file download — hit `Connection
+refused`, so a cross-network sync never completed). The full chain is
+exercised end-to-end by `tests/test_bb_p2p_bootnode_relay.py` (gated
+`HSYNC_BB_P2P=1`, sibling bootnode with `--relay`): the test-only seam
+`p2p_discovery_bootnode.py::_TEST_ADVERTISED_ENDPOINTS_ENV` makes the real master
+publish only undialable candidates on a single host, so the slave's probes fail
+and the file exchange must ride the relay — no real NAT isolation needed.
 
 The local node's candidacy can also be dropped at runtime
 (`p2p_peers.py::PeerManager.set_master_candidacy`): a client parked in

@@ -83,6 +83,33 @@ def refusal_code(raw: bytes) -> str | None:
     return None if refusal is None else str(refusal["error"])
 
 
+async def _probe_relay_connect(quic: Any, frame: dict[str, object], timeout: float) -> tuple:
+    """Open one relay session and return ``(reader, writer, refusal)``.
+
+    Success keeps the fresh stream open and returns it with ``refusal=None``;
+    the caller owns both ends and must close them. On refusal, protocol error or
+    transport error the stream is closed and ``(None, None, code)`` is returned,
+    so the caller can tell a node without the relay from a torn connection.
+    """
+    try:
+        stream_reader, stream_writer = await quic.create_stream()
+    except (ConnectionError, OSError) as exc:
+        return None, None, f"stream_failed: {exc}"
+    try:
+        stream_writer.write(frame_line(frame))
+        await stream_writer.drain()
+        reply = await asyncio.wait_for(stream_reader.readline(), timeout)
+    except (TimeoutError, ConnectionError, OSError):
+        stream_writer.close()
+        return None, None, "relay_unavailable"
+    raw = bytes(reply).rstrip(b"\n")
+    refusal = refusal_code(raw)
+    if refusal is not None or (raw and validate_boot_relay_ok(json.loads(raw)) is None):
+        stream_writer.close()
+        return None, None, refusal or "relay_protocol"
+    return stream_reader, stream_writer, None
+
+
 async def _pump(reader: Any, writer: Any, idle_timeout: float, done: asyncio.Event) -> None:
     """Copy one direction until EOF, an idle gap or a transport error."""
     try:
@@ -157,7 +184,16 @@ async def bridge(
 
 
 class RelayDialer:
-    """Requester side: one relay session exposed as a loopback TCP endpoint."""
+    """Requester side: one relay tunnel exposed as a loopback TCP endpoint.
+
+    A tunnel is long-lived (until :meth:`close`): every TCP connection accepted
+    on loopback opens its **own** ``relay_connect`` session with the node, so the
+    data plane (REST + WSS, several connections per sync cycle) rides the same
+    tunnel. The old one-session-per-tunnel design closed the loopback listener
+    as soon as the first bridged connection ended, so any later connection (the
+    WebSocket channel, a file download) hit ``Connection refused`` and a
+    cross-network sync never completed.
+    """
 
     def __init__(
         self,
@@ -224,30 +260,20 @@ class RelayDialer:
 
     async def _run(self) -> None:
         async with _quic_session(self._client) as quic:
-            stream_reader, stream_writer = await quic.create_stream()
-            stream_writer.write(
-                frame_line(
-                    build_relay_connect_frame(
-                        cid=self._cid,
-                        bucket=self._bucket,
-                        target_cid=self._target_cid,
-                        group=self._group,
-                        bucket_token=self._token,
-                    )
-                )
+            # Pre-flight: prove the node pairs a session for this target before
+            # exposing a loopback endpoint, so ``open()`` keeps returning ``None``
+            # for a node without the relay (the caller backs off instead of
+            # re-dialling on every discovery tick). The probe stream is closed
+            # right after the reply; real sessions are paired per connection.
+            probe_reader, probe_writer, refusal = await _probe_relay_connect(
+                quic, self._connect_frame(), self._client.timeout
             )
-            await stream_writer.drain()
-            reply = await asyncio.wait_for(stream_reader.readline(), self._client.timeout)
-            raw = bytes(reply).rstrip(b"\n")
-            refusal = refusal_code(raw)
-            if refusal is not None:
-                log.debug(f"Relay session refused by the node: {refusal}")
+            if probe_reader is None:
+                if refusal is not None:
+                    log.debug(f"Relay session refused by the node: {refusal}")
                 return
-            if raw and validate_boot_relay_ok(json.loads(raw)) is None:
-                raise BootnodeProtocolError("expected a 'relay_ok' frame")
-            server = await asyncio.start_server(
-                self._handle(stream_reader, stream_writer), "127.0.0.1", 0
-            )
+            probe_writer.close()
+            server = await asyncio.start_server(self._handle(quic), "127.0.0.1", 0)
             try:
                 socket = server.sockets[0]
                 self._endpoint = ("127.0.0.1", int(socket.getsockname()[1]))
@@ -257,14 +283,37 @@ class RelayDialer:
                 server.close()
                 await server.wait_closed()
 
-    def _handle(self, stream_reader: Any, stream_writer: Any) -> Any:
-        """Loopback accept callback: one HTTPS session rides this relay stream."""
+    def _connect_frame(self) -> dict[str, object]:
+        """The ``relay_connect`` frame for this tunnel's target, built once."""
+        return build_relay_connect_frame(
+            cid=self._cid,
+            bucket=self._bucket,
+            target_cid=self._target_cid,
+            group=self._group,
+            bucket_token=self._token,
+        )
+
+    def _handle(self, quic: Any) -> Any:
+        """Loopback accept callback: one relay session per HTTPS connection.
+
+        A sync cycle opens several TCP connections to the loopback endpoint
+        (REST requests plus the WSS channel); the tunnel must survive each of
+        them, so every accepted connection pairs its **own** ``relay_connect``
+        session and is bridged over it. The previous single-session design died
+        with the first connection and the next one hit ``Connection refused``.
+        """
 
         async def _handle(tcp_reader: Any, tcp_writer: Any) -> None:
+            stream_reader, stream_writer, refusal = await _probe_relay_connect(
+                quic, self._connect_frame(), self._client.timeout
+            )
+            if stream_reader is None:
+                if refusal is not None:
+                    log.debug(f"Relay session refused by the node: {refusal}")
+                tcp_writer.close()
+                return
             log.info("Relay tunnel established with the master (via the discovery server)")
             await bridge(tcp_reader, tcp_writer, stream_reader, stream_writer)
-            if self._stop is not None:
-                self._stop.set()
 
         return _handle
 

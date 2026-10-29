@@ -26,7 +26,10 @@ from hsync_client.boot_client import (
     BootnodeRefused,
     BootnodeUnreachable,
 )
-from hsync_client.p2p_discovery_bootnode import BootnodeDiscovery
+from hsync_client.p2p_discovery_bootnode import (
+    _TEST_ADVERTISED_ENDPOINTS_ENV,
+    BootnodeDiscovery,
+)
 from hsync_client.p2p_peers import Peer, PeerManager
 from hsync_client.stun import ObservedAddress
 
@@ -796,3 +799,43 @@ class TestNetworkChange:
         _kind, frame = plan._client.calls[-1]
         assert frame["endpoints"], "the re-register after a lost lease must carry endpoints"
         assert plan._published_endpoints is True
+
+
+class TestAdvertisedEndpointsOverride:
+    """The ``HSYNC_P2P_TEST_ADVERTISED_ENDPOINTS`` seam (relay-e2e enabler)."""
+
+    def test_unset_keeps_the_derived_candidates(self, monkeypatch):
+        monkeypatch.delenv(_TEST_ADVERTISED_ENDPOINTS_ENV, raising=False)
+        plan, _ = make_plan()
+        plan._observed = ObservedAddress(host="203.0.113.9", port=51000)
+        assert plan._endpoint_wire("192.0.2.10") == [
+            {"proto": "tcp", "host": "203.0.113.9", "port": 8443},
+            {"proto": "tcp", "host": "192.0.2.10", "port": 8443},
+        ]
+
+    def test_override_replaces_the_derived_candidates(self, monkeypatch):
+        monkeypatch.setenv(_TEST_ADVERTISED_ENDPOINTS_ENV, "198.51.100.7:8443,198.51.100.8:8443")
+        plan, _ = make_plan()
+        plan._observed = ObservedAddress(host="203.0.113.9", port=51000)
+        assert plan._endpoint_wire("192.0.2.10") == [
+            {"proto": "tcp", "host": "198.51.100.7", "port": 8443},
+            {"proto": "tcp", "host": "198.51.100.8", "port": 8443},
+        ]
+
+    def test_override_is_published_in_the_register_frame(self, monkeypatch):
+        """The published frame must carry the override verbatim (two dead candidates)."""
+        monkeypatch.setenv(_TEST_ADVERTISED_ENDPOINTS_ENV, "198.51.100.7:8443,198.51.100.8:8443")
+        plan, _ = make_plan()
+        plan._register(publish_endpoint=True)
+        _kind, frame = plan._client.calls[-1]
+        assert frame["endpoints"] == [
+            {"proto": "tcp", "host": "198.51.100.7", "port": 8443},
+            {"proto": "tcp", "host": "198.51.100.8", "port": 8443},
+        ]
+        assert validate_boot_frame(frame) is not None
+
+    def test_malformed_override_fails_fast(self, monkeypatch):
+        monkeypatch.setenv(_TEST_ADVERTISED_ENDPOINTS_ENV, "not-an-endpoint")
+        plan, _ = make_plan()
+        with pytest.raises(ValueError):
+            plan._endpoint_wire("192.0.2.10")

@@ -26,6 +26,7 @@ Consumers: ``hsync-client`` (p2p subcommand), tests.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections.abc import Callable, Sequence
@@ -62,7 +63,7 @@ from hsync_client.constants import (
     PEER_TIMEOUT,
 )
 from hsync_client.events import emit_warning
-from hsync_client.nat_traversal import candidate_endpoints
+from hsync_client.nat_traversal import CandidateEndpoint, candidate_endpoints
 from hsync_client.net_utils import get_local_ip
 from hsync_client.net_watch import (
     NetworkChangeMonitor,
@@ -87,6 +88,43 @@ __all__ = ["BootnodeDiscovery", "MultiBootnodeDiscovery", "SharedUpnpMapping"]
 # 10/min (``boot-1.md``), so the client uses the spec's 30 s refresh window
 # instead of the mDNS heartbeat cadence.
 _DEFAULT_REFRESH_S = BOOTNODE_REFRESH_INTERVAL
+
+# Test-only override of the endpoint list a master publishes. Test-only: no CLI
+# flag, no config field, no packaging/docs surface — it exists so a black-box
+# test can make a real master advertise undialable candidates on a single host
+# and force the relayed path (``tests/test_bb_p2p_bootnode_relay.py``).
+_TEST_ADVERTISED_ENDPOINTS_ENV = "HSYNC_P2P_TEST_ADVERTISED_ENDPOINTS"
+
+
+def _test_advertised_endpoints() -> list[CandidateEndpoint] | None:
+    """Return ``HSYNC_P2P_TEST_ADVERTISED_ENDPOINTS`` as wire candidates.
+
+    The value is comma-separated ``host:port`` pairs (TCP, IPv4). When set it
+    replaces the UPnP/STUN-derived candidates in the register frame, so a master
+    can be made to publish exactly what a CGNAT deployment can — guesses that are
+    useless to a remote peer — while its real listener keeps serving loopback for
+    the relay bridge. ``None`` (the production case) keeps the derived list.
+    """
+    raw = os.environ.get(_TEST_ADVERTISED_ENDPOINTS_ENV)
+    if not raw:
+        return None
+    endpoints: list[CandidateEndpoint] = []
+    for part in raw.split(","):
+        host, sep, port_text = part.strip().rpartition(":")
+        if not sep or not host:
+            raise ValueError(
+                f"{_TEST_ADVERTISED_ENDPOINTS_ENV} must be comma-separated host:port pairs"
+            )
+        try:
+            port = int(port_text)
+        except ValueError:
+            raise ValueError(
+                f"{_TEST_ADVERTISED_ENDPOINTS_ENV} must be comma-separated host:port pairs"
+            ) from None
+        if not 1 <= port <= 65535:
+            raise ValueError(f"{_TEST_ADVERTISED_ENDPOINTS_ENV} port out of range: {port}")
+        endpoints.append(CandidateEndpoint("tcp", host, port))
+    return endpoints or None
 
 
 class SharedUpnpMapping:
@@ -771,6 +809,9 @@ class BootnodeDiscovery(DiscoveryPlanState):
         )
 
     def _endpoint_wire(self, local_ip: str) -> list[dict[str, object]]:
+        override = _test_advertised_endpoints()
+        if override is not None:
+            return [candidate.as_wire() for candidate in override]
         return [
             candidate.as_wire()
             for candidate in candidate_endpoints(

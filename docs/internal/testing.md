@@ -370,6 +370,7 @@ files:
 
 | `test_bb_p2p_bootnode_client.py` | the client's `BootnodeClient` against the **real** `hsync-bootnode` (register → ack/STUN-echo, query relay, refresh, leave); skips when the sibling bootnode is not built. |
 | `test_bb_p2p_bootnode_discovery.py` | two clients discover **and sync through** a loopback bootnode (`BOOTNODE 127.0.0.1 --port <p> --insecure`); also holds the opt-in real-NAT check. |
+| `test_bb_p2p_bootnode_relay.py` | the **data relay** end-to-end: a master that advertises only undialable candidates (test seam `HSYNC_P2P_TEST_ADVERTISED_ENDPOINTS`) syncs with a slave **through** a `--relay` bootnode — both `[RELAY]` lines plus the file exchange. |
 
 **These tests are disabled by default** because they are inherently
 environment‑sensitive (multicast on loopback, self‑signed certificate

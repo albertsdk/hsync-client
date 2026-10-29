@@ -797,26 +797,31 @@ def _reserve_udp_port() -> int:
         return int(probe.getsockname()[1])
 
 
-def _bootnode_start(port: int, ready_file: Path) -> subprocess.Popen:
+def _bootnode_start(port: int, ready_file: Path, *, relay: bool = False) -> subprocess.Popen:
     """Spawn the sibling bootnode on loopback (scrubbed env + ready file).
 
-    Raises ``FileNotFoundError`` when the sibling repo is not built; callers
-    translate that into a skip.
+    ``relay=True`` enables the data relay (``--relay``), so two peers that no
+    inbound NAT mapping reaches can sync through the node. Raises
+    ``FileNotFoundError`` when the sibling repo is not built; callers translate
+    that into a skip.
     """
     binary = _bootnode_bin()
     if binary is None:
         raise FileNotFoundError("hsync-bootnode is not built (sibling repo venv missing)")
+    args = [
+        binary,
+        "run",
+        "--listen-host",
+        "127.0.0.1",
+        "--listen-port",
+        str(port),
+        "--ready-file",
+        str(ready_file),
+    ]
+    if relay:
+        args.append("--relay")
     return subprocess.Popen(
-        [
-            binary,
-            "run",
-            "--listen-host",
-            "127.0.0.1",
-            "--listen-port",
-            str(port),
-            "--ready-file",
-            str(ready_file),
-        ],
+        args,
         env=_bootnode_env(),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
