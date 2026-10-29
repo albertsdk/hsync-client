@@ -435,6 +435,94 @@ class TestLANSyncIntegration:
         assert response.status_code == 409, response.text
         assert not target.exists()
 
+    def test_download_of_a_growing_remote_file_over_p2p(self, master_server, tmp_path):
+        """End-to-end: a P2P master serving more bytes than declared.
+
+        The peer attempt is ranked as a malformed source; the canonical-master
+        fallback against the same server raises ``DeclaredSizeMismatchError``
+        (the distinct message, never the absolute-cap wording) and the ``.part``
+        is discarded from both attempts, so the next ``modified`` event can
+        re-queue the download immediately.
+        """
+        from hsync_common.models.file import File
+
+        from hsync_client.exceptions import DeclaredSizeMismatchError
+        from hsync_client.p2p_sources import P2PPeerSource
+        from hsync_client.transfer import download_file
+
+        srv, port, master_bucket = master_server
+        content = os.urandom(2000)
+        (master_bucket / "grew.bin").write_bytes(content)
+        client_bucket = tmp_path / "client"
+        client_bucket.mkdir()
+
+        source = P2PPeerSource(
+            cid="bbmaster" + "0" * 14,
+            download_url=f"http://127.0.0.1:{port}/api/v1/buckets/test/files/download",
+            cert_fingerprint=None,
+            compression=False,
+            serve_slots=1,
+        )
+
+        class _Resolver:
+            """Minimal resolver exposing the single master-backed peer."""
+
+            def candidates_for(self, file, candidates=None, *, refresh=False):
+                return (source,)
+
+            def authorize(self, source):
+                return True
+
+            def acquire_slot(self, source, **kwargs):
+                return True
+
+            def release_slot(self, source):
+                return None
+
+            def record_failure(self, source, kind, retry_after_s=None):
+                return None
+
+            def request_headers(self, source, *, resumed, compression_enabled):
+                return {}
+
+        file = File(
+            filepath="grew.bin",
+            sha256sum=_sha256(content).hexdigest(),
+            size=1000,  # understated on purpose: the real file is 2000 bytes
+            mtime=time.time(),
+            ctime=time.time(),
+        )
+
+        with (
+            patch("hsync_client.p2p_server.CONFIG", unauth_write_config(str(master_bucket))),
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": f"http://127.0.0.1:{port}/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "REQUEST_HEADERS": {},
+                    "LOCAL_BUCKET": str(client_bucket),
+                    "DELTA_ENABLED": False,
+                    "SERVER_DELTA_ENABLED": False,
+                    "COMPRESSION_ENABLED": False,
+                    # Far above both the declared and the real size, so only
+                    # the declared-size body guard can fire.
+                    "MAX_INBOUND_SIZE": 10_000_000,
+                    "TRANSFER_RETRY_ATTEMPTS": 1,
+                    "P2P_PEER_SOURCES_MAX": 1,
+                },
+            ),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+        ):
+            with pytest.raises(
+                DeclaredSizeMismatchError,
+                match="received more bytes than the size declared by the remote",
+            ):
+                download_file(file, source_resolver=_Resolver())
+
+        assert not (client_bucket / "grew.bin").exists()
+        assert not (client_bucket / "grew.bin.part").exists()
+
 
 class TestLANDuplicateCidGuard:
     """The HTTP write endpoints refuse duplicated device identities (409)."""

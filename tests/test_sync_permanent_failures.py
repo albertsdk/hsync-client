@@ -51,6 +51,76 @@ class TestPermanentSkipSet:
         assert not _is_permanently_failed(f)
 
 
+class TestDeclaredSizeMismatchIsDeferred:
+    """A declared-size mismatch is a deferral, not a permanent skip.
+
+    The remote copy outgrew the size its listing declared (still being
+    written): the next ``modified`` event must be able to re-queue the
+    download immediately, so the path is never written into the per-cycle
+    skip-set. Every other permanent failure keeps the skip-set behaviour.
+    """
+
+    def test_a_declared_size_mismatch_is_not_added_to_the_skip_set(self, tmp_path):
+        from hsync_client.exceptions import DeclaredSizeMismatchError
+        from hsync_client.sync import (
+            _permanent_download_failures,
+            _record_permanent_download_failure,
+        )
+
+        f = File(filepath="grew.bin", sha256sum="deadbeef", size=1)
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            _record_permanent_download_failure(
+                f,
+                DeclaredSizeMismatchError("received more bytes than declared"),
+            )
+
+        assert _permanent_download_failures == set()
+        assert not _is_permanently_failed(f)
+
+    def test_an_absolute_cap_failure_still_lands_in_the_skip_set(self, tmp_path):
+        from hsync_client.sync import (
+            _permanent_download_failures,
+            _record_permanent_download_failure,
+        )
+
+        f = File(filepath="big.bin", sha256sum="deadbeef", size=1)
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            _record_permanent_download_failure(f, PermanentDownloadError("over the cap"))
+
+        assert _permanent_skip_key(f) in _permanent_download_failures
+
+    def test_second_event_is_not_blocked_after_a_mismatch(self, tmp_path):
+        """update_file retries immediately once the peer re-emits the file."""
+        from hsync_client.exceptions import DeclaredSizeMismatchError
+
+        data = {
+            "filepath": "big.dat",
+            "name": "big.dat",
+            "path": "",
+            "mtime": 1000,
+            "ctime": 1000,
+            "size": 100,
+            "sha256sum": "deadbeef",
+            "permissions": "644",
+        }
+
+        def _boom(_file, **kwargs):
+            raise DeclaredSizeMismatchError("received more bytes than declared")
+
+        mock_download = MagicMock(side_effect=_boom)
+        with (
+            patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch("hsync_client.transfer.download_file", mock_download),
+        ):
+            # First event: fails with the mismatch → not in the skip-set.
+            update_file(data)
+            # Second event (the peer re-emitted the file once it stabilised):
+            # must reach download_file again — no "Skipping permanently-failed".
+            update_file(data)
+
+        assert mock_download.call_count == 2
+
+
 class TestUpdateFilePermanentFailure:
     """Regression: update_file must not re-download a permanently-failed file
     and must record it in the skip-set + emit transfer_failed."""

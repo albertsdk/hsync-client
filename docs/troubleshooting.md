@@ -215,10 +215,12 @@ was being transferred (or a peer served a copy inconsistent with the listing).
 The absolute `--max-inbound-size` cap is a *different* check and would print a
 number equal to your configured MB value × 1 MiB.
 
-**Remedy.** Nothing is wrong with the limit configuration. The file arrives on
-the next sync cycle once the source copy is stable (a file still being written,
-e.g. by an acquisition or export job, cannot be transferred consistently).
-The stale number self-resolves: re-run the sync after the writing process
+**Remedy.** Nothing is wrong with the limit configuration. The transfer is a
+*deferral*: once the source copy is stable — a file still being written, e.g.
+by an acquisition or export job, cannot be transferred consistently — the peer
+emits a `modified` event and the client re-queues the download immediately,
+without waiting for the next resync cycle. If the source never stops changing,
+the transfer keeps deferring; re-run the sync after the writing process
 finishes.
 
 ## A folder keeps re-syncing or reports phantom conflicts

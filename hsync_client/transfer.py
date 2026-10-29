@@ -77,6 +77,7 @@ from hsync_client.delta_transfer import (
 )
 from hsync_client.events import UiEventName, emit_event, emit_warning
 from hsync_client.exceptions import (
+    DeclaredSizeMismatchError,
     PermanentDownloadError,
     PermanentUploadError,
     ServerError,
@@ -1183,7 +1184,7 @@ def _download_from_source_attempt(
                         # copy changed while it was being transferred. The
                         # wording must say so, or the user reads the declared
                         # size as their --max-inbound-size limit.
-                        raise PermanentDownloadError(
+                        raise DeclaredSizeMismatchError(
                             f'"{file.filepath}" received more bytes than the size '
                             f"declared by the remote ({write_cap} bytes); "
                             "the remote copy changed while transferring"

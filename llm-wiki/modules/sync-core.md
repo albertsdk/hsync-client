@@ -322,7 +322,14 @@ mirroring the server's `max_upload_size`; `0` = declared size only). The
 declared-size guard is a *separate* check with a distinct message: if the
 streamed body exceeds the size the remote listing declared (`file.size`
 printed as the number), the remote copy changed while it was being transferred
-— never read that number as the configured cap. Wire-supplied permissions go through
+— never read that number as the configured cap. That condition raises
+`DeclaredSizeMismatchError` (under `PermanentDownloadError`, so the retry
+policy never retries it in the same instant), and `sync._record_permanent_download_failure`
+treats it as a **deferral, not a permanent skip**: the path is *not* written
+into the per-cycle skip-set, so the peer's next `modified` event re-queues the
+download immediately once the writer stabilises — no wait for the next resync
+cycle. Every other permanent failure (e.g. the absolute cap) keeps the
+skip-set behaviour. Wire-supplied permissions go through
 `utils.set_permissions` (`utils/permissions.py::set_permissions`) which strips setuid/setgid/sticky bits
 (`sanitize_remote_permissions`).
 

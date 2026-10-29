@@ -86,6 +86,24 @@ class PermanentDownloadError(DownloadError):
     default_message = "Download permanently failed"
 
 
+class DeclaredSizeMismatchError(PermanentDownloadError):
+    """The remote copy outgrew the size its listing declared mid-transfer.
+
+    Unlike the absolute ``MAX_INBOUND_SIZE`` cap (a genuinely permanent
+    condition: no retry helps), this is *transient*: the file is still being
+    written on the source, so the size the listing declared no longer matches
+    the bytes it streams. Callers treat it as a deferral — the next
+    ``modified`` event from the peer re-queues the download once the writer
+    stabilises — instead of writing the path into the per-cycle skip-set. It
+    stays under ``PermanentDownloadError`` so the download retry policy (which
+    never retries permanent errors) still applies: a retry in the same moment
+    would only hit the same growing file again.
+    """
+
+    error_code = "HSYNC-C3006"
+    default_message = "The remote copy changed while downloading"
+
+
 class UploadError(SyncError):
     """File upload failed."""
 

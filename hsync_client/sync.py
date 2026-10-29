@@ -71,6 +71,7 @@ from hsync_client.constants import (
 from hsync_client.events import UiEventName, emit_event, emit_warning, set_link_status
 from hsync_client.exceptions import (
     AuthenticationError,
+    DeclaredSizeMismatchError,
     NetworkError,
     PermanentDownloadError,
     ServerError,
@@ -297,9 +298,28 @@ def _is_permanently_failed(file: File) -> bool:
 
 
 def _record_permanent_download_failure(file: File, e: PermanentDownloadError) -> None:
-    """Record a permanent download failure: skip-set entry + log + UI event."""
-    _permanent_download_failures.add(_permanent_skip_key(file))
-    log.warning(f'Permanent download failure for "{file.filepath}" (skipped for this cycle): {e}')
+    """Record a download failure: skip-set entry + log + UI event.
+
+    A :class:`DeclaredSizeMismatchError` is deliberately **not** added to the
+    skip-set: the remote copy outgrew the size its listing declared, which
+    means it is still being written. As soon as the writer finishes the peer
+    emits a ``modified`` event and the download is re-queued immediately —
+    marking the file failed for the whole cycle would only delay it until the
+    next resync for no reason (the file will change again). Every other
+    permanent failure keeps the skip-set behaviour so it is not retried on
+    every resync tick; the UI event is emitted in both cases, so the retry is
+    visible instead of silent.
+    """
+    if isinstance(e, DeclaredSizeMismatchError):
+        log.info(
+            f'Download of "{file.filepath}" deferred: the remote copy changed while '
+            "transferring; it will be retried as soon as it stabilises"
+        )
+    else:
+        _permanent_download_failures.add(_permanent_skip_key(file))
+        log.warning(
+            f'Permanent download failure for "{file.filepath}" (skipped for this cycle): {e}'
+        )
     emit_event(UiEventName.transfer_failed, op="download", file=file.filepath, message=str(e))
 
 

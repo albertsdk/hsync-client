@@ -15,7 +15,7 @@ from hsync_common.models.file import File
 from requests import RequestException
 
 from hsync_client.events import UiEventName
-from hsync_client.exceptions import PermanentDownloadError
+from hsync_client.exceptions import DeclaredSizeMismatchError, PermanentDownloadError
 from hsync_client.p2p_sources import P2PPeerSource, PeerFailureKind
 from hsync_client.transfer import _parse_retry_after, download_file
 
@@ -865,7 +865,7 @@ class TestDownloadSizeCap:
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
         ):
             with pytest.raises(
-                PermanentDownloadError,
+                DeclaredSizeMismatchError,
                 match="received more bytes than the size declared by the remote",
             ):
                 download_file(file)
