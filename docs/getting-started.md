@@ -16,7 +16,7 @@ and most immediate to the most involved.
 | 3 | **Windows installer** (`.exe`) | <img src="assets/os/windows.svg" alt="Windows" width="16" height="16"> | A Windows x64 host: per-user install, adds `hsync` to your `PATH` | [Windows installer](getting-started-windows.md) |
 | 4 | **Debian/Ubuntu package** (`.deb`) | <img src="assets/os/debian.svg" alt="Debian" width="16" height="16"> <img src="assets/os/ubuntu.svg" alt="Ubuntu" width="16" height="16"> | A Debian/Ubuntu host managed by systemd | [Debian package](getting-started-deb.md) |
 | 5 | **RPM package** (`.rpm`) | <img src="assets/os/redhat.svg" alt="Red Hat" width="16" height="16"> <img src="assets/os/fedora.svg" alt="Fedora" width="16" height="16"> | A RHEL/Rocky/Alma/Fedora host managed by systemd | [RPM package](getting-started-rpm.md) |
-| 6 | **WD My Cloud OS5** (`.bin`) | <img src="assets/os/mycloud.svg" alt="WD My Cloud" width="16" height="16"> | A supported WD My Cloud OS5 NAS | [WD OS5 packaging](../packaging/wd-os5/README.md) |
+| 6 | **WD My Cloud OS5** (`.bin`) | <img src="assets/os/mycloud.svg" alt="WD My Cloud" width="16" height="16"> | A supported WD My Cloud OS5 NAS | [hsync-wd-os5](https://github.com/albertsdk/hsync-wd-os5) |
 | 7 | **From source** (clone and build) |  | Development, or a platform with no prebuilt asset | [Build from source](getting-started-source.md) |
 
 All methods produce the same `hsync` executable; only the toolchain differs. The

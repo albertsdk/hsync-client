@@ -223,7 +223,7 @@ HSYNC Client focuses on reliable, fast transfers.
 - [Protocol specification](https://github.com/albertsdk/hsync-common/blob/main/docs/protocol.md) - Shared, versioned wire protocol (schemas and fixtures)
 - [Usage](docs/usage.md) - CLI overview, log labels, error handling
 - [Examples](docs/examples.md) - Practical scenarios (server-based and p2p)
-- [WD-OS5 Packaging](packaging/wd-os5/README.md) - Western Digital My Cloud (OS5) app package and web UI
+- [hsync-wd-os5](https://github.com/albertsdk/hsync-wd-os5) - Western Digital My Cloud (OS5) app package and web UI
 - [Contributing](CONTRIBUTING.md) - Development setup and contribution guidelines
 - [Report an issue](https://github.com/albertsdk/hsync-client/issues) - Open development and bug tracking
 - [Changelog](CHANGELOG.md) - Release notes and version history

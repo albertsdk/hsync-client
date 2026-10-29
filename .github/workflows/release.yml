@@ -1,7 +1,8 @@
 name: Release
 
-# Publish prebuilt client binaries, .deb/.rpm packages, the Windows installer
-# and WD OS5 .bin installers as GitHub Release assets. Two triggers:
+# Publish prebuilt client binaries, .deb/.rpm packages and the Windows
+# installer as GitHub Release assets. The WD OS5 .bin installers are built
+# and released by the hsync-wd-os5 repository. Two triggers:
 #
 # 1. vX.Y.Z tag pushed  →  create a formal Release (bumped version).
 # 2. workflow_dispatch  →  build artifacts without a tag (useful for testing;
@@ -127,7 +128,7 @@ jobs:
           $magick = (Get-Command magick.exe -ErrorAction SilentlyContinue).Source
           if (-not $magick) { throw "ImageMagick (magick.exe) not found after install" }
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-          & $magick "packaging/wd-os5/Apkg/web/hsync.png" -define icon:auto-resize=256,128,64,48,32,16 "packaging/windows/icon.ico"
+          & $magick "packaging/windows/hsync.png" -define icon:auto-resize=256,128,64,48,32,16 "packaging/windows/icon.ico"
           $vi = "${{ steps.version.outputs.version }}" -replace '-.*$','' -replace '\+.*$',''
           & $iscc "/DAppVersion=${{ steps.version.outputs.version }}" `
                   "/DVersionInfoVersion=$vi" `
@@ -171,7 +172,7 @@ jobs:
               echo "version=${BASE}" >> "$GITHUB_OUTPUT"
             fi
           fi
-      # The .deb/WD OS5 images are cross-built for ARMv7/arm64 under qemu-user.
+      # The .deb images are cross-built for arm64/armhf under qemu-user.
       # The QEMU that ships with the ubuntu-latest runner has regressed and makes
       # gcc crash deterministically with SIGSEGV (exit 139) while emitting -O3
       # code for some CPython/OpenSSL translation units (e.g. Python/_warnings.c),
@@ -188,21 +189,19 @@ jobs:
           platforms: arm,arm64
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
-      - name: Build .deb, .rpm and WD OS5 packages
+      - name: Build .deb and .rpm packages
         working-directory: hsync-client
         env:
           HSYNC_VERSION: ${{ steps.version.outputs.version }}
         run: |
           ./compile.sh --target deb-all
           ./compile.sh --target rpm-all
-          ./compile.sh --target wd-os5-all
       - uses: actions/upload-artifact@v7
         with:
           name: packages
           path: |
             hsync-client/dist/deb/*.deb
             hsync-client/dist/rpm/*.rpm
-            hsync-client/dist/wd-os5/*.bin
 
   release:
     needs: [build-binaries, build-packages]
@@ -232,7 +231,7 @@ jobs:
         run: |
           cd assets
           # download-artifact preserves the artifact's internal directory
-          # structure, so the packages artifact lands under deb/ and wd-os5/.
+          # structure, so the packages artifact lands under deb/ and rpm/.
           # Move every file to the top level for flat release assets.
           find . -mindepth 2 -type f -exec mv -t . {} +
           find . -mindepth 1 -type d -empty -delete

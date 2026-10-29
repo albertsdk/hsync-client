@@ -22,12 +22,6 @@
 #                               rpm-all              .rpm for x86_64 and
 #                                                    aarch64 (via Docker,
 #                                                    Rocky Linux 9 baseline)
-#                               wd-ex2-ultra-os5     WD My Cloud EX2 Ultra OS5
-#                                                    (ARMv7, packaged as .bin)
-#                               wd-os5-all           Every WD OS5 model
-#                                                    (builds one binary per
-#                                                     arch, packages all 10
-#                                                     models in dist/wd-os5/)
 #                               rpi                  Standalone binaries for
 #                                                    Raspberry Pi OS 32-bit
 #                                                    (armhf) and 64-bit (arm64)
@@ -45,7 +39,7 @@
 #     any Debian/Ubuntu system via dpkg-dev)
 #   - rpm target: Python virtual environment (.venv) + rpmbuild (available on
 #     any RHEL/Rocky/Fedora system via rpm-build)
-#   - deb-all / rpm-all / rpi / wd-ex2-ultra-os5 / wd-os5-all: Docker with
+#   - deb-all / rpm-all / rpi: Docker with
 #     qemu-user-static (binfmt) configured (used for cross-arch emulation on
 #     amd64 hosts).
 #
@@ -65,11 +59,6 @@
 #   rpm-all:
 #     - dist/rpm/hsync-client-<ver>-1.el9.x86_64.rpm
 #     - dist/rpm/hsync-client-<ver>-1.el9.aarch64.rpm
-#   wd-ex2-ultra-os5:
-#     - dist/wd-ex2-ultra-os5/MyCloudEX2Ultra_hsync_<ver>.bin
-#                                       Installable through the OS5 dashboard
-#   wd-os5-all:
-#     - dist/wd-os5/<MODEL>_hsync_<ver>.bin   one .bin per supported model
 #   rpi:
 #     - dist/rpi/armhf/hsync   Raspberry Pi OS 32-bit (armv7)
 #     - dist/rpi/arm64/hsync   Raspberry Pi OS 64-bit (aarch64)
@@ -122,6 +111,31 @@ else
 fi
 # --strip needs binutils and is unreliable on Windows; omit it there.
 readonly STRIP_FLAG="$([[ "${OS_NAME}" == "windows" ]] && echo "" || echo "--strip")"
+
+# PyInstaller flags for the RPM container build. The WD OS5 package lives in
+# the hsync-wd-os5 repository and carries its own copy.
+readonly PYINSTALLER_COMMON_FLAGS="--clean --onedir --noconfirm --strip \
+    --name ${APP_NAME} \
+    --log-level ERROR \
+    --hidden-import websockets.legacy \
+    --hidden-import websockets.legacy.client \
+    --hidden-import websockets.client \
+    --hidden-import websockets.exceptions \
+    --hidden-import watchdog.observers \
+    --hidden-import watchdog.observers.inotify \
+    --hidden-import watchdog.observers.inotify_buffer \
+    --hidden-import watchdog.events \
+    --hidden-import rich._unicode_data \
+    --hidden-import rich._unicode_data._versions \
+    --collect-submodules pathspec \
+    --collect-submodules hsync_common \
+    --exclude-module pytest --exclude-module pytest_asyncio \
+    --exclude-module pytest_cov --exclude-module tkinter \
+    --exclude-module unittest --exclude-module pdb \
+    --exclude-module doctest --exclude-module pip \
+    --exclude-module setuptools --exclude-module wheel \
+    --exclude-module pkg_resources --exclude-module rapidfuzz \
+    ${ENTRY_POINT}"
 
 # -----------------------------------------------------------------------------
 # Colors (disabled if not a terminal)
@@ -235,8 +249,7 @@ ${BOLD}Usage:${RESET}
 ${BOLD}Options:${RESET}
     -c, --clean             Clean build artifacts before building
     -t, --target TARGET     Build target (default: native)
-                            Supported: native, deb, deb-all, rpm, rpm-all, rpi,
-                            wd-ex2-ultra-os5, wd-os5-all
+                            Supported: native, deb, deb-all, rpm, rpm-all, rpi
     -v, --version VERSION   Override the package version (default:
                             pyproject.toml). Also settable via HSYNC_VERSION.
     -h, --help              Show this help message
@@ -249,8 +262,6 @@ ${BOLD}Examples:${RESET}
     ./compile.sh --target rpm                   # .rpm for host arch (RHEL-family)
     ./compile.sh --target rpm-all               # .rpm for x86_64 + aarch64
     ./compile.sh --target rpi                   # Raspberry Pi armhf + arm64
-    ./compile.sh --target wd-ex2-ultra-os5      # ARMv7 .bin for WD OS5
-    ./compile.sh --target wd-os5-all            # All 10 WD OS5 models
 
 ${BOLD}Output:${RESET}
     native:
@@ -266,10 +277,6 @@ ${BOLD}Output:${RESET}
     rpm-all:
         ${OUTPUT_BASE}/rpm/${DEB_PKG_NAME}-<ver>-1.el9.x86_64.rpm
         ${OUTPUT_BASE}/rpm/${DEB_PKG_NAME}-<ver>-1.el9.aarch64.rpm
-    wd-ex2-ultra-os5:
-        dist/wd-ex2-ultra-os5/MyCloudEX2Ultra_${APP_NAME}_<ver>.bin
-    wd-os5-all:
-        dist/wd-os5/<MODEL>_${APP_NAME}_<ver>.bin (one per model)
     rpi:
         dist/rpi/armhf/${APP_NAME}   Raspberry Pi OS 32-bit (armv7)
         dist/rpi/arm64/${APP_NAME}   Raspberry Pi OS 64-bit (aarch64)
@@ -1275,476 +1282,6 @@ build_rpm_all() {
 }
 
 # -----------------------------------------------------------------------------
-# WD My Cloud EX2 Ultra (OS5) build
-# -----------------------------------------------------------------------------
-
-# Configuration for the wd-ex2-ultra-os5 target.
-readonly WDOS5_DIR="packaging/wd-os5"
-readonly WDOS5_SRC_APKG="${WDOS5_DIR}/Apkg"
-readonly WDOS5_OUTPUT_DIR="${OUTPUT_BASE}/wd-ex2-ultra-os5"
-readonly WDOS5_BUILD_DIR="${BUILD_DIR}/wdos5"
-# NOTE: the staging directory **must** be named after the package
-# (``Package:`` field of apkg.rc / ``APP_NAME``) because mksapkg-OS5 tars its
-# CWD basename verbatim, and WD OS5 rejects the .bin at upload time with
-# ``Failed to load the app package for installation`` if the root directory
-# inside the tar is not the package name.
-readonly WDOS5_STAGE_DIR="${WDOS5_BUILD_DIR}/${APP_NAME}"
-readonly WDOS5_BUILDER_IMAGE="hsync-wdos5-builder:armv7"
-readonly WDOS5_MKSAPKG_URL="https://raw.githubusercontent.com/WDCommunity/wdpksrc/master/mksapkg-OS5"
-readonly WDOS5_CACHE_DIR="${WDOS5_DIR}/.cache"
-readonly WDOS5_MKSAPKG="${WDOS5_CACHE_DIR}/mksapkg-OS5"
-readonly WDOS5_MODEL="MyCloudEX2Ultra"
-# Runtime image used to execute mksapkg-OS5 (see ``_wdos5_build_mksapkg_image``).
-readonly WDOS5_MKSAPKG_IMAGE="hsync-wdos5-mksapkg:bullseye"
-readonly WDOS5_MKSAPKG_DOCKERFILE="${WDOS5_DIR}/Dockerfile.mksapkg"
-
-# Minimal Docker build context staged by ``_wdos5_stage_context``. It mirrors
-# the ``hsync-client`` / ``hsync-common`` sibling layout so the builder image
-# can install the path dependency and bake the sources (see
-# packaging/wd-os5/Dockerfile.builder).
-readonly WDOS5_CTX_DIR="${WDOS5_BUILD_DIR}/ctx"
-
-# PyInstaller flags shared by every WD OS5 build (single target and all-models).
-# The entry point is intentionally last; ``_run_pyinstaller_in_docker`` appends
-# the per-build --distpath/--workpath/--specpath after it.
-# NOTE: backslash continuations (not embedded newlines) are used so the
-# variable expands to a single line, keeping the ``pyinstaller`` command and
-# its arguments on the same logical line.
-readonly PYINSTALLER_COMMON_FLAGS="--clean --onedir --noconfirm --strip \
-    --name ${APP_NAME} \
-    --log-level ERROR \
-    --hidden-import websockets.legacy \
-    --hidden-import websockets.legacy.client \
-    --hidden-import websockets.client \
-    --hidden-import websockets.exceptions \
-    --hidden-import watchdog.observers \
-    --hidden-import watchdog.observers.inotify \
-    --hidden-import watchdog.observers.inotify_buffer \
-    --hidden-import watchdog.events \
-    --hidden-import rich._unicode_data \
-    --hidden-import rich._unicode_data._versions \
-    --collect-submodules pathspec \
-    --collect-submodules hsync_common \
-    --exclude-module pytest --exclude-module pytest_asyncio \
-    --exclude-module pytest_cov --exclude-module tkinter \
-    --exclude-module unittest --exclude-module pdb \
-    --exclude-module doctest --exclude-module pip \
-    --exclude-module setuptools --exclude-module wheel \
-    --exclude-module pkg_resources --exclude-module rapidfuzz \
-    ${ENTRY_POINT}"
-
-# Build the small amd64 image that runs mksapkg-OS5. The upstream tool is a
-# prebuilt x86-64 binary linked against ``libxml2.so.2`` and it shells out to
-# ``openssl bf-cbc`` (a legacy cipher) to sign apkg.sign. Modern hosts no longer
-# provide either — e.g. Ubuntu 26.04 ships libxml2 ``.so.16`` only, and OpenSSL 3
-# hides bf-cbc behind the legacy provider — so the tool runs inside a Debian
-# bullseye container that still carries libxml2.so.2 and an OpenSSL 1.1.1 with
-# bf-cbc enabled by default (see Dockerfile.mksapkg). Cached after first build.
-_wdos5_build_mksapkg_image() {
-    log_step "Building mksapkg runtime image ${WDOS5_MKSAPKG_IMAGE} (cached after first run)..."
-    DOCKER_BUILDKIT=1 docker build \
-        --platform linux/amd64 \
-        -t "${WDOS5_MKSAPKG_IMAGE}" \
-        -f "${WDOS5_MKSAPKG_DOCKERFILE}" \
-        "${WDOS5_DIR}"
-}
-
-# Run mksapkg-OS5 against a staged package tree inside the runtime image.
-# mksapkg-OS5 has no output-path flag: it ``cd ..`` and drops the .bin in the
-# parent of its working directory, so the staging dir's parent is mounted at
-# /work and the staging dir itself is the container CWD. Running with the host
-# uid keeps the produced artifacts owned by the caller.
-# Args: stage_abs  model
-_wdos5_run_mksapkg() {
-    local stage_abs="$1" model="$2"
-    local stage_parent stage_name mksapkg_abs
-    stage_parent="$(dirname "${stage_abs}")"
-    stage_name="$(basename "${stage_abs}")"
-    mksapkg_abs="$(cd "$(dirname "${WDOS5_MKSAPKG}")" && pwd)/$(basename "${WDOS5_MKSAPKG}")"
-    docker run --rm \
-        --platform linux/amd64 \
-        -u "$(id -u):$(id -g)" \
-        -v "${stage_parent}:/work" \
-        -v "${mksapkg_abs}:/usr/local/bin/mksapkg-OS5:ro" \
-        -w "/work/${stage_name}" \
-        "${WDOS5_MKSAPKG_IMAGE}" \
-        mksapkg-OS5 -E -s -m "${model}"
-}
-
-# Stage the minimal Docker build context consumed by Dockerfile.builder.
-#
-# The builder image installs the project's dependencies and bakes the sources
-# as cached layers, so the context must expose both projects in their relative
-# ``../hsync-common`` layout. __pycache__ directories are pruned to keep the
-# context (and therefore the layer cache) stable across runs.
-_wdos5_stage_context() {
-    log_step "Staging Docker build context at ${WDOS5_CTX_DIR}..."
-    rm -rf "${WDOS5_CTX_DIR}"
-    mkdir -p "${WDOS5_CTX_DIR}/hsync-client" "${WDOS5_CTX_DIR}/hsync-common"
-    cp -a pyproject.toml poetry.lock packaging/wd-os5/README.nas.md "${WDOS5_CTX_DIR}/hsync-client/"
-    mv "${WDOS5_CTX_DIR}/hsync-client/README.nas.md" "${WDOS5_CTX_DIR}/hsync-client/README.md"
-    cp -a hsync_client "${WDOS5_CTX_DIR}/hsync-client/"
-    cp -a ../hsync-common/pyproject.toml ../hsync-common/README.md \
-        "${WDOS5_CTX_DIR}/hsync-common/"
-    cp -a ../hsync-common/hsync_common "${WDOS5_CTX_DIR}/hsync-common/"
-    find "${WDOS5_CTX_DIR}" -name __pycache__ -type d -prune -exec rm -rf {} +
-}
-
-# Build the WD OS5 builder image for one CPU family.
-# Args: docker_platform  base_image  builder_tag
-_wdos5_docker_build() {
-    local docker_platform="$1" base_image="$2" builder_tag="$3"
-    log_step "Building Docker image ${builder_tag} (cached after first run)..."
-    DOCKER_BUILDKIT=1 docker build \
-        --platform "${docker_platform}" \
-        --build-arg "BASE_IMAGE=${base_image}" \
-        --build-arg "TARGET_PLATFORM=${docker_platform}" \
-        -t "${builder_tag}" \
-        -f "${WDOS5_DIR}/Dockerfile.builder" \
-        "${WDOS5_CTX_DIR}"
-}
-
-# Run PyInstaller inside the pre-built builder image. Dependencies and sources
-# are already baked into the image, so this step only produces the frozen
-# binary. The host ${out_dir} is mounted at /out; PyInstaller writes /out/bin
-# (the onedir bundle) and /out/work (intermediates).
-# Args: docker_platform  out_dir  builder_tag
-_run_pyinstaller_in_docker() {
-    local docker_platform="$1" out_dir="$2" builder_tag="$3"
-    local out_abs
-    mkdir -p "${out_dir}"
-    out_abs="$(cd "${out_dir}" && pwd)"
-    # Run as the host uid:gid so the produced bundle under /out (the host
-    # ${out_dir}, e.g. build/wdos5) is owned by the caller and not root —
-    # otherwise the host-side cleanup (rm -rf build) of a later native build
-    # fails with "Permission denied". HOME/XDG_CACHE_HOME are pointed at /tmp
-    # because an arbitrary uid has no writable home for PyInstaller's cache.
-    docker run --rm \
-        --platform "${docker_platform}" \
-        -u "$(id -u):$(id -g)" \
-        -e HOME=/tmp -e XDG_CACHE_HOME=/tmp \
-        -v "${out_abs}:/out" \
-        -w /build/hsync-client \
-        -e LC_ALL=C -e PYTHONWARNINGS=ignore \
-        "${builder_tag}" \
-        pyinstaller \
-            ${PYINSTALLER_COMMON_FLAGS} \
-            --distpath /out/bin \
-            --workpath /out/work \
-            --specpath /out/work
-}
-
-# Build the .bin installer for WD My Cloud OS5 (ARMv7).
-build_wd_os5() {
-    local version
-    version="$(get_version)"
-
-    log_step "Building ${APP_NAME} v${version} for wd-ex2-ultra-os5 (ARMv7)..."
-
-    # --- prerequisites ---------------------------------------------------
-    if ! command -v docker >/dev/null 2>&1; then
-        log_error "docker is required for the wd-ex2-ultra-os5 target."
-        exit 1
-    fi
-    if [[ ! -d "${WDOS5_SRC_APKG}" ]]; then
-        log_error "Packaging tree missing: ${WDOS5_SRC_APKG}"
-        exit 1
-    fi
-    mkdir -p "${WDOS5_OUTPUT_DIR}" "${WDOS5_CACHE_DIR}" "${WDOS5_BUILD_DIR}"
-
-    # --- qemu-user-static (binfmt) --------------------------------------
-    ensure_qemu_binfmt qemu-arm
-
-    # --- builder image (dependencies + sources baked as cached layers) --
-    _wdos5_stage_context
-    _wdos5_docker_build linux/arm/v7 arm32v7/debian:buster "${WDOS5_BUILDER_IMAGE}"
-
-    # --- PyInstaller inside the emulated container ----------------------
-    # The image already carries the installed deps and sources, so this only
-    # produces the frozen binary under build/wdos5/bin/ (mounted at /out),
-    # keeping the source tree clean for the Apkg staging step below.
-    log_step "Running PyInstaller inside the ARMv7 container..."
-    _run_pyinstaller_in_docker linux/arm/v7 "${WDOS5_BUILD_DIR}" "${WDOS5_BUILDER_IMAGE}"
-
-    local built_dir="${WDOS5_BUILD_DIR}/bin/${APP_NAME}"
-    if [[ ! -d "${built_dir}" ]]; then
-        log_error "ARMv7 build directory not produced at ${built_dir}"
-        exit 1
-    fi
-
-    # --- stage Apkg/ for mksapkg ----------------------------------------
-    # mksapkg-OS5 packs the directory in place, so we materialise a
-    # disposable copy under build/ to keep the source tree pristine and to
-    # avoid mutating the apkg.rc template with the rendered version.
-    log_step "Staging Apkg tree at ${WDOS5_STAGE_DIR}..."
-    rm -rf "${WDOS5_STAGE_DIR}"
-    mkdir -p "${WDOS5_STAGE_DIR}"
-    cp -a "${WDOS5_SRC_APKG}/." "${WDOS5_STAGE_DIR}/"
-
-    mkdir -p "${WDOS5_STAGE_DIR}/bin"
-    cp -a "${built_dir}" "${WDOS5_STAGE_DIR}/bin/"
-    chmod 0755 "${WDOS5_STAGE_DIR}/bin/${APP_NAME}/${APP_NAME}"
-    # mksapkg-OS5 tars the staged tree as-is: the lifecycle hooks (preinst,
-    # install, start, stop, remove, init, clean) must be executable or the
-    # install on the NAS fails silently.
-    chmod 0755 "${WDOS5_STAGE_DIR}"/*.sh 2>/dev/null || true
-
-    log_step "Injecting version ${version} into staged apkg.rc..."
-    sed -i.bak -e "s/__HSYNC_VERSION__/${version}/g" \
-        "${WDOS5_STAGE_DIR}/apkg.rc"
-    rm -f "${WDOS5_STAGE_DIR}/apkg.rc.bak"
-    echo "${version}" > "${WDOS5_STAGE_DIR}/VERSION"
-
-    # --- mksapkg-OS5 -----------------------------------------------------
-    if [[ ! -x "${WDOS5_MKSAPKG}" ]]; then
-        log_step "Fetching mksapkg-OS5 from WDCommunity/wdpksrc..."
-        curl -fsSL "${WDOS5_MKSAPKG_URL}" -o "${WDOS5_MKSAPKG}"
-        chmod 0755 "${WDOS5_MKSAPKG}"
-    fi
-    _wdos5_build_mksapkg_image
-
-    log_step "Building OS5 .bin package..."
-    local stage_abs stage_parent out_abs
-    stage_abs="$(cd "${WDOS5_STAGE_DIR}" && pwd)"
-    stage_parent="$(dirname "${stage_abs}")"
-    out_abs="$(cd "${WDOS5_OUTPUT_DIR}" && pwd)"
-
-    # mksapkg-OS5 has no output-path flag: it runs `cd ..` and drops the
-    # .bin in the parent of its current working directory. Clean any stale
-    # artifact there so the lookup below picks up the fresh one.
-    rm -f "${stage_parent}/${WDOS5_MODEL}_${APP_NAME}_"*.bin*
-    _wdos5_run_mksapkg "${stage_abs}" "${WDOS5_MODEL}"
-
-    local produced_bin bin_name bin_path
-    produced_bin="$(ls -t "${stage_parent}/${WDOS5_MODEL}_${APP_NAME}_"*.bin* 2>/dev/null | head -1)"
-    if [[ -z "${produced_bin}" || ! -f "${produced_bin}" ]]; then
-        log_error "mksapkg-OS5 did not produce a .bin in ${stage_parent}/"
-        exit 1
-    fi
-    # mksapkg-OS5 appends the build date (MMDDYYYY) to the file name:
-    # <MODEL>_hsync_<ver>.bin(08192026). Normalise it to a clean, deterministic
-    # name; the OS5 dashboard validates the signed payload (apkg.sign), not
-    # the file name.
-    bin_name="${WDOS5_MODEL}_${APP_NAME}_${version}.bin"
-    mv -f "${produced_bin}" "${out_abs}/${bin_name}"
-    bin_path="${out_abs}/${bin_name}"
-
-    local size bin_abs
-    size="$(du -h "${bin_path}" | cut -f1)"
-    bin_abs="$(cd "$(dirname "${bin_path}")" && pwd)/$(basename "${bin_path}")"
-
-    echo
-    log_ok "WD OS5 package built!"
-    echo
-    echo -e "  ${BOLD}Model:${RESET}    ${WDOS5_MODEL}"
-    echo -e "  ${BOLD}Arch:${RESET}     linux/arm/v7 (glibc <= 2.28 / works up to 2.30)"
-    echo -e "  ${BOLD}Size:${RESET}     ${size}"
-    echo -e "  ${BOLD}Version:${RESET}  ${version}"
-    echo
-    echo -e "${DIM}Install via My Cloud OS5 dashboard:${RESET}"
-    echo -e "${DIM}  Apps → Install an App manually → choose this .bin${RESET}"
-    echo
-    # Final highlighted block — easy to spot and copy
-    local sep="────────────────────────────────────────────────────────────"
-    echo -e "${GREEN}${BOLD}${sep}${RESET}"
-    echo -e "${GREEN}${BOLD}  📦  Installation package:${RESET}"
-    echo -e "${GREEN}${BOLD}      ${bin_abs}${RESET}"
-    echo -e "${GREEN}${BOLD}${sep}${RESET}"
-}
-
-# -----------------------------------------------------------------------------
-# WD My Cloud OS5 — All models
-# -----------------------------------------------------------------------------
-
-# Package a single WD OS5 model .bin installer from a pre-built binary.
-#
-# Args:
-#   $1  model      — mksapkg-OS5 model name (e.g. MyCloudEX2Ultra)
-#   $2  binary     — path to the compiled hsync binary for this arch
-#   $3  version    — version string (e.g. 1.2.3)
-#   $4  stage_base — directory under which a disposable <model>/<APP_NAME>/
-#                    staging tree is created (the inner dir name must equal
-#                    APP_NAME or OS5 rejects the .bin at upload time)
-#   $5  out_abs    — absolute path to the final output directory
-#
-# Requires the mksapkg runtime image (``_wdos5_build_mksapkg_image``) to be
-# built beforehand by the caller.
-_wdos5_package_model() {
-    local model="$1" binary_path="$2" version="$3"
-    local stage_base="$4" out_abs="$5"
-
-    # Disposable staging copy so the source tree stays pristine. The inner
-    # directory **must** be named after the package (APP_NAME) — mksapkg-OS5
-    # tars its CWD basename verbatim and OS5 rejects packages whose tar root
-    # is not the Package: name with ``Failed to load the app package``.
-    local stage_dir="${stage_base}/${model}/${APP_NAME}"
-    rm -rf "${stage_dir}"
-    mkdir -p "${stage_dir}"
-    cp -a "${WDOS5_SRC_APKG}/." "${stage_dir}/"
-
-    # Place the binary.
-    mkdir -p "${stage_dir}/bin"
-    cp -a "${binary_path}" "${stage_dir}/bin/"
-    chmod 0755 "${stage_dir}/bin/${APP_NAME}/${APP_NAME}"
-    # Lifecycle hook scripts must be executable or the install fails silently.
-    chmod 0755 "${stage_dir}"/*.sh 2>/dev/null || true
-
-    # Inject version.
-    sed -i.bak -e "s/__HSYNC_VERSION__/${version}/g" "${stage_dir}/apkg.rc"
-    rm -f "${stage_dir}/apkg.rc.bak"
-    echo "${version}" > "${stage_dir}/VERSION"
-
-    # mksapkg-OS5 drops the .bin in the *parent* of its CWD.
-    local stage_abs stage_parent
-    stage_abs="$(cd "${stage_dir}" && pwd)"
-    stage_parent="$(dirname "${stage_abs}")"
-
-    rm -f "${stage_parent}/${model}_${APP_NAME}_"*.bin*
-    _wdos5_run_mksapkg "${stage_abs}" "${model}"
-
-    local produced bin_name
-    produced="$(ls -t "${stage_parent}/${model}_${APP_NAME}_"*.bin* 2>/dev/null | head -1)"
-    if [[ -z "${produced}" || ! -f "${produced}" ]]; then
-        log_error "mksapkg-OS5 did not produce a .bin for ${model}"
-        return 1
-    fi
-    # Normalise the mksapkg-OS5 name (it appends the build date, MMDDYYYY,
-    # after the .bin extension) to a clean, deterministic one; the dashboard
-    # validates the signed payload, not the file name.
-    bin_name="${model}_${APP_NAME}_${version}.bin"
-    mv -f "${produced}" "${out_abs}/${bin_name}"
-    log_ok "  → ${bin_name}"
-}
-
-# Build .bin installers for every WD My Cloud OS5 model (10 total).
-#
-# Two Docker builds are performed — one per CPU family — and the same
-# PyInstaller binary is shared across all models of that family:
-#
-#   ARMv7 (4 models) → arm32v7/debian:buster
-#       MyCloudEX2Ultra  WDMyCloudMirror  WDMyCloud  WDCloud
-#
-#   amd64 (6 models) → amd64/debian:buster
-#       WDMyCloudEX2100  WDMyCloudEX4100  WDMyCloudDL2100
-#       WDMyCloudDL4100  MyCloudPR2100    MyCloudPR4100
-#
-# Output: dist/wd-os5/<MODEL>_hsync_<ver>.bin
-build_wd_os5_all() {
-    local version
-    version="$(get_version)"
-
-    log_step "Building ${APP_NAME} v${version} for all 10 WD My Cloud OS5 models..."
-
-    # ── prerequisites ─────────────────────────────────────────────────────────
-    if ! command -v docker >/dev/null 2>&1; then
-        log_error "docker is required for the wd-os5-all target."
-        exit 1
-    fi
-    if [[ ! -d "${WDOS5_SRC_APKG}" ]]; then
-        log_error "Packaging tree missing: ${WDOS5_SRC_APKG}"
-        exit 1
-    fi
-
-    local all_out="${OUTPUT_BASE}/wd-os5"
-    local all_build="${BUILD_DIR}/wdos5/all"
-    mkdir -p "${all_out}" "${WDOS5_CACHE_DIR}"
-
-    # ── mksapkg-OS5 ──────────────────────────────────────────────────────────
-    if [[ ! -x "${WDOS5_MKSAPKG}" ]]; then
-        log_step "Fetching mksapkg-OS5 from WDCommunity/wdpksrc..."
-        curl -fsSL "${WDOS5_MKSAPKG_URL}" -o "${WDOS5_MKSAPKG}"
-        chmod 0755 "${WDOS5_MKSAPKG}"
-    fi
-    _wdos5_build_mksapkg_image
-
-    # ── qemu (ARMv7 emulation on amd64 hosts) ────────────────────────────────
-    ensure_qemu_binfmt qemu-arm
-
-    # ── Docker build context (shared by both CPU families) ───────────────────
-    # Both builder images consume the same staged context; only the platform
-    # and base image differ. PyInstaller flags live in PYINSTALLER_COMMON_FLAGS.
-    _wdos5_stage_context
-
-    # ── ARMv7 binary ──────────────────────────────────────────────────────────
-    echo
-    log_step "─── ARMv7 build ───────────────────────────────────────"
-    local armv7_tag="hsync-wdos5-builder:armv7"
-    local armv7_out="${all_build}/armv7"
-    local armv7_binary="${armv7_out}/bin/${APP_NAME}"
-
-    _wdos5_docker_build linux/arm/v7 arm32v7/debian:buster "${armv7_tag}"
-
-    log_step "Compiling ARMv7 binary inside container..."
-    _run_pyinstaller_in_docker linux/arm/v7 "${armv7_out}" "${armv7_tag}"
-
-    if [[ ! -d "${armv7_binary}" ]]; then
-        log_error "ARMv7 build directory not produced at ${armv7_binary}"
-        exit 1
-    fi
-    log_ok "ARMv7 binary ready ($(du -sh "${armv7_binary}" | cut -f1))"
-
-    # ── amd64 binary ──────────────────────────────────────────────────────────
-    echo
-    log_step "─── amd64 build ───────────────────────────────────────"
-    local amd64_tag="hsync-wdos5-builder:amd64"
-    local amd64_out="${all_build}/amd64"
-    local amd64_binary="${amd64_out}/bin/${APP_NAME}"
-
-    _wdos5_docker_build linux/amd64 amd64/debian:buster "${amd64_tag}"
-
-    log_step "Compiling amd64 binary inside container..."
-    _run_pyinstaller_in_docker linux/amd64 "${amd64_out}" "${amd64_tag}"
-
-    if [[ ! -d "${amd64_binary}" ]]; then
-        log_error "amd64 build directory not produced at ${amd64_binary}"
-        exit 1
-    fi
-    log_ok "amd64 binary ready ($(du -sh "${amd64_binary}" | cut -f1))"
-
-    # ── Package all 10 models ─────────────────────────────────────────────────
-    local stage_base="${all_build}/stage"
-    local out_abs
-    out_abs="$(cd "${all_out}" && pwd)"
-
-    local -a armv7_models=("MyCloudEX2Ultra" "WDMyCloudMirror" "WDMyCloud" "WDCloud")
-    local -a amd64_models=("WDMyCloudEX2100" "WDMyCloudEX4100" "WDMyCloudDL2100" \
-                            "WDMyCloudDL4100" "MyCloudPR2100" "MyCloudPR4100")
-
-    echo
-    log_step "─── Packaging ARMv7 models (${#armv7_models[@]}) ─────────────────────────────"
-    for model in "${armv7_models[@]}"; do
-        _wdos5_package_model "${model}" "${armv7_binary}" "${version}" \
-            "${stage_base}" "${out_abs}"
-    done
-
-    echo
-    log_step "─── Packaging amd64 models (${#amd64_models[@]}) ─────────────────────────────"
-    for model in "${amd64_models[@]}"; do
-        _wdos5_package_model "${model}" "${amd64_binary}" "${version}" \
-            "${stage_base}" "${out_abs}"
-    done
-
-    # ── Summary ───────────────────────────────────────────────────────────────
-    local total=$(( ${#armv7_models[@]} + ${#amd64_models[@]} ))
-    echo
-    log_ok "All ${total} WD OS5 packages built!"
-    echo
-    echo -e "  ${BOLD}Version:${RESET}   ${version}"
-    echo -e "  ${BOLD}Output:${RESET}    ${out_abs}/"
-    echo
-    echo -e "  ${BOLD}ARMv7 (${#armv7_models[@]}):${RESET}  ${armv7_models[*]}"
-    echo -e "  ${BOLD}amd64 (${#amd64_models[@]}):${RESET}  ${amd64_models[*]}"
-    echo
-    local sep="────────────────────────────────────────────────────────────"
-    echo -e "${GREEN}${BOLD}${sep}${RESET}"
-    echo -e "${GREEN}${BOLD}  📦  Installation packages:${RESET}"
-    for f in "${out_abs}/"*_"${APP_NAME}"_*.bin; do
-        [[ -f "${f}" ]] && echo -e "${GREEN}${BOLD}      $(basename "${f}")${RESET}"
-    done
-    echo -e "${GREEN}${BOLD}${sep}${RESET}"
-}
-
-# -----------------------------------------------------------------------------
 # Raspberry Pi OS (armhf + arm64) — standalone executables via Docker
 # -----------------------------------------------------------------------------
 
@@ -1954,35 +1491,6 @@ main() {
             fi
             build_rpi
             ;;
-        wd-ex2-ultra-os5)
-            # Only pyproject.toml is required (poetry runs inside the container).
-            if [[ ! -f "pyproject.toml" ]]; then
-                log_error "pyproject.toml not found. Run from the project root."
-                exit 1
-            fi
-            if [[ "${do_clean}" == true ]]; then
-                log_step "Cleaning wd-ex2-ultra-os5 artifacts..."
-                rm -rf "${WDOS5_OUTPUT_DIR}" "${WDOS5_BUILD_DIR}"
-                docker image rm -f "${WDOS5_BUILDER_IMAGE}" >/dev/null 2>&1 || true
-                echo
-            fi
-            build_wd_os5
-            ;;
-        wd-os5-all)
-            if [[ ! -f "pyproject.toml" ]]; then
-                log_error "pyproject.toml not found. Run from the project root."
-                exit 1
-            fi
-            if [[ "${do_clean}" == true ]]; then
-                log_step "Cleaning wd-os5-all artifacts..."
-                rm -rf "${OUTPUT_BASE}/wd-os5" "${BUILD_DIR}/wdos5/all"
-                docker image rm -f \
-                    "hsync-wdos5-builder:armv7" \
-                    "hsync-wdos5-builder:amd64" >/dev/null 2>&1 || true
-                echo
-            fi
-            build_wd_os5_all
-            ;;
         rpm)
             check_prerequisites
             if [[ "${do_clean}" == true ]]; then
@@ -2009,7 +1517,7 @@ main() {
             ;;
         *)
             log_error "Unknown target: ${target}"
-            echo "Supported targets: native, deb, deb-all, rpm, rpm-all, rpi, wd-ex2-ultra-os5, wd-os5-all"
+            echo "Supported targets: native, deb, deb-all, rpm, rpm-all, rpi"
             exit 1
             ;;
     esac

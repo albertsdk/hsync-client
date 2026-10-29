@@ -18,7 +18,7 @@ Brief summary of the changes and why they are needed.
   - [ ] `docs/` (user-facing docs) updated if CLI options, env vars, or behavior changed
   - [ ] `llm-wiki/` (internal wiki) updated if internal architecture changed
 - [ ] `CHANGELOG.md` updated under `## [Unreleased]` if the change is user-facing
-- [ ] WD OS5 packaging updated if CLI flags or env vars changed (`packaging/wd-os5/`)
+- [ ] WD OS5 package updated in `hsync-wd-os5` if CLI flags or env vars changed
 - [ ] `docs/configuration.md` updated if CLI options changed
 
 ## Related issues

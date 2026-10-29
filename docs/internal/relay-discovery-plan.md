@@ -86,7 +86,7 @@ Cross-project mirrors that make a new backend expensive (see §8):
 * The desktop app exposes the bootnode endpoint and trust policy in its settings
   UI (`hsync_desktop/engine/endpoints.py::normalize_bootnode_endpoint`) and in
   **12 locales**.
-* `hsync-client/packaging/wd-os5` and the Debian man page must follow any new
+* `hsync-wd-os5` (`packaging/Apkg`) and the Debian man page must follow any new
   CLI flag or `HSYNC_*` variable (project rule).
 
 ## 4. Candidates and verified facts (probed 2026-10-21)
@@ -391,7 +391,7 @@ happen once regardless of which option wins.
 | A7 | Tests | `tests/test_p2p_discovery_relay.py` with a fake local relay (deterministic), signature/replay/namespace cases; `test_bb_*` only against the local fake relay — never against `ntfy.sh` in CI |
 | A8 | Desktop | `hsync_desktop/engine/endpoints.py::normalize_bootnode_endpoint` + settings/wizard + **12 locales** |
 | A9 | Android | Only if the backend must be reachable from the app: a mirror in the style of `data/api/BootnodeProtocol.kt` + parity test + shared fixtures. Otherwise document the asymmetry explicitly |
-| A10 | Packaging/docs | Man page `packaging/deb/usr/share/man/man1/hsync.1`; `packaging/wd-os5` (`start.sh`, `config_get.php`, `config_set.php`, `app.js`, `index.html`, i18n ×5: EN/IT/DE/ES/FR); `docs/p2p-bootnode.md` (or a new `docs/p2p-relay.md`), `docs/configuration-p2p.md`, `docs/faq-p2p.md`, `docs/troubleshooting.md`, `llm-wiki/modules/p2p-mode.md`, ADR |
+| A10 | Packaging/docs | Man page `packaging/deb/usr/share/man/man1/hsync.1`; `hsync-wd-os5` (`packaging/Apkg/start.sh`, `config_get.php`, `config_set.php`, `app.js`, `index.html`, every i18n dictionary); `docs/p2p-bootnode.md` (or a new `docs/p2p-relay.md`), `docs/configuration-p2p.md`, `docs/faq-p2p.md`, `docs/troubleshooting.md`, `llm-wiki/modules/p2p-mode.md`, ADR |
 
 Security obligation: record signing, namespace derivation and replay handling
 are a protocol contract — independent review plus fixtures, not only unit tests.

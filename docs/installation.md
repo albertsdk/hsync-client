@@ -28,16 +28,21 @@ procedure.
 | Debian package | <img src="assets/os/debian.svg" alt="Debian" width="16" height="16"> <img src="assets/os/ubuntu.svg" alt="Ubuntu" width="16" height="16"> Debian/Ubuntu | armhf | `hsync-client_<version>_armhf.deb` | [Debian package](getting-started-deb.md) |
 | RPM package | <img src="assets/os/redhat.svg" alt="Red Hat" width="16" height="16"> <img src="assets/os/fedora.svg" alt="Fedora" width="16" height="16"> RHEL/Rocky/Alma/Fedora | x86_64 | `hsync-client-<version>-1.el9.x86_64.rpm` | [RPM package](getting-started-rpm.md) |
 | RPM package | <img src="assets/os/redhat.svg" alt="Red Hat" width="16" height="16"> <img src="assets/os/fedora.svg" alt="Fedora" width="16" height="16"> RHEL/Rocky/Alma/Fedora | aarch64 | `hsync-client-<version>-1.el9.aarch64.rpm` | [RPM package](getting-started-rpm.md) |
-| WD OS5 installer | <img src="assets/os/mycloud.svg" alt="WD My Cloud" width="16" height="16"> WD My Cloud OS5 | model-specific | `<MODEL>_hsync_<version>.bin` | [WD OS5 packaging](../packaging/wd-os5/README.md) |
+| WD OS5 installer | <img src="assets/os/mycloud.svg" alt="WD My Cloud" width="16" height="16"> WD My Cloud OS5 | model-specific | `<MODEL>_hsync_<version>.bin` | [hsync-wd-os5](https://github.com/albertsdk/hsync-wd-os5) |
 | Checksums | all | all | `SHA256SUMS` | [Verify the download](#verify-the-download) |
 
-> **Note**: all assets share the `hsync-client` prefix. Binary archives use
+> **Note**: the assets in this table share the `hsync-client` prefix; the WD OS5
+> `.bin` installers live on the [hsync-wd-os5 releases](https://github.com/albertsdk/hsync-wd-os5/releases) instead.
+>
+> Binary archives use
 > hyphens (`hsync-client-<version>-<target>.tar.gz`) while Debian packages
 > follow the Debian convention with underscores (`hsync-client_<version>_<arch>.deb`).
 > Both contain the same `hsync` executable.
 
-Every tag (`vX.Y.Z`) publishes the full set on the
-[Releases page](https://github.com/albertsdk/hsync-client/releases). Building
+Every `hsync-client` tag (`vX.Y.Z`) publishes its assets on the
+[client Releases page](https://github.com/albertsdk/hsync-client/releases); the
+WD OS5 `.bin` installers are published by
+[hsync-wd-os5](https://github.com/albertsdk/hsync-wd-os5/releases). Building
 from source is covered in
 [Getting Started — From source](getting-started-source.md).
 

@@ -172,9 +172,10 @@ write opt-in is `CLI-opt-in OR environment-opt-in` and defaults false.
 `hsync_common.protocol.events`) to a desktop-provided fd. `init_emitter` (`events.py::init_emitter`),
 `get_emitter` (`events.py::get_emitter`), `emit_event` (`events.py::emit_event`). Consumed by `hsync-desktop`.
 
-> **Domain-critical**: any change to `HSYNC_*` flags / defaults requires the
-> synchronized `packaging/wd-os5` update (see `AGENTS.md`).
-> WD `packaging/wd-os5/Apkg/start.sh` maps the web UI autotune fields to the
+> **Domain-critical**: any change to `HSYNC_*` flags / defaults requires a
+> synchronized update of the WD OS5 package (`hsync-wd-os5`,
+> `packaging/Apkg/start.sh`) — see `AGENTS.md`.
+> That launcher maps the web UI autotune fields to the
 > binary: `--no-autotune` / `--http-timeout` / `--retry-delay`, and exports
 > `HSYNC_TRANSFER_RETRY_MIN_WAIT` / `HSYNC_TRANSFER_RETRY_MAX_WAIT` (no CLI).
 > Empty UI values are omitted so autotune/defaults apply. Secrets stay env-only.

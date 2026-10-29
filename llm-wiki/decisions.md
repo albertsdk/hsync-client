@@ -155,16 +155,12 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   master whose record is already stale, so a local-link blip never splits the
   group. The deterministic election alone decides the role.
 - **Packaging lock-step**: any `HSYNC_*` flag/default change requires the
-  synchronized `packaging/wd-os5` update (see `AGENTS.md`).
-- **Containerized mksapkg**: `mksapkg-OS5` runs inside the
-  `hsync-wdos5-mksapkg` image (`packaging/wd-os5/Dockerfile.mksapkg`) via
-  `_wdos5_run_mksapkg` (`compile.sh::_wdos5_run_mksapkg`), not on the host — the prebuilt tool
-  needs `libxml2.so.2` + OpenSSL 1.1.1 `bf-cbc`, absent on modern hosts.
+  synchronized update of the WD OS5 package, which lives in the
+  `hsync-wd-os5` repository (`packaging/Apkg`; see `AGENTS.md`).
 - **Host-uid container builds**: containerized build steps drop to the host
   `uid:gid` so artifacts under `build/`/`dist/` stay caller-owned — otherwise
   root-owned output breaks the `rm -rf build` cleanup of a later native build
-  (`cleanup_temp_files`). Covers WD OS5 (`_wdos5_run_mksapkg`; PyInstaller
-  `_run_pyinstaller_in_docker` (`compile.sh::_run_pyinstaller_in_docker`)) and `deb-all`'s in-container
+  (`cleanup_temp_files`). Covers `deb-all`'s in-container
   PyInstaller (`compile.sh::build_deb_all`, with `HOME=/tmp` for the poetry/PyInstaller
   caches). The `deb-all` `dpkg-deb` step stays **root** (so the `.deb`'s
   internal `/usr`,`/etc` are owned `root:root`) and instead `chown`s the
@@ -182,7 +178,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   tag gates on lint+test, then builds native binaries on per-OS matrix runners
   (`linux-amd64`, `linux-arm64`, `darwin-amd64`, `darwin-arm64`, `windows-amd64`
   — PyInstaller cannot cross-compile) plus the Linux-only
-  `deb-all`/`rpm-all`/`wd-os5-all` packages, and publishes them with
+  `deb-all`/`rpm-all` packages, and publishes them with
   `SHA256SUMS` to the GitHub Release. macOS
   binaries are unsigned (documented `xattr` workaround in `docs/getting-started-binary.md`).
 - **Fixed-name `latest` aliases**: the `release` job copies each versioned asset
@@ -229,8 +225,6 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   built `--enable-shared`) rather than a CPython build from source: this keeps
   the CPython build out of qemu-user emulation, where the host's
   `qemu-aarch64` 7.2.0 crashed (`cc1` SIGSEGV) compiling `Modules/readline`.
-  The WD OS5 (Debian Buster) builder stays separate and still compiles Python
-  from source.
 - **PyInstaller × multiprocessing (`freeze_support`)**: `main.main`
   (`main.py::main`) calls `multiprocessing.freeze_support()` before importing the
   CLI. The loguru sinks use `enqueue=True` (`logger.py::setup_logging`), which makes
@@ -270,7 +264,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   the window, which would starve real discovery.
   `HSYNC_BOOTNODE_REFRESH_INTERVAL` is documented in
   `docs/configuration-p2p.md` and the man page; it is **not** part of the WD OS5
-  web config surface (which never exposed the heartbeat).
+  web config surface in `hsync-wd-os5` (which never exposed the heartbeat).
 
 - **A fatal discovery failure aborts `hsync p2p`**: a
   `BootnodeFingerprintMismatch` is terminal — the lease loop records it and

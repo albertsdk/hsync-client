@@ -113,7 +113,7 @@ Releases are **tag-driven**: pushing a `vX.Y.Z` tag triggers the
 `release.yml` GitHub Actions workflow, which gates on lint+test, then builds
 native binaries on per-OS matrix runners (`linux-amd64`, `linux-arm64`,
 `darwin-amd64`, `darwin-arm64`, `windows-amd64`) plus the Linux-only
-`deb-all`/`wd-os5-all` packages, and publishes them with `SHA256SUMS` to the
+`deb-all` packages, and publishes them with `SHA256SUMS` to the
 GitHub Release. macOS binaries are unsigned (documented `xattr` workaround in
 `docs/getting-started-binary.md`).
 
@@ -141,7 +141,6 @@ testing or for a non-release platform:
 # Build all targets (requires Docker)
 ./compile.sh --target rpi           # Raspberry Pi armhf + arm64 binaries
 ./compile.sh --target deb-all       # .deb for amd64, arm64, armhf
-./compile.sh --target wd-os5-all    # .bin for all WD OS5 models
 ```
 
 ### Create a release
@@ -194,7 +193,8 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 - When changing CLI options, update the reference in
   `docs/configuration.md` (and the overview in `docs/usage.md`).
 - **CLI / env / behavior changes require a synchronous update to the
-  WD OS5 packaging** (`packaging/wd-os5/`: `Apkg/start.sh`, `Apkg/install.sh`,
-  `Apkg/web/*`, i18n translations) and the **Debian man page**
+  WD OS5 package** (the [hsync-wd-os5](https://github.com/albertsdk/hsync-wd-os5) repository: `packaging/Apkg/start.sh`,
+  `packaging/Apkg/install.sh`, `packaging/Apkg/web/*`, i18n translations)
+  and the **Debian man page**
   (`packaging/deb/usr/share/man/man1/hsync.1`).
 - Ensure `ruff`, `pytest` and `mypy` pass locally before opening a PR.
