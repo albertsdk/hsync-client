@@ -62,7 +62,7 @@ across topologies. Continuous is the default and `--once` is the only run-mode k
 | `_warn_if_p2p_in_container` | `main_logic.py::_warn_if_p2p_in_container` | warn that mDNS rendezvous cannot cross container bridge/NAT networking (suggests `--network host`) |
 | `_check_disk_space` | `main_logic.py::_check_disk_space` | min-free-disk guard |
 | `_check_server_connectivity` | `main_logic.py::_check_server_connectivity` | startup health gate; one-shot mode fails fast on an unreachable server, continuous mode (default) logs a warning and lets `remote_connect` retry forever (p2p parity) |
-| `_get_stability_delay_value` / `_get_rendezvous_timeout_value` / `_get_resync_value` | `main_logic.py::_get_stability_delay_value` / `main_logic.py::_get_rendezvous_timeout_value` / `main_logic.py::_get_resync_value` | resolve CLI > env > default |
+| `_get_stability_delay_value` / `_get_peer_rendezvous_timeout_value` / `_get_resync_value` | `main_logic.py::_get_stability_delay_value` / `main_logic.py::_get_peer_rendezvous_timeout_value` / `main_logic.py::_get_resync_value` | resolve CLI > env > default |
 | `_start_hsyncignore_watcher` | `main_logic.py::_start_hsyncignore_watcher` | hot-reload `.hsyncignore` matcher |
 | `_safe_config_for_log` | `main_logic.py::_safe_config_for_log` | builds the redacted verbose `Local configuration` dump: masks `API_KEY`/`P2P_KEY`/`Authorization` and appends a `PATHS` section (`ENV_FILE`, `DEVICE_DIR`, `STATE_DIR`, `STATE_DB`, `LOCKS_DIR`) resolved from `identity.default_device_dir`/`default_locks_dir` + `folder.default_state_dir`/`default_syncstate_db_path` |
 | `_run_preview` | `preview.py::_run_preview` | dry-run action preview |

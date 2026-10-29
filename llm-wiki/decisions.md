@@ -40,7 +40,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   subcommand appears automatically in `--capabilities-json` (introspected), so
   the desktop gates its button on `supports_subcommand(doc, "state")`.
 - **Rendezvous multi-port dial fallback**: `HSYNC_RENDEZVOUS_SERVER_EXTRA_PORTS`
-  (`config.py::get_rendezvous_ports`) adds extra UDP ports for the **same** rendezvous;
+  (`config.py::get_rendezvous_server_extra_ports`) adds extra UDP ports for the **same** rendezvous;
   `RendezvousClient._with_connection` (`rdv_client.py`) dials the last working port
   first (then the primary and extras) and falls back **only when the QUIC handshake
   fails** — the blocked-port signal: the "port problem" is the **client's egress
