@@ -991,12 +991,6 @@ def run_sync(
             log=log,
         )
 
-    # All fatal startup validation is behind us. The Desktop treats an exit
-    # before this event as a startup failure (its safety net) and uses it as the
-    # explicit "the engine is running" marker, so it must stay after every
-    # startup ``sys.exit`` above and before the run loop.
-    emit_event(UiEventName.ready)
-
     # Populate global configuration dictionary
 
     # ── Auto-tuning ────────────────────────────────────────────────────
@@ -1309,6 +1303,14 @@ def run_sync(
     # flock is held for the whole run (P2P or remote) and is released by the
     # kernel even on SIGKILL; see hsync_client.identity.InstanceLock.
     instance_lock = _acquire_instance_lock(local_path, log)
+
+    # The folder is ours: this is the explicit "the engine is running" marker.
+    # The Desktop treats an exit before it as a startup failure (its tail carries
+    # the client's own reason), so the instance-lock refusal above must stay on
+    # the startup side of the marker. The gates still evaluated below (server
+    # trust and connectivity in remote mode) refuse through the exit code and the
+    # log line, which the Desktop reports as a fatal exit.
+    emit_event(UiEventName.ready)
     try:
         # P2P Mode: Peer Discovery and Master Election
         if config["P2P_MODE"]:
@@ -1424,18 +1426,25 @@ def _acquire_instance_lock(local_path: str, log) -> "Any":
     Two live hsync processes on the same synced directory would corrupt each
     other's folder state; the lock holder's PID (when readable) is included
     in the message so the conflicting process is easy to find.
+
+    The refusal is also published on the structured error channel
+    (``reason="startup"``): hsync-desktop drives the engine through events, and
+    a refusal it only sees as exit code 1 is indistinguishable from a clean
+    stop — the operator would find the reason in the log only.
     """
     from hsync_client.identity import InstanceLock, InstanceLockError
 
     try:
         return InstanceLock.acquire(local_path)
     except InstanceLockError as e:
-        log.error(str(e))
+        message = str(e)
+        log.error(message)
         # The message IS the refusal: with asynchronous sinks it must be
         # flushed before the process terminates or the user sees a bare
         # non-zero exit with no explanation.
         flush_logs()
-        sys.exit(1)
+        emit_event(UiEventName.error, message=message, reason="startup")
+        sys.exit(int(ExitCode.FATAL))
 
 
 async def _run_with_stdin_commands(log) -> None:

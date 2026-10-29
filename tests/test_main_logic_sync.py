@@ -24,6 +24,7 @@ from hsync_client.constants import (
     RESYNC_DEFAULT,
 )
 from hsync_client.events import get_emitter, init_emitter
+from hsync_client.identity import InstanceLockError
 from hsync_client.main_logic import (
     _check_server_connectivity,
     _get_discovery_timeout_value,
@@ -1304,3 +1305,55 @@ class TestStartupErrorVisibility:
         names = [event["event"] for event in captured]
         assert "ready" in names
         assert not any(event.get("reason") == "startup" for event in captured)
+
+    def test_instance_lock_refusal_is_a_startup_error_before_ready(self, tmp_path):
+        """A second process on the same folder is a startup failure, not a stop.
+
+        The instance lock is the last gate before the run loop, so its refusal
+        must reach the Desktop as ``error(reason=startup)`` *and* happen before
+        ``ready``: the GUI treats an exit after the marker as an ordinary stop
+        and would leave the reason in the log only.
+        """
+        read_fd, write_fd = os.pipe()
+        kwargs = _default_run_sync_kwargs(
+            tmp_path,
+            server_url=None,
+            p2p_mode=True,
+            p2p_allow_unauthenticated=True,
+            discovery_timeout=None,
+            sync_direction="download-only",
+            events_json_fd=write_fd,
+        )
+        refusal = (
+            f"Another hsync process is already syncing '{tmp_path}' (pid 42). "
+            "Refusing to start: two processes on the same directory would "
+            "corrupt each other's sync state."
+        )
+        try:
+            with (
+                patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
+                patch("hsync_client.main_logic.get_server_url", return_value=None),
+                patch("hsync_client.main_logic.get_discovery_timeout", return_value=None),
+                patch("hsync_client.main_logic.set_config"),
+                patch("hsync_client.main_logic.set_debug"),
+                patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
+                patch(
+                    "hsync_client.identity.InstanceLock.acquire",
+                    side_effect=InstanceLockError(refusal),
+                ),
+            ):
+                mock_log_setup.return_value = MagicMock()
+                with pytest.raises(SystemExit) as exc_info:
+                    run_sync(**kwargs)
+            get_emitter().close()
+            captured = self._drain(read_fd)
+        finally:
+            self._close(read_fd, write_fd)
+
+        assert exc_info.value.code == 1
+        errors = [event for event in captured if event["event"] == "error"]
+        assert errors and errors[-1]["reason"] == "startup"
+        assert errors[-1]["message"] == refusal
+        # The readiness marker must never precede the refusal: the client would
+        # look "running" and its exit like a clean stop.
+        assert not any(event["event"] == "ready" for event in captured)
