@@ -84,7 +84,7 @@ SYNC_DIRECTION_DEFAULT = _defaults.SYNC_DIRECTION_DEFAULT
 # =============================================================================
 
 # Bare-hostname charset shared by the CLI host parser (``cli.py``), the
-# ``HSYNC_SERVER`` URL validator (``config.py``) and the shared endpoint parser
+# ``HSYNC_SERVER_URL`` URL validator (``config.py``) and the shared endpoint parser
 # (``hsync_common.endpoint``). SSOT lives in ``hsync_common.constants``; the
 # name is re-exported from the import block above.
 
@@ -235,7 +235,7 @@ PEER_TIMEOUT_MAX = 600
 # ~12 s; 30 s matches the spec refresh and stays comfortably inside both.
 # Distinct from ``HEARTBEAT_INTERVAL`` (mDNS liveness, 5 s): the bootnode cadence
 # has its own rate-limit budget, overridable via
-# ``HSYNC_BOOTNODE_REFRESH_INTERVAL``.
+# ``HSYNC_DISCOVERY_SERVER_REFRESH_INTERVAL``.
 BOOTNODE_REFRESH_INTERVAL = 30
 BOOTNODE_REFRESH_INTERVAL_MIN = 1
 BOOTNODE_REFRESH_INTERVAL_MAX = 300

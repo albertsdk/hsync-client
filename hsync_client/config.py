@@ -13,11 +13,12 @@ from functools import lru_cache
 from typing import Any, Literal, TypedDict, cast
 
 from hsync_common import defaults as hsync_defaults
-from hsync_common.constants import DELTA_MIN_FILE_SIZE, DELTA_MIN_FILE_SIZE_P2P
+from hsync_common.constants import BOOT_DEFAULT_PORT, DELTA_MIN_FILE_SIZE, DELTA_MIN_FILE_SIZE_P2P
 from hsync_common.endpoint import (
     HostPort,
     build_https_url,
-    normalize_bare_endpoint,
+    normalize_endpoint_list,
+    parse_endpoint_list,
     parse_host_port,
     parse_https_url,
     parse_port_list,
@@ -73,7 +74,7 @@ def load_env_file(file_path: str) -> None:
 def _normalize_fingerprint_list(value: object, subject: str) -> str | None:
     """Normalize a comma-separated pin list (up to two) and reject invalid entries.
 
-    Shared by the bootnode and server ``*_FINGERPRINT`` fields: at most two
+    Shared by the discovery-server and server ``*_FINGERPRINTS`` fields: at most two
     fingerprints are accepted (a rotation window); each must be a valid
     ``sha256:<hex>`` / bare-hex digest. Fail-fast keeps an operator from silently
     pinning nothing.
@@ -104,9 +105,9 @@ class EnvSettings(BaseSettings):
     )
 
     # Server Connection
-    server: str | None = Field(default=None, description="Server URL")
+    server_url: str | None = Field(default=None, description="Sync-server URL")
 
-    @field_validator("server", mode="before")
+    @field_validator("server_url", mode="before")
     @classmethod
     def _validate_server_url(cls, v: str | None) -> str | None:
         if v is None:
@@ -121,27 +122,27 @@ class EnvSettings(BaseSettings):
         endpoint = parse_host_port(raw)
         return build_https_url(endpoint, SERVER_DEFAULT_PORT)
 
-    @field_validator("bootnode", mode="before")
+    @field_validator("discovery_server_endpoints", mode="before")
     @classmethod
-    def _validate_bootnode_host(cls, v: str | None) -> str | None:
-        """Accept a ``HOST[:PORT]`` endpoint: no scheme, no path.
+    def _validate_discovery_server_endpoints(cls, v: str | None) -> str | None:
+        """Accept an ordered list of ``HOST[:PORT]`` endpoints: no scheme, no path.
 
-        The bootnode channel is QUIC/UDP (not HTTPS), so the ``https://``
-        validator used for ``HSYNC_SERVER`` does not apply; normalization is the
-        shared ``hsync_common.endpoint.normalize_bare_endpoint`` (the same rule
-        the desktop GUI applies to its discovery-server field).
+        The discovery channel is QUIC/UDP (not HTTPS), so the ``https://``
+        validator used for ``HSYNC_SERVER_URL`` does not apply; normalization is
+        the shared ``hsync_common.endpoint.normalize_endpoint_list`` (the same
+        rule the desktop GUI applies to its discovery-server field).
         """
         if v is None:
             return None
-        return normalize_bare_endpoint(str(v))
+        return normalize_endpoint_list(str(v), strict=True)
 
-    @field_validator("bootnode_fingerprint", mode="before")
+    @field_validator("discovery_server_fingerprints", mode="before")
     @classmethod
-    def _validate_bootnode_fingerprints(cls, v: object) -> str | None:
-        """Normalize the bootnode comma-separated pin list (see ADR-0034)."""
-        return _normalize_fingerprint_list(v, "bootnode")
+    def _validate_discovery_server_fingerprints(cls, v: object) -> str | None:
+        """Normalize the discovery-server comma-separated pin list (ADR-0034)."""
+        return _normalize_fingerprint_list(v, "discovery server")
 
-    @field_validator("server_fingerprint", mode="before")
+    @field_validator("server_fingerprints", mode="before")
     @classmethod
     def _validate_server_fingerprints(cls, v: object) -> str | None:
         """Normalize the server comma-separated pin list (see ADR-0036)."""
@@ -170,40 +171,43 @@ class EnvSettings(BaseSettings):
     p2p_listen_port: int | None = Field(
         default=None, ge=1, le=65535, description="P2P master TCP listen port"
     )
-    bootnode: str | None = Field(
+    discovery_server_endpoints: str | None = Field(
         default=None,
         description=(
-            "Bare bootnode host for cross-network discovery (QUIC/UDP, no scheme). "
-            "Unset = mDNS-only discovery"
+            "Ordered comma-separated list of discovery-server endpoints "
+            "(HOST[:PORT], QUIC/UDP, no scheme), e.g. "
+            "'boot-a.example.net,boot-b.example.net:8443'. The client leases and "
+            "queries every reachable entry. Unset = mDNS-only discovery"
         ),
     )
-    bootnode_ports: str | None = Field(
+    discovery_server_extra_ports: str | None = Field(
         default=None,
         description=(
-            "Comma-separated extra UDP ports to try for the SAME bootnode (multi-port "
-            "dial fallback; e.g. '53' to also try DNS when UDP 443 is blocked by the "
-            "client egress firewall). Tried after the bootnode/default port"
+            "Comma-separated extra UDP ports to try on EACH discovery-server "
+            "endpoint (dial fallback; e.g. '53' to also try DNS when UDP 443 is "
+            "blocked by the client egress firewall). Tried after the endpoint's "
+            "own/default port"
         ),
     )
-    bootnode_fingerprint: str | None = Field(
+    discovery_server_fingerprints: str | None = Field(
         default=None,
         description=(
-            "Bootnode certificate fingerprint(s) to pin (comma-separated, up to two "
-            "for a rotation window); each accepts 'sha256:<hex>' or bare hex"
+            "Discovery-server certificate fingerprint(s) to pin (comma-separated, "
+            "up to two for a rotation window); each accepts 'sha256:<hex>' or bare hex"
         ),
     )
-    bootnode_tofu: bool = Field(
+    discovery_server_tofu: bool = Field(
         default=False,
         description=(
-            "Trust the bootnode certificate on first use (TOFU); a later mismatch "
-            "is refused as a possible man-in-the-middle"
+            "Trust a discovery server's certificate on first use (TOFU); a later "
+            "mismatch is refused as a possible man-in-the-middle"
         ),
     )
-    upnp_enabled: bool = Field(
+    map_data_port: bool = Field(
         default=False,
         description=(
-            "Map the master TCP port with UPnP (opt-in; off by default). Only "
-            "meaningful with a bootnode."
+            "Map the p2p data-plane TCP port with UPnP (opt-in; off by default). "
+            "Only meaningful with a discovery server."
         ),
     )
 
@@ -212,7 +216,7 @@ class EnvSettings(BaseSettings):
         default=None,
         description="Sync-server TLS trust policy (default: chain)",
     )
-    server_fingerprint: str | None = Field(
+    server_fingerprints: str | None = Field(
         default=None,
         description=(
             "Sync-server certificate fingerprint(s) to pin (comma-separated, up to two "
@@ -228,10 +232,10 @@ class EnvSettings(BaseSettings):
     )
 
     # P2P Discovery Settings
-    discovery_timeout: int | None = Field(
+    peer_discovery_timeout: int | None = Field(
         default=None,
         ge=0,
-        description="Discovery timeout in seconds (0 = wait indefinitely)",
+        description="Peer discovery timeout in seconds (0 = wait indefinitely)",
     )
     heartbeat_interval: int | None = Field(
         default=None,
@@ -245,15 +249,15 @@ class EnvSettings(BaseSettings):
         le=PEER_TIMEOUT_MAX,
         description="Peer timeout in seconds",
     )
-    bootnode_refresh_interval: int | None = Field(
+    discovery_server_refresh_interval: int | None = Field(
         default=None,
         ge=BOOTNODE_REFRESH_INTERVAL_MIN,
         le=BOOTNODE_REFRESH_INTERVAL_MAX,
         description="boot/1 lease/query cadence in seconds (default 30)",
     )
-    bootnode_trust: Literal["ask", "accept-new", "strict", "none"] | None = Field(
+    discovery_server_trust: Literal["ask", "accept-new", "strict", "none"] | None = Field(
         default=None,
-        description="Bootnode TLS trust policy (default: ask)",
+        description="Discovery-server TLS trust policy (default: ask)",
     )
     never_master: bool = Field(
         default=False,
@@ -427,8 +431,8 @@ def get_env_settings() -> EnvSettings:
 
 
 def get_server_url() -> str | None:
-    """Get server URL from environment."""
-    return get_env_settings().server
+    """Get the sync-server URL from environment."""
+    return get_env_settings().server_url
 
 
 def get_api_key() -> str:
@@ -472,25 +476,33 @@ def get_p2p_listen_port() -> int | None:
     return get_env_settings().p2p_listen_port
 
 
-def get_bootnode_endpoint() -> HostPort | None:
-    """Get the parsed bootnode endpoint from ``HSYNC_BOOTNODE`` (None = mDNS plan)."""
-    raw = get_env_settings().bootnode
-    if not raw:
-        return None
-    return parse_host_port(raw)
+def get_discovery_server_endpoints() -> tuple[HostPort, ...]:
+    """Get the ordered discovery-server endpoints from the environment.
+
+    Parsed from ``HSYNC_DISCOVERY_SERVER_ENDPOINTS`` with the shared
+    ``hsync_common.endpoint.parse_endpoint_list`` SSOT and the channel default
+    port applied, so ``a`` and ``a:443`` are one destination. An empty result
+    means the mDNS-only plan.
+    """
+    endpoints = parse_endpoint_list(
+        get_env_settings().discovery_server_endpoints,
+        strict=True,
+        default_port=BOOT_DEFAULT_PORT,
+    )
+    return tuple(endpoints)
 
 
-def get_bootnode_ports() -> tuple[int, ...]:
-    """Extra UDP ports to try for the same bootnode (multi-port dial fallback).
+def get_discovery_server_extra_ports() -> tuple[int, ...]:
+    """Extra UDP ports to try on each discovery-server endpoint (dial fallback).
 
-    Parsed from ``HSYNC_BOOTNODE_PORTS`` with the shared
+    Parsed from ``HSYNC_DISCOVERY_SERVER_EXTRA_PORTS`` with the shared
     ``hsync_common.endpoint.parse_port_list`` SSOT (comma-separated, order
     preserved, invalid/duplicate entries dropped — the lenient env policy).
-    Consumed by the bootnode client so a client whose egress firewall blocks UDP
+    Consumed by the discovery-server client so a client whose egress firewall blocks UDP
     443 can still reach the node on another port (e.g. 53) — the same node, one
     routing table.
     """
-    raw = get_env_settings().bootnode_ports
+    raw = get_env_settings().discovery_server_extra_ports
     if not raw:
         return ()
     return parse_port_list(raw)
@@ -508,19 +520,24 @@ def _parse_fingerprint_list(raw: str | None) -> tuple[str, ...]:
     return tuple(pins)
 
 
-def get_bootnode_fingerprints() -> tuple[str, ...]:
-    """Get the pinned bootnode fingerprints (validated, up to two, normalized)."""
-    return _parse_fingerprint_list(get_env_settings().bootnode_fingerprint)
+def get_discovery_server_fingerprints() -> tuple[str, ...]:
+    """Get the pinned discovery-server fingerprints (validated, up to two, normalized)."""
+    return _parse_fingerprint_list(get_env_settings().discovery_server_fingerprints)
 
 
-def get_bootnode_tofu() -> bool:
-    """Get whether the bootnode certificate is trusted on first use."""
-    return get_env_settings().bootnode_tofu
+def get_discovery_server_tofu() -> bool:
+    """Get whether a discovery server's certificate is trusted on first use."""
+    return get_env_settings().discovery_server_tofu
 
 
-def get_discovery_timeout() -> int | None:
-    """Get discovery timeout from environment."""
-    return get_env_settings().discovery_timeout
+def get_map_data_port() -> bool:
+    """Get whether the p2p data-plane TCP port is mapped with UPnP."""
+    return get_env_settings().map_data_port
+
+
+def get_peer_discovery_timeout() -> int | None:
+    """Get the peer-discovery wait from the environment (0 = wait indefinitely)."""
+    return get_env_settings().peer_discovery_timeout
 
 
 def get_heartbeat_interval() -> int | None:
@@ -533,14 +550,14 @@ def get_peer_timeout() -> int | None:
     return get_env_settings().peer_timeout
 
 
-def get_bootnode_refresh_interval() -> int | None:
+def get_discovery_server_refresh_interval() -> int | None:
     """Get the boot/1 lease/query cadence from the environment."""
-    return get_env_settings().bootnode_refresh_interval
+    return get_env_settings().discovery_server_refresh_interval
 
 
-def get_bootnode_trust() -> str | None:
-    """Get the bootnode TLS trust policy from the environment (see ADR-0035)."""
-    return get_env_settings().bootnode_trust
+def get_discovery_server_trust() -> str | None:
+    """Get the discovery-server TLS trust policy from the environment (ADR-0035)."""
+    return get_env_settings().discovery_server_trust
 
 
 def get_server_trust() -> str | None:
@@ -550,7 +567,7 @@ def get_server_trust() -> str | None:
 
 def get_server_fingerprints() -> tuple[str, ...]:
     """Get the pinned server fingerprints (validated, up to two, normalized)."""
-    return _parse_fingerprint_list(get_env_settings().server_fingerprint)
+    return _parse_fingerprint_list(get_env_settings().server_fingerprints)
 
 
 def get_server_tofu() -> bool:
@@ -802,12 +819,12 @@ class HsyncConfig(TypedDict):
     P2P_MODE: bool
     # P2P port for master server
     P2P_LISTEN_PORT: int
-    # Discovery timeout in seconds for P2P mode (0 = wait indefinitely)
-    DISCOVERY_TIMEOUT: int
+    # Peer discovery timeout in seconds for P2P mode (0 = wait indefinitely)
+    PEER_DISCOVERY_TIMEOUT: int
     # Heartbeat interval in seconds for P2P mode
     HEARTBEAT_INTERVAL: int
-    # boot/1 lease/query cadence in seconds (default 30; bootnode plan only)
-    BOOTNODE_REFRESH_INTERVAL: int
+    # boot/1 lease/query cadence in seconds (default 30; discovery-server plan only)
+    DISCOVERY_SERVER_REFRESH_INTERVAL: int
     # Peer timeout in seconds for P2P mode
     PEER_TIMEOUT: int
     # P2P shared secret key for authentication (None = no auth)
@@ -826,29 +843,29 @@ class HsyncConfig(TypedDict):
     P2P_PEER_DOWNLOAD: bool
     P2P_PEER_READ_CAP: int
     P2P_PEER_SOURCES_MAX: int
-    # Bootnode host for cross-network discovery (None = mDNS-only plan)
-    BOOTNODE: str | None
-    # UDP (QUIC) port of the remote bootnode
-    BOOTNODE_PORT: int
-    # Extra UDP ports to try for the same bootnode (multi-port dial fallback)
-    BOOTNODE_PORTS: tuple[int, ...]
-    # Bootnode certificate fingerprint(s) to pin (up to two for a rotation window)
-    BOOTNODE_FINGERPRINT: tuple[str, ...]
-    # Bootnode TLS trust policy (ADR-0035; default ask)
-    BOOTNODE_TRUST: TrustPolicy
+    # Discovery-server endpoints, ordered, each carrying its own port
+    # (empty = mDNS-only plan)
+    DISCOVERY_SERVER_ENDPOINTS: tuple[HostPort, ...]
+    # Extra UDP ports to try on each discovery-server endpoint (dial fallback)
+    DISCOVERY_SERVER_EXTRA_PORTS: tuple[int, ...]
+    # Discovery-server certificate fingerprint(s) to pin (up to two for a rotation window)
+    DISCOVERY_SERVER_FINGERPRINTS: tuple[str, ...]
+    # Discovery-server TLS trust policy (ADR-0035; default ask)
+    DISCOVERY_SERVER_TRUST: TrustPolicy
     # Dangerous explicit opt-in: permit keyless mutation requests
     P2P_ALLOW_UNAUTHENTICATED_WRITES: bool
     # Explicit acknowledgement: run P2P without a shared key
     P2P_ALLOW_UNAUTHENTICATED: bool
     # Explicit acceptance: bypass the deletion-risk confirmation
     ALLOW_DELETIONS: bool
-    # Map the master TCP port with UPnP (plan default: on only with a bootnode)
-    UPNP_ENABLED: bool
+    # Map the p2p data-plane TCP port with UPnP (plan default: on only with a
+    # discovery server)
+    MAP_DATA_PORT: bool
     # Master certificate fingerprint for HTTPS verification (set at runtime)
     MASTER_CERT_FINGERPRINT: str | None
     # Server TLS trust policy (ADR-0036; default chain) and explicit pins
     SERVER_TRUST: TrustPolicy
-    SERVER_FINGERPRINT: tuple[str, ...]
+    SERVER_FINGERPRINTS: tuple[str, ...]
     # Server certificate fingerprint for HTTPS verification (set at runtime)
     SERVER_CERT_FINGERPRINT: str | None
     # What a deletion does on this device (see deletions_are_kept)

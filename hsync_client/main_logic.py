@@ -43,19 +43,19 @@ from hsync_client.config import (
     get_allow_deletions,
     get_api_key,
     get_autotune_enabled,
-    get_bootnode_fingerprints,
-    get_bootnode_ports,
-    get_bootnode_refresh_interval,
-    get_bootnode_tofu,
-    get_bootnode_trust,
     get_compression_enabled,
     get_connectivity_retry_attempts,
     get_connectivity_retry_max_wait,
     get_connectivity_retry_min_wait,
     get_delta_enabled,
-    get_discovery_timeout,
+    get_discovery_server_extra_ports,
+    get_discovery_server_fingerprints,
+    get_discovery_server_refresh_interval,
+    get_discovery_server_tofu,
+    get_discovery_server_trust,
     get_heartbeat_interval,
     get_ignore_patterns,
+    get_map_data_port,
     get_mass_delete_guard,
     get_mass_delete_percent,
     get_mass_delete_threshold,
@@ -71,6 +71,7 @@ from hsync_client.config import (
     get_p2p_peer_read_cap,
     get_p2p_peer_sources_max,
     get_p2p_trust,
+    get_peer_discovery_timeout,
     get_peer_timeout,
     get_resync,
     get_server_fingerprints,
@@ -84,7 +85,6 @@ from hsync_client.config import (
     set_debug,
 )
 from hsync_client.constants import (
-    BOOTNODE_DEFAULT_PORT,
     BOOTNODE_REFRESH_INTERVAL,
     CLIENT_NAME,
     CONNECTIVITY_RETRY_ATTEMPTS_DEFAULT,
@@ -201,9 +201,9 @@ def _get_stability_delay_value(cli_value: int | None) -> int:
     return _first_defined(cli_value, get_stability_delay(), FILE_STABILITY_INTERVAL_DEFAULT)
 
 
-def _get_discovery_timeout_value(cli_value: int | None) -> int:
+def _get_peer_discovery_timeout_value(cli_value: int | None) -> int:
     """Priority: CLI > env > default. ``0`` means wait indefinitely."""
-    return _first_defined(cli_value, get_discovery_timeout(), DISCOVERY_TIMEOUT_DEFAULT)
+    return _first_defined(cli_value, get_peer_discovery_timeout(), DISCOVERY_TIMEOUT_DEFAULT)
 
 
 def _get_resync_value(cli_value: int | None) -> int | None:
@@ -609,28 +609,28 @@ def _safe_config_for_log(config: HsyncConfig, env_file: str | None) -> dict[str,
     return safe
 
 
-def _resolve_bootnode_trust(
+def _resolve_discovery_server_trust(
     policy: str | None,
     fingerprints: tuple[str, ...],
     tofu: bool,
     verify_ssl: bool,
 ) -> TrustPolicy:
-    """Resolve the bootnode trust policy from flags/env (ADR-0035).
+    """Resolve the discovery-server trust policy from flags/env (ADR-0035).
 
-    Precedence: ``--insecure`` (``none``) > ``--bootnode-fingerprint``
-    (``strict``) > ``--bootnode-tofu`` (``accept-new``) > the flag value >
-    ``HSYNC_BOOTNODE_TRUST`` > the ``ask`` default.
+    Precedence: ``--insecure`` (``none``) > ``--discovery-server-fingerprint``
+    (``strict``) > ``--discovery-server-tofu`` (``accept-new``) > the flag value >
+    ``HSYNC_DISCOVERY_SERVER_TRUST`` > the ``ask`` default.
 
     The precedence itself is the shared SSOT
     (:func:`hsync_common.protocol.tls_trust.resolve_trust_policy`); only the
-    ``ask`` fallback and the bootnode env source are transport-specific.
+    ``ask`` fallback and the discovery-server env source are transport-specific.
     """
     return resolve_trust_policy(
         policy,
         fingerprints,
         tofu,
         verify_ssl,
-        env_default=get_bootnode_trust(),
+        env_default=get_discovery_server_trust(),
         fallback=TrustPolicy.ask,
     )
 
@@ -718,7 +718,7 @@ def _evaluate_server_trust(config: HsyncConfig, log, host: str, port: int) -> st
     observed = fetch_server_fingerprint(host, port, float(config.get("HTTP_TIMEOUT", 10)))
     store = default_server_trust_store()
     stored = store.get(host, port)
-    explicit = tuple(config.get("SERVER_FINGERPRINT") or ())
+    explicit = tuple(config.get("SERVER_FINGERPRINTS") or ())
 
     if explicit:
         if observed is not None and fingerprint_matches(observed, explicit):
@@ -783,7 +783,7 @@ def run_sync(
     max_bandwidth_download: int | None,
     p2p_mode: bool,
     p2p_listen_port: int,
-    discovery_timeout: int | None,
+    peer_discovery_timeout: int | None,
     p2p_group: str | None,
     prefer_master: bool,
     never_master: bool,
@@ -811,12 +811,11 @@ def run_sync(
     delta_min_file_size_p2p: int | None = None,
     p2p_peer_download_enabled: bool = True,
     p2p_allow_unauthenticated_writes: bool = False,
-    p2p_bootnode: str | None = None,
-    p2p_bootnode_port: int | None = None,
-    p2p_upnp_enabled: bool | None = None,
-    bootnode_fingerprints: tuple[str, ...] = (),
-    bootnode_tofu: bool = False,
-    bootnode_trust: str | None = None,
+    discovery_server_endpoints: tuple[Any, ...] = (),
+    map_data_port: bool | None = None,
+    discovery_server_fingerprints: tuple[str, ...] = (),
+    discovery_server_tofu: bool = False,
+    discovery_server_trust: str | None = None,
     server_fingerprints: tuple[str, ...] = (),
     server_tofu: bool = False,
     server_trust: str | None = None,
@@ -898,7 +897,7 @@ def run_sync(
 
     if not effective_server_url and not p2p_mode:
         _fatal_startup(
-            "Server URL is required (use 'hsync server HOSTNAME' or set HSYNC_SERVER)",
+            "Server URL is required (use 'hsync server HOSTNAME' or set HSYNC_SERVER_URL)",
             log=log,
         )
 
@@ -1133,21 +1132,22 @@ def run_sync(
         "MAX_WAIT_TIMEOUT": max_wait_timeout,
         "P2P_MODE": p2p_mode,
         "P2P_LISTEN_PORT": p2p_listen_port or get_p2p_listen_port() or 0,
-        "BOOTNODE": p2p_bootnode,
-        "BOOTNODE_PORT": p2p_bootnode_port or BOOTNODE_DEFAULT_PORT,
-        "BOOTNODE_PORTS": get_bootnode_ports(),
-        # Bootnode TLS trust (ADR-0034): explicit fingerprints or opt-in TOFU.
-        "BOOTNODE_FINGERPRINT": bootnode_fingerprints or get_bootnode_fingerprints(),
-        "BOOTNODE_TRUST": _resolve_bootnode_trust(
-            bootnode_trust,
-            bootnode_fingerprints or get_bootnode_fingerprints(),
-            bootnode_tofu or get_bootnode_tofu(),
+        "DISCOVERY_SERVER_ENDPOINTS": tuple(discovery_server_endpoints),
+        "DISCOVERY_SERVER_EXTRA_PORTS": get_discovery_server_extra_ports(),
+        # Discovery-server TLS trust (ADR-0034): explicit fingerprints or opt-in TOFU.
+        "DISCOVERY_SERVER_FINGERPRINTS": discovery_server_fingerprints
+        or get_discovery_server_fingerprints(),
+        "DISCOVERY_SERVER_TRUST": _resolve_discovery_server_trust(
+            discovery_server_trust,
+            discovery_server_fingerprints or get_discovery_server_fingerprints(),
+            discovery_server_tofu or get_discovery_server_tofu(),
             verify_ssl,
         ),
-        "UPNP_ENABLED": bool(p2p_upnp_enabled),
-        "DISCOVERY_TIMEOUT": _get_discovery_timeout_value(discovery_timeout),
+        "MAP_DATA_PORT": get_map_data_port() if map_data_port is None else bool(map_data_port),
+        "PEER_DISCOVERY_TIMEOUT": _get_peer_discovery_timeout_value(peer_discovery_timeout),
         "HEARTBEAT_INTERVAL": get_heartbeat_interval() or HEARTBEAT_INTERVAL,
-        "BOOTNODE_REFRESH_INTERVAL": get_bootnode_refresh_interval() or BOOTNODE_REFRESH_INTERVAL,
+        "DISCOVERY_SERVER_REFRESH_INTERVAL": get_discovery_server_refresh_interval()
+        or BOOTNODE_REFRESH_INTERVAL,
         "PEER_TIMEOUT": get_peer_timeout() or PEER_TIMEOUT,
         "P2P_KEY": resolved_p2p_key,
         "P2P_GROUP": p2p_group or get_p2p_group(),
@@ -1172,7 +1172,7 @@ def run_sync(
             server_tofu or get_server_tofu(),
             verify_ssl,
         ),
-        "SERVER_FINGERPRINT": server_fingerprints or get_server_fingerprints(),
+        "SERVER_FINGERPRINTS": server_fingerprints or get_server_fingerprints(),
         "SERVER_CERT_FINGERPRINT": None,
         "DELETION_POLICY": resolve_deletion_policy(deletion_policy),
         "COMPRESSION_ENABLED": compression_enabled and get_compression_enabled(),
@@ -1256,7 +1256,7 @@ def run_sync(
         allow_deletions=config["ALLOW_DELETIONS"],
         allow_unauthenticated_writes=config["P2P_ALLOW_UNAUTHENTICATED_WRITES"],
         allow_unauthenticated_p2p=config["P2P_ALLOW_UNAUTHENTICATED"],
-        bootnode_trust=config["BOOTNODE_TRUST"],
+        discovery_server_trust=config["DISCOVERY_SERVER_TRUST"],
         server_trust=config["SERVER_TRUST"],
     )
 

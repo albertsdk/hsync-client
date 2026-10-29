@@ -183,7 +183,7 @@ def _p2p_start(
         "--min-free-disk-space",
         "0",
         "--no-autotune",
-        "--discovery-timeout",
+        "--peer-discovery-timeout",
         "10",
         "--retry-delay",
         "1",

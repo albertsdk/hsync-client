@@ -129,7 +129,7 @@ class TestBypassWarnings:
             logger,
             allow_deletions=True,
             allow_unauthenticated_p2p=True,
-            bootnode_trust=TrustPolicy.accept_new,
+            discovery_server_trust=TrustPolicy.accept_new,
         )
         assert logger.warning.call_count == 3
         texts = " ".join(str(c) for c in logger.warning.call_args_list)
@@ -154,7 +154,7 @@ class TestBypassWarnings:
                 loguru_logger,
                 allow_deletions=True,
                 allow_unauthenticated_p2p=True,
-                bootnode_trust=TrustPolicy.accept_new,
+                discovery_server_trust=TrustPolicy.accept_new,
             )
         finally:
             loguru_logger.remove(sink_id)

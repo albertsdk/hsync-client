@@ -516,7 +516,7 @@ def _p2p_config(tmp_path, **overrides: Any) -> HsyncConfig:
         "P2P_GROUP": None,
         "LOCAL_BUCKET": str(tmp_path),
         "P2P_KEY": None,
-        "DISCOVERY_TIMEOUT": 1,
+        "PEER_DISCOVERY_TIMEOUT": 1,
         "DRYRUN": False,
         "ONE_SHOT": True,
         "REQUEST_HEADERS": {},

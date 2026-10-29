@@ -102,13 +102,13 @@ have missed (e.g. the inotify watch limit on Linux, sleep/wake cycles).
 
 ```bash
 # Continuous mode (the default)
-hsync server server.example.com -b mybucket -p /path/to/dir
+hsync server --server-url server.example.com -b mybucket -p /path/to/dir
 
 # Continuous mode with a longer stability delay (safe for slow storage)
-hsync server server.example.com -b media -p /srv/media --stability-delay 30
+hsync server --server-url server.example.com -b media -p /srv/media --stability-delay 30
 
 # Reverse proxy on the standard HTTPS port (the default port is 9753)
-hsync server server.example.com --port 443 -b mybucket -p /path/to/dir
+hsync server --server-url server.example.com:443 -b mybucket -p /path/to/dir
 ```
 
 For scheduled background sync (cron, systemd timer, Task Scheduler) use
@@ -118,7 +118,7 @@ confirmation):
 ```cron
 # Cron entry: sync every hour
 0 * * * * HSYNC_API_KEY=hs_ACCOUNT_ID_ACCOUNT_SECRET \
-  hsync server server.example.com --once \
+  hsync server --server-url server.example.com --once \
   -b mybucket -p /path --allow-deletions
 ```
 
@@ -136,7 +136,7 @@ automatically falls back to a full transfer on any failure.
 
 ```bash
 # Delta is enabled by default; disable it:
-hsync server server.example.com -b media -p ~/Media --no-delta
+hsync server --server-url server.example.com -b media -p ~/Media --no-delta
 ```
 
 > Full conditions, configuration and the fallback model are documented in
@@ -146,16 +146,16 @@ hsync server server.example.com -b media -p ~/Media --no-delta
 
 ```bash
 # Compression is enabled by default; disable it for fast local networks:
-hsync server server.example.com -b media -p ~/Media --no-compression
+hsync server --server-url server.example.com -b media -p ~/Media --no-compression
 ```
 
 ### Bandwidth limiting (token bucket)
 
 ```bash
 # Cap upload to 1 MB/s
-hsync server server.example.com -b mybucket --limit-upload 1MB
+hsync server --server-url server.example.com -b mybucket --limit-upload 1MB
 # Cap download to 500 KB/s
-hsync server server.example.com -b mybucket --limit-download 500KB
+hsync server --server-url server.example.com -b mybucket --limit-download 500KB
 ```
 
 ## File Filtering & Ignore Rules
@@ -180,7 +180,7 @@ gitignore-style patterns:
 Or pass patterns directly on the command line without creating a file:
 
 ```bash
-hsync server server.example.com -b mybucket \
+hsync server --server-url server.example.com -b mybucket \
   --ignore-pattern ".git/" \
   --ignore-pattern "*.log" \
   --ignore-pattern "/dist/"
@@ -229,10 +229,10 @@ remote bucket is **always blocked**, regardless of thresholds.
 
 ```bash
 # Disable the guard (when confident deletions observed by the server are safe)
-hsync server server.example.com -b mybucket --no-mass-delete-guard
+hsync server --server-url server.example.com -b mybucket --no-mass-delete-guard
 
 # Tighter guard: pause deletions at 10 files or 10% of the tree
-hsync server server.example.com -b mybucket \
+hsync server --server-url server.example.com -b mybucket \
   --mass-delete-threshold 10 --mass-delete-percent 10
 ```
 
@@ -250,7 +250,7 @@ Key server-mode specific options:
 
 | Option | Env var | Description | Default |
 |--------|---------|-------------|---------|
-| `HOSTNAME` + `--port` | `HSYNC_SERVER` | Server endpoint (`https://` implied; accepts `HOST[:PORT]`, `[IPv6][:PORT]`, or a full `https://` URL; `--port` default `9753`) | (required) |
+| `--server-url` | `HSYNC_SERVER_URL` | Sync-server URL (`https://` implied for a bare endpoint; accepts `HOST[:PORT]`, `[IPv6][:PORT]`, or a full `https://…[/path]` URL; default port `9753`) | (required) |
 | `--ca-cert` | — | Path to CA certificate (self-signed servers) | — |
 | `--insecure` | — | Skip SSL certificate verification | `false` |
 | `--http-timeout` | `HSYNC_HTTP_TIMEOUT` | HTTP request timeout (seconds) | `30` |

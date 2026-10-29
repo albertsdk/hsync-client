@@ -10,12 +10,11 @@ p2p configuration for peer-to-peer synchronization without a central server.
 | Option | Description | Default |
 |---|---|---|
 | `p2p` subcommand | Enable p2p mode (selected with `hsync p2p`) | — (CLI only) |
-| `BOOTNODE` (positional) | Bootnode host for cross-network discovery (optional; omit for mDNS only). Accepts `HOST[:PORT]` | — |
-| `--port` | UDP (QUIC) port of the remote bootnode; refused without `BOOTNODE`; mutually exclusive with a port in `BOOTNODE` | `443` |
-| `--upnp` | Map the master TCP port with UPnP when a bootnode is used (opt-in) | `false` (UPnP off; enable explicitly) |
-| `--bootnode-fingerprint` | Pin the bootnode certificate fingerprint (`sha256:<hex>` or bare hex); repeatable up to two for a rotation window; refused without `BOOTNODE` | — (`ask`: confirm at the prompt on a terminal, fail closed without one) |
-| `--bootnode-tofu` | Trust the bootnode certificate on first use; a later mismatch is refused | `false` |
-| `--bootnode-trust` | Bootnode TLS trust policy: `ask` (prompt on a terminal and remember, fail closed without one), `accept-new`, `strict`, `none` | `ask` |
+| `--discovery-server` | Discovery-server endpoint for cross-network discovery: `HOST[:PORT]`, QUIC/UDP, no scheme (optional; omit for mDNS only). Repeatable, and each value may carry a comma-separated list; the client leases and queries every listed server and merges the peers | — |
+| `--map-data-port` | Map the p2p data-plane TCP port with UPnP when a discovery server is used (opt-in) | `false` (UPnP off; enable explicitly) |
+| `--discovery-server-fingerprint` | Pin a discovery server's certificate fingerprint (`sha256:<hex>` or bare hex); repeatable up to two per server for a rotation window; refused without `--discovery-server` | — (`ask`: confirm at the prompt on a terminal, fail closed without one) |
+| `--discovery-server-tofu` | Trust a discovery server's certificate on first use; a later mismatch is refused | `false` |
+| `--discovery-server-trust` | Discovery-server TLS trust policy: `ask` (prompt on a terminal and remember, fail closed without one), `accept-new`, `strict`, `none` | `ask` |
 | `--group` | p2p group name (only peers in the same group see each other) | — (all peers visible) |
 | `--listen-port` | Port when acting as p2p master; `0` = pick a free port | `0` (auto) |
 | *(data relay)* | No client option: when no advertised candidate is reachable (both peers behind carrier-grade NAT) the client relays the data plane through the bootnode automatically, if the node runs with `--relay` | — (last resort; see [Sync across networks](p2p-bootnode.md#behind-carrier-grade-nat-mobile-hotspot-guest-network)) |
@@ -24,7 +23,7 @@ p2p configuration for peer-to-peer synchronization without a central server.
 | `--p2p-trust` | P2P master trust policy: `ask` (confirm an unknown master on a terminal, fail closed without one), `accept-new` (pin the first sighting silently) or `strict` (require an explicit pin) | `ask` |
 | `--no-peer-download` | Disable peer-assisted downloads for this run; overrides an enabled environment setting | `false` |
 | `--allow-unauthenticated-writes` | Dangerously allow write-capable sync without a shared secret | `false` |
-| `--discovery-timeout` | Seconds to wait for p2p peer discovery (`0` = wait indefinitely) | `0` (indefinite) |
+| `--peer-discovery-timeout` | Seconds to wait for p2p peer discovery (`0` = wait indefinitely) | `0` (indefinite) |
 
 The shared secret comes from `HSYNC_P2P_PASSPHRASE` (at least 12 characters;
 the client derives the 64-hex group key with scrypt) or from `HSYNC_P2P_KEY`
@@ -101,22 +100,22 @@ Both must be explicit: a TTY or `--allow-deletions` never grants them.
 | `HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES` | Dangerously allow p2p filesystem mutations with no shared key | `false` |
 | `HSYNC_P2P_ALLOW_UNAUTHENTICATED` | Explicitly acknowledge running p2p without a shared key (peers unauthenticated, reads open) | `false` |
 | `HSYNC_P2P_LISTEN_PORT` | p2p master port (`1`–`65535`); unset keeps CLI auto (`0`) | — |
-| `HSYNC_BOOTNODE` | Bootnode endpoint for cross-network discovery (`host`, `host:port`, `[IPv6]`, `[IPv6]:port`; QUIC/UDP, no scheme); unset = mDNS-only | — |
-| `HSYNC_BOOTNODE_PORTS` | Extra UDP ports to try for the **same** bootnode, comma-separated and ordered (multi-port dial fallback); e.g. `53` so a client whose **egress firewall** blocks UDP 443 can still reach the node on 53. Tried after the bootnode/default port | — |
-| `HSYNC_BOOTNODE_FINGERPRINT` | Comma-separated bootnode certificate fingerprint(s) to pin (up to two, `sha256:<hex>` or bare hex) | — |
-| `HSYNC_BOOTNODE_TOFU` | Trust the bootnode certificate on first use (`1` = on) | `false` |
-| `HSYNC_BOOTNODE_TRUST` | Bootnode TLS trust policy: `ask` (prompt on a terminal and remember, fail closed without one), `accept-new`, `strict`, `none` | `ask` |
-| `HSYNC_UPNP_ENABLED` | Map the master TCP port with UPnP (`true`/`false`); off by default | `false` |
+| `HSYNC_DISCOVERY_SERVER_ENDPOINTS` | Bootnode endpoint for cross-network discovery (`host`, `host:port`, `[IPv6]`, `[IPv6]:port`; QUIC/UDP, no scheme); unset = mDNS-only | — |
+| `HSYNC_DISCOVERY_SERVER_EXTRA_PORTS` | Extra UDP ports to try for the **same** bootnode, comma-separated and ordered (multi-port dial fallback); e.g. `53` so a client whose **egress firewall** blocks UDP 443 can still reach the node on 53. Tried after the bootnode/default port | — |
+| `HSYNC_DISCOVERY_SERVER_FINGERPRINTS` | Comma-separated bootnode certificate fingerprint(s) to pin (up to two, `sha256:<hex>` or bare hex) | — |
+| `HSYNC_DISCOVERY_SERVER_TOFU` | Trust the bootnode certificate on first use (`1` = on) | `false` |
+| `HSYNC_DISCOVERY_SERVER_TRUST` | Bootnode TLS trust policy: `ask` (prompt on a terminal and remember, fail closed without one), `accept-new`, `strict`, `none` | `ask` |
+| `HSYNC_MAP_DATA_PORT` | Map the master TCP port with UPnP (`true`/`false`); off by default | `false` |
 | `HSYNC_NEVER_MASTER` | Never become master | `false` |
 | `HSYNC_DEVICE_DIR` | Device identity dir (device ID + p2p keypair + per-folder sync-state DBs `syncstate/<uuid>.db`, `syncstate/index.db`) | `$XDG_STATE_HOME/hsync/device` or `~/.local/state/hsync/device` |
 | `HSYNC_LOCKS_DIR` | Instance-lock dir (`<sha256>.lock` per synced directory) | `$XDG_RUNTIME_DIR/hsync/locks`, else `<device-dir>/locks` |
 | `HSYNC_P2P_PIN_FILE` | Pinned fingerprints of known p2p peers (TOFU) | `$HSYNC_STATE_DIR/p2p_known_peers.json`; `$XDG_STATE_HOME/hsync/…` or `~/.local/state/hsync/…` when the state dir is unset |
-| `HSYNC_BOOTNODE_TRUST_FILE` | Trusted bootnode fingerprints (known-hosts store) | `$HSYNC_STATE_DIR/bootnode_known_hosts.json`; the XDG/local-state path when the state dir is unset |
+| `HSYNC_DISCOVERY_SERVER_TRUST_FILE` | Trusted bootnode fingerprints (known-hosts store) | `$HSYNC_STATE_DIR/discovery_server_known_hosts.json`; the XDG/local-state path when the state dir is unset |
 | `HSYNC_P2P_TRUST` | P2P master trust policy: `ask`, `accept-new` or `strict` | `ask` |
-| `HSYNC_DISCOVERY_TIMEOUT` | p2p peer discovery timeout in seconds (`0` = indefinitely) | `0` |
+| `HSYNC_PEER_DISCOVERY_TIMEOUT` | p2p peer discovery timeout in seconds (`0` = indefinitely) | `0` |
 | `HSYNC_HEARTBEAT_INTERVAL` | LAN mDNS re-announce / liveness-evaluation cadence in seconds (`1`–`60`) | `5` |
-| `HSYNC_BOOTNODE_REFRESH_INTERVAL` | `boot/1` lease/query cadence in seconds (`1`–`300`): how often the client registers, refreshes and queries the bootnode. Sized against the node's rate limits (spec refresh: 30 s) | `30` |
-| `HSYNC_PEER_TIMEOUT` | Seconds without a peer's heartbeat before it is considered dead and excluded from election (`3`–`600`); must be ≥ 2× the heartbeat, and with a bootnode configured the client raises it to at least 2× `HSYNC_BOOTNODE_REFRESH_INTERVAL` (default 60 s) so a relayed peer is not expired between two random samples | `15` |
+| `HSYNC_DISCOVERY_SERVER_REFRESH_INTERVAL` | `boot/1` lease/query cadence in seconds (`1`–`300`): how often the client registers, refreshes and queries the bootnode. Sized against the node's rate limits (spec refresh: 30 s) | `30` |
+| `HSYNC_PEER_TIMEOUT` | Seconds without a peer's heartbeat before it is considered dead and excluded from election (`3`–`600`); must be ≥ 2× the heartbeat, and with a bootnode configured the client raises it to at least 2× `HSYNC_DISCOVERY_SERVER_REFRESH_INTERVAL` (default 60 s) so a relayed peer is not expired between two random samples | `15` |
 | `HSYNC_STABILITY_DELAY` | Seconds a file must stay unchanged before upload (already-idle files skip the wait) | `5` |
 | `HSYNC_DELTA_MIN_FILE_SIZE_P2P` | Min file size for delta transfer in p2p mode | `1048576` (1 MB) |
 

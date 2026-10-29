@@ -8,6 +8,7 @@ from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
+from hsync_common.endpoint import HostPort
 
 from hsync_client.config import HsyncConfig
 from hsync_client.events import UiEventName
@@ -32,7 +33,7 @@ def _make_p2p_config(tmp_path: object, **overrides: object) -> HsyncConfig:
         "SYNC_DIRECTION": "bidirectional",
         "LOCAL_BUCKET": str(tmp_path),
         "P2P_KEY": None,
-        "DISCOVERY_TIMEOUT": 1,
+        "PEER_DISCOVERY_TIMEOUT": 1,
         "DRYRUN": False,
         "ONE_SHOT": True,
         "REQUEST_HEADERS": {"X-Client-Id": "test-cid"},
@@ -71,7 +72,9 @@ class TestRunLanMode:
 
     def test_discovery_event_reports_the_active_plan(self, tmp_path):
         """The plan is surfaced on the structured-events channel at startup."""
-        config = _make_p2p_config(tmp_path, BOOTNODE="boot.example.net", BOOTNODE_PORT=443)
+        config = _make_p2p_config(
+            tmp_path, DISCOVERY_SERVER_ENDPOINTS=(HostPort("boot.example.net", 443),)
+        )
         mock_log = MagicMock()
         mock_peer_mgr = MagicMock()
         mock_peer_mgr.get_alive_peers.return_value = []
@@ -103,12 +106,14 @@ class TestRunLanMode:
         assert len(discovery_calls) == 1
         assert discovery_calls[0].kwargs == {
             "plan": "mdns+bootnode",
-            "bootnode": "boot.example.net",
+            "bootnode": "boot.example.net:443",
         }
 
     def test_bootnode_banner_and_plan_selection(self, tmp_path):
         """A configured bootnode selects the combined mDNS + bootnode plan."""
-        config = _make_p2p_config(tmp_path, BOOTNODE="boot.example.net", BOOTNODE_PORT=443)
+        config = _make_p2p_config(
+            tmp_path, DISCOVERY_SERVER_ENDPOINTS=(HostPort("boot.example.net", 443),)
+        )
         mock_log = MagicMock()
 
         mock_peer_mgr = MagicMock()
@@ -138,7 +143,8 @@ class TestRunLanMode:
         assert kwargs["bootnode_host"] == "boot.example.net"
         assert kwargs["bootnode_port"] == 443
         assert any(
-            "Discovery: mDNS on the local network + bootnode boot.example.net:443" in str(c)
+            "Discovery: mDNS on the local network + discovery server(s) boot.example.net:443"
+            in str(c)
             for c in mock_log.info.call_args_list
         )
 

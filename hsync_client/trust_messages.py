@@ -4,7 +4,7 @@
 """Shared SSH-style trust messages for the durable trust stores.
 
 Three transports pin a certificate fingerprint and refuse a mismatch as a possible
-man-in-the-middle: the bootnode (``bootnode_known_hosts.json``, keyed ``host:port``),
+man-in-the-middle: the bootnode (``discovery_server_known_hosts.json``, keyed ``host:port``),
 the sync server (``server_known_hosts.json``, keyed ``host:port``) and the P2P
 master/seeders (``p2p_known_peers.json``, keyed ``cid|bucket``). This module owns the
 operator-facing prose for those moments — the "permanently added" announcement and
@@ -35,6 +35,12 @@ __all__ = [
 ]
 
 
+# Human labels for the two ``host:port`` trust namespaces the guidance covers.
+# They double as the ``hsync trust <kind>`` subcommand names, so a command the
+# operator copies from the message is exactly the one the CLI accepts.
+_HOST_KIND_LABELS = {"discovery-server": "Discovery server", "server": "Sync server"}
+
+
 def _permanently_added_line(identity: str, store_kind: str, store_path: Path) -> str:
     """The shared "permanently added" sentence (OpenSSH ``known_hosts`` style).
 
@@ -55,12 +61,12 @@ def _presented_fingerprint_lines(subject: str, observed: str) -> list[str]:
 
 
 def known_hosts_added_message(host: str, port: int, store_path: Path) -> str:
-    """SSH-style confirmation that a bootnode fingerprint was just pinned, and where.
+    """SSH-style confirmation that a discovery-server fingerprint was just pinned, and where.
 
     Mirrors OpenSSH's ``Warning: Permanently added '…' (…) to the list of known
     hosts`` and names the effective store path, which OpenSSH leaves implicit.
 
-    Consumers: ``hsync-client`` (bootnode connect path: prompt acceptance and TOFU).
+    Consumers: ``hsync-client`` (discovery-server connect path: prompt acceptance and TOFU).
     """
     return _permanently_added_line(format_authority(host, port), "hosts", store_path)
 
@@ -93,7 +99,7 @@ def _host_mismatch_guidance(
     flag_name: str,
     env_var: str,
 ) -> str:
-    """SSH-style recovery block for a refused ``host:port`` pin (bootnode/server).
+    """SSH-style recovery block for a refused ``host:port`` pin (discovery/sync server).
 
     Three variants: a pin that changed (possible man-in-the-middle), a host that is
     not pinned under ``strict``, and a fingerprint that matches none of the explicit
@@ -101,7 +107,7 @@ def _host_mismatch_guidance(
     holds the accepted pin and the exact ``hsync trust <kind>`` command that
     unblocks the situation.
     """
-    label = kind.capitalize()
+    label = _HOST_KIND_LABELS.get(kind, kind.capitalize())
     if stored is not None:
         headline = (
             "the certificate fingerprint does not match the accepted pin "
@@ -121,21 +127,21 @@ def _host_mismatch_guidance(
         lines += [
             f"The accepted pin is stored in {store_path}.",
             "If you can verify the new fingerprint out of band, re-pin it with:",
-            f"  hsync trust {kind} add {host} sha256:{observed} --port {port}",
+            f"  hsync trust {kind} add {format_authority(host, port)} sha256:{observed}",
             "To forget the pin and be prompted again at the next connection "
             "(like 'ssh-keygen -R'):",
-            f"  hsync trust {kind} remove {host} --port {port}",
+            f"  hsync trust {kind} remove {format_authority(host, port)}",
         ]
     elif explicit_pins:
         lines += [
             f"Read the {kind}'s current fingerprint out of band with:",
-            f"  hsync trust {kind} fingerprint {host} --port {port}",
+            f"  hsync trust {kind} fingerprint {format_authority(host, port)}",
             f"then update the pinned value (--{flag_name} or {env_var}).",
         ]
     else:
         lines += [
             "Verify it out of band and pin it with:",
-            f"  hsync trust {kind} add {host} sha256:{observed} --port {port}",
+            f"  hsync trust {kind} add {format_authority(host, port)} sha256:{observed}",
             f"Alternatively, start the client with --{kind}-tofu (trust the first "
             f"sighting) or --{flag_name} <fp>.",
         ]
@@ -149,7 +155,7 @@ def _host_pairing_needed_guidance(kind: str, host: str, port: int, observed: str
         "requires explicit trust confirmation.",
         *_presented_fingerprint_lines(kind, observed),
         "Verify it out of band and pin it with:",
-        f"  hsync trust {kind} add {host} sha256:{observed} --port {port}",
+        f"  hsync trust {kind} add {format_authority(host, port)} sha256:{observed}",
         "Until then the connection is refused.",
     ]
     return "\n".join(lines)
@@ -164,20 +170,20 @@ def mismatch_guidance(
     store_path: Path,
     explicit_pins: bool,
 ) -> str:
-    """SSH-style recovery block for a refused bootnode fingerprint (English).
+    """SSH-style recovery block for a refused discovery-server fingerprint (English).
 
     Consumers: ``hsync-client`` (``BootnodeClient._mismatch``), tests.
     """
     return _host_mismatch_guidance(
-        "bootnode",
+        "discovery-server",
         host,
         port,
         observed,
         stored=stored,
         store_path=store_path,
         explicit_pins=explicit_pins,
-        flag_name="bootnode-fingerprint",
-        env_var="HSYNC_BOOTNODE_FINGERPRINT",
+        flag_name="discovery-server-fingerprint",
+        env_var="HSYNC_DISCOVERY_SERVER_FINGERPRINTS",
     )
 
 

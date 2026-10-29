@@ -9,7 +9,7 @@ Server-mode configuration for connecting to a central HSYNC Server.
 
 | Option | Description | Default |
 |---|---|---|
-| `HOSTNAME` (+ `--port`) | Server host (`https://` implied; accepts `HOST[:PORT]`; `--port` default `9753`; required in server mode unless `HSYNC_SERVER` is set) | `HSYNC_SERVER` |
+| `--server-url` | Sync-server URL: a full `https://…[/path]` URL or a bare `HOST[:PORT]` (HTTPS implied, default port `9753`); required in server mode unless `HSYNC_SERVER_URL` is set | `HSYNC_SERVER_URL` |
 | `-b, --bucket` | Bucket name | (required; CLI only) |
 | `--ca-cert` | Path to CA certificate for self-signed server certs | — |
 | `--server-trust` | TLS trust policy: `chain` (default), `ask`, `accept-new`, `strict`, `none` | `chain` |
@@ -54,7 +54,7 @@ out-of-band step.
 
 | Variable | Description | Default |
 |---|---|---|
-| `HSYNC_SERVER` | Sync-server endpoint: bare `host`, `host:port`, `[IPv6]`, `[IPv6]:port`, or a full `https://…` URL (alternative to the `HOSTNAME` argument) | (required or pass `HOSTNAME`) |
+| `HSYNC_SERVER_URL` | Sync-server URL: bare `host`, `host:port`, `[IPv6]`, `[IPv6]:port`, or a full `https://…[/path]` URL (same as `--server-url`) | (required or pass `--server-url`) |
 | `HSYNC_API_KEY` | Account token (`hs_<id>_<secret>`) | (required in server mode) |
 | `HSYNC_SERVER_TRUST` | TLS trust policy (`chain`/`ask`/`accept-new`/`strict`/`none`) | `chain` |
 | `HSYNC_SERVER_FINGERPRINT` | Certificate fingerprint(s) to pin (up to two) | — |
@@ -74,13 +74,13 @@ export HSYNC_API_KEY="hs_ACCOUNT_ID_ACCOUNT_SECRET"
 hsync server --env-file ./hsync.env -b documents -p "$HOME/Documents"
 ```
 
-With no `HOSTNAME` on the command line the client reads the server URL from
-`HSYNC_SERVER` (set it in the env file, or `export` it in the shell). If
+With no `--server-url` on the command line the client reads the server URL from
+`HSYNC_SERVER_URL` (set it in the env file, or `export` it in the shell). If
 neither is provided, the client exits immediately with a usage error rather
 than starting a connection attempt.
 
 `--env-file` only applies `HSYNC_*` keys recognised by the client settings
-model (for server mode: `HSYNC_SERVER`, `HSYNC_API_KEY`, plus the shared
+model (for server mode: `HSYNC_SERVER_URL`, `HSYNC_API_KEY`, plus the shared
 keys in [Configuration](configuration.md)). Alternatively, `export` the
 variables in the shell (or `source` a file) before running `hsync`.
 

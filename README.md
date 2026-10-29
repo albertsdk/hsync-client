@@ -205,7 +205,7 @@ HSYNC Client focuses on reliable, fast transfers.
 * **NAT traversal:** optional UPnP port mapping and the bootnode's STUN-style echo for cross-network reachability — no manual port forwarding in the common case.
 * **Stable device identity:** a persistent device ID and keypair keep pins across restarts; a rotated key shows up as a changed fingerprint.
 
-> **Internet P2P.** An optional, self-hostable discovery node ([HSYNC Bootnode](https://github.com/albertsdk/hsync-bootnode)) extends the peer-to-peer topology beyond a single LAN segment over `boot/1` (QUIC/UDP 443, no-log, RAM-only). Pass a bootnode hostname to `hsync p2p` (positional argument or `HSYNC_BOOTNODE`) to sync devices that are **not** on the same local network — same mode, same election, same data plane; only discovery differs. Writes are authorized by a shared key, so a keyless LAN is read-only. The bootnode is a **stable v1** (Python).
+> **Internet P2P.** An optional, self-hostable discovery node ([HSYNC Bootnode](https://github.com/albertsdk/hsync-bootnode)) extends the peer-to-peer topology beyond a single LAN segment over `boot/1` (QUIC/UDP 443, no-log, RAM-only). Pass a bootnode hostname to `hsync p2p` (positional argument or `HSYNC_DISCOVERY_SERVER_ENDPOINTS`) to sync devices that are **not** on the same local network — same mode, same election, same data plane; only discovery differs. Writes are authorized by a shared key, so a keyless LAN is read-only. The bootnode is a **stable v1** (Python).
 
 ## Documentation
 

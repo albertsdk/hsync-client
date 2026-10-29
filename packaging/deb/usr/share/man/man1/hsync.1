@@ -12,8 +12,7 @@ hsync \- file synchronization client (Server and P2P modes)
 .SY hsync
 .B server
 .OP \-b NAME
-.RB [ hostname [:PORT] ]
-.OP \-\-port PORT
+.OP \-\-server\-url URL
 .OP \-p DIR
 .RI [ OPTIONS ]
 .YS
@@ -22,14 +21,12 @@ hsync \- file synchronization client (Server and P2P modes)
 .B p2p
 .OP \-b NAME
 .OP \-p DIR
-.RI [ BOOTNODE [:PORT] ]
-.OP \-\-port PORT
 .RI [ OPTIONS ]
 .YS
 .
 .SY hsync
 .B trust
-.BI peer | bootnode | server
+.BI peer | discovery\-server | server
 .RI [ OPTIONS ]
 .YS
 .
@@ -113,27 +110,21 @@ This option is mandatory.
 .\" --- Server subcommand ---
 .SS Server subcommand
 .TP
-.BI hostname [\fI:PORT\fP]
-Remote server host or IP
-.RI ( server\.example\.com ),
-optionally with a port
-.RI ( server\.example\.com\fI:443\fP ).
-HTTPS is always used; the port defaults to 9753 (the hsync\-server
-default) and a reverse proxy on 443 is selected with
-.BR \-\-port .
-Can also be configured as a full URL via the
-.B HSYNC_SERVER
+.BI \-\-server\-url\fP= URL
+Sync-server URL: a full
+.I https://
+URL (optionally with a reverse-proxy path) or a bare
+.IR HOST : PORT ,
+which implies HTTPS on port 9753 (the hsync\-server default). The port is
+carried by the endpoint; there is no separate
+.B \-\-port .
+Can also be configured via the
+.B HSYNC_SERVER_URL
 environment variable. Required for
 .B hsync server
 unless
-.B HSYNC_SERVER
+.B HSYNC_SERVER_URL
 is set.
-.TP
-.BR \-\-port =\fIPORT\fP
-Remote server port (default: 9753). Requires
-.BR hostname .
-Mutually exclusive with a port given in
-.BI hostname [\fI:PORT\fP] .
 .TP
 .B \-\-insecure
 Skip SSL/TLS certificate verification (not recommended).
@@ -180,7 +171,7 @@ the client runs continuously (daemon mode, the default): it keeps the
 connection open, syncs changes in real time, and retries an unreachable
 server indefinitely instead of exiting. In p2p mode it runs one slave sync
 cycle and exits, and a run that is still alone when
-.B \-\-discovery\-timeout
+.B \-\-peer\-discovery\-timeout
 expires exits with code
 .B 5
 instead of serving as a lone master; a master that is serving live peers
@@ -335,52 +326,51 @@ Hidden option intended for GUI integration.
 .\" --- p2p subcommand ---
 .SS p2p subcommand
 .TP
-.BR BOOTNODE [\fI:PORT\fP]
-Optional bootnode host for cross-network peer discovery: a bare hostname/IPv4,
-a bracketed IPv6 literal, or a
+.BI \-\-discovery\-server\fP= ENDPOINT
+Discovery server (the
+.B hsync\-bootnode
+daemon speaking
+.IR boot/1 )
+for cross-network peer discovery: a bare hostname/IPv4, a bracketed IPv6
+literal, or a
 .IR HOST : PORT
-pair (the QUIC scheme is implied); omit it to stay on mDNS only. Extra UDP ports
-to try for the
-.B same
-node (egress-firewall fallback) are set with
-.BR HSYNC_BOOTNODE_PORTS
-(see ENVIRONMENT).
+pair (the QUIC scheme is implied). Repeatable, and each value may carry a
+comma-separated list, so the option accepts exactly the grammar of
+.BR HSYNC_DISCOVERY_SERVER_ENDPOINTS .
+The client leases and queries every listed server and merges the peers it
+learns, so a peer registered through one server is visible through any other.
+Omit it to stay on mDNS only. An endpoint that carries no port uses 443; extra
+UDP ports to try on
+.B each
+endpoint (egress-firewall fallback) are set with
+.BR HSYNC_DISCOVERY_SERVER_EXTRA_PORTS .
 .TP
 .BR \-\-listen\-port =\fIPORT\fP
 Port to listen on when acting as p2p master (default: 0 = auto).
 .TP
-.BR \-\-port =\fIPORT\fP
-UDP (QUIC) port of the remote bootnode (default: 443). Only meaningful with
-.BR BOOTNODE ;
-without it,
-.B \-\-port
-is refused rather than ignored. Mutually exclusive with a port given in
-.BR BOOTNODE [\fI:PORT\fP] .
-Additional ports for the same node are offered by
-.BR HSYNC_BOOTNODE_PORTS .
+.B \-\-map\-data\-port
+Map the p2p data-plane TCP port with UPnP (opt\-in; off by default). Without a
+discovery server the flag has no effect (mDNS discovery stays on the local
+network).
 .TP
-.B \-\-upnp
-Map the master TCP port with UPnP (opt\-in; off by default). Without a bootnode
-the flag has no effect (mDNS discovery stays on the local network).
-.TP
-.BI \-\-bootnode\-fingerprint\fP= FINGERPRINT
-Pin the bootnode certificate fingerprint (canonical
+.BI \-\-discovery\-server\-fingerprint\fP= FINGERPRINT
+Pin a discovery server certificate fingerprint (canonical
 .I sha256:<hex>
-or bare hex); repeatable up to two values for a rotation window. Refused
-without a
-.BR BOOTNODE .
+or bare hex); repeatable up to two values per server for a rotation window.
+Refused without at least one
+.BR \-\-discovery\-server .
 Selects the
 .I strict
 trust policy.
 .TP
-.B \-\-bootnode\-tofu
-Trust the bootnode certificate on first use (accept-new); a later mismatch is
-refused as a possible man-in-the-middle. Selects the
+.B \-\-discovery\-server\-tofu
+Trust a discovery server certificate on first use (accept-new); a later
+mismatch is refused as a possible man-in-the-middle. Selects the
 .I accept-new
 trust policy.
 .TP
-.BI \-\-bootnode\-trust\fP= POLICY
-Bootnode TLS trust policy. One of:
+.BI \-\-discovery\-server\-trust\fP= POLICY
+Discovery-server TLS trust policy. One of:
 .RS
 .TP
 .I ask
@@ -389,22 +379,21 @@ it; refuse a changed one. Without a terminal the client fails closed.
 .TP
 .I accept-new
 Pin the first sighting silently (same as
-.BR \-\-bootnode\-tofu ).
+.BR \-\-discovery\-server\-tofu ).
 .TP
 .I strict
 Require a pin (same as
-.BR \-\-bootnode\-fingerprint ).
+.BR \-\-discovery\-server\-fingerprint ).
 .TP
 .I none
 No verification (loopback/tests only; same as an unpinned insecure link).
 .RE
 .IP
 The decision is remembered in the known-hosts store (see
-.BR HSYNC_BOOTNODE_TRUST_FILE );
+.BR HSYNC_DISCOVERY_SERVER_TRUST_FILE );
 manage it with
-.BR "hsync trust bootnode" .
-.TP
-.BR \-\-discovery\-timeout =\fISEC\fP
+.BR "hsync trust discovery\-server" .
+.BR \-\-peer\-discovery\-timeout =\fISEC\fP
 Time to wait for initial p2p peer discovery
 (default:
 .BR 0 ;
@@ -529,7 +518,7 @@ namespace; verify a fingerprint out of band before pinning it.
 Manage the p2p known-peers store (identities are
 .IR device-id|bucket ).
 .TP
-.B "hsync trust bootnode {list,show,add,remove,fingerprint} [\-\-json]"
+.B "hsync trust discovery\-server {list,show,add,remove,fingerprint} [\-\-json]"
 Manage the bootnode known-hosts store.
 .B fingerprint
 prints a node's certificate fingerprint without trusting it.
@@ -539,12 +528,12 @@ Manage the sync-server known-hosts store.
 .B fingerprint
 prints a server's certificate fingerprint without trusting it.
 .TP
-.BR "hsync trust \fISTORE\fP add \fIid fingerprint\fP [\-\-port PORT] [\-\-bucket NAME]"
+.BR "hsync trust \fISTORE\fP add \fIid fingerprint\fP [\-\-bucket NAME]"
 Pin a fingerprint (accepts
 .I sha256:<hex>
 or bare hex; exits non-zero on an invalid fingerprint).
 .TP
-.BR "hsync trust \fISTORE\fP remove \fIid\fP [\-\-port PORT] [\-\-bucket NAME]"
+.BR "hsync trust \fISTORE\fP remove \fIid\fP [\-\-bucket NAME]"
 Forget a pin (like
 .BR "ssh\-keygen \-R" ).
 .PP
@@ -672,7 +661,7 @@ to isolate multiple independent sync groups on the same network.
 .\" ---------------------------------------------------------------------
 .SH ENVIRONMENT
 .TP
-.B HSYNC_SERVER
+.B HSYNC_SERVER_URL
 Sync-server endpoint: a bare
 .RI host ,
 .RI host : port ,
@@ -785,7 +774,7 @@ Periodic resync interval in seconds (default:
 .BR 300 ;
 0 = disabled).
 .TP
-.B HSYNC_BOOTNODE
+.B HSYNC_DISCOVERY_SERVER_ENDPOINTS
 Optional bootnode endpoint for cross-network discovery: a bare hostname/IPv4, a
 .RI HOST : PORT
 pair, or a bracketed IPv6 literal (optionally
@@ -795,7 +784,7 @@ No scheme or path. Unset keeps discovery on mDNS only. The QUIC port defaults to
 .B \-\-port
 overrides a port embedded here.
 .TP
-.B HSYNC_BOOTNODE_PORTS
+.B HSYNC_DISCOVERY_SERVER_EXTRA_PORTS
 Comma-separated, ordered extra UDP ports to try for the
 .B same
 bootnode (multi-port dial fallback); e.g.
@@ -807,30 +796,30 @@ the same set
 .BR \-\-ports ).
 Unset keeps single-port dialing.
 .TP
-.B HSYNC_BOOTNODE_FINGERPRINT
+.B HSYNC_DISCOVERY_SERVER_FINGERPRINTS
 Comma-separated bootnode certificate fingerprint(s) to pin (up to two,
 .I sha256:<hex>
 or bare hex).
 .TP
-.B HSYNC_BOOTNODE_TOFU
+.B HSYNC_DISCOVERY_SERVER_TOFU
 Trust the bootnode certificate on first use (1 = on; default off).
 .TP
-.B HSYNC_BOOTNODE_TRUST
+.B HSYNC_DISCOVERY_SERVER_TRUST
 Bootnode TLS trust policy:
 .IR ask " (default), " accept-new ", " strict " or " none .
 Equivalent to
-.BR \-\-bootnode\-trust .
+.BR \-\-discovery\-server\-trust .
 .TP
-.B HSYNC_BOOTNODE_TRUST_FILE
+.B HSYNC_DISCOVERY_SERVER_TRUST_FILE
 File storing the trusted bootnode fingerprints (default:
-.IR $XDG_STATE_HOME/hsync/bootnode_known_hosts.json ,
+.IR $XDG_STATE_HOME/hsync/discovery_server_known_hosts.json ,
 or
-.IR ~/.local/state/hsync/bootnode_known_hosts.json
+.IR ~/.local/state/hsync/discovery_server_known_hosts.json
 when
 .I XDG_STATE_HOME
 is unset).
 .TP
-.B HSYNC_UPNP_ENABLED
+.B HSYNC_MAP_DATA_PORT
 Map the master TCP port with UPnP (true/false; default false = opt\-in only
 with a bootnode).
 .TP
@@ -840,7 +829,7 @@ Port to use when acting as p2p master (default: 0 = auto).
 .B HSYNC_P2P_GROUP
 Group name for p2p peer filtering (default: empty = no filter).
 .TP
-.B HSYNC_DISCOVERY_TIMEOUT
+.B HSYNC_PEER_DISCOVERY_TIMEOUT
 Seconds to wait for the first p2p peer (default:
 .BR 0 ;
 wait indefinitely, mirroring the server-mode default of retrying an
@@ -919,7 +908,7 @@ Heartbeat interval in seconds for p2p mode (default:
 range: 1\(en60). Governs how often a peer's mDNS presence is re-announced and how
 often the discovery loop re-evaluates peer liveness.
 .TP
-.B HSYNC_BOOTNODE_REFRESH_INTERVAL
+.B HSYNC_DISCOVERY_SERVER_REFRESH_INTERVAL
 \fBboot/1\fR lease and query cadence in seconds (default:
 .BR 30 ;
 range: 1\(en300). Governs how often the client registers, refreshes its lease
@@ -991,13 +980,13 @@ identity lives in
 .IR device/ ,
 and the trusted keys live in
 .IR server_known_hosts.json ,
-.IR bootnode_known_hosts.json
+.IR discovery_server_known_hosts.json
 and
 .IR p2p_known_peers.json .
 Set
 .BR HSYNC_DEVICE_DIR ,
 .BR HSYNC_SERVER_TRUST_FILE ,
-.BR HSYNC_BOOTNODE_TRUST_FILE
+.BR HSYNC_DISCOVERY_SERVER_TRUST_FILE
 or
 .BR HSYNC_P2P_PIN_FILE
 to move one item out of it. The server keeps its per-bucket state here.
@@ -1071,13 +1060,13 @@ is unset; override with
 .BR HSYNC_P2P_PIN_FILE ).
 Pinned fingerprints of known p2p peers (TOFU).
 .TP
-.IR $XDG_STATE_HOME/hsync/bootnode_known_hosts.json
+.IR $XDG_STATE_HOME/hsync/discovery_server_known_hosts.json
 (or
-.IR ~/.local/state/hsync/bootnode_known_hosts.json
+.IR ~/.local/state/hsync/discovery_server_known_hosts.json
 when
 .I XDG_STATE_HOME
 is unset; override with
-.BR HSYNC_BOOTNODE_TRUST_FILE ).
+.BR HSYNC_DISCOVERY_SERVER_TRUST_FILE ).
 Known-hosts store for bootnode certificate fingerprints.
 .TP
 .IR $XDG_STATE_HOME/hsync/server_known_hosts.json
@@ -1192,8 +1181,8 @@ Non-interactive deployments accept the first sighting explicitly, or pin a
 fingerprint the operator published out of band:
 .PP
 .EX
-hsync p2p boot.example.net \-b shared \-\-bootnode\-tofu
-hsync p2p boot.example.net \-b shared \-\-bootnode\-fingerprint sha256:FINGERPRINT
+hsync p2p boot.example.net \-b shared \-\-discovery\-server\-tofu
+hsync p2p boot.example.net \-b shared \-\-discovery\-server\-fingerprint sha256:FINGERPRINT
 .EE
 .PP
 Read a node's fingerprint without trusting it, pin it, and manage the known
@@ -1203,10 +1192,10 @@ and
 .BR ssh\-keygen \-R ):
 .PP
 .EX
-hsync trust bootnode fingerprint boot.example.net
-hsync trust bootnode add boot.example.net sha256:FINGERPRINT
-hsync trust bootnode list
-hsync trust bootnode remove boot.example.net
+hsync trust discovery\-server fingerprint boot.example.net
+hsync trust discovery\-server add boot.example.net sha256:FINGERPRINT
+hsync trust discovery\-server list
+hsync trust discovery\-server remove boot.example.net
 .EE
 .PP
 Authenticate to a private node or a protected bucket. The node holds the raw

@@ -194,12 +194,12 @@ systemd unit's `ExecStart`; the rest are consumed directly by the hsync binary.
 | `HSYNC_STATE_DIR` | `/var/lib/hsync/state` | Installation state directory: the server's per-bucket state and the default parent of the device identity, trust stores and p2p pins when their own override is unset |
 | `HSYNC_LOCKS_DIR` | `/var/lib/hsync/locks` | Directory for the per-directory instance locks (`<sha256>.lock` per synced directory) |
 | `HSYNC_P2P_PIN_FILE` | `/var/lib/hsync/p2p_known_peers.json` | File storing pinned fingerprints of known p2p peers (TOFU) |
-| `HSYNC_BOOTNODE_TRUST_FILE` | `/var/lib/hsync/bootnode_known_hosts.json` | File storing trusted bootnode fingerprints (known-hosts store) |
+| `HSYNC_DISCOVERY_SERVER_TRUST_FILE` | `/var/lib/hsync/discovery_server_known_hosts.json` | File storing trusted bootnode fingerprints (known-hosts store) |
 | `HSYNC_SERVER_TRUST_FILE` | `/var/lib/hsync/server_known_hosts.json` | File storing trusted server fingerprints (known-hosts store) |
 | `HSYNC_SERVER_TRUST` | `chain` | Server TLS trust policy (`chain`/`ask`/`accept-new`/`strict`/`none`) |
-| `HSYNC_DISCOVERY_TIMEOUT` | `0` | Seconds to wait for the first peer (0 = indefinite) |
+| `HSYNC_PEER_DISCOVERY_TIMEOUT` | `0` | Seconds to wait for the first peer (0 = indefinite) |
 | `HSYNC_NEVER_MASTER` | `false` | Never become master; always remain a client/slave |
-| `HSYNC_SERVER` | *(empty)* | Server endpoint: `host`/`host:port`/`[IPv6]`/`[IPv6]:port` or full `https://` URL (for server mode) |
+| `HSYNC_SERVER_URL` | *(empty)* | Server endpoint: `host`/`host:port`/`[IPv6]`/`[IPv6]:port` or full `https://` URL (for server mode) |
 | `HSYNC_API_KEY` | *(empty)* | API key (for server mode) |
 | `HSYNC_DELETION_POLICY` | `propagate` | What a deletion does: `propagate` or `keep` (never delete on this device) |
 | `HSYNC_COMPRESSION_ENABLED` | `true` | Enable zstd compression for file transfers |

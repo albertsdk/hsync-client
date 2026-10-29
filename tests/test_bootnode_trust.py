@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""Unit tests for the durable bootnode trust store (``bootnode_known_hosts.json``).
+"""Unit tests for the durable bootnode trust store (``discovery_server_known_hosts.json``).
 
 The store is the client's known hosts (ADR-0035): it persists the accepted
 fingerprint per ``host:port`` with ``first_seen`` and the ``source`` that trusted

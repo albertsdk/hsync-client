@@ -80,7 +80,7 @@ def _prompt_allowed(config: Mapping[str, object], policy_key: str) -> bool:
 def build_trust_prompt(
     config: Mapping[str, object],
     *,
-    policy_key: str = "BOOTNODE_TRUST",
+    policy_key: str = "DISCOVERY_SERVER_TRUST",
     prompt: TrustPrompt | None = None,
 ) -> TrustPrompt | None:
     """Return the terminal prompt to use, or ``None`` to fail closed.

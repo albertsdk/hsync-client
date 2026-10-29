@@ -171,7 +171,7 @@ re-raised untouched.
 | Tombstones | `tombstones.py` | same DB, `tombstones` table | deletion propagation |
 | Folder identity | `state_backend.py` | `.hsyncfolder` at bucket root | UUIDv4 re-anchor |
 | TOFU pins | `pinning.py::PinStore` | pin store (0o600) | p2p master fingerprint trust |
-| Bootnode trust | `bootnode_trust.py::BootnodeTrustStore` | `$HSYNC_BOOTNODE_TRUST_FILE` (0o600) | bootnode fingerprint pin/TOFU (ADR-0034) |
+| Bootnode trust | `bootnode_trust.py::BootnodeTrustStore` | `$HSYNC_DISCOVERY_SERVER_TRUST_FILE` (0o600) | bootnode fingerprint pin/TOFU (ADR-0034) |
 | p2p master identity | `ssl_utils.py::load_or_create_master_cert` | persistent cert/key (0o600) | stable fingerprint across restarts |
 
 `resolve_bucket_folder` (`state_backend.py::resolve_bucket_folder`) memoizes the

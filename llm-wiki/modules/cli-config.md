@@ -8,12 +8,12 @@ How flags/env become the running `CONFIG` and how `run_sync` drives a session.
 | ------ | -------- | ---- |
 | `main` (parent callback) | `cli.py::main` | global options `--version` / `--capabilities-json` / `--help-symbols` (typed before the subcommand); no implicit mode |
 | `p2p` | `cli.py::p2p` | p2p subcommand: shared + p2p-only flags, including final `--no-peer-download` opt-out and dangerous `--allow-unauthenticated-writes`; validates and calls `run_sync` |
-| `server` | `cli.py::server` | central-server subcommand: `HOSTNAME[:PORT]` positional + `--port` + shared flags, resolves the server URL eagerly (`HOSTNAME`/`HOSTNAME:PORT` form, else `HSYNC_SERVER` from shell or `--env-file`) and fails fast with `typer.BadParameter` when no server can be resolved, then calls `run_sync` |
+| `server` | `cli.py::server` | central-server subcommand: `--server-url URL` (a full `https://…[/path]` URL or a bare `HOST[:PORT]`) + shared flags, resolves the server URL eagerly (else `HSYNC_SERVER_URL` from shell or `--env-file`) and fails fast with `typer.BadParameter` when no server can be resolved, then calls `run_sync` |
 | `run` | `cli.py::run` | console-script entry: installs the `SIGTERM`→`KeyboardInterrupt` handler (`cli.py::_install_sigterm_handler`, so a service/desktop stop unwinds like Ctrl+C), maps an operator stop to a clean exit (plain `KeyboardInterrupt`, plus Typer's own `Exit(130)` kept in `cli.py::_INTERRUPTED_EXIT_CODE)`), and in its `finally` drains and closes the log sinks (`logger.py::shutdown_logging`) — the close is what releases the semaphores `resource_tracker` would otherwise report as leaked |
 | `collect_subcommand_options` | `cli.py::collect_subcommand_options` | introspects each subcommand's long flags for the capabilities document |
 | `capabilities_json_callback` | `cli.py::capabilities_json_callback` | `--capabilities-json` (per-subcommand introspection via `collect_subcommand_options`) |
 | `_validate_bucket` | `cli.py::_validate_bucket` | bucket flag validation |
-| `_build_server_url` | `cli.py` | `HOSTNAME[:PORT]` form → `https://host:port` (implied scheme, `SERVER_DEFAULT_PORT` when no port, IPv6 auto-bracketing via the shared `hsync_common.endpoint` parser; rejects URL-like input, refuses `--port` without a hostname, and a port in the host is mutually exclusive with `--port`); `None` hostname → the `server` subcommand resolves the `HSYNC_SERVER` fallback (shell env or `--env-file`) and raises `typer.BadParameter` if still unset |
+| `_build_server_url` | `cli.py::_build_server_url` | `--server-url` → the canonical `https://` URL: a full `https://…[/path]` value is validated by the shared `parse_https_url`, a bare `HOST[:PORT]` becomes `https://host:port` (`SERVER_DEFAULT_PORT` when it carries no port, IPv6 auto-bracketed). A non-HTTPS scheme is a usage error; the port always belongs to the endpoint (no `--port`). `None` → the `server` subcommand resolves the `HSYNC_SERVER_URL` fallback (shell env or `--env-file`) and raises `typer.BadParameter` if still unset |
 | `_validate_shared_options` | `cli.py::_validate_shared_options` | numeric-range / bandwidth / direction / concurrency / mass-delete / delta checks shared by both subcommands. Accepted names are declared once in `_SharedValidationValues` (`cli.py::_SharedValidationValues`), whose field names drive the frame extraction and type every read (a typo is a mypy error); a command frame missing one fails fast naming the option. Shared/mode-specific classification pinned by `tests/test_cli_option_parity.py` |
 | `state` namespace + `state_reset` | `cli.py::state_reset` | `hsync state reset --folder DIR [--json] [--quarantine]`: forgets one folder's versions + tombstones; the CLI is a thin shell and the logic lives in [state_reset.py](../data-models.md#state_resetpy-sync-state-reset) |
 
@@ -32,11 +32,11 @@ passphrase (at least 12 chars) is derived to the group key by
 path (`main_logic.py` →
 `load_env_file`); `./.env` is not auto-loaded. `--env-file` only fills
 `EnvSettings` fields; bucket/path/direction/the `p2p`/`server` subcommand
-selection/`--prefer-master`/the server `HOSTNAME[:PORT]`+`--port` stay CLI-only
-(the `HSYNC_SERVER` env var accepts a bare `HOST[:PORT]`/`[IPv6]` or a full
+selection/`--prefer-master`/`--server-url` stay CLI-only
+(the `HSYNC_SERVER_URL` env var accepts a bare `HOST[:PORT]`/`[IPv6]` or a full
 `https://…[/path]` URL; the CLI host wins when both are set). A server-mode run
-with neither a `HOSTNAME` nor a resolvable
-`HSYNC_SERVER` (shell env or `--env-file`) is rejected at parse time with a
+with neither a `--server-url` nor a resolvable
+`HSYNC_SERVER_URL` (shell env or `--env-file`) is rejected at parse time with a
 `typer.BadParameter` usage error, before the banner/logging or `run_sync`
 starts — so the missing server never reaches the deep, late validation inside
 `run_sync`.
@@ -78,20 +78,25 @@ across topologies. Continuous is the default and `--once` is the only run-mode k
 | `set_config` | `config.py::set_config` | write the global in-place; modules read `CONFIG` directly — **no** `get_config` |
 | `set_debug` / `is_debug` | `config.py::set_debug` / `config.py::is_debug` | debug flag |
 | `load_env_file` | `config.py::load_env_file` | dotenv loader |
-| typed getters | `config.py::get_server_url`–`config.py::get_connectivity_retry_max_wait` | `get_server_url`, `get_api_key`, p2p getters (`get_p2p_key`/`get_p2p_group`/`get_p2p_listen_port`), discovery getters, the bootnode getters (`get_bootnode`, `get_bootnode_tofu`, `get_bootnode_ports`), guard getters, delta getters, etc. |
+| typed getters | `config.py::get_server_url`–`config.py::get_connectivity_retry_max_wait` | `get_server_url`, `get_api_key`, p2p getters (`get_p2p_key`/`get_p2p_group`/`get_p2p_listen_port`), the discovery-server getters (`get_discovery_server_endpoints`/`_extra_ports`/`_fingerprints`/`_tofu`/`_trust`/`_refresh_interval`), `get_map_data_port`, `get_peer_discovery_timeout`, guard getters, delta getters, etc. |
 
-The `p2p` subcommand takes an optional positional `BOOTNODE` (`HOST[:PORT]`) plus
-`--port` (bootnode UDP, default 443) and `--upnp` (opt-in; off by default);
-`_build_bootnode`
-(`cli.py`) validates them, refuses `--port` without a host (never a silently
-ignored flag), and a port in `BOOTNODE` is mutually exclusive with `--port`.
-The source(s) are selected in `p2p_discovery.build_discovery_plan`
-(`config["BOOTNODE"]` unset → mDNS only, set → `HybridDiscovery` running mDNS
-**and** bootnode over one shared `PeerManager`), so `p2p_handler.run_p2p_mode`
-only sees the `DiscoveryPlan` surface.
+The `p2p` subcommand takes a repeatable `--discovery-server ENDPOINT`
+(`HOST[:PORT]`, QUIC/UDP, no scheme; each value may itself carry a comma list)
+plus `--map-data-port` (opt-in UPnP for the data-plane port, off by default).
+`_build_discovery_servers` (`cli.py::_build_discovery_servers`) parses the values
+with the shared `hsync_common.endpoint.parse_endpoint_list` in strict mode
+(an invalid or duplicated entry is a usage error, never a silently ignored
+flag), applies the channel default port, and falls back to
+`HSYNC_DISCOVERY_SERVER_ENDPOINTS` when the option is omitted. The sources are
+selected in `p2p_discovery.build_discovery_plan`: no endpoints → mDNS only;
+one or more → `HybridDiscovery` running mDNS **and** one
+`BootnodeDiscovery` per endpoint (wrapped in
+`MultiBootnodeDiscovery` when there is more than one) over one shared
+`PeerManager`, so `p2p_handler.run_p2p_mode` only sees the `DiscoveryPlan`
+surface and the election stays single.
 
-Multi-port dial fallback: `HSYNC_BOOTNODE_PORTS`
-(`config.py::get_bootnode_ports`, a thin lenient wrapper over the shared
+Multi-port dial fallback: `HSYNC_DISCOVERY_SERVER_EXTRA_PORTS`
+(`config.py::get_discovery_server_extra_ports`, a thin lenient wrapper over the shared
 `hsync_common.endpoint.parse_port_list` SSOT) adds extra UDP ports to try for the
 SAME bootnode; `BootnodeClient` (`boot_client.py::_with_connection`) dials the last
 working port first (then the primary and extras) and falls back only on a
@@ -102,14 +107,15 @@ reachable, so a reply timeout or a trust/protocol error propagates without
 re-dialling. The wire is unchanged and trust stays a single pin (shared fleet
 identity), so the fallback never re-prompts.
 
-The bootnode endpoint is `HSYNC_BOOTNODE` (the `_validate_bootnode_host`
-validator accepts `host`, `host:port`, `[IPv6]`, `[IPv6]:port` and normalizes
-through the shared `hsync_common.endpoint.normalize_bare_endpoint` — the same
-rule the desktop GUI applies to its discovery-server field; no scheme or
-path), and UPnP is `HSYNC_UPNP_ENABLED` (default `false`; opt-in). The p2p
-command resolves the bootnode CLI > env (`_build_bootnode`,
-`use_env=True`): a CLI `BOOTNODE[:PORT]` positional replaces the whole env
-endpoint, and an explicit `--port` overrides a port embedded in the env.
+The discovery-server endpoints are `HSYNC_DISCOVERY_SERVER_ENDPOINTS`
+(`_validate_discovery_server_endpoints` normalizes the list through the shared
+`hsync_common.endpoint.normalize_endpoint_list` in strict mode — the same
+rule the desktop GUI applies to its field; `host`, `host:port`, `[IPv6]`,
+`[IPv6]:port`, comma-separated, no scheme or path), and UPnP is
+`HSYNC_MAP_DATA_PORT` (default `false`; opt-in). The p2p command resolves CLI >
+env (`_build_discovery_servers`, `use_env=True`: a CLI value replaces the whole
+env list), and `get_discovery_server_endpoints()` applies the channel default
+port so `a` and `a:443` are one destination.
 `HSYNC_P2P_LISTEN_PORT` sets the master TCP listen port (env for the
 `p2p_listen_port` field; `BOOTNODE_DEFAULT_PORT = 443` in `constants.py`).
 
@@ -147,9 +153,9 @@ write opt-in is `CLI-opt-in OR environment-opt-in` and defaults false.
    metal, where the memory probe returns `None`).
 - `constants.py::SERVER_DEFAULT_PORT` — a re-export of
   `hsync_common/constants.py::SERVER_DEFAULT_PORT`: the port `hsync server
-  HOSTNAME` uses when `--port` is omitted (the same default the server binds),
+  HOSTNAME` uses when the endpoint carries no port (the same default the server binds),
   so the omitted-port form targets a default server install directly;
-  reverse-proxy deployments pass `--port 443`.
+  reverse-proxy deployments pass `--server-url https://host` (or `host:443`).
 - Shared CLI/GUI defaults and their accepted bounds (HTTP timeout, retry/stability
   delays, sync direction, bandwidth bounds, mass-delete guard, free-space/inbound
   limits, max-wait timeout, peer-download caps) live in `hsync_common/defaults.py`;

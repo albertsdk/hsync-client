@@ -32,7 +32,7 @@ import asyncio
 import contextlib
 import json
 import threading
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 from aioquic.asyncio import connect
@@ -59,7 +59,13 @@ from hsync_client.constants import (
     RELAY_KEEPALIVE_INTERVAL,
 )
 
-__all__ = ["RelayAcceptor", "RelayDialer", "RelayOpenError"]
+__all__ = [
+    "FailoverRelayDialer",
+    "GroupRelayAcceptor",
+    "RelayAcceptor",
+    "RelayDialer",
+    "RelayOpenError",
+]
 
 
 class RelayOpenError(RuntimeError):
@@ -119,7 +125,7 @@ async def _quic_session(client: BootnodeClient) -> AsyncIterator[Any]:
             if connected:
                 raise
             last_exc = exc
-    log.debug(f"Relay cannot reach the bootnode: {last_exc}")
+    log.debug(f"Relay cannot reach the discovery server: {last_exc}")
 
 
 async def bridge(
@@ -254,7 +260,7 @@ class RelayDialer:
         """Loopback accept callback: one HTTPS session rides this relay stream."""
 
         async def _handle(tcp_reader: Any, tcp_writer: Any) -> None:
-            log.info("Relay tunnel established with the master (via the bootnode)")
+            log.info("Relay tunnel established with the master (via the discovery server)")
             await bridge(tcp_reader, tcp_writer, stream_reader, stream_writer)
             if self._stop is not None:
                 self._stop.set()
@@ -356,7 +362,7 @@ class RelayAcceptor:
                     raise BootnodeProtocolError("expected a 'relay_listening' frame")
                 self._registered = True
                 self._ready.set()
-                log.info("Relay listener registered with the bootnode")
+                log.info("Relay listener registered with the discovery server")
                 tasks = [
                     asyncio.create_task(self._read_incoming(quic, reader, sessions)),
                     asyncio.create_task(self._keepalive(writer)),
@@ -419,3 +425,59 @@ class RelayAcceptor:
             await asyncio.sleep(RELAY_KEEPALIVE_INTERVAL)
             writer.write(frame_line(build_relay_ping_frame(cid=self._cid, bucket=self._bucket)))
             await writer.drain()
+
+
+class FailoverRelayDialer:
+    """Relay dialer that pairs through the first discovery server that accepts it.
+
+    With several discovery servers configured, the peer a relay session targets
+    may be listening on any of them and a ``query`` record does not say which
+    one paired it. Each server is asked in order and the first ``relay_ok``
+    wins, so the caller keeps its single "open, then close" contract.
+    """
+
+    def __init__(self, dialers: Sequence[RelayDialer]) -> None:
+        self._dialers = list(dialers)
+        self._winner: RelayDialer | None = None
+
+    def open(self, timeout: float = 15.0) -> tuple[str, int] | None:
+        """Try each server in order; return the loopback endpoint or ``None``."""
+        for dialer in self._dialers:
+            endpoint = dialer.open(timeout)
+            if endpoint is not None:
+                self._winner = dialer
+                return endpoint
+        return None
+
+    def close(self) -> None:
+        """Tear down the winning tunnel and any attempt that is still open."""
+        self._winner = None
+        for dialer in self._dialers:
+            dialer.close()
+
+
+class GroupRelayAcceptor:
+    """Relay listener registered on **every** discovery server of the group.
+
+    A peer reaches this node through whichever server it is paired with, so the
+    serving side must be present on all of them; a single successful
+    registration is enough for the relay to be considered available.
+    """
+
+    def __init__(self, acceptors: Sequence[RelayAcceptor]) -> None:
+        self._acceptors = list(acceptors)
+
+    @property
+    def active(self) -> bool:
+        """True while at least one server still holds this node's listener."""
+        return any(acceptor.active for acceptor in self._acceptors)
+
+    def start(self, timeout: float = 10.0) -> bool:
+        """Register on every server; ``True`` when at least one accepted."""
+        started = [acceptor.start(timeout) for acceptor in self._acceptors]
+        return any(started)
+
+    def stop(self) -> None:
+        """Withdraw the listener from every server (idempotent)."""
+        for acceptor in self._acceptors:
+            acceptor.stop()

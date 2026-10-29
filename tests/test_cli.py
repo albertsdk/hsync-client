@@ -154,7 +154,9 @@ class TestTyperCli:
     @patch("hsync_client.main_logic.run_sync")
     def test_accepts_bucket_short_option(self, mock_run_sync):
         """CLI accepts -b bucket option."""
-        result = runner.invoke(app, ["server", "-b", "testbucket", "test.example.com"])
+        result = runner.invoke(
+            app, ["server", "-b", "testbucket", "--server-url", "test.example.com"]
+        )
         assert result.exit_code == 0
         mock_run_sync.assert_called_once()
         call_kwargs = mock_run_sync.call_args.kwargs
@@ -163,7 +165,9 @@ class TestTyperCli:
     @patch("hsync_client.main_logic.run_sync")
     def test_accepts_bucket_long_option(self, mock_run_sync):
         """CLI accepts --bucket option."""
-        result = runner.invoke(app, ["server", "--bucket", "mybucket123", "test.example.com"])
+        result = runner.invoke(
+            app, ["server", "--bucket", "mybucket123", "--server-url", "test.example.com"]
+        )
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
         assert call_kwargs["bucket"] == "mybucket123"
@@ -171,10 +175,14 @@ class TestTyperCli:
     @patch("hsync_client.main_logic.run_sync")
     def test_accepts_bucket_with_hyphens_and_underscores(self, mock_run_sync):
         """CLI accepts bucket names with hyphens and underscores."""
-        result = runner.invoke(app, ["server", "-b", "test-bucket", "test.example.com"])
+        result = runner.invoke(
+            app, ["server", "-b", "test-bucket", "--server-url", "test.example.com"]
+        )
         assert result.exit_code == 0
         assert mock_run_sync.call_args.kwargs["bucket"] == "test-bucket"
-        result = runner.invoke(app, ["server", "-b", "test_bucket", "test.example.com"])
+        result = runner.invoke(
+            app, ["server", "-b", "test_bucket", "--server-url", "test.example.com"]
+        )
         assert result.exit_code == 0
         assert mock_run_sync.call_args.kwargs["bucket"] == "test_bucket"
 
@@ -190,7 +198,9 @@ class TestTyperCli:
     @patch("hsync_client.main_logic.run_sync")
     def test_server_url_is_assembled_from_hostname(self, mock_run_sync):
         """The bare hostname form assembles the implied https:// server URL."""
-        result = runner.invoke(app, ["server", "-b", "test", "test.example.com", "--port", "8000"])
+        result = runner.invoke(
+            app, ["server", "-b", "test", "--server-url", "test.example.com:8000"]
+        )
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
         assert call_kwargs["bucket"] == "test"
@@ -199,7 +209,7 @@ class TestTyperCli:
     @patch("hsync_client.main_logic.run_sync")
     def test_default_is_continuous(self, mock_run_sync):
         """Without --once the client runs continuously (infinite retry)."""
-        result = runner.invoke(app, ["server", "-b", "test", "test.example.com"])
+        result = runner.invoke(app, ["server", "-b", "test", "--server-url", "test.example.com"])
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
         assert call_kwargs["continuous"] is True
@@ -207,7 +217,9 @@ class TestTyperCli:
     @patch("hsync_client.main_logic.run_sync")
     def test_once_flag(self, mock_run_sync):
         """CLI accepts --once as the sole one-shot form."""
-        result = runner.invoke(app, ["server", "-b", "test", "--once", "test.example.com"])
+        result = runner.invoke(
+            app, ["server", "-b", "test", "--once", "--server-url", "test.example.com"]
+        )
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
         assert call_kwargs["continuous"] is False
@@ -223,7 +235,9 @@ class TestTyperCli:
     @patch("hsync_client.main_logic.run_sync")
     def test_verbose_flag(self, mock_run_sync):
         """CLI accepts -v/--verbose flag."""
-        result = runner.invoke(app, ["server", "-b", "test", "test.example.com", "-v"])
+        result = runner.invoke(
+            app, ["server", "-b", "test", "--server-url", "test.example.com", "-v"]
+        )
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
         assert call_kwargs["debug"] is True
@@ -231,7 +245,9 @@ class TestTyperCli:
     @patch("hsync_client.main_logic.run_sync")
     def test_quiet_flag(self, mock_run_sync):
         """CLI accepts -q/--quiet flag."""
-        result = runner.invoke(app, ["server", "-b", "test", "test.example.com", "-q"])
+        result = runner.invoke(
+            app, ["server", "-b", "test", "--server-url", "test.example.com", "-q"]
+        )
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
         assert call_kwargs["quiet"] is True
@@ -239,7 +255,9 @@ class TestTyperCli:
     @patch("hsync_client.main_logic.run_sync")
     def test_dry_run_flag(self, mock_run_sync):
         """CLI accepts -n/--dry-run flag."""
-        result = runner.invoke(app, ["server", "-b", "test", "test.example.com", "-n"])
+        result = runner.invoke(
+            app, ["server", "-b", "test", "--server-url", "test.example.com", "-n"]
+        )
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
         assert call_kwargs["dryrun"] is True
@@ -247,7 +265,9 @@ class TestTyperCli:
     @patch("hsync_client.main_logic.run_sync")
     def test_insecure_flag(self, mock_run_sync):
         """CLI accepts --insecure flag."""
-        result = runner.invoke(app, ["server", "-b", "test", "test.example.com", "--insecure"])
+        result = runner.invoke(
+            app, ["server", "-b", "test", "--server-url", "test.example.com", "--insecure"]
+        )
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
         assert call_kwargs["verify_ssl"] is False
@@ -258,7 +278,7 @@ class TestTyperCli:
         from hsync_common.runtime import ColorMode
 
         result = runner.invoke(
-            app, ["server", "-b", "test", "test.example.com", "--color", "never"]
+            app, ["server", "-b", "test", "--server-url", "test.example.com", "--color", "never"]
         )
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
@@ -275,7 +295,9 @@ class TestTyperCli:
     @patch("hsync_client.main_logic.run_sync")
     def test_path_option(self, mock_run_sync):
         """CLI accepts -p/--path option."""
-        result = runner.invoke(app, ["server", "-b", "test", "test.example.com", "-p", "/tmp/sync"])
+        result = runner.invoke(
+            app, ["server", "-b", "test", "--server-url", "test.example.com", "-p", "/tmp/sync"]
+        )
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
         assert call_kwargs["local_path"] == "/tmp/sync"
@@ -284,7 +306,16 @@ class TestTyperCli:
     def test_ca_cert_option(self, mock_run_sync):
         """CLI accepts --ca-cert option."""
         result = runner.invoke(
-            app, ["server", "-b", "test", "test.example.com", "--ca-cert", "/path/to/ca.crt"]
+            app,
+            [
+                "server",
+                "-b",
+                "test",
+                "--server-url",
+                "test.example.com",
+                "--ca-cert",
+                "/path/to/ca.crt",
+            ],
         )
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
@@ -294,7 +325,16 @@ class TestTyperCli:
     def test_output_option(self, mock_run_sync):
         """CLI accepts --log-file option."""
         result = runner.invoke(
-            app, ["server", "-b", "test", "test.example.com", "--log-file", "/tmp/log.txt"]
+            app,
+            [
+                "server",
+                "-b",
+                "test",
+                "--server-url",
+                "test.example.com",
+                "--log-file",
+                "/tmp/log.txt",
+            ],
         )
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
@@ -304,7 +344,7 @@ class TestTyperCli:
     def test_subdir_option(self, mock_run_sync):
         """CLI accepts --subdir option."""
         result = runner.invoke(
-            app, ["server", "-b", "test", "test.example.com", "--subdir", "subdir"]
+            app, ["server", "-b", "test", "--server-url", "test.example.com", "--subdir", "subdir"]
         )
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
@@ -314,7 +354,7 @@ class TestTyperCli:
     def test_retry_delay_option(self, mock_run_sync):
         """CLI accepts --retry-delay option."""
         result = runner.invoke(
-            app, ["server", "-b", "test", "test.example.com", "--retry-delay", "10"]
+            app, ["server", "-b", "test", "--server-url", "test.example.com", "--retry-delay", "10"]
         )
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
@@ -323,7 +363,7 @@ class TestTyperCli:
     @patch("hsync_client.main_logic.run_sync")
     def test_default_values(self, mock_run_sync):
         """CLI sets correct default values."""
-        result = runner.invoke(app, ["server", "-b", "test", "test.example.com"])
+        result = runner.invoke(app, ["server", "-b", "test", "--server-url", "test.example.com"])
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
         assert call_kwargs["continuous"] is True
@@ -337,14 +377,14 @@ class TestTyperCli:
         assert call_kwargs["logfile"] is None
         assert call_kwargs["resync"] is None
         assert call_kwargs["env_file"] is None
-        assert call_kwargs["discovery_timeout"] is None
+        assert call_kwargs["peer_discovery_timeout"] is None
 
     @patch("hsync_client.main_logic.run_sync")
     def test_discovery_timeout_accepts_zero(self, mock_run_sync):
-        """--discovery-timeout 0 is accepted as wait-indefinitely."""
-        result = runner.invoke(app, ["p2p", "-b", "test", "--discovery-timeout", "0"])
+        """--peer-discovery-timeout 0 is accepted as wait-indefinitely."""
+        result = runner.invoke(app, ["p2p", "-b", "test", "--peer-discovery-timeout", "0"])
         assert result.exit_code == 0
-        assert mock_run_sync.call_args.kwargs["discovery_timeout"] == 0
+        assert mock_run_sync.call_args.kwargs["peer_discovery_timeout"] == 0
 
     @patch("hsync_client.main_logic.run_sync")
     def test_bootnode_fingerprint_and_tofu_flow(self, mock_run_sync):
@@ -355,21 +395,31 @@ class TestTyperCli:
                 "p2p",
                 "-b",
                 "test",
+                "--discovery-server",
                 "boot.example.net",
-                "--bootnode-fingerprint",
+                "--discovery-server-fingerprint",
                 hex64,
-                "--bootnode-tofu",
+                "--discovery-server-tofu",
             ],
         )
         assert result.exit_code == 0
         kwargs = mock_run_sync.call_args.kwargs
-        assert kwargs["bootnode_fingerprints"] == (hex64,)
-        assert kwargs["bootnode_tofu"] is True
+        assert kwargs["discovery_server_fingerprints"] == (hex64,)
+        assert kwargs["discovery_server_tofu"] is True
 
     def test_bootnode_ca_cert_is_refused(self):
         """--ca-cert has no bootnode-channel meaning: refuse it, not silently ignore."""
         result = runner.invoke(
-            app, ["p2p", "-b", "test", "boot.example.net", "--ca-cert", "/tmp/ca.pem"]
+            app,
+            [
+                "p2p",
+                "-b",
+                "test",
+                "--discovery-server",
+                "boot.example.net",
+                "--ca-cert",
+                "/tmp/ca.pem",
+            ],
         )
         assert result.exit_code != 0
         assert "ca-cert" in result.output
@@ -381,9 +431,10 @@ class TestTyperCli:
                 "p2p",
                 "-b",
                 "test",
+                "--discovery-server",
                 "boot.example.net",
                 "--insecure",
-                "--bootnode-fingerprint",
+                "--discovery-server-fingerprint",
                 "0" * 64,
             ],
         )
@@ -391,16 +442,27 @@ class TestTyperCli:
         assert "mutually exclusive" in result.output
 
     def test_bootnode_fingerprint_requires_bootnode(self):
-        result = runner.invoke(app, ["p2p", "-b", "test", "--bootnode-fingerprint", "0" * 64])
+        result = runner.invoke(
+            app, ["p2p", "-b", "test", "--discovery-server-fingerprint", "0" * 64]
+        )
         assert result.exit_code != 0
-        assert "require a bootnode" in result.output
+        assert "require at least one --discovery-server" in result.output
 
     def test_bootnode_fingerprint_rejects_invalid(self):
         result = runner.invoke(
-            app, ["p2p", "-b", "test", "boot.example.net", "--bootnode-fingerprint", "zzz"]
+            app,
+            [
+                "p2p",
+                "-b",
+                "test",
+                "--discovery-server",
+                "boot.example.net",
+                "--discovery-server-fingerprint",
+                "zzz",
+            ],
         )
         assert result.exit_code != 0
-        assert "invalid --bootnode-fingerprint" in result.output
+        assert "invalid --discovery-server-fingerprint" in result.output
 
     def test_help_documents_discovery_timeout_zero(self):
         """Help output documents the 0 = wait indefinitely convention."""
@@ -414,7 +476,16 @@ class TestTyperCli:
     def test_env_file_option(self, mock_run_sync):
         """CLI accepts --env-file option."""
         result = runner.invoke(
-            app, ["server", "-b", "test", "test.example.com", "--env-file", "/path/to/env"]
+            app,
+            [
+                "server",
+                "-b",
+                "test",
+                "--server-url",
+                "test.example.com",
+                "--env-file",
+                "/path/to/env",
+            ],
         )
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
@@ -499,7 +570,7 @@ class TestTyperCli:
     def test_allow_deletions_flag(self, mock_run_sync):
         """CLI accepts --allow-deletions flag."""
         result = runner.invoke(
-            app, ["server", "-b", "test", "test.example.com", "--allow-deletions"]
+            app, ["server", "-b", "test", "--server-url", "test.example.com", "--allow-deletions"]
         )
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
@@ -516,7 +587,7 @@ class TestTyperCli:
     @patch("hsync_client.main_logic.run_sync")
     def test_allow_deletions_defaults_false(self, mock_run_sync):
         """--allow-deletions flag defaults to False when not provided."""
-        result = runner.invoke(app, ["server", "-b", "test", "test.example.com"])
+        result = runner.invoke(app, ["server", "-b", "test", "--server-url", "test.example.com"])
         assert result.exit_code == 0
         call_kwargs = mock_run_sync.call_args.kwargs
         assert call_kwargs["allow_deletions"] is False
@@ -528,7 +599,7 @@ class TestCLIValidation:
     def test_rejects_http_timeout_below_min(self):
         """CLI rejects --http-timeout below minimum."""
         result = runner.invoke(
-            app, ["server", "-b", "test", "test.example.com", "--http-timeout", "0"]
+            app, ["server", "-b", "test", "--server-url", "test.example.com", "--http-timeout", "0"]
         )
         assert result.exit_code != 0
         assert "timeout" in result.output.lower()
@@ -543,6 +614,7 @@ class TestCLIValidation:
                 "server",
                 "-b",
                 "test",
+                "--server-url",
                 "test.example.com",
                 "--http-timeout",
                 str(HTTP_TIMEOUT_MAX + 1),
@@ -553,7 +625,9 @@ class TestCLIValidation:
 
     def test_rejects_resync_interval_below_min(self):
         """CLI rejects --interval below minimum."""
-        result = runner.invoke(app, ["server", "-b", "test", "test.example.com", "--interval", "0"])
+        result = runner.invoke(
+            app, ["server", "-b", "test", "--server-url", "test.example.com", "--interval", "0"]
+        )
         assert result.exit_code != 0
         assert "interval" in result.output.lower()
 
@@ -563,7 +637,15 @@ class TestCLIValidation:
 
         result = runner.invoke(
             app,
-            ["server", "-b", "test", "test.example.com", "--interval", str(RESYNC_MAX + 1)],
+            [
+                "server",
+                "-b",
+                "test",
+                "--server-url",
+                "test.example.com",
+                "--interval",
+                str(RESYNC_MAX + 1),
+            ],
         )
         assert result.exit_code != 0
         assert "interval" in result.output.lower()
@@ -571,7 +653,7 @@ class TestCLIValidation:
     def test_rejects_retry_delay_below_min(self):
         """CLI rejects --retry-delay below minimum."""
         result = runner.invoke(
-            app, ["server", "-b", "test", "test.example.com", "--retry-delay", "0"]
+            app, ["server", "-b", "test", "--server-url", "test.example.com", "--retry-delay", "0"]
         )
         assert result.exit_code != 0
         assert "retry" in result.output.lower()
@@ -586,6 +668,7 @@ class TestCLIValidation:
                 "server",
                 "-b",
                 "test",
+                "--server-url",
                 "test.example.com",
                 "--retry-delay",
                 str(RECONNECT_DELAY_MAX + 1),
@@ -597,7 +680,8 @@ class TestCLIValidation:
     def test_rejects_stability_delay_below_min(self):
         """CLI rejects --stability-delay below minimum."""
         result = runner.invoke(
-            app, ["server", "-b", "test", "test.example.com", "--stability-delay", "0"]
+            app,
+            ["server", "-b", "test", "--server-url", "test.example.com", "--stability-delay", "0"],
         )
         assert result.exit_code != 0
         assert "stability" in result.output.lower()
@@ -612,6 +696,7 @@ class TestCLIValidation:
                 "server",
                 "-b",
                 "test",
+                "--server-url",
                 "test.example.com",
                 "--stability-delay",
                 str(STABILITY_DELAY_MAX + 1),
@@ -623,7 +708,8 @@ class TestCLIValidation:
     def test_rejects_max_wait_timeout_below_min(self):
         """CLI rejects --max-wait-timeout below minimum."""
         result = runner.invoke(
-            app, ["server", "-b", "test", "test.example.com", "--max-wait-timeout", "0"]
+            app,
+            ["server", "-b", "test", "--server-url", "test.example.com", "--max-wait-timeout", "0"],
         )
         assert result.exit_code != 0
         assert "max wait" in result.output.lower() or "timeout" in result.output.lower()
@@ -638,6 +724,7 @@ class TestCLIValidation:
                 "server",
                 "-b",
                 "test",
+                "--server-url",
                 "test.example.com",
                 "--max-wait-timeout",
                 str(MAX_WAIT_TIMEOUT_MAX + 1),
@@ -647,15 +734,24 @@ class TestCLIValidation:
         assert "max wait" in result.output.lower() or "timeout" in result.output.lower()
 
     def test_rejects_negative_discovery_timeout(self):
-        """CLI rejects negative --discovery-timeout values."""
-        result = runner.invoke(app, ["p2p", "-b", "test", "--discovery-timeout", "-1"])
+        """CLI rejects negative --peer-discovery-timeout values."""
+        result = runner.invoke(app, ["p2p", "-b", "test", "--peer-discovery-timeout", "-1"])
         assert result.exit_code != 0
         assert "discovery timeout" in result.output.lower()
 
     def test_rejects_invalid_sync_direction(self):
         """CLI rejects invalid --sync-direction value."""
         result = runner.invoke(
-            app, ["server", "-b", "test", "test.example.com", "--sync-direction", "invalid"]
+            app,
+            [
+                "server",
+                "-b",
+                "test",
+                "--server-url",
+                "test.example.com",
+                "--sync-direction",
+                "invalid",
+            ],
         )
         assert result.exit_code != 0
         assert "sync-direction" in result.output.lower()
@@ -718,29 +814,31 @@ class TestServerHostnameArgument:
 
     @patch("hsync_client.main_logic.run_sync")
     def test_explicit_port_assembles_https_url(self, mock_run_sync):
-        """HOSTNAME --port PORT assembles the https:// URL."""
-        result = runner.invoke(app, ["server", "-b", "test", "hsync.example.com", "--port", "443"])
+        """HOST[:PORT] assembles the https:// URL."""
+        result = runner.invoke(
+            app, ["server", "-b", "test", "--server-url", "hsync.example.com:443"]
+        )
         assert result.exit_code == 0
         assert mock_run_sync.call_args.kwargs["server_url"] == "https://hsync.example.com:443"
 
     @patch("hsync_client.main_logic.run_sync")
     def test_default_port_is_implied(self, mock_run_sync):
-        """HOSTNAME without --port uses the hsync-server default port."""
-        result = runner.invoke(app, ["server", "-b", "test", "hsync.example.com"])
+        """A bare host uses the hsync-server default port."""
+        result = runner.invoke(app, ["server", "-b", "test", "--server-url", "hsync.example.com"])
         assert result.exit_code == 0
         assert mock_run_sync.call_args.kwargs["server_url"] == "https://hsync.example.com:9753"
 
     @patch("hsync_client.main_logic.run_sync")
     def test_bare_ipv6_literal_is_bracketed(self, mock_run_sync):
         """A bare IPv6 literal becomes the bracketed https:// host part."""
-        result = runner.invoke(app, ["server", "-b", "test", "::1", "--port", "9753"])
+        result = runner.invoke(app, ["server", "-b", "test", "--server-url", "[::1]:9753"])
         assert result.exit_code == 0
         assert mock_run_sync.call_args.kwargs["server_url"] == "https://[::1]:9753"
 
     @patch("hsync_client.main_logic.run_sync")
     def test_missing_hostname_resolves_from_env(self, mock_run_sync, monkeypatch):
-        """No HOSTNAME resolves the full URL from HSYNC_SERVER."""
-        monkeypatch.setenv("HSYNC_SERVER", "https://env.example.com:9753")
+        """No HOSTNAME resolves the full URL from HSYNC_SERVER_URL."""
+        monkeypatch.setenv("HSYNC_SERVER_URL", "https://env.example.com:9753")
         get_env_settings.cache_clear()
         try:
             result = runner.invoke(app, ["server", "-b", "test"])
@@ -751,10 +849,10 @@ class TestServerHostnameArgument:
 
     @patch("hsync_client.main_logic.run_sync")
     def test_missing_hostname_resolves_from_env_file(self, mock_run_sync, monkeypatch, tmp_path):
-        """A --env-file supplying HSYNC_SERVER satisfies the server requirement."""
-        monkeypatch.delenv("HSYNC_SERVER", raising=False)
+        """A --env-file supplying HSYNC_SERVER_URL satisfies the server requirement."""
+        monkeypatch.delenv("HSYNC_SERVER_URL", raising=False)
         env_file = tmp_path / "prod.env"
-        env_file.write_text("HSYNC_SERVER=https://file.example.com:9753\n", encoding="utf-8")
+        env_file.write_text("HSYNC_SERVER_URL=https://file.example.com:9753\n", encoding="utf-8")
         get_env_settings.cache_clear()
         try:
             result = runner.invoke(app, ["server", "-b", "test", "--env-file", str(env_file)])
@@ -765,47 +863,52 @@ class TestServerHostnameArgument:
 
     @patch("hsync_client.main_logic.run_sync")
     def test_missing_hostname_without_server_fails_fast(self, mock_run_sync, monkeypatch):
-        """No HOSTNAME and no HSYNC_SERVER is a usage error before run_sync."""
-        monkeypatch.delenv("HSYNC_SERVER", raising=False)
+        """No HOSTNAME and no HSYNC_SERVER_URL is a usage error before run_sync."""
+        monkeypatch.delenv("HSYNC_SERVER_URL", raising=False)
         get_env_settings.cache_clear()
         try:
             result = runner.invoke(app, ["server", "-b", "test"])
             assert result.exit_code != 0
-            assert "hostname" in result.output.lower()
+            assert "sync-server url" in result.output.lower()
             mock_run_sync.assert_not_called()
         finally:
             get_env_settings.cache_clear()
 
-    def test_rejects_full_url_as_hostname(self):
-        """A URL in the hostname slot is a usage error (the scheme is implied)."""
-        result = runner.invoke(app, ["server", "-b", "test", "https://hsync.example.com"])
-        assert result.exit_code != 0
-        assert "not a URL" in result.output
+    def test_accepts_a_full_https_url(self):
+        """--server-url takes the full URL form, path included."""
+        with patch("hsync_client.main_logic.run_sync") as mock_run_sync:
+            result = runner.invoke(
+                app, ["server", "-b", "test", "--server-url", "https://hsync.example.com/hsync"]
+            )
+        assert result.exit_code == 0
+        assert mock_run_sync.call_args.kwargs["server_url"] == "https://hsync.example.com/hsync"
 
     @patch("hsync_client.main_logic.run_sync")
     def test_accepts_host_port_shorthand(self, mock_run_sync):
-        """HOST:PORT assembles the https:// URL (mutually exclusive with --port)."""
-        result = runner.invoke(app, ["server", "-b", "test", "hsync.example.com:9753"])
+        """HOST:PORT assembles the https:// URL."""
+        result = runner.invoke(
+            app, ["server", "-b", "test", "--server-url", "hsync.example.com:9753"]
+        )
         assert result.exit_code == 0
         assert mock_run_sync.call_args.kwargs["server_url"] == "https://hsync.example.com:9753"
 
-    def test_rejects_port_supplied_twice(self):
-        """A port in HOST:PORT and in --port is a usage error, not a precedence."""
+    def test_rejects_plain_http_scheme(self):
+        """Server mode always uses HTTPS: an http:// URL is a usage error."""
         result = runner.invoke(
-            app, ["server", "-b", "test", "hsync.example.com:9753", "--port", "9753"]
+            app, ["server", "-b", "test", "--server-url", "http://hsync.example.com"]
         )
         assert result.exit_code != 0
-        assert "not both" in result.output
+        assert "https" in result.output.lower()
 
-    def test_rejects_port_without_hostname(self):
-        """--port alone cannot express the server."""
-        result = runner.invoke(app, ["server", "-b", "test", "--port", "9753"])
+    def test_rejects_an_empty_server_url(self):
+        """An empty --server-url cannot express the server."""
+        result = runner.invoke(app, ["server", "-b", "test", "--server-url", ""])
         assert result.exit_code != 0
-        assert "requires a hostname" in result.output
+        assert "missing sync-server url" in result.output.lower()
 
     def test_rejects_port_out_of_range(self):
-        """--port accepts only 1-65535."""
-        result = runner.invoke(app, ["server", "-b", "test", "hsync.example.com", "--port", "0"])
+        """The endpoint port accepts only 1-65535."""
+        result = runner.invoke(app, ["server", "-b", "test", "--server-url", "hsync.example.com:0"])
         assert result.exit_code != 0
         assert "between 1 and 65535" in result.output
 
@@ -841,12 +944,18 @@ class TestCapabilitiesJson:
             "--allow-unauthenticated-writes",
         ):
             assert flag in doc["cli_options"]["p2p"]
-        for flag in ("--port", "--insecure", "--ca-cert"):
+        for flag in ("--server-url", "--insecure", "--ca-cert"):
             assert flag in doc["cli_options"]["server"]
         assert "--listen-port" not in doc["cli_options"]["server"]
         # C2: the p2p subcommand owns --port (the bootnode UDP port) and
-        # --upnp; --listen-port is the master TCP port and stays p2p-only.
-        for flag in ("--port", "--upnp", "--insecure", "--ca-cert", "--listen-port"):
+        # --map-data-port; --listen-port is the master TCP port and stays p2p-only.
+        for flag in (
+            "--discovery-server",
+            "--map-data-port",
+            "--insecure",
+            "--ca-cert",
+            "--listen-port",
+        ):
             assert flag in doc["cli_options"]["p2p"]
 
     def test_does_not_require_bucket(self):
@@ -866,196 +975,172 @@ class TestCapabilitiesJson:
             assert flags == sorted(flags)
             assert all(f.startswith("--") for f in flags)
         assert "--limit-upload" in options["p2p"]
-        assert "--port" in options["server"]
+        assert "--server-url" in options["server"]
         assert "--listen-port" not in options["server"]
-        assert "--port" in options["p2p"]
-        assert "--upnp" in options["p2p"]
+        assert "--discovery-server" in options["p2p"]
+        assert "--map-data-port" in options["p2p"]
 
 
-class TestBuildBootnode:
-    """The bootnode CLI resolution rules."""
+class TestBuildDiscoveryServers:
+    """The discovery-server resolution rules: one option, one grammar."""
 
-    def test_no_bootnode_selects_the_mdns_plan(self):
-        from hsync_client.cli import _build_bootnode
+    def test_no_server_selects_the_mdns_plan(self):
+        from hsync_client.cli import _build_discovery_servers
 
-        assert _build_bootnode(None, None, upnp=False) == (None, BOOTNODE_DEFAULT_PORT, False)
+        assert _build_discovery_servers(None) == ()
 
-    def test_default_bootnode_port_is_443_and_upnp_defaults_off(self):
-        from hsync_client.cli import _build_bootnode
+    def test_default_port_is_the_channel_default(self):
+        from hsync_common.endpoint import HostPort
 
-        assert _build_bootnode("boot.example.net", None, upnp=False) == (
-            "boot.example.net",
-            443,
-            False,
+        from hsync_client.cli import _build_discovery_servers
+
+        assert _build_discovery_servers(["boot.example.net"]) == (
+            HostPort("boot.example.net", BOOTNODE_DEFAULT_PORT),
         )
 
-    def test_explicit_port_wins_and_upnp_enables_mapping(self):
-        from hsync_client.cli import _build_bootnode
+    def test_endpoint_port_is_preserved(self):
+        from hsync_common.endpoint import HostPort
 
-        assert _build_bootnode("boot.example.net", 8443, upnp=True) == (
-            "boot.example.net",
-            8443,
-            True,
+        from hsync_client.cli import _build_discovery_servers
+
+        assert _build_discovery_servers(["boot.example.net:8443"]) == (
+            HostPort("boot.example.net", 8443),
         )
 
-    def test_port_without_bootnode_is_refused(self):
-        from hsync_client.cli import _build_bootnode
+    def test_repeatable_option_lists_every_server_in_order(self):
+        from hsync_common.endpoint import HostPort
 
-        with pytest.raises(typer.BadParameter):
-            _build_bootnode(None, 8443, upnp=False)
+        from hsync_client.cli import _build_discovery_servers
 
-    def test_url_and_path_are_refused(self):
-        from hsync_client.cli import _build_bootnode
-
-        for bad in ("https://boot.example.net", "boot.example.net/path"):
-            with pytest.raises(typer.BadParameter):
-                _build_bootnode(bad, None, upnp=False)
-
-    def test_host_port_shorthand_is_accepted(self):
-        from hsync_client.cli import _build_bootnode
-
-        assert _build_bootnode("boot.example.net:8443", None, upnp=False) == (
-            "boot.example.net",
-            8443,
-            False,
+        assert _build_discovery_servers(["a.example", "b.example:8443"]) == (
+            HostPort("a.example", BOOTNODE_DEFAULT_PORT),
+            HostPort("b.example", 8443),
         )
 
-    def test_host_port_and_port_flag_are_mutually_exclusive(self):
-        from hsync_client.cli import _build_bootnode
+    def test_a_value_may_carry_the_env_comma_list(self):
+        from hsync_common.endpoint import HostPort
+
+        from hsync_client.cli import _build_discovery_servers
+
+        assert _build_discovery_servers(["a.example,b.example:53"]) == (
+            HostPort("a.example", BOOTNODE_DEFAULT_PORT),
+            HostPort("b.example", 53),
+        )
+
+    def test_listing_the_same_endpoint_twice_is_refused(self):
+        """One destination listed twice is a config error, not two leases."""
+        from hsync_client.cli import _build_discovery_servers
 
         with pytest.raises(typer.BadParameter):
-            _build_bootnode("boot.example.net:8443", 8443, upnp=False)
+            _build_discovery_servers(["a.example", "a.example:443"])
 
-    def test_out_of_range_port_is_refused(self):
-        from hsync_client.cli import _build_bootnode
+    def test_blank_value_is_ignored(self):
+        from hsync_client.cli import _build_discovery_servers
+
+        assert _build_discovery_servers(["   "]) == ()
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "https://boot.example.net",
+            "boot.example.net/path",
+            "boot.example.net:0",
+            "a.example,,b.example",
+        ],
+    )
+    def test_invalid_input_is_refused(self, bad):
+        from hsync_client.cli import _build_discovery_servers
 
         with pytest.raises(typer.BadParameter):
-            _build_bootnode("boot.example.net", 70000, upnp=False)
+            _build_discovery_servers([bad])
 
     def test_ipv6_bracketed_is_returned_unbracketed(self):
-        from hsync_client.cli import _build_bootnode
+        from hsync_common.endpoint import HostPort
 
-        assert _build_bootnode("[::1]", None, upnp=False) == ("::1", 443, False)
+        from hsync_client.cli import _build_discovery_servers
 
-    def test_ipv6_bracketed_with_port_is_returned_unbracketed(self):
-        from hsync_client.cli import _build_bootnode
+        assert _build_discovery_servers(["[::1]"]) == (HostPort("::1", BOOTNODE_DEFAULT_PORT),)
 
-        assert _build_bootnode("[::1]:8443", None, upnp=False) == ("::1", 8443, False)
+    def test_env_is_resolved_when_use_env(self, monkeypatch):
+        from hsync_common.endpoint import HostPort
 
-    def test_env_bootnode_is_resolved_when_use_env(self, monkeypatch):
-        from hsync_client.cli import _build_bootnode
+        from hsync_client.cli import _build_discovery_servers
         from hsync_client.config import get_env_settings
 
-        monkeypatch.setenv("HSYNC_BOOTNODE", "boot.example.net")
-        monkeypatch.delenv("HSYNC_UPNP_ENABLED", raising=False)
+        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_ENDPOINTS", "a.example,b.example:8443")
         get_env_settings.cache_clear()
-        assert _build_bootnode(None, None, upnp=False, use_env=True) == (
-            "boot.example.net",
-            443,
-            False,
-        )
-
-    def test_env_upnp_enabled_opts_in(self, monkeypatch):
-        from hsync_client.cli import _build_bootnode
-        from hsync_client.config import get_env_settings
-
-        monkeypatch.setenv("HSYNC_BOOTNODE", "boot.example.net")
-        monkeypatch.setenv("HSYNC_UPNP_ENABLED", "true")
-        get_env_settings.cache_clear()
-        assert _build_bootnode(None, None, upnp=False, use_env=True) == (
-            "boot.example.net",
-            443,
-            True,
-        )
-
-    def test_env_bootnode_port_and_flag_port(self, monkeypatch):
-        """An explicit --port overrides a port embedded in HSYNC_BOOTNODE (CLI > env)."""
-        from hsync_client.cli import _build_bootnode
-        from hsync_client.config import get_env_settings
-
-        monkeypatch.setenv("HSYNC_BOOTNODE", "boot.example.net:8443")
-        monkeypatch.delenv("HSYNC_UPNP_ENABLED", raising=False)
-        get_env_settings.cache_clear()
-        assert _build_bootnode(None, 9000, upnp=False, use_env=True) == (
-            "boot.example.net",
-            9000,
-            False,
-        )
-
-    def test_env_bootnode_port_without_flag(self, monkeypatch):
-        from hsync_client.cli import _build_bootnode
-        from hsync_client.config import get_env_settings
-
-        monkeypatch.setenv("HSYNC_BOOTNODE", "boot.example.net:8443")
-        monkeypatch.delenv("HSYNC_UPNP_ENABLED", raising=False)
-        get_env_settings.cache_clear()
-        assert _build_bootnode(None, None, upnp=False, use_env=True) == (
-            "boot.example.net",
-            8443,
-            False,
-        )
+        try:
+            assert _build_discovery_servers(None, use_env=True) == (
+                HostPort("a.example", BOOTNODE_DEFAULT_PORT),
+                HostPort("b.example", 8443),
+            )
+        finally:
+            get_env_settings.cache_clear()
 
     def test_env_is_not_used_without_use_env(self, monkeypatch):
-        from hsync_client.cli import _build_bootnode
+        from hsync_client.cli import _build_discovery_servers
         from hsync_client.config import get_env_settings
 
-        monkeypatch.setenv("HSYNC_BOOTNODE", "boot.example.net")
+        monkeypatch.setenv(
+            "HSYNC_DISCOVERY_SERVER_ENDPOINTS", "--discovery-server", "boot.example.net"
+        )
         get_env_settings.cache_clear()
-        assert _build_bootnode(None, None, upnp=False) == (None, BOOTNODE_DEFAULT_PORT, False)
+        try:
+            assert _build_discovery_servers(None) == ()
+        finally:
+            get_env_settings.cache_clear()
 
 
 class TestBootnodeTrustCommands:
-    """``hsync trust bootnode`` manages the known-hosts store (ADR-0035)."""
+    """``hsync trust discovery-server`` manages the known-hosts store (ADR-0035)."""
 
     def test_add_list_show_remove(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("HSYNC_BOOTNODE_TRUST_FILE", str(tmp_path / "trust.json"))
+        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_TRUST_FILE", str(tmp_path / "trust.json"))
         fingerprint = "a" * 64
 
-        empty = runner.invoke(app, ["trust", "bootnode", "list"])
+        empty = runner.invoke(app, ["trust", "discovery-server", "list"])
         assert empty.exit_code == 0
-        assert "No bootnodes" in empty.output
+        assert "No discovery servers" in empty.output
 
         added = runner.invoke(
-            app, ["trust", "bootnode", "add", "boot.example.net", fingerprint, "--port", "1443"]
+            app, ["trust", "discovery-server", "add", "boot.example.net:1443", fingerprint]
         )
         assert added.exit_code == 0, added.output
         assert str(tmp_path / "trust.json") in added.output
 
-        listed = runner.invoke(app, ["trust", "bootnode", "list"])
+        listed = runner.invoke(app, ["trust", "discovery-server", "list"])
         assert fingerprint in listed.output
         assert "boot.example.net:1443" in listed.output
 
-        shown = runner.invoke(
-            app, ["trust", "bootnode", "show", "boot.example.net", "--port", "1443"]
-        )
+        shown = runner.invoke(app, ["trust", "discovery-server", "show", "boot.example.net:1443"])
         assert shown.exit_code == 0
         assert fingerprint in shown.output
 
         removed = runner.invoke(
-            app, ["trust", "bootnode", "remove", "boot.example.net", "--port", "1443"]
+            app, ["trust", "discovery-server", "remove", "boot.example.net:1443"]
         )
         assert removed.exit_code == 0
 
-        missing = runner.invoke(
-            app, ["trust", "bootnode", "show", "boot.example.net", "--port", "1443"]
-        )
+        missing = runner.invoke(app, ["trust", "discovery-server", "show", "boot.example.net:1443"])
         assert missing.exit_code == 1
 
     def test_add_rejects_an_invalid_fingerprint(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("HSYNC_BOOTNODE_TRUST_FILE", str(tmp_path / "trust.json"))
-        result = runner.invoke(app, ["trust", "bootnode", "add", "boot.example.net", "nope"])
+        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_TRUST_FILE", str(tmp_path / "trust.json"))
+        result = runner.invoke(
+            app, ["trust", "discovery-server", "add", "boot.example.net", "nope"]
+        )
         assert result.exit_code == 1
 
     def test_list_json(self, tmp_path, monkeypatch):
         import json
 
-        monkeypatch.setenv("HSYNC_BOOTNODE_TRUST_FILE", str(tmp_path / "trust.json"))
+        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_TRUST_FILE", str(tmp_path / "trust.json"))
         result = runner.invoke(
             app,
-            ["trust", "bootnode", "add", "boot.example.net", "a" * 64, "--port", "1443"],
+            ["trust", "discovery-server", "add", "boot.example.net:1443", "a" * 64],
         )
         assert result.exit_code == 0
-        listed = runner.invoke(app, ["trust", "bootnode", "list", "--json"])
+        listed = runner.invoke(app, ["trust", "discovery-server", "list", "--json"])
         assert listed.exit_code == 0
         payload = json.loads(listed.output)
         assert payload == [
@@ -1141,10 +1226,8 @@ class TestServerTrustCommands:
                 "trust",
                 "server",
                 "add",
-                "server.example.com",
+                "server.example.com:9753",
                 f"sha256:{fingerprint}",
-                "--port",
-                "9753",
             ],
         )
         assert added.exit_code == 0, added.output
@@ -1155,19 +1238,13 @@ class TestServerTrustCommands:
         assert "server.example.com:9753" in listed.output
         assert fingerprint in listed.output
 
-        shown = runner.invoke(
-            app, ["trust", "server", "show", "server.example.com", "--port", "9753"]
-        )
+        shown = runner.invoke(app, ["trust", "server", "show", "server.example.com:9753"])
         assert shown.exit_code == 0
         assert fingerprint in shown.output
 
-        removed = runner.invoke(
-            app, ["trust", "server", "remove", "server.example.com", "--port", "9753"]
-        )
+        removed = runner.invoke(app, ["trust", "server", "remove", "server.example.com:9753"])
         assert removed.exit_code == 0
-        missing = runner.invoke(
-            app, ["trust", "server", "remove", "server.example.com", "--port", "9753"]
-        )
+        missing = runner.invoke(app, ["trust", "server", "remove", "server.example.com:9753"])
         assert "was not in the known-hosts store" in missing.output
 
     def test_show_unknown_server_exits_nonzero(self):

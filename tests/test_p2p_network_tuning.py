@@ -53,7 +53,7 @@ def _make_config(tmp_path, **overrides: Any) -> HsyncConfig:
         "SYNC_DIRECTION": "bidirectional",
         "LOCAL_BUCKET": str(tmp_path),
         "P2P_KEY": None,
-        "DISCOVERY_TIMEOUT": 1,
+        "PEER_DISCOVERY_TIMEOUT": 1,
         "DRYRUN": False,
         "ONE_SHOT": True,
         "REQUEST_HEADERS": {"X-Client-Id": "test-cid"},

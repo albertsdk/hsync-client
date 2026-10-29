@@ -101,7 +101,7 @@ In plain terms, p2p mode works in three steps:
 
 ## Continuous Mode (Default)
 
-Continuous mode is the default in p2p mode. The client stays active indefinitely, even when no peers are found, and automatically starts a file system watcher that propagates events in real time. Discovery waits indefinitely by default (`--discovery-timeout 0`), mirroring the server-mode default of retrying an unreachable server forever.
+Continuous mode is the default in p2p mode. The client stays active indefinitely, even when no peers are found, and automatically starts a file system watcher that propagates events in real time. Discovery waits indefinitely by default (`--peer-discovery-timeout 0`), mirroring the server-mode default of retrying an unreachable server forever.
 
 This is useful for:
 
@@ -239,7 +239,7 @@ connection that carries the data.
   `hsync trust peer add` accepts a `sha256:<hex>` or bare-hex fingerprint and
   refuses anything else; `remove` forgets the pin so the peer is prompted again
   at the next connection. The bootnode known-hosts store has its own parallel
-  group, `hsync trust bootnode {list,show,add,remove,fingerprint}`, documented in
+  group, `hsync trust discovery-server {list,show,add,remove,fingerprint}`, documented in
   [Sync across networks](p2p-bootnode.md).
 
 > The certificate flow, fingerprint-pinning details and key parameters are in
@@ -450,7 +450,7 @@ See also: [Architecture > Pre-Sync Safety Check](internal/architecture.md#pre-sy
 
 1. **Check firewall**: Ensure mDNS (UDP port 5353) is allowed
 2. **Check network**: All devices must be on the same subnet (or point the whole group at the same bootnode for cross-network discovery)
-3. **Increase timeout**: Use `--discovery-timeout 15` for slower networks, or `--discovery-timeout 0` to wait indefinitely for the first peer/master
+3. **Increase timeout**: Use `--peer-discovery-timeout 15` for slower networks, or `--peer-discovery-timeout 0` to wait indefinitely for the first peer/master
 4. **Running in a container?**: mDNS multicast cannot cross the NAT boundary of
    the default bridge network used by container runtimes, so peers will never
    be found. Run the client with host networking (e.g.

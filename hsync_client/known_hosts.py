@@ -4,7 +4,7 @@
 """Shared ``host:port`` known-hosts store, SSH ``known_hosts``-style.
 
 Two certificates are authenticated by pinning a fingerprint per ``host:port``: the
-``boot/1`` bootnode (``bootnode_known_hosts.json``) and the sync server
+``boot/1`` bootnode (``discovery_server_known_hosts.json``) and the sync server
 (``server_known_hosts.json``). They have the exact same on-disk shape — a map of
 ``host:port`` to a record with ``current``/``updated_at``/``first_seen``/``source``
 — so this module owns the load/validate/persist contract; the two stores differ
@@ -58,7 +58,7 @@ class KnownHostsStore(JsonStore):
     their default path to :class:`~hsync_client._trust_store.JsonStore`.
     """
 
-    # JSON key under which the records live (e.g. ``bootnodes`` / ``servers``).
+    # JSON key under which the records live (e.g. ``discovery_servers`` / ``servers``).
     records_key: str
 
     def _load_unlocked(self) -> dict[str, Any]:

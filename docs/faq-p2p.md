@@ -119,13 +119,13 @@ when that field is missing or tied. The losing version is preserved as a
 **Q: Can I sync devices that are not on the same local network?**
 Yes. mDNS only works on one local network, so point every device of the group
 at the same **boot/1 bootstrap node** (positional hostname or
-`HSYNC_BOOTNODE`). Election, transport and security are unchanged — only
+`HSYNC_DISCOVERY_SERVER_ENDPOINTS`). Election, transport and security are unchanged — only
 discovery differs. See [Sync across networks](p2p-bootnode.md).
 
 **Q: The client reports "Bootnode '…' trust failed: the certificate
 fingerprint does not match the accepted pin" — what do I do?**
 The bootnode authenticates with a self-signed certificate that you **pin**: with
-`--bootnode-tofu` the first fingerprint seen for `host:port` is remembered, and
+`--discovery-server-tofu` the first fingerprint seen for `host:port` is remembered, and
 any later difference is refused as a possible man-in-the-middle. A self-hosted
 node generates a fresh certificate at every start unless the operator runs it
 with `--identity PATH`, so **a restart changes the fingerprint**.
@@ -133,10 +133,10 @@ with `--identity PATH`, so **a restart changes the fingerprint**.
 The client prints the presented fingerprint, the known-hosts file that holds the
 accepted pin and the commands that unblock the situation:
 - If the change is expected, verify the new fingerprint out of band and re-pin it
-  with `hsync trust bootnode add HOSTNAME sha256:NEW_FINGERPRINT` (or pass
-  `--bootnode-fingerprint NEW_FINGERPRINT` on this run).
+  with `hsync trust discovery-server add HOSTNAME sha256:NEW_FINGERPRINT` (or pass
+  `--discovery-server-fingerprint NEW_FINGERPRINT` on this run).
 - To forget the pin and be prompted again at the next connection, run
-  `hsync trust bootnode remove HOSTNAME` (like `ssh-keygen -R`).
+  `hsync trust discovery-server remove HOSTNAME` (like `ssh-keygen -R`).
 - Ask the operator to persist the node identity (`--identity`) and to publish the
   stable fingerprint for clients to pin.
 
@@ -178,7 +178,7 @@ each other. Devices with different groups (or no group) are isolated.
 Not for local-network (mDNS) sync — discovery stays within the subnet and needs
 no router configuration. Cross-network groups that use a bootnode must expose
 the master's sync port: the client can map it with UPnP when you opt in
-(`--upnp` / `HSYNC_UPNP_ENABLED=true`), otherwise forward it on the router. When
+(`--map-data-port` / `HSYNC_MAP_DATA_PORT=true`), otherwise forward it on the router. When
 the node runs with `--relay`, the master does not need to be reachable at all:
 the bootnode relays the data plane (see [Sync across networks](p2p-bootnode.md)).
 

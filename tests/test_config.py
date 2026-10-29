@@ -117,13 +117,13 @@ class TestEnvSettings:
         """Default values are correct."""
         get_env_settings.cache_clear()
         settings = EnvSettings()
-        assert settings.server is None
+        assert settings.server_url is None
         assert settings.api_key.get_secret_value() == ""
         assert settings.stability_delay is None
         assert settings.p2p_key is None
         assert settings.p2p_group is None
         assert settings.p2p_listen_port is None
-        assert settings.discovery_timeout is None
+        assert settings.peer_discovery_timeout is None
         assert settings.deletion_policy == "propagate"
         assert settings.compression_enabled is True
         assert settings.p2p_peer_download is True
@@ -139,14 +139,14 @@ class TestEnvSettings:
         assert not hasattr(settings, "p2p_persistent")
 
     def test_bootnode_default_none(self):
-        """Unset HSYNC_BOOTNODE means the mDNS discovery plan."""
+        """Unset HSYNC_DISCOVERY_SERVER_ENDPOINTS means the mDNS discovery plan."""
         get_env_settings.cache_clear()
-        assert EnvSettings().bootnode is None
+        assert EnvSettings().discovery_server_endpoints is None
 
     def test_bootnode_accepts_bare_host(self, monkeypatch):
-        monkeypatch.setenv("HSYNC_BOOTNODE", "boot.example.net")
+        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_ENDPOINTS", "boot.example.net")
         get_env_settings.cache_clear()
-        assert EnvSettings().bootnode == "boot.example.net"
+        assert EnvSettings().discovery_server_endpoints == "boot.example.net"
 
     def test_bootnode_rejects_scheme_and_path(self, monkeypatch):
         """The bootnode channel is QUIC/UDP: no scheme, no path."""
@@ -154,136 +154,138 @@ class TestEnvSettings:
             "https://boot.example.net",
             "boot.example.net/path",
         ):
-            monkeypatch.setenv("HSYNC_BOOTNODE", bad)
+            monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_ENDPOINTS", bad)
             get_env_settings.cache_clear()
             with pytest.raises(ValueError):
                 EnvSettings()
 
     def test_bootnode_accepts_host_port(self, monkeypatch):
-        """``HSYNC_BOOTNODE`` accepts ``HOST[:PORT]``; the host is unbracketed."""
-        monkeypatch.setenv("HSYNC_BOOTNODE", "boot.example.net:8443")
+        """``HSYNC_DISCOVERY_SERVER_ENDPOINTS`` accepts ``HOST[:PORT]``; the host is unbracketed."""
+        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_ENDPOINTS", "boot.example.net:8443")
         get_env_settings.cache_clear()
-        assert EnvSettings().bootnode == "boot.example.net:8443"
+        assert EnvSettings().discovery_server_endpoints == "boot.example.net:8443"
 
     def test_bootnode_ipv6_bracketed_with_port(self, monkeypatch):
-        monkeypatch.setenv("HSYNC_BOOTNODE", "[::1]:8443")
+        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_ENDPOINTS", "[::1]:8443")
         get_env_settings.cache_clear()
-        assert EnvSettings().bootnode == "[::1]:8443"
+        assert EnvSettings().discovery_server_endpoints == "[::1]:8443"
 
     def test_bootnode_bare_ipv6_is_normalized_unbracketed(self, monkeypatch):
-        monkeypatch.setenv("HSYNC_BOOTNODE", "[::1]")
+        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_ENDPOINTS", "[::1]")
         get_env_settings.cache_clear()
-        assert EnvSettings().bootnode == "::1"
+        assert EnvSettings().discovery_server_endpoints == "::1"
 
     def test_bootnode_ports_parsed_ordered_and_validated(self, monkeypatch):
-        """``HSYNC_BOOTNODE_PORTS`` is an ordered extra-port set; bad/dupes dropped."""
-        from hsync_client.config import get_bootnode_ports
+        """``HSYNC_DISCOVERY_SERVER_EXTRA_PORTS`` is an ordered extra-port set; bad/dupes dropped."""
+        from hsync_client.config import get_discovery_server_extra_ports
 
-        monkeypatch.setenv("HSYNC_BOOTNODE_PORTS", "53, 8443, 53, nope, 0, 70000")
+        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_EXTRA_PORTS", "53, 8443, 53, nope, 0, 70000")
         get_env_settings.cache_clear()
-        assert get_bootnode_ports() == (53, 8443)
+        assert get_discovery_server_extra_ports() == (53, 8443)
 
     def test_bootnode_ports_unset_is_empty(self, monkeypatch):
-        from hsync_client.config import get_bootnode_ports
+        from hsync_client.config import get_discovery_server_extra_ports
 
-        monkeypatch.delenv("HSYNC_BOOTNODE_PORTS", raising=False)
+        monkeypatch.delenv("HSYNC_DISCOVERY_SERVER_EXTRA_PORTS", raising=False)
         get_env_settings.cache_clear()
-        assert get_bootnode_ports() == ()
+        assert get_discovery_server_extra_ports() == ()
 
     def test_bootnode_fingerprint_parses_and_validates(self, monkeypatch):
-        from hsync_client.config import get_bootnode_fingerprints
+        from hsync_client.config import get_discovery_server_fingerprints
 
         hex64 = "0" * 64
         other = "f" * 64
-        monkeypatch.setenv("HSYNC_BOOTNODE_FINGERPRINT", f"sha256:{hex64},{other}")
+        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_FINGERPRINTS", f"sha256:{hex64},{other}")
         get_env_settings.cache_clear()
-        assert get_bootnode_fingerprints() == (hex64, other)
+        assert get_discovery_server_fingerprints() == (hex64, other)
 
     def test_bootnode_fingerprint_rejects_invalid(self, monkeypatch):
-        monkeypatch.setenv("HSYNC_BOOTNODE_FINGERPRINT", "not-a-pin")
+        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_FINGERPRINTS", "not-a-pin")
         get_env_settings.cache_clear()
         with pytest.raises(ValueError):
             EnvSettings()
 
     def test_bootnode_fingerprint_rejects_more_than_two(self, monkeypatch):
-        monkeypatch.setenv("HSYNC_BOOTNODE_FINGERPRINT", ",".join("0" * 64 for _ in range(3)))
+        monkeypatch.setenv(
+            "HSYNC_DISCOVERY_SERVER_FINGERPRINTS", ",".join("0" * 64 for _ in range(3))
+        )
         get_env_settings.cache_clear()
         with pytest.raises(ValueError):
             EnvSettings()
 
     def test_bootnode_tofu_default_and_override(self, monkeypatch):
-        from hsync_client.config import get_bootnode_tofu
+        from hsync_client.config import get_discovery_server_tofu
 
         get_env_settings.cache_clear()
-        assert get_bootnode_tofu() is False
-        monkeypatch.setenv("HSYNC_BOOTNODE_TOFU", "1")
+        assert get_discovery_server_tofu() is False
+        monkeypatch.setenv("HSYNC_DISCOVERY_SERVER_TOFU", "1")
         get_env_settings.cache_clear()
-        assert get_bootnode_tofu() is True
+        assert get_discovery_server_tofu() is True
 
     def test_upnp_enabled_default_off_and_override(self, monkeypatch):
         """Off by default; an explicit value opts in."""
         get_env_settings.cache_clear()
-        assert EnvSettings().upnp_enabled is False
-        monkeypatch.setenv("HSYNC_UPNP_ENABLED", "true")
+        assert EnvSettings().map_data_port is False
+        monkeypatch.setenv("HSYNC_MAP_DATA_PORT", "true")
         get_env_settings.cache_clear()
-        assert EnvSettings().upnp_enabled is True
-        monkeypatch.setenv("HSYNC_UPNP_ENABLED", "false")
+        assert EnvSettings().map_data_port is True
+        monkeypatch.setenv("HSYNC_MAP_DATA_PORT", "false")
         get_env_settings.cache_clear()
-        assert EnvSettings().upnp_enabled is False
+        assert EnvSettings().map_data_port is False
 
     def test_discovery_timeout_zero_is_valid(self):
-        """HSYNC_DISCOVERY_TIMEOUT=0 means wait indefinitely and is valid."""
+        """HSYNC_PEER_DISCOVERY_TIMEOUT=0 means wait indefinitely and is valid."""
         get_env_settings.cache_clear()
-        old = os.environ.get("HSYNC_DISCOVERY_TIMEOUT")
-        os.environ["HSYNC_DISCOVERY_TIMEOUT"] = "0"
+        old = os.environ.get("HSYNC_PEER_DISCOVERY_TIMEOUT")
+        os.environ["HSYNC_PEER_DISCOVERY_TIMEOUT"] = "0"
         try:
             settings = EnvSettings()
-            assert settings.discovery_timeout == 0
+            assert settings.peer_discovery_timeout == 0
         finally:
             if old is not None:
-                os.environ["HSYNC_DISCOVERY_TIMEOUT"] = old
+                os.environ["HSYNC_PEER_DISCOVERY_TIMEOUT"] = old
             else:
-                os.environ.pop("HSYNC_DISCOVERY_TIMEOUT", None)
+                os.environ.pop("HSYNC_PEER_DISCOVERY_TIMEOUT", None)
             get_env_settings.cache_clear()
 
     def test_reads_from_env(self):
         """Settings are read from HSYNC_ prefixed env vars."""
         get_env_settings.cache_clear()
-        os.environ["HSYNC_SERVER"] = "https://test.example.com:8000"
+        os.environ["HSYNC_SERVER_URL"] = "https://test.example.com:8000"
         try:
             settings = EnvSettings()
-            assert settings.server == "https://test.example.com:8000"
+            assert settings.server_url == "https://test.example.com:8000"
         finally:
-            del os.environ["HSYNC_SERVER"]
+            del os.environ["HSYNC_SERVER_URL"]
             get_env_settings.cache_clear()
 
     def test_server_url_normalizes_bare_host(self):
         """A bare host (Option A) normalizes to the canonical HTTPS URL."""
         get_env_settings.cache_clear()
-        os.environ["HSYNC_SERVER"] = "test.example.com"
+        os.environ["HSYNC_SERVER_URL"] = "test.example.com"
         try:
-            assert EnvSettings().server == "https://test.example.com:9753"
+            assert EnvSettings().server_url == "https://test.example.com:9753"
         finally:
-            del os.environ["HSYNC_SERVER"]
+            del os.environ["HSYNC_SERVER_URL"]
             get_env_settings.cache_clear()
 
     def test_server_url_ipv6_bracketed_with_port(self):
         get_env_settings.cache_clear()
-        os.environ["HSYNC_SERVER"] = "[::1]:8443"
+        os.environ["HSYNC_SERVER_URL"] = "[::1]:8443"
         try:
-            assert EnvSettings().server == "https://[::1]:8443"
+            assert EnvSettings().server_url == "https://[::1]:8443"
         finally:
-            del os.environ["HSYNC_SERVER"]
+            del os.environ["HSYNC_SERVER_URL"]
             get_env_settings.cache_clear()
 
     def test_server_url_rejects_http(self):
         get_env_settings.cache_clear()
-        os.environ["HSYNC_SERVER"] = "http://test.example.com"
+        os.environ["HSYNC_SERVER_URL"] = "http://test.example.com"
         try:
             with pytest.raises(ValueError):
                 EnvSettings()
         finally:
-            del os.environ["HSYNC_SERVER"]
+            del os.environ["HSYNC_SERVER_URL"]
             get_env_settings.cache_clear()
 
     def test_p2p_key_is_preserved(self):
@@ -350,14 +352,14 @@ class TestEnvGetters:
     def test_get_server_url_default(self):
         """get_server_url returns None when not set."""
         get_env_settings.cache_clear()
-        # Ensure HSYNC_SERVER is not set
-        old = os.environ.pop("HSYNC_SERVER", None)
+        # Ensure HSYNC_SERVER_URL is not set
+        old = os.environ.pop("HSYNC_SERVER_URL", None)
         try:
             get_env_settings.cache_clear()
             assert get_server_url() is None
         finally:
             if old is not None:
-                os.environ["HSYNC_SERVER"] = old
+                os.environ["HSYNC_SERVER_URL"] = old
             get_env_settings.cache_clear()
 
     def test_get_api_key_default(self):

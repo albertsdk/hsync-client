@@ -134,7 +134,7 @@ class BootnodeFingerprintMismatch(BootnodeError):
     (changed pin, node not pinned under ``strict``, no explicit-pin match), while
     ``guidance`` carries the SSH-style recovery block the front-end logs once:
     the presented fingerprint, the known-hosts file and the exact
-    ``hsync trust bootnode`` commands that unblock the situation.
+    ``hsync trust discovery-server`` commands that unblock the situation.
     """
 
     def __init__(self, message: str, *, guidance: str | None = None) -> None:
@@ -234,7 +234,7 @@ class BootnodeClient:
 
         Connects, reads the certificate during the handshake and closes without
         sending any frame (like ``ssh-keyscan``). Used by
-        ``hsync trust bootnode fingerprint`` so an operator can verify a node out
+        ``hsync trust discovery-server fingerprint`` so an operator can verify a node out
         of band before pinning it.
         """
         try:
@@ -461,7 +461,7 @@ class BootnodeClient:
         observed = compute_cert_fingerprint(cert)
         store = default_bootnode_trust_store()
 
-        # Explicit pins (``--bootnode-fingerprint``) are accepted directly and are
+        # Explicit pins (``--discovery-server-fingerprint``) are accepted directly and are
         # the source of truth for a ``strict`` run; a non-match falls through so
         # ``strict`` refuses and ``ask`` prompts.
         if self.fingerprints and fingerprint_matches(observed, list(self.fingerprints)):
@@ -487,7 +487,7 @@ class BootnodeClient:
             raise BootnodeNotTrusted(
                 f"bootnode {format_authority(self.host, self.port)}: certificate fingerprint {observed} "
                 "is not trusted and there is no terminal to confirm it; pass "
-                "--bootnode-tofu (accept new) or --bootnode-fingerprint <fp> to trust it",
+                "--discovery-server-tofu (accept new) or --discovery-server-fingerprint <fp> to trust it",
                 non_interactive=True,
             )
         if self.prompt(self.host, self.port, observed):
@@ -496,8 +496,8 @@ class BootnodeClient:
             return
         raise BootnodeNotTrusted(
             f"bootnode {format_authority(self.host, self.port)}: certificate fingerprint {observed} "
-            "was not accepted; nothing was saved. Pass --bootnode-tofu to trust the "
-            "first sighting or --bootnode-fingerprint <fp> to pin it"
+            "was not accepted; nothing was saved. Pass --discovery-server-tofu to trust the "
+            "first sighting or --discovery-server-fingerprint <fp> to pin it"
         )
 
     def _announce_known_host(self, store: BootnodeTrustStore) -> None:
@@ -526,7 +526,7 @@ class BootnodeClient:
         elif self.fingerprints:
             reason = (
                 f"bootnode {format_authority(self.host, self.port)}: certificate fingerprint {observed} "
-                "does not match any fingerprint passed with --bootnode-fingerprint"
+                "does not match any fingerprint passed with --discovery-server-fingerprint"
             )
         else:
             reason = (

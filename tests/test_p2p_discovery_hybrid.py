@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+from hsync_common.endpoint import HostPort
+
 from hsync_client.p2p_discovery import build_discovery_plan
 from hsync_client.p2p_discovery_hybrid import HybridDiscovery
 
@@ -43,14 +45,14 @@ class TestBuildDiscoveryPlan:
             plan = build_discovery_plan(_config(), cert_fingerprint="aa", port=9000)
         assert plan is mdns.return_value
 
-    def test_hybrid_when_a_bootnode_is_set(self):
-        """A configured bootnode adds the bootnode source next to mDNS."""
+    def test_hybrid_when_a_discovery_server_is_set(self):
+        """A configured discovery server adds its source next to mDNS."""
         with (
             patch("hsync_client.p2p_discovery_mdns.MdnsDiscovery") as mdns,
             patch("hsync_client.p2p_discovery_bootnode.BootnodeDiscovery") as bootnode,
         ):
             plan = build_discovery_plan(
-                _config(BOOTNODE="node.example", BOOTNODE_PORT=443),
+                _config(DISCOVERY_SERVER_ENDPOINTS=(HostPort("node.example", 443),)),
                 cert_fingerprint="aa",
                 port=9000,
             )
@@ -76,7 +78,7 @@ class TestBuildDiscoveryPlan:
             patch("hsync_client.p2p_discovery_bootnode.BootnodeDiscovery") as bootnode,
         ):
             build_discovery_plan(
-                _config(BOOTNODE="node.example", BOOTNODE_PORT=443),
+                _config(DISCOVERY_SERVER_ENDPOINTS=(HostPort("node.example", 443),)),
                 cert_fingerprint="aa",
                 port=9000,
             )
@@ -91,7 +93,10 @@ class TestBuildDiscoveryPlan:
             patch("hsync_client.p2p_discovery_bootnode.BootnodeDiscovery") as bootnode,
         ):
             build_discovery_plan(
-                _config(BOOTNODE="node.example", BOOTNODE_REFRESH_INTERVAL=10),
+                _config(
+                    DISCOVERY_SERVER_ENDPOINTS=(HostPort("node.example", 443),),
+                    DISCOVERY_SERVER_REFRESH_INTERVAL=10,
+                ),
                 cert_fingerprint="aa",
                 port=9000,
             )
@@ -105,7 +110,9 @@ class TestBuildDiscoveryPlan:
             patch("hsync_client.p2p_discovery_bootnode.BootnodeDiscovery") as bootnode,
         ):
             build_discovery_plan(
-                _config(BOOTNODE="node.example", PEER_TIMEOUT=120),
+                _config(
+                    DISCOVERY_SERVER_ENDPOINTS=(HostPort("node.example", 443),), PEER_TIMEOUT=120
+                ),
                 cert_fingerprint="aa",
                 port=9000,
             )

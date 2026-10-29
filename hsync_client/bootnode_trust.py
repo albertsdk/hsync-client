@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""Durable bootnode trust store (``bootnode_known_hosts.json``), SSH-style.
+"""Durable discovery-server trust store (``discovery_server_known_hosts.json``), SSH-style.
 
-A self-hosted bootnode authenticates its QUIC/TLS transport with a self-signed
+A self-hosted discovery server authenticates its QUIC/TLS transport with a self-signed
 certificate, so the only trust anchor is the certificate fingerprint the operator
 pins. This store is the client's ``known_hosts``: it remembers the accepted
 fingerprint per ``host:port`` and is the persistence half of the shared policy
@@ -13,12 +13,12 @@ and the Android mirror cannot drift; this module only names the bootnode store
 (the shared ``host:port`` load/persist contract is in ``known_hosts.py``).
 
 Each record keeps a single ``current`` fingerprint (no ``next``: a rotation
-window is expressed by passing two ``--bootnode-fingerprint`` values, and the
+window is expressed by passing two ``--discovery-server-fingerprint`` values, and the
 store records whichever matched) plus ``updated_at``, ``first_seen`` and the
 ``source`` that trusted it. State lives outside the synced bucket (overridable
-via ``HSYNC_BOOTNODE_TRUST_FILE``).
+via ``HSYNC_DISCOVERY_SERVER_TRUST_FILE``).
 
-Consumers: ``hsync-client`` (bootnode connect path, ``hsync trust bootnode``).
+Consumers: ``hsync-client`` (connect path, ``hsync trust discovery-server``).
 """
 
 from __future__ import annotations
@@ -38,26 +38,26 @@ __all__ = [
     "default_bootnode_trust_store",
 ]
 
-# Environment override for the bootnode trust store (tests, operators keeping
+# Environment override for the discovery-server trust store (tests, operators keeping
 # state elsewhere).
-BOOTNODE_TRUST_FILE_ENV = "HSYNC_BOOTNODE_TRUST_FILE"
+BOOTNODE_TRUST_FILE_ENV = "HSYNC_DISCOVERY_SERVER_TRUST_FILE"
 
 
 class BootnodeTrustStoreError(StoreError):
-    """The durable bootnode trust store could not be read or updated safely."""
+    """The durable discovery-server trust store could not be read or updated safely."""
 
 
 def default_bootnode_trust_path() -> Path:
-    """Resolve the trust-store path: ``$HSYNC_BOOTNODE_TRUST_FILE`` or the state dir."""
-    return state_path("bootnode_known_hosts.json", override_env=BOOTNODE_TRUST_FILE_ENV)
+    """Resolve the trust-store path: ``$HSYNC_DISCOVERY_SERVER_TRUST_FILE`` or the state dir."""
+    return state_path("discovery_server_known_hosts.json", override_env=BOOTNODE_TRUST_FILE_ENV)
 
 
 class BootnodeTrustStore(KnownHostsStore):
-    """Disk-backed map of ``host:port`` to a pinned bootnode certificate fingerprint."""
+    """Disk-backed map of ``host:port`` to a pinned discovery-server certificate fingerprint."""
 
     error_cls = BootnodeTrustStoreError
-    label = "bootnode trust store"
-    records_key = "bootnodes"
+    label = "discovery-server trust store"
+    records_key = "discovery_servers"
 
     def __init__(self, path: Path | None = None) -> None:
         super().__init__(path or default_bootnode_trust_path())

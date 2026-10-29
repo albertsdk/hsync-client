@@ -8,10 +8,10 @@ Connect your HSYNC client to a central HSYNC server.
 
 ```bash
 # Single sync (one-shot)
-hsync server server.example.com --once -b mybucket -p /path/to/dir
+hsync server --server-url server.example.com --once -b mybucket -p /path/to/dir
 
 # Continuous sync (the default: keeps retrying if the server is unreachable)
-hsync server server.example.com -b mybucket -p /path/to/dir
+hsync server --server-url server.example.com -b mybucket -p /path/to/dir
 ```
 
 > For local development with a self-signed certificate, add `--insecure` and
@@ -42,10 +42,10 @@ mkdir -p /tmp/hsync-a /tmp/hsync-b
 echo "hello hsync" > /tmp/hsync-a/hello.txt
 
 # 6. Sync folder A → server (one-shot, self-signed cert)
-hsync server localhost --once -b demo -p /tmp/hsync-a --insecure
+hsync server --server-url localhost --once -b demo -p /tmp/hsync-a --insecure
 
 # 7. Sync server → folder B (one-shot, self-signed cert)
-hsync server localhost --once -b demo -p /tmp/hsync-b --insecure
+hsync server --server-url localhost --once -b demo -p /tmp/hsync-b --insecure
 
 # 8. Verify the file arrived
 cat /tmp/hsync-b/hello.txt   # → hello hsync
@@ -59,7 +59,7 @@ either folder — changes propagate within seconds.
 Set the required variables in your shell or export them in a `.env` file:
 
 ```bash
-export HSYNC_SERVER="https://server.example.com"
+export HSYNC_SERVER_URL="https://server.example.com"
 export HSYNC_API_KEY="hs_ACCOUNT_ID_ACCOUNT_SECRET"
 ```
 

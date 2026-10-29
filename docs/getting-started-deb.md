@@ -39,7 +39,7 @@ as the `_hsync` system user.
 > `HSYNC_DEVICE_DIR=/var/lib/hsync/device`,
 > `HSYNC_LOCKS_DIR=/var/lib/hsync/locks`,
 > `HSYNC_P2P_PIN_FILE=/var/lib/hsync/p2p_known_peers.json` and
-> `HSYNC_BOOTNODE_TRUST_FILE=/var/lib/hsync/bootnode_known_hosts.json`
+> `HSYNC_DISCOVERY_SERVER_TRUST_FILE=/var/lib/hsync/discovery_server_known_hosts.json`
 > because the `_hsync` system user has no home directory.
 
 ```bash

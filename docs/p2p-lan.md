@@ -23,7 +23,7 @@ this page covers running without a bootnode configured.
 HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p /srv/hsync
 ```
 
-Nothing else is required: with no `BOOTNODE` hostname and no `HSYNC_BOOTNODE`,
+Nothing else is required: with no `BOOTNODE` hostname and no `HSYNC_DISCOVERY_SERVER_ENDPOINTS`,
 `hsync p2p` never contacts a bootstrap node.
 
 ## Confirm which plan is active
@@ -35,7 +35,7 @@ Discovery: mDNS on the local network (no bootnode configured)
 ```
 
 If you see `Discovery: mDNS on the local network + bootnode HOST:PORT` instead, a
-bootnode is configured — unset `HSYNC_BOOTNODE` (or drop the positional) to go
+bootnode is configured — unset `HSYNC_DISCOVERY_SERVER_ENDPOINTS` (or drop the positional) to go
 back to mDNS-only.
 
 ## Keep groups apart
@@ -57,7 +57,7 @@ HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p /srv/hsyn
 HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p /srv/hsync --never-master
 ```
 
-The mDNS plan also exposes `--discovery-timeout SECONDS` (default `0` = wait
+The mDNS plan also exposes `--peer-discovery-timeout SECONDS` (default `0` = wait
 indefinitely) for one-shot runs.
 
 ## Verify it works

@@ -138,20 +138,20 @@ serves:
 ```bash
 # Same command on every device of the group.
 HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p ~/Sync \
-  --upnp boot.example.net
+  --map-data-port boot.example.net
 ```
 
 On a terminal the first contact is SSH-like: the client prints the node's
 SHA-256 fingerprint and asks to confirm it once (answer `yes`), then remembers
 it and reconnects silently. Read the fingerprint without trusting it at any
-time with `hsync trust bootnode fingerprint boot.example.net`.
+time with `hsync trust discovery-server fingerprint boot.example.net`.
 
 A run with no terminal (cron, systemd, CI) cannot answer the prompt, so it must
 state the trust decision explicitly. Accept the first sighting:
 
 ```bash
 HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p ~/Sync \
-  boot.example.net --bootnode-tofu
+  boot.example.net --discovery-server-tofu
 ```
 
 Once the operator has published the stable `sha256:<hex>` fingerprint
@@ -159,11 +159,11 @@ Once the operator has published the stable `sha256:<hex>` fingerprint
 
 ```bash
 HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p ~/Sync \
-  boot.example.net --bootnode-fingerprint YOUR_BOOTNODE_FINGERPRINT
+  boot.example.net --discovery-server-fingerprint YOUR_BOOTNODE_FINGERPRINT
 ```
 
 The `ask` trust prompt only appears on a terminal, so it is not enough for a
-service run: pin the fingerprint (as above) or use `--bootnode-trust accept-new`.
+service run: pin the fingerprint (as above) or use `--discovery-server-trust accept-new`.
 `--insecure` skips verification and is for loopback tests only.
 
 A device that cannot map its port stays **slave-only** (it still syncs, it just

@@ -39,7 +39,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   `--quarantine` renames a corrupt DB aside. Wire/capabilities: the `state`
   subcommand appears automatically in `--capabilities-json` (introspected), so
   the desktop gates its button on `supports_subcommand(doc, "state")`.
-- **Bootnode multi-port dial fallback**: `HSYNC_BOOTNODE_PORTS`
+- **Bootnode multi-port dial fallback**: `HSYNC_DISCOVERY_SERVER_EXTRA_PORTS`
   (`config.py::get_bootnode_ports`) adds extra UDP ports for the **same** bootnode;
   `BootnodeClient._with_connection` (`boot_client.py`) dials the last working port
   first (then the primary and extras) and falls back **only when the QUIC handshake
@@ -256,7 +256,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
 
 - **Bootnode discovery cadence has its own budget**: the `boot/1` plan uses
   `BOOTNODE_REFRESH_INTERVAL` (`hsync_client.constants`, default `30`, spec
-  ``boot-1.md``: "client refresh every 30 s"; env `HSYNC_BOOTNODE_REFRESH_INTERVAL`,
+  ``boot-1.md``: "client refresh every 30 s"; env `HSYNC_DISCOVERY_SERVER_REFRESH_INTERVAL`,
   range 1–300) to drive the lease loop's register/refresh/query, distinct from the
   mDNS `HEARTBEAT_INTERVAL` (5 s). `BootnodeDiscovery.wait_for_discovery` is
   event-based (`PeerManager.wait_for_change`, like mDNS) and never polls `query`
@@ -265,7 +265,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   10/min (`hsync-bootnode/python/src/hsync_bootnode/handler.py::BootHandler`), and this cadence keeps the client inside those
   limits instead of burning the burst and being `rate_limited` for the rest of
   the window, which would starve real discovery.
-  `HSYNC_BOOTNODE_REFRESH_INTERVAL` is documented in
+  `HSYNC_DISCOVERY_SERVER_REFRESH_INTERVAL` is documented in
   `docs/configuration-p2p.md` and the man page; it is **not** part of the WD OS5
   web config surface in `hsync-wd-os5` (which never exposed the heartbeat).
 
@@ -286,7 +286,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   while an unreachable/refused sync server still cancels the start (server mode
   has no alternative). See `hsync-bootnode/docs/faq.md` and `docs/faq-p2p.md` for
   the operator/client recovery steps (stable `--identity`,
-  `--bootnode-fingerprint`, clearing the pin).
+  `--discovery-server-fingerprint`, clearing the pin).
 
 - **One log line per boot/1 lease cycle**: aioquic's per-frame QUIC/TLS INFO
   records (`Retrying with token`, `Negotiated protocol version`, `ALPN
@@ -300,18 +300,18 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
 
 - **SSH-like bootnode trust (ADR-0035)**: the default policy is `ask` — on a
   terminal the client prints the unknown bootnode fingerprint and confirms it
-  once (like `ssh`), remembering it in `bootnode_known_hosts.json`; without a
+  once (like `ssh`), remembering it in `discovery_server_known_hosts.json`; without a
   terminal it fails closed. The policy is the shared SSOT
   `hsync_common.protocol.tls_trust` (`TrustPolicy` + `evaluate_tls_trust`),
   consumed by `BootnodeClient` (`policy`/`prompt` fields; `BootnodeNotTrusted`
   disables the bootnode source in the lease loop, like a pin mismatch, while the
   run continues on the remaining sources) and mirrored by the Android client
-  via the `p2p-bootnode-trust-scenarios` fixture. `--bootnode-trust
-  {ask,accept-new,strict}` and `HSYNC_BOOTNODE_TRUST` select the policy;
-  `--bootnode-tofu` maps to `accept-new`, `--bootnode-fingerprint` to `strict` and
-  `--insecure` to `none`. The store (`bootnode_known_hosts.json`) keeps
+  via the `p2p-bootnode-trust-scenarios` fixture. `--discovery-server-trust
+  {ask,accept-new,strict}` and `HSYNC_DISCOVERY_SERVER_TRUST` select the policy;
+  `--discovery-server-tofu` maps to `accept-new`, `--discovery-server-fingerprint` to `strict` and
+  `--insecure` to `none`. The store (`discovery_server_known_hosts.json`) keeps
   `{current, updated_at, first_seen, source}` and is managed with
-  `hsync trust bootnode {list,show,add,remove,fingerprint}` (`fingerprint` reads a
+  `hsync trust discovery-server {list,show,add,remove,fingerprint}` (`fingerprint` reads a
   node's certificate without trusting it). The prompt is built by
   `hsync_client/trust_prompt.py` and only prompts on a terminal under policy
   `ask`; non-interactive acceptance is expressed with `accept-new` (TOFU).
@@ -337,3 +337,26 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   ``_propagate_metadata_change``): the two directions are now symmetric
   (``touch`` on either side converges the other's mtime without transferring
   bytes).
+
+- **One naming rule for destinations, ports and bind addresses**: the sync-server
+  endpoint is `--server-url`/`HSYNC_SERVER_URL` (a URL: it may carry a
+  reverse-proxy path), the discovery servers are the repeatable
+  `--discovery-server`/`HSYNC_DISCOVERY_SERVER_ENDPOINTS` (scheme-less
+  `HOST[:PORT]` endpoints, because the QUIC/UDP channel refuses a scheme), extra
+  dial ports of those same endpoints are `HSYNC_DISCOVERY_SERVER_EXTRA_PORTS`,
+  and bind addresses are `--listen-*`. No flag is a bare `--port` any more: a
+  port always travels inside the endpoint it belongs to, so the same word can no
+  longer mean "port I dial" and "port I bind". Renaming the client's
+  discovery-server surface also freed the `HSYNC_DISCOVERY_*` prefix: the
+  peer-discovery wait is `HSYNC_PEER_DISCOVERY_TIMEOUT`, so `HSYNC_DISCOVERY_*`
+  never describes two different objects.
+- **Several discovery servers are leased and merged client-side, not replicated**:
+  every configured endpoint gets its own lease (register/refresh/query) and its
+  own trust state, and the samples merge in the shared `PeerManager` by CID. A
+  node stays a single RAM-only routing table (the `boot/1` spec forbids state
+  sharding), so redundancy is a client property and no peer data crosses nodes.
+  A plain failover would have re-created the partition it tries to hide: with
+  two live nodes, a client pinned to one would never see the other's devices.
+  The residual limit is stated instead of hidden: clients whose reachable sets
+  are disjoint (asymmetric egress filtering) still cannot meet, and closing that
+  needs node-to-node federation, which the wire protocol does not have.

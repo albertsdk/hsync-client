@@ -691,9 +691,8 @@ class TestUntrustedNodeDisablesTheSource:
 
 class TestStop:
     def test_stop_sends_leave_and_unmaps(self):
-        plan, fake_upnp = make_plan()
-        plan._upnp = fake_upnp
-        plan._external_port = 8443
+        plan, fake_upnp = make_plan(upnp_enabled=True)
+        plan._shared_upnp.external_port(plan._port)
         plan._running = True
         plan._thread = None
         plan.stop()
@@ -702,10 +701,9 @@ class TestStop:
 
     def test_stop_after_an_untrusted_node_skips_leave(self):
         """Never contact a node declared untrusted: no lease to release."""
-        plan, fake_upnp = make_plan()
+        plan, fake_upnp = make_plan(upnp_enabled=True)
         plan._disable_source("pin mismatch")
-        plan._upnp = fake_upnp
-        plan._external_port = 8443
+        plan._shared_upnp.external_port(plan._port)
         plan._running = True
         plan._thread = None
         plan.stop()
@@ -753,7 +751,6 @@ class TestNetworkChange:
         # The mapping belonged to the previous network: it is dropped and the
         # next publish maps the live port again.
         assert fake_upnp.unmapped is True
-        assert plan._upnp is None
 
         plan._publish_endpoint()
         _kind, republished = plan._client.calls[-1]

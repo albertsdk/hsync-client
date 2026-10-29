@@ -550,13 +550,13 @@ class TestTrustFailureGuidance:
         assert "does not match the pinned fingerprint (possible man-in-the-middle)" in message
         assert guidance is not None
         assert guidance.startswith(
-            "Bootnode 'boot.example.net:443' trust failed: the certificate fingerprint "
+            "Discovery server 'boot.example.net:443' trust failed: the certificate fingerprint "
             "does not match the accepted pin (possible man-in-the-middle)."
         )
         assert f"sha256:{fp}" in guidance
         assert str(trust_file) in guidance
-        assert f"hsync trust bootnode add boot.example.net sha256:{fp} --port 443" in guidance
-        assert "hsync trust bootnode remove boot.example.net --port 443" in guidance
+        assert f"hsync trust discovery-server add boot.example.net:443 sha256:{fp}" in guidance
+        assert "hsync trust discovery-server remove boot.example.net:443" in guidance
         assert "ssh-keygen -R" in guidance
 
     def test_strict_unknown_node_offers_pinning_and_tofu(self, tmp_path, monkeypatch):
@@ -569,8 +569,8 @@ class TestTrustFailureGuidance:
             client._verify_peer(_FakePeer(cert))
         assert "is not pinned and the trust policy is 'strict'" in str(excinfo.value)
         guidance = excinfo.value.guidance or ""
-        assert f"hsync trust bootnode add boot.example.net sha256:{fp} --port 443" in guidance
-        assert "--bootnode-tofu" in guidance
+        assert f"hsync trust discovery-server add boot.example.net:443 sha256:{fp}" in guidance
+        assert "--discovery-server-tofu" in guidance
 
     def test_explicit_pin_mismatch_points_at_the_flag(self, tmp_path, monkeypatch):
         from hsync_client.bootnode_trust import BOOTNODE_TRUST_FILE_ENV
@@ -582,10 +582,10 @@ class TestTrustFailureGuidance:
         )
         with pytest.raises(BootnodeFingerprintMismatch) as excinfo:
             client._verify_peer(_FakePeer(cert))
-        assert "--bootnode-fingerprint" in str(excinfo.value)
+        assert "--discovery-server-fingerprint" in str(excinfo.value)
         guidance = excinfo.value.guidance or ""
-        assert "hsync trust bootnode fingerprint boot.example.net --port 443" in guidance
-        assert "--bootnode-fingerprint" in guidance
+        assert "hsync trust discovery-server fingerprint boot.example.net:443" in guidance
+        assert "--discovery-server-fingerprint" in guidance
 
     def test_prompt_accept_reports_where_the_pin_was_saved(self, tmp_path, monkeypatch):
         from loguru import logger as log
@@ -644,8 +644,8 @@ class TestTrustFailureGuidance:
             client._verify_peer(_FakePeer(cert))
         message = str(excinfo.value)
         assert "nothing was saved" in message
-        assert "--bootnode-tofu" in message
-        assert "--bootnode-fingerprint" in message
+        assert "--discovery-server-tofu" in message
+        assert "--discovery-server-fingerprint" in message
 
 
 class TestRefusals:

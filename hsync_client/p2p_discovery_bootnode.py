@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from hsync_common.endpoint import format_authority
@@ -48,7 +48,12 @@ from hsync_client.boot_client import (
     build_refresh_frame,
     build_register_frame,
 )
-from hsync_client.boot_relay import RelayAcceptor, RelayDialer
+from hsync_client.boot_relay import (
+    FailoverRelayDialer,
+    GroupRelayAcceptor,
+    RelayAcceptor,
+    RelayDialer,
+)
 from hsync_client.constants import (
     BOOTNODE_DEFAULT_PORT,
     BOOTNODE_REFRESH_INTERVAL,
@@ -75,13 +80,48 @@ from hsync_client.p2p_peers import (
 from hsync_client.stun import ObservedAddress, observed_address
 from hsync_client.upnp import UpnpMapper
 
-__all__ = ["BootnodeDiscovery"]
+__all__ = ["BootnodeDiscovery", "MultiBootnodeDiscovery", "SharedUpnpMapping"]
 
 # How often the lease loop wakes to register/refresh/query. The bootnode
 # rate-limits ``query`` to 5/min per (IP, bucket) and ``register``/``refresh`` to
 # 10/min (``boot-1.md``), so the client uses the spec's 30 s refresh window
 # instead of the mDNS heartbeat cadence.
 _DEFAULT_REFRESH_S = BOOTNODE_REFRESH_INTERVAL
+
+
+class SharedUpnpMapping:
+    """One UPnP mapping shared by every discovery source of this process.
+
+    N sources publish the same data-plane port, so mapping per source would
+    create N mappings and up to N different external ports for one service. The
+    first publisher creates the mapping and every source reads the same value; a
+    network change invalidates it for all of them.
+    """
+
+    def __init__(self, mapper_factory: Callable[[], UpnpMapper] = UpnpMapper) -> None:
+        self._factory = mapper_factory
+        self._lock = threading.Lock()
+        self._mapper: UpnpMapper | None = None
+        self._external_port: int | None = None
+
+    def external_port(self, local_port: int) -> int | None:
+        """Map *local_port* once; ``None`` when the router exposes no mapping."""
+        with self._lock:
+            if self._external_port is None:
+                if self._mapper is None:
+                    self._mapper = self._factory()
+                self._external_port = self._mapper.map_port(local_port)
+            return self._external_port
+
+    def unmap(self) -> None:
+        """Drop the mapping so the next publish re-creates it (best-effort)."""
+        with self._lock:
+            mapper, self._mapper, self._external_port = self._mapper, None, None
+        if mapper is not None:
+            try:
+                mapper.unmap()
+            except Exception as exc:  # noqa: BLE001 - best-effort teardown
+                log.debug(f"UPnP unmap failed: {exc}")
 
 
 class BootnodeDiscovery(DiscoveryPlanState):
@@ -110,6 +150,7 @@ class BootnodeDiscovery(DiscoveryPlanState):
         policy: TrustPolicy = TrustPolicy.ask,
         prompt: TrustPrompt | None = None,
         upnp_enabled: bool = False,
+        shared_upnp: SharedUpnpMapping | None = None,
         capacity: int = 0,
         peer_download_enabled: bool = False,
         client_factory: Callable[..., BootnodeClient] = BootnodeClient,
@@ -149,6 +190,12 @@ class BootnodeDiscovery(DiscoveryPlanState):
             prompt=prompt,
         )
         self._upnp_factory = upnp_factory
+        # One mapping per process, not per source: the multi-source plan passes a
+        # shared holder, a single-source plan owns the one it creates here.
+        self._shared_upnp = shared_upnp
+        if self._shared_upnp is None and upnp_enabled:
+            self._shared_upnp = SharedUpnpMapping(upnp_factory)
+        self._owns_upnp_mapping = shared_upnp is None
         self._token = derive_bucket_token(p2p_key.encode("utf-8"), bucket) if p2p_key else None
 
         self._peer_manager: PeerManager | None = None
@@ -165,7 +212,6 @@ class BootnodeDiscovery(DiscoveryPlanState):
         # the candidates relayed by the node went stale after a network change.
         self._published_local_ip: str | None = None
         self._external_port: int | None = None
-        self._upnp: UpnpMapper | None = None
         self._network_monitor: NetworkChangeMonitor | None = None
 
         self._server_ready = False
@@ -241,9 +287,8 @@ class BootnodeDiscovery(DiscoveryPlanState):
         # lease loop before any register, so there is no lease to release.
         if not self._untrusted:
             self._send_leave()
-        if self._upnp is not None:
-            self._upnp.unmap()
-            self._upnp = None
+        if self._owns_upnp_mapping and self._shared_upnp is not None:
+            self._shared_upnp.unmap()
 
     def wait_for_discovery(self, timeout: float) -> None:
         """Block until at least one live peer is known, or ``timeout`` elapses.
@@ -418,14 +463,10 @@ class BootnodeDiscovery(DiscoveryPlanState):
             "republishing the bootnode endpoint"
         )
         self._published_endpoints = False
-        if self._upnp is not None:
+        if self._shared_upnp is not None:
             # The mapping was created on the previous network (another router or
             # external address): drop it so the next publish maps the live port.
-            try:
-                self._upnp.unmap()
-            except Exception as exc:
-                log.debug(f"UPnP unmap during the network change failed: {exc}")
-            self._upnp = None
+            self._shared_upnp.unmap()
         self._external_port = None
         return True
 
@@ -623,9 +664,8 @@ class BootnodeDiscovery(DiscoveryPlanState):
             )
 
     def _publish_endpoint(self) -> None:
-        if self._upnp_enabled and self._upnp is None:
-            self._upnp = self._upnp_factory()
-            self._external_port = self._upnp.map_port(self._port)
+        if self._shared_upnp is not None:
+            self._external_port = self._shared_upnp.external_port(self._port)
         self._register(publish_endpoint=True)
 
     def _refresh(self) -> None:
@@ -752,3 +792,135 @@ class BootnodeDiscovery(DiscoveryPlanState):
 
 def _client_version() -> str:
     return HSYNC_VERSION
+
+
+class MultiBootnodeDiscovery(DiscoveryPlanState):
+    """Lease and query several discovery servers over one shared ``PeerManager``.
+
+    Each child keeps its own transport, trust policy and lease state (the
+    observed endpoint and the published candidates are per node), while peer
+    state and the master election stay single: ``PeerManager.add_peer`` merges
+    the samples by CID, so a peer seen through two servers is one candidate and
+    one election input.
+
+    Readiness is "at least one source published": a server that is down, refused
+    or not trusted must not delay the data plane, because a peer can still reach
+    this node through any server that did see it. A source that stops for good
+    (an untrusted node) is disabled on its own, never for its siblings.
+
+    The children must be built with the same serving ``port``; ``build_discovery_plan``
+    resolves it once for exactly that reason.
+    """
+
+    def __init__(
+        self,
+        sources: Sequence[BootnodeDiscovery],
+        *,
+        shared_upnp: SharedUpnpMapping | None = None,
+    ) -> None:
+        if not sources:
+            raise ValueError("at least one discovery source is required")
+        self._sources = list(sources)
+        self._shared_upnp = shared_upnp
+        self._port = self._sources[0].port
+        self._peer_manager: PeerManager | None = None
+        self._connected_clients_provider: Callable[[], int] | None = None
+        self._discovery_announced = False
+
+    # -- DiscoveryPlan surface -------------------------------------------------
+
+    def start(self, register_service: bool = True) -> PeerManager:
+        """Start every lease loop over one shared :class:`PeerManager`."""
+        manager = self._sources[0].create_peer_manager()
+        self._peer_manager = manager
+        for source in self._sources:
+            source.start(register_service=register_service, peer_manager=manager)
+        log.info(f"P2P discovery started ({len(self._sources)} discovery server(s))")
+        return manager
+
+    def stop(self) -> None:
+        """Stop every lease loop and drop the shared UPnP mapping (reverse order)."""
+        for source in reversed(self._sources):
+            source.stop()
+        if self._shared_upnp is not None:
+            self._shared_upnp.unmap()
+
+    def wait_for_discovery(self, timeout: float) -> None:
+        """Wait once on the shared manager: peers can arrive from any source."""
+        if self._peer_manager is None:
+            return
+        if not self._discovery_announced:
+            log.info(f"Waiting {timeout}s for peer discovery...")
+            self._discovery_announced = True
+        else:
+            log.debug(f"Waiting {timeout}s for peer discovery...")
+        self._peer_manager.wait_for_change(timeout)
+        self.log_peer_count()
+
+    def update_endpoint_ready(self, ready: bool) -> None:
+        """Publish (or retract) this node's data-plane endpoint on every source."""
+        for source in self._sources:
+            source.update_endpoint_ready(ready)
+
+    def endpoint_published(self) -> bool:
+        """True once any source that can still carry traffic published the endpoint."""
+        usable = [source for source in self._sources if not source.source_disabled()]
+        return any(source.endpoint_published() for source in usable)
+
+    def update_server_ready(self) -> None:
+        """Publish that the local master server is ready on every source."""
+        for source in self._sources:
+            source.update_server_ready()
+
+    def update_server_not_ready(self) -> None:
+        """Publish that the local master server is no longer ready on every source."""
+        for source in self._sources:
+            source.update_server_not_ready()
+
+    def set_connected_clients(self, count: int) -> None:
+        """Publish the connected-client count on every source."""
+        for source in self._sources:
+            source.set_connected_clients(count)
+
+    def set_master_eligibility(self, eligible: bool) -> None:
+        """Withdraw or restore this node's master candidacy on every source."""
+        for source in self._sources:
+            source.set_master_eligibility(eligible)
+
+    def refresh_election_advertisement(self) -> None:
+        """Re-announce the election flags on every source."""
+        for source in self._sources:
+            source.refresh_election_advertisement()
+
+    def set_connected_clients_provider(self, provider: Callable[[], int] | None) -> None:
+        """Install the connected-client provider on every source."""
+        super().set_connected_clients_provider(provider)
+        for source in self._sources:
+            source.set_connected_clients_provider(provider)
+
+    def log_peer_count(self) -> None:
+        """Log the shared alive-peer count once (each source would repeat it)."""
+        if self._sources:
+            self._sources[0].log_peer_count()
+
+    def source_disabled(self) -> bool:
+        """True only when every source stopped for good."""
+        return all(source.source_disabled() for source in self._sources)
+
+    def relay_dialer(self, target_cid: str) -> Any:
+        """Pair the relay session through the first server that accepts it."""
+        dialers = [
+            dialer
+            for source in self._sources
+            if (dialer := source.relay_dialer(target_cid)) is not None
+        ]
+        return FailoverRelayDialer(dialers) if dialers else None
+
+    def relay_acceptor(self, local_port: int) -> Any:
+        """Register the relay listener on every server."""
+        acceptors = [
+            acceptor
+            for source in self._sources
+            if (acceptor := source.relay_acceptor(local_port)) is not None
+        ]
+        return GroupRelayAcceptor(acceptors) if acceptors else None

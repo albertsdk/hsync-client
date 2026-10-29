@@ -20,7 +20,7 @@ a bootnode banner), but the peer list stays empty and no sync happens.
   checklist in [Sync on the local network](p2p-lan.md).
 - Peers listed but no sync → different `HSYNC_P2P_PASSPHRASE`/`HSYNC_P2P_KEY`, bucket or `--group`.
 - The log shows `Discovery: mDNS on the local network + bootnode …` although only
-  mDNS was intended → a bootnode is configured; unset `HSYNC_BOOTNODE` (or drop
+  mDNS was intended → a bootnode is configured; unset `HSYNC_DISCOVERY_SERVER_ENDPOINTS` (or drop
   the positional).
 
 ## After a network change a device stays "waiting"
@@ -242,7 +242,7 @@ Then check what the next sync would transfer, without moving anything:
 
 ```bash
 hsync state reset --folder ~/Photos --json
-hsync server server.example.com -b photos -p ~/Photos --dry-run
+hsync server --server-url server.example.com -b photos -p ~/Photos --dry-run
 ```
 
 If the state database is unreadable, move it aside instead of failing (the file

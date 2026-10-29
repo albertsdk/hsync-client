@@ -27,8 +27,7 @@ from typing import Any
 
 from loguru import logger as log
 
-from hsync_client.p2p_discovery import DiscoveryPlanState
-from hsync_client.p2p_discovery_bootnode import BootnodeDiscovery
+from hsync_client.p2p_discovery import BootnodeSource, DiscoveryPlanState
 from hsync_client.p2p_discovery_mdns import MdnsDiscovery
 from hsync_client.p2p_peers import PeerManager
 
@@ -36,9 +35,9 @@ __all__ = ["HybridDiscovery"]
 
 
 class HybridDiscovery(DiscoveryPlanState):
-    """Run the mDNS and bootnode plans together over one shared PeerManager."""
+    """Run the mDNS plan and the discovery-server source(s) over one PeerManager."""
 
-    def __init__(self, *, mdns: MdnsDiscovery, bootnode: BootnodeDiscovery) -> None:
+    def __init__(self, *, mdns: MdnsDiscovery, bootnode: BootnodeSource) -> None:
         self._mdns = mdns
         self._bootnode = bootnode
         # The shared trivial state (port, peer manager, connected-client
@@ -52,16 +51,16 @@ class HybridDiscovery(DiscoveryPlanState):
     # -- DiscoveryPlan surface -------------------------------------------------
 
     def start(self, register_service: bool = True) -> PeerManager:
-        """Start both source plans over one shared :class:`PeerManager`."""
+        """Start every source over one shared :class:`PeerManager`."""
         manager = self._mdns.create_peer_manager()
         self._peer_manager = manager
         self._mdns.start(register_service=register_service, peer_manager=manager)
         self._bootnode.start(register_service=register_service, peer_manager=manager)
-        log.info("P2P discovery started (mDNS + bootnode)")
+        log.info("P2P discovery started (mDNS + discovery server)")
         return manager
 
     def stop(self) -> None:
-        """Stop both source plans."""
+        """Stop every source (the discovery sources first, mDNS last)."""
         self._bootnode.stop()
         self._mdns.stop()
 
@@ -70,8 +69,8 @@ class HybridDiscovery(DiscoveryPlanState):
 
         Peers can arrive from either source, so the wait is the mDNS one (wake on
         a discovery change, or the window elapsing); presence is emitted exactly
-        once, by the mDNS child, and the bootnode result is logged once. A
-        bootnode source that stopped (untrusted node) never fails the wait: it
+        once, by the mDNS child, and the discovery result is logged once. A
+        discovery source that stopped (untrusted node) never fails the wait: it
         simply delivers no more peers while the local network keeps feeding the
         shared state.
         """
@@ -94,10 +93,10 @@ class HybridDiscovery(DiscoveryPlanState):
     def endpoint_published(self) -> bool:
         """True once every source that can still carry traffic published it.
 
-        The mDNS plan has no separate publication step (always ``True``); the
-        bootnode plan gates readiness until its endpoint register, so the
+        The mDNS plan has no separate publication step (always ``True``); a
+        discovery source gates readiness until its endpoint register, so the
         combined plan is ready only when the node is reachable from both. A
-        disabled bootnode source (untrusted node) carries no traffic at all, so
+        disabled discovery source (untrusted node) carries no traffic at all, so
         requiring its publication would only delay readiness for a peer that
         cannot be reached through it.
         """
@@ -121,11 +120,11 @@ class HybridDiscovery(DiscoveryPlanState):
         self._bootnode.set_connected_clients(count)
 
     def relay_dialer(self, target_cid: str) -> Any:
-        """Delegate the data relay to the bootnode source (mDNS has none)."""
+        """Delegate the data relay to the discovery source (mDNS has none)."""
         return self._bootnode.relay_dialer(target_cid)
 
     def relay_acceptor(self, local_port: int) -> Any:
-        """Delegate the data relay listener to the bootnode source."""
+        """Delegate the data relay listener to the discovery source."""
         return self._bootnode.relay_acceptor(local_port)
 
     def set_master_eligibility(self, eligible: bool) -> None:

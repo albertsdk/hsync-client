@@ -48,7 +48,12 @@ if TYPE_CHECKING:
     from hsync_client.config import HsyncConfig
 
 
-__all__ = ["DiscoveryPlan", "DiscoveryPlanState", "build_discovery_plan"]
+__all__ = [
+    "BootnodeSource",
+    "DiscoveryPlan",
+    "DiscoveryPlanState",
+    "build_discovery_plan",
+]
 
 
 @runtime_checkable
@@ -128,18 +133,88 @@ class DiscoveryPlan(Protocol):
     def relay_dialer(self, target_cid: str) -> Any:
         """A data-relay tunnel factory towards *target_cid*, or ``None``.
 
-        Discovery plans that cannot relay (mDNS) return ``None``; the bootnode
-        plan returns a ready-to-open :class:`hsync_client.boot_relay.RelayDialer`.
-        The caller owns the returned object and must close it.
+        Discovery plans that cannot relay (mDNS) return ``None``; a discovery
+        source returns a ready-to-open
+        :class:`hsync_client.boot_relay.RelayDialer`. The caller owns the
+        returned object and must close it.
         """
         ...
 
     def relay_acceptor(self, local_port: int) -> Any:
         """A data-relay listener for this node, or ``None`` when unsupported.
 
-        Only the bootnode plan can ask the node to relay inbound sessions; the
+        Only a discovery source can ask the node to relay inbound sessions; the
         caller starts and stops the returned acceptor with the serving role.
         """
+        ...
+
+
+@runtime_checkable
+class BootnodeSource(Protocol):
+    """The ``boot/1`` surface a combined plan drives, for one node or several.
+
+    One implementation is a single :class:`~hsync_client.p2p_discovery_bootnode.BootnodeDiscovery`;
+    :class:`~hsync_client.p2p_discovery_bootnode.MultiBootnodeDiscovery` is the
+    fan-out over N of them. ``HybridDiscovery`` depends only on this surface, so
+    mDNS plus one node and mDNS plus N nodes are the same composition.
+    """
+
+    def start(
+        self, register_service: bool = True, peer_manager: PeerManager | None = None
+    ) -> PeerManager:
+        """Start the lease loop(s) and return the shared :class:`PeerManager`."""
+        ...
+
+    def stop(self) -> None:
+        """Stop the lease loop(s) and release the transport resources."""
+        ...
+
+    def log_peer_count(self) -> None:
+        """Log the alive-peer count once per discovery window."""
+        ...
+
+    def update_endpoint_ready(self, ready: bool) -> None:
+        """Publish (or retract) this node's data-plane endpoint."""
+        ...
+
+    def endpoint_published(self) -> bool:
+        """True once the data-plane endpoint reached every source that can carry it."""
+        ...
+
+    def source_disabled(self) -> bool:
+        """True when the source stopped for good (an untrusted node)."""
+        ...
+
+    def update_server_ready(self) -> None:
+        """Publish that the local master server is ready to accept peers."""
+        ...
+
+    def update_server_not_ready(self) -> None:
+        """Publish that the local master server is no longer ready."""
+        ...
+
+    def set_connected_clients(self, count: int) -> None:
+        """Publish the number of currently connected peer clients."""
+        ...
+
+    def set_connected_clients_provider(self, provider: Callable[[], int] | None) -> None:
+        """Install a callback that yields the live connected-client count."""
+        ...
+
+    def set_master_eligibility(self, eligible: bool) -> None:
+        """Advertise or withdraw this node's master candidacy."""
+        ...
+
+    def refresh_election_advertisement(self) -> None:
+        """Re-announce the election flags."""
+        ...
+
+    def relay_dialer(self, target_cid: str) -> Any:
+        """A data-relay tunnel factory towards *target_cid*, or ``None``."""
+        ...
+
+    def relay_acceptor(self, local_port: int) -> Any:
+        """A data-relay listener feeding the local master, or ``None``."""
         ...
 
 
@@ -281,7 +356,8 @@ def build_discovery_plan(
     """Select the discovery plan from ``CONFIG`` — the single decision point.
 
     No bootnode configured → the mDNS plan (historical behavior); a bootnode
-    host set (CLI positional or ``HSYNC_BOOTNODE``) → the bootnode plan. The
+    endpoint set (`--discovery-server` or ``HSYNC_DISCOVERY_SERVER_ENDPOINTS``)
+    → the discovery plan. The
     sync core (``p2p_handler.run_p2p_mode``) never branches on the plan: it
     receives the adapter here and only uses the :class:`DiscoveryPlan` surface.
 
@@ -289,27 +365,31 @@ def build_discovery_plan(
     serving port, so discovery advertises the real port instead of probing for
     one (no probe/release race).
     """
-    from hsync_client.p2p_discovery_bootnode import BootnodeDiscovery
+    from hsync_client.p2p_discovery_bootnode import (
+        BootnodeDiscovery,
+        MultiBootnodeDiscovery,
+        SharedUpnpMapping,
+    )
     from hsync_client.p2p_discovery_mdns import MdnsDiscovery
 
     resolved_port = config["P2P_LISTEN_PORT"] if port is None else port
-    bootnode = config.get("BOOTNODE")
-    bootnode_refresh = config.get("BOOTNODE_REFRESH_INTERVAL") or BOOTNODE_REFRESH_INTERVAL
+    endpoints = tuple(config.get("DISCOVERY_SERVER_ENDPOINTS") or ())
+    discovery_refresh = config.get("DISCOVERY_SERVER_REFRESH_INTERVAL") or BOOTNODE_REFRESH_INTERVAL
     peer_timeout: float = float(config.get("PEER_TIMEOUT") or PEER_TIMEOUT)
-    # A bootnode-discovered peer is only re-seen when its CID is drawn in the
+    # A discovery-server peer is only re-seen when its CID is drawn in the
     # node's random sample, and samples arrive at the lease cadence
-    # (``BOOTNODE_REFRESH_INTERVAL``, spec ``boot-1.md``: 30 s). The shared
-    # PeerManager holds ONE liveness window for both sources, so with a bootnode
-    # that window must span at least two query cycles — mirroring the mDNS rule
-    # ``PEER_TIMEOUT >= 2 * HEARTBEAT_INTERVAL`` — or a live cross-network peer
-    # is declared stale between two samples and the election churns. An explicit
-    # larger ``HSYNC_PEER_TIMEOUT`` is preserved (``max``).
-    if bootnode:
-        required_timeout = 2.0 * float(bootnode_refresh)
+    # (``DISCOVERY_SERVER_REFRESH_INTERVAL``, spec ``boot-1.md``: 30 s). The
+    # shared PeerManager holds ONE liveness window for every source, so with a
+    # discovery server that window must span at least two query cycles —
+    # mirroring the mDNS rule ``PEER_TIMEOUT >= 2 * HEARTBEAT_INTERVAL`` — or a
+    # live cross-network peer is declared stale between two samples and the
+    # election churns. An explicit larger ``HSYNC_PEER_TIMEOUT`` is preserved.
+    if endpoints:
+        required_timeout = 2.0 * float(discovery_refresh)
         if peer_timeout < required_timeout:
             log.warning(
                 f"Raising the peer liveness timeout to {required_timeout:.0f}s: "
-                f"bootnode discovery re-samples peers every {bootnode_refresh}s"
+                f"discovery-server sampling runs every {discovery_refresh}s"
             )
             peer_timeout = required_timeout
     shared: dict[str, object] = {
@@ -325,28 +405,42 @@ def build_discovery_plan(
         "peer_timeout": peer_timeout,
         "heartbeat_interval": config.get("HEARTBEAT_INTERVAL") or HEARTBEAT_INTERVAL,
     }
-    if not bootnode:
+    if not endpoints:
         return MdnsDiscovery(**shared)  # type: ignore[arg-type]
-    # The bootnode plan has its own lease cadence (spec ``boot-1.md``: refresh
-    # every 30 s) sized against the node's query/register rate limits; it must
+    # Every discovery source follows the boot/1 lease cadence (spec: refresh
+    # every 30 s), sized against the node's query/register rate limits; it must
     # not reuse the mDNS heartbeat, which is far faster.
     bootnode_shared = {key: value for key, value in shared.items() if key != "heartbeat_interval"}
-    bootnode_plan = BootnodeDiscovery(
-        **bootnode_shared,  # type: ignore[arg-type]
-        refresh_interval=bootnode_refresh,
-        bootnode_host=bootnode,
-        bootnode_port=config.get("BOOTNODE_PORT") or BOOTNODE_DEFAULT_PORT,
-        bootnode_ports=tuple(config.get("BOOTNODE_PORTS") or ()),
-        p2p_key=config.get("P2P_KEY"),
-        fingerprints=config.get("BOOTNODE_FINGERPRINT", ()),
-        policy=config.get("BOOTNODE_TRUST", TrustPolicy.ask),
-        prompt=build_trust_prompt(config),
-        upnp_enabled=bool(config.get("UPNP_ENABLED", False)),
-        capacity=config.get("P2P_PEER_READ_CAP", 0),
-        peer_download_enabled=bool(config.get("P2P_PEER_DOWNLOAD", False)),
+    map_data_port = bool(config.get("MAP_DATA_PORT", False))
+    # One UPnP mapping for the whole process: N sources publish the same
+    # data-plane port, so a mapper per source would create N mappings. With a
+    # single source the child owns the mapping it creates.
+    shared_upnp = SharedUpnpMapping() if map_data_port and len(endpoints) > 1 else None
+    sources = [
+        BootnodeDiscovery(
+            **bootnode_shared,  # type: ignore[arg-type]
+            refresh_interval=discovery_refresh,
+            bootnode_host=endpoint.host,
+            bootnode_port=endpoint.port or BOOTNODE_DEFAULT_PORT,
+            bootnode_ports=tuple(config.get("DISCOVERY_SERVER_EXTRA_PORTS") or ()),
+            p2p_key=config.get("P2P_KEY"),
+            fingerprints=tuple(config.get("DISCOVERY_SERVER_FINGERPRINTS") or ()),
+            policy=config.get("DISCOVERY_SERVER_TRUST", TrustPolicy.ask),
+            prompt=build_trust_prompt(config),
+            upnp_enabled=map_data_port,
+            shared_upnp=shared_upnp,
+            capacity=config.get("P2P_PEER_READ_CAP", 0),
+            peer_download_enabled=bool(config.get("P2P_PEER_DOWNLOAD", False)),
+        )
+        for endpoint in endpoints
+    ]
+    bootnode_plan = (
+        sources[0]
+        if len(sources) == 1
+        else MultiBootnodeDiscovery(sources, shared_upnp=shared_upnp)
     )
-    # mDNS stays active alongside the bootnode: a node next to us on the local
-    # network is found without a round trip through the node, and the two
+    # mDNS stays active alongside the discovery servers: a node next to us on the
+    # local network is found without a round trip through a server, and the
     # sources share one PeerManager so the election stays single.
     from hsync_client.p2p_discovery_hybrid import HybridDiscovery
 

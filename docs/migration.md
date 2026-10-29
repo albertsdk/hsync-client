@@ -35,19 +35,19 @@ and caveats to watch for.
 
 3. **Create a bucket and upload from the source device**:
    ```bash
-   hsync server server.example.com -b mybucket -p /path/to/files
+   hsync server --server-url server.example.com -b mybucket -p /path/to/files
    ```
 
 4. **Connect remaining devices**. On each additional device, point HSYNC to an
    **empty directory** and let it download everything:
    ```bash
-   hsync server server.example.com -b mybucket -p /path/to/empty/dir
+   hsync server --server-url server.example.com -b mybucket -p /path/to/empty/dir
    ```
    Using an empty directory on new peers prevents accidental overwrites.
 
 5. **Replace your rsync cron job or script** with HSYNC in continuous mode:
    ```bash
-   hsync server server.example.com -b mybucket -p /path/to/files
+   hsync server --server-url server.example.com -b mybucket -p /path/to/files
    ```
 
 ### Caveats
@@ -166,7 +166,7 @@ and caveats to watch for.
 - Cloud storage's "selective sync" (sync only some folders) maps to HSYNC's
   `--subdir` option:
   ```bash
-  hsync server server.example.com -b mybucket -p /path --subdir Documents/
+  hsync server --server-url server.example.com -b mybucket -p /path --subdir Documents/
   ```
 
 ---

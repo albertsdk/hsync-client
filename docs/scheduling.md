@@ -13,7 +13,7 @@ Continuous/daemon mode is the **default**; for automation pass the dedicated
 
 ```bash
 # One-shot: run one cycle and exit (required for cron/systemd timers)
-hsync server server.example.com -b docs --once
+hsync server --server-url server.example.com -b docs --once
 ```
 
 Without `--once` the client keeps running and retries an unreachable server
@@ -33,7 +33,7 @@ HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b docs -p ~/Sync --once
 > **Note:** a p2p master that is serving live peers is inherently continuous
 > (it must stay available to serve them). One-shot p2p runs are the slave side:
 > keep the master running and start the slave with `--once`.
-> `--discovery-timeout 0` is the explicit opt-in to wait for the first peer
+> `--peer-discovery-timeout 0` is the explicit opt-in to wait for the first peer
 > forever.
 
 Flags that make a run non-interactive and safe for schedulers:
@@ -65,14 +65,14 @@ failed transfers (`2`) > deletion guard (`3`) > conflicts (`4`).
 Check the code in a shell as usual:
 
 ```bash
-hsync server server.example.com -b docs --once --allow-deletions
+hsync server --server-url server.example.com -b docs --once --allow-deletions
 echo $?
 ```
 
 or branch on it:
 
 ```bash
-hsync server server.example.com -b docs --once --allow-deletions || echo "sync failed"
+hsync server --server-url server.example.com -b docs --once --allow-deletions || echo "sync failed"
 ```
 
 ## Best practices for automation
@@ -84,7 +84,7 @@ hsync server server.example.com -b docs --once --allow-deletions || echo "sync f
    ```bash
    install -m 600 /dev/null /etc/hsync/hsync.env
    cat > /etc/hsync/hsync.env <<'EOF'
-   HSYNC_SERVER="https://server.example.com"
+   HSYNC_SERVER_URL="https://server.example.com"
    HSYNC_API_KEY="hs_ACCOUNT_ID_ACCOUNT_SECRET"
    EOF
    ```
@@ -141,14 +141,14 @@ Notes:
 ### p2p one-shot via cron
 
 Schedules a slave that syncs against the p2p master and exits (exit `5`
-means "no peer found"). A finite `--discovery-timeout` bounds the wait for
+means "no peer found"). A finite `--peer-discovery-timeout` bounds the wait for
 the first peer and is what ends the run when no peer shows up (the default
 waits indefinitely, so a one-shot run never exits):
 
 ```cron
 # HSYNC_P2P_PASSPHRASE (or HSYNC_P2P_KEY) lives in /etc/hsync/hsync.env (see above)
 0 2 * * * hsyncuser hsync p2p -b shared \
-    -p /data/shared --once --discovery-timeout 30 --allow-deletions \
+    -p /data/shared --once --peer-discovery-timeout 30 --allow-deletions \
     --env-file /etc/hsync/hsync.env
 ```
 

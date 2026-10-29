@@ -478,7 +478,7 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
     if not one_shot:
         log.info("Continuous mode enabled - will wait indefinitely for peers")
 
-    discovery_timeout = config["DISCOVERY_TIMEOUT"]
+    discovery_timeout = config["PEER_DISCOVERY_TIMEOUT"]
     wait_indefinitely_for_peer = discovery_timeout == 0
     # The effective heartbeat (env-overridable) sets the discovery poll cadence,
     # so staleness is re-evaluated at least once per announce cycle.
@@ -520,23 +520,28 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
     p2p_server.start()
     p2p_server.stop_serving()
 
-    # The discovery plan (mDNS or bootnode) is selected in one place; the core
-    # only ever sees the DiscoveryPlan surface and never branches on the plan.
-    # Discovery advertises the already-bound serving port.
+    # The discovery plan (mDNS or mDNS + discovery servers) is selected in one
+    # place; the core only ever sees the DiscoveryPlan surface and never branches
+    # on the plan. Discovery advertises the already-bound serving port.
     p2p_sync = build_discovery_plan(
         config, cert_fingerprint=cert_info.fingerprint, port=p2p_server.port
     )
-    bootnode = config.get("BOOTNODE")
-    if bootnode:
-        log.info(
-            "Discovery: mDNS on the local network + bootnode "
-            f"{bootnode}:{config.get('BOOTNODE_PORT', BOOTNODE_DEFAULT_PORT)} "
-            "(cross-network; UPnP "
-            f"{'on' if config.get('UPNP_ENABLED', True) else 'off'})"
+    endpoints = tuple(config.get("DISCOVERY_SERVER_ENDPOINTS") or ())
+    if endpoints:
+        listed = ", ".join(
+            format_authority(endpoint.host, endpoint.port or BOOTNODE_DEFAULT_PORT)
+            for endpoint in endpoints
         )
-        emit_event(UiEventName.discovery, plan="mdns+bootnode", bootnode=bootnode)
+        log.info(
+            "Discovery: mDNS on the local network + discovery server(s) "
+            f"{listed} (cross-network; UPnP "
+            f"{'on' if config.get('MAP_DATA_PORT', True) else 'off'})"
+        )
+        # The UI event keeps its documented shape: ``plan`` names the combined
+        # plan and ``bootnode`` carries the configured endpoints.
+        emit_event(UiEventName.discovery, plan="mdns+bootnode", bootnode=listed)
     else:
-        log.info("Discovery: mDNS on the local network (no bootnode configured)")
+        log.info("Discovery: mDNS on the local network (no discovery server configured)")
         emit_event(UiEventName.discovery, plan="mdns")
     if config["P2P_NEVER_MASTER"]:
         log.info("Never-master mode enabled - this client will always remain a client/slave")

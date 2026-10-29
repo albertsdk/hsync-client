@@ -57,7 +57,6 @@ COMMON_OPTIONS = frozenset(
         "no_compression",
         "no_delta",
         "once",
-        "port",
         "quiet",
         "reconnect_delay",
         "resync",
@@ -71,11 +70,11 @@ P2P_ONLY_OPTIONS = frozenset(
     {
         "allow_unauthenticated_p2p",
         "allow_unauthenticated_writes",
-        "bootnode",
-        "bootnode_fingerprint",
-        "bootnode_tofu",
-        "bootnode_trust",
-        "discovery_timeout",
+        "discovery_server",
+        "discovery_server_fingerprint",
+        "discovery_server_trust",
+        "discovery_server_tofu",
+        "peer_discovery_timeout",
         "never_master",
         "no_peer_download",
         "p2p_group",
@@ -84,15 +83,15 @@ P2P_ONLY_OPTIONS = frozenset(
         "p2p_listen_port",
         "prefer_master",
         "p2p_trust",
-        "upnp",
+        "map_data_port",
     }
 )
 
 SERVER_ONLY_OPTIONS = frozenset(
     {
         "api_key_fd",
-        "hostname",
         "server_fingerprint",
+        "server_url",
         "server_tofu",
         "server_trust",
     }

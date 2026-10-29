@@ -7,7 +7,7 @@ connected to a central server.
 
 ## 1. Initial Connection
 
-1. **Config Load**: The client reads environment variables (`HSYNC_SERVER`,
+1. **Config Load**: The client reads environment variables (`HSYNC_SERVER_URL`,
    `HSYNC_API_KEY`, `HSYNC_BUCKET`, `HSYNC_PATH`).
 2. **Server Connection**: The client connects to the server over HTTPS/WSS.
 3. **WebSocket Auth**: The client sends an auth frame with its API key, app

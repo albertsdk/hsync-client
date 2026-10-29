@@ -129,10 +129,12 @@ class TestTrustPolicyResolutionParity:
     ):
         from hsync_client import main_logic
 
-        monkeypatch.setattr(main_logic, "get_bootnode_trust", lambda: env_default)
+        monkeypatch.setattr(main_logic, "get_discovery_server_trust", lambda: env_default)
         monkeypatch.setattr(main_logic, "get_server_trust", lambda: env_default)
 
-        bootnode = main_logic._resolve_bootnode_trust(policy, fingerprints, tofu, verify_ssl)
+        bootnode = main_logic._resolve_discovery_server_trust(
+            policy, fingerprints, tofu, verify_ssl
+        )
         server = main_logic._resolve_server_trust(policy, fingerprints, tofu, verify_ssl)
 
         if env_default is None and policy is None and not fingerprints and not tofu:
@@ -212,7 +214,7 @@ class TestServerTrustMessages:
     def test_pairing_needed_names_the_pin_command(self):
         block = server_pairing_needed_guidance("server.example.com", 443, _FP_A)
         assert "server 'server.example.com:443'" in block
-        assert f"hsync trust server add server.example.com sha256:{_FP_A} --port 443" in block
+        assert f"hsync trust server add server.example.com:443 sha256:{_FP_A}" in block
 
     def test_changed_pin_names_store_and_commands(self):
         block = server_mismatch_guidance(
@@ -224,12 +226,12 @@ class TestServerTrustMessages:
             explicit_pins=False,
         )
         assert "/state/server_known_hosts.json" in block
-        assert f"hsync trust server add server.example.com sha256:{_FP_B} --port 443" in block
-        assert "hsync trust server remove server.example.com --port 443" in block
+        assert f"hsync trust server add server.example.com:443 sha256:{_FP_B}" in block
+        assert "hsync trust server remove server.example.com:443" in block
 
     def test_explicit_mismatch_points_at_the_flag(self):
         block = server_mismatch_guidance(
             "h", 443, _FP_B, stored=None, store_path="/p.json", explicit_pins=True
         )
         assert "--server-fingerprint" in block
-        assert "hsync trust server fingerprint h --port 443" in block
+        assert "hsync trust server fingerprint h:443" in block

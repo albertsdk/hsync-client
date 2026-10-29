@@ -22,7 +22,14 @@ from typing import Annotated, Any, TypedDict, cast
 
 import typer
 import typer.main
-from hsync_common.endpoint import HostPort, build_https_url, format_authority, parse_host_port
+from hsync_common.endpoint import (
+    HostPort,
+    build_https_url,
+    format_authority,
+    parse_endpoint_list,
+    parse_host_port,
+    parse_https_url,
+)
 from hsync_common.protocol.pairing import parse_fingerprint
 from hsync_common.protocol.tls_trust import TrustPolicy, resolve_self_signed_policy
 from hsync_common.runtime import ColorMode
@@ -159,95 +166,56 @@ def _parse_host_port(raw: str) -> HostPort:
         raise typer.BadParameter(str(exc)) from exc
 
 
-def _merge_port(raw_host: str, parsed_port: int | None, flag_port: int | None) -> int | None:
-    """Reject a port supplied twice; return the single effective port or ``None``.
-
-    ``parsed_port`` comes from the ``HOST[:PORT]`` form, ``flag_port`` from
-    ``--port``. Supplying both is a usage error (no silent precedence).
-    """
-    if parsed_port is not None and flag_port is not None:
-        raise typer.BadParameter(
-            f"specify the port either in {raw_host!r} (HOST:PORT) or with --port, not both"
-        )
-    if parsed_port is not None:
-        return parsed_port
-    return flag_port
-
-
-def _build_server_url(hostname: str | None, port: int | None) -> str | None:
-    """Assemble the ``https://`` server URL from the bare host form.
+def _build_server_url(url: str | None) -> str | None:
+    """Normalize the ``--server-url`` value; ``None`` keeps the env fallback.
 
     Server mode always uses HTTPS (the client refuses to send the API key over
-    an unencrypted channel), so the scheme is implied; the port defaults to
-    ``SERVER_DEFAULT_PORT``, the hsync-server default. A ``None`` hostname
-    (env-only usage, ``HSYNC_SERVER``) returns ``None`` so ``run_sync`` keeps
-    its documented env fallback. The host may be a bare hostname/IPv4, a
-    ``HOST[:PORT]`` pair or a (bracketed) IPv6 literal.
+    an unencrypted channel), so a bare ``HOST[:PORT]`` is normalized to
+    ``https://host:port`` (port from the SSOT default) and an explicit
+    ``https://…[/path]`` URL is validated and returned unchanged. The port is
+    carried by the endpoint itself: there is no separate ``--port``.
 
     Raises:
-        typer.BadParameter: on URL-like input, an unparseable host, a port
-            outside 1-65535, ``--port`` without a hostname, or a port supplied
-            both in the host and via ``--port``.
+        typer.BadParameter: on a non-HTTPS scheme, an unparseable host or a port
+            outside 1-65535.
     """
-    if port is not None and not 1 <= port <= 65535:
-        raise typer.BadParameter("--port must be between 1 and 65535.")
-    if hostname is None:
-        if port is not None:
-            raise typer.BadParameter(
-                "--port requires a hostname (or set the full URL via HSYNC_SERVER)."
-            )
+    raw = (url or "").strip()
+    if not raw:
         return None
-    hp = _parse_host_port(hostname)
-    effective_port = _merge_port(hostname.strip(), hp.port, port)
-    return build_https_url(HostPort(host=hp.host, port=effective_port), SERVER_DEFAULT_PORT)
+    if "://" in raw:
+        if not raw.lower().startswith("https://"):
+            raise typer.BadParameter("the server URL must use HTTPS.")
+        try:
+            return parse_https_url(raw)
+        except ValueError as exc:
+            raise typer.BadParameter(f"invalid server URL: {exc}") from exc
+    return build_https_url(_parse_host_port(raw), SERVER_DEFAULT_PORT)
 
 
-def _build_bootnode(
-    hostname: str | None,
-    port: int | None,
+def _build_discovery_servers(
+    values: list[str] | None,
     *,
-    upnp: bool,
     use_env: bool = False,
-) -> tuple[str | None, int, bool]:
-    """Resolve the bootnode plan inputs; return ``(host, port, upnp_enabled)``.
+) -> tuple[HostPort, ...]:
+    """Resolve the discovery-server endpoints; return them ordered and deduplicated.
 
-    A ``None`` host selects the mDNS plan (``port``/``upnp`` are then
-    irrelevant). When ``use_env`` is set (the ``p2p`` command) a missing CLI
-    hostname falls back to ``HSYNC_BOOTNODE``; an explicit ``--port`` overrides
-    a port embedded in the environment value (CLI > env), while a port supplied
-    both in the CLI ``HOST[:PORT]`` and via ``--port`` is a usage error. The
-    bootnode host may be a bare hostname/IPv4, a ``HOST[:PORT]`` pair or a
-    (bracketed) IPv6 literal; the returned host is always unbracketed.
-
-    UPnP is opt-in: it is enabled only by ``--upnp`` or ``HSYNC_UPNP_ENABLED``.
+    ``--discovery-server`` is repeatable and each value may itself carry a
+    comma-separated list, so the option accepts exactly the grammar of
+    ``HSYNC_DISCOVERY_SERVER_ENDPOINTS`` (one parser, one grammar). An entry that
+    omits the port gets the channel default, so ``a`` and ``a:443`` are one
+    destination. When ``use_env`` is set (the ``p2p`` command) a missing CLI
+    value falls back to the environment. An empty tuple selects the mDNS plan.
     """
-    if port is not None and not 1 <= port <= 65535:
-        raise typer.BadParameter("--port must be between 1 and 65535.")
-    if hostname is None and use_env:
-        from hsync_client.config import get_bootnode_endpoint
+    raw = ",".join(value for value in (values or ()) if value.strip())
+    try:
+        endpoints = parse_endpoint_list(raw, strict=True, default_port=BOOTNODE_DEFAULT_PORT)
+    except ValueError as exc:
+        raise typer.BadParameter(f"invalid discovery server: {exc}") from exc
+    if not endpoints and use_env:
+        from hsync_client.config import get_discovery_server_endpoints
 
-        endpoint = get_bootnode_endpoint()
-        if endpoint is not None:
-            hostname = endpoint.host
-            if endpoint.port is not None and port is None:
-                port = endpoint.port
-    if hostname is None:
-        if port is not None:
-            raise typer.BadParameter(
-                "--port requires a bootnode hostname (or set the full host via HSYNC_BOOTNODE)."
-            )
-        return None, BOOTNODE_DEFAULT_PORT, False
-    if use_env and not upnp:
-        from hsync_client.config import get_env_settings
-
-        upnp = bool(get_env_settings().upnp_enabled)
-    hp = _parse_host_port(hostname)
-    effective_port = _merge_port(hostname.strip(), hp.port, port)
-    return (
-        hp.host,
-        effective_port if effective_port is not None else BOOTNODE_DEFAULT_PORT,
-        upnp,
-    )
+        endpoints = get_discovery_server_endpoints()
+    return tuple(endpoints)
 
 
 # =============================================================================
@@ -842,21 +810,22 @@ HostArg = Annotated[
     str | None,
     typer.Argument(
         help=(
-            "Remote server host or IP, optionally with a port (HOST[:PORT]); "
-            "https:// is always used. Omit to read the full URL from HSYNC_SERVER."
+            "Remote host or IP, optionally with a port (HOST[:PORT]); https:// is "
+            "always used. Omit to read the full URL from HSYNC_SERVER_URL."
         ),
         metavar="HOST[:PORT]",
     ),
 ]
-ServerPortOpt = Annotated[
-    int | None,
+ServerUrlOpt = Annotated[
+    str | None,
     typer.Option(
-        "--port",
+        "--server-url",
         help=(
-            f"Remote server port (default: {SERVER_DEFAULT_PORT}). Mutually "
-            "exclusive with a port in the HOST[:PORT] argument."
+            f"Sync-server URL: a full https:// URL (optionally with a path) or a "
+            f"bare HOST[:PORT] normalized to https on the default port "
+            f"({SERVER_DEFAULT_PORT}). Omit to read HSYNC_SERVER_URL."
         ),
-        metavar="PORT",
+        metavar="URL",
         rich_help_panel="Connection",
     ),
 ]
@@ -943,28 +912,18 @@ ListenPortOpt = Annotated[
 ]
 
 BootnodeArg = Annotated[
-    str | None,
-    typer.Argument(
-        help=(
-            "Optional bootnode host for cross-network discovery, optionally "
-            "with a port (HOST[:PORT]); omit it to stay on mDNS only. Extra UDP "
-            "ports to try for the SAME node (client-egress fallback, e.g. when "
-            "UDP 443 is blocked) go in HSYNC_BOOTNODE_PORTS."
-        ),
-        metavar="BOOTNODE[:PORT]",
-    ),
-]
-
-BootnodePortOpt = Annotated[
-    int | None,
+    list[str] | None,
     typer.Option(
-        "--port",
+        "--discovery-server",
         help=(
-            f"UDP port of the remote bootnode (QUIC); default {BOOTNODE_DEFAULT_PORT}. "
-            "Mutually exclusive with a port in the BOOTNODE[:PORT] argument. "
-            "HSYNC_BOOTNODE_PORTS adds extra ports to try for the same node."
+            "Discovery server (the hsync-bootnode daemon speaking boot/1) for "
+            "cross-network discovery: HOST[:PORT], QUIC/UDP, no scheme. Repeatable, "
+            "and each value may carry a comma-separated list (the same grammar as "
+            "HSYNC_DISCOVERY_SERVER_ENDPOINTS); the client leases and queries every "
+            "reachable entry. Omit to stay on mDNS only. Extra UDP ports to try on "
+            "each endpoint go in HSYNC_DISCOVERY_SERVER_EXTRA_PORTS."
         ),
-        metavar="PORT",
+        metavar="ENDPOINT",
         rich_help_panel="P2P Mode",
     ),
 ]
@@ -972,11 +931,11 @@ BootnodePortOpt = Annotated[
 UpnpOpt = Annotated[
     bool,
     typer.Option(
-        "--upnp",
+        "--map-data-port",
         help=(
-            "Map the master TCP port with UPnP (opt-in; off by default). Only "
-            "meaningful with a bootnode: without one, mDNS already keeps discovery "
-            "on the local network."
+            "Map the p2p data-plane TCP port with UPnP (opt-in; off by default). "
+            "Only meaningful with a discovery server: without one, mDNS already "
+            "keeps discovery on the local network."
         ),
         rich_help_panel="P2P Mode",
     ),
@@ -984,10 +943,10 @@ UpnpOpt = Annotated[
 BootnodeFingerprintOpt = Annotated[
     list[str] | None,
     typer.Option(
-        "--bootnode-fingerprint",
+        "--discovery-server-fingerprint",
         help=(
-            "Pin the bootnode certificate fingerprint ('sha256:<hex>' or bare hex). "
-            "May be repeated (up to two) for a rotation window."
+            "Pin a discovery server's certificate fingerprint ('sha256:<hex>' or "
+            "bare hex). May be repeated (up to two per server) for a rotation window."
         ),
         metavar="FINGERPRINT",
         rich_help_panel="P2P Mode",
@@ -996,10 +955,10 @@ BootnodeFingerprintOpt = Annotated[
 BootnodeTofuOpt = Annotated[
     bool,
     typer.Option(
-        "--bootnode-tofu",
+        "--discovery-server-tofu",
         help=(
-            "Trust the bootnode certificate on first use (TOFU); a later mismatch "
-            "is refused as a possible man-in-the-middle."
+            "Trust a discovery server's certificate on first use (TOFU); a later "
+            "mismatch is refused as a possible man-in-the-middle."
         ),
         show_default=False,
         rich_help_panel="P2P Mode",
@@ -1008,9 +967,9 @@ BootnodeTofuOpt = Annotated[
 BootnodeTrustOpt = Annotated[
     str | None,
     typer.Option(
-        "--bootnode-trust",
+        "--discovery-server-trust",
         help=(
-            "Bootnode TLS trust policy: 'ask' (default: confirm an unknown "
+            "Discovery-server TLS trust policy: 'ask' (default: confirm an unknown "
             "fingerprint on a terminal, fail closed without one), 'accept-new' "
             "(pin the first sighting silently), 'strict' (require a pin) or "
             "'none' (no verification; loopback/tests only)."
@@ -1023,7 +982,7 @@ BootnodeTrustOpt = Annotated[
 DiscoveryTimeoutOpt = Annotated[
     int | None,
     typer.Option(
-        "--discovery-timeout",
+        "--peer-discovery-timeout",
         help=(
             "Time to wait for initial P2P peer discovery in seconds "
             f"(default: {DISCOVERY_TIMEOUT_DEFAULT}; 0 = wait indefinitely)."
@@ -1198,7 +1157,7 @@ def main(
 
     [bold]Environment Variables:[/bold]
 
-        HSYNC_SERVER          Full server URL (alternative to the HOSTNAME argument)
+        HSYNC_SERVER_URL          Full server URL (alternative to the HOSTNAME argument)
         HSYNC_API_KEY         API key for authentication
         HSYNC_P2P_PASSPHRASE  Shared password (>=12 chars, derived to the group key)
         HSYNC_P2P_KEY         Raw shared key (>=32 chars), used as-is
@@ -1216,10 +1175,10 @@ def main(
 @app.command()
 def p2p(
     bucket: BucketOpt,
-    bootnode: BootnodeArg = None,
+    discovery_server: BootnodeArg = None,
     http_timeout: HttpTimeoutOpt = None,
     p2p_listen_port: ListenPortOpt = 0,
-    discovery_timeout: DiscoveryTimeoutOpt = None,
+    peer_discovery_timeout: DiscoveryTimeoutOpt = None,
     p2p_group: GroupOpt = None,
     prefer_master: PreferMasterOpt = False,
     never_master: NeverMasterOpt = False,
@@ -1228,13 +1187,12 @@ def p2p(
     allow_unauthenticated_p2p: AllowUnauthenticatedP2POpt = False,
     p2p_key_fd: P2PKeyFdOpt = None,
     p2p_passphrase_fd: P2PPassphraseFdOpt = None,
-    port: BootnodePortOpt = None,
-    upnp: UpnpOpt = False,
+    map_data_port: UpnpOpt = False,
     insecure: InsecureOpt = False,
     ca_cert: CaCertOpt = None,
-    bootnode_fingerprint: BootnodeFingerprintOpt = None,
-    bootnode_tofu: BootnodeTofuOpt = False,
-    bootnode_trust: BootnodeTrustOpt = None,
+    discovery_server_fingerprint: BootnodeFingerprintOpt = None,
+    discovery_server_tofu: BootnodeTofuOpt = False,
+    discovery_server_trust: BootnodeTrustOpt = None,
     events_json_fd: EventsJsonFdOpt = None,
     local_path: PathOpt = _DEFAULT_LOCAL_PATH,
     once: OnceOpt = False,
@@ -1288,11 +1246,11 @@ def p2p(
         [dim]# Advanced: a full raw group key instead of a password (32+ chars)[/dim]
         $ HSYNC_P2P_KEY=YOUR_SHARED_KEY_AT_LEAST_32_CHARACTERS hsync p2p -b shared --group home
 
-        [dim]# Discover peers across networks through a bootnode[/dim]
+        [dim]# Discover peers across networks through a discovery server[/dim]
         $ hsync p2p boot.example.net -b shared
 
         [dim]# Bootnode extra ports when your egress firewall blocks UDP 443[/dim]
-        $ HSYNC_BOOTNODE_PORTS=53 hsync p2p boot.example.net -b shared
+        $ HSYNC_DISCOVERY_SERVER_EXTRA_PORTS=53 hsync p2p boot.example.net -b shared
 
     [bold]Environment Variables:[/bold]
 
@@ -1307,8 +1265,10 @@ def p2p(
     ) = _validate_shared_options(locals())
 
     # P2P-only validation
-    if discovery_timeout is not None and discovery_timeout < 0:
-        raise typer.BadParameter("Discovery timeout must be 0 or greater (0 = wait indefinitely).")
+    if peer_discovery_timeout is not None and peer_discovery_timeout < 0:
+        raise typer.BadParameter(
+            "Peer discovery timeout must be 0 or greater (0 = wait indefinitely)."
+        )
 
     # --prefer-master is incompatible with directional sync (upload/download-only)
     if prefer_master and sync_direction != "bidirectional":
@@ -1324,9 +1284,9 @@ def p2p(
             "cannot both prefer the master role and be forbidden from it."
         )
 
-    # Resolve the bootnode endpoint from the CLI positional, then the env
-    # (loaded here so an --env-file bootnode is visible before run_sync loads it
-    # again later). An explicit --port overrides a port embedded in the env.
+    # Resolve the discovery-server endpoints from the CLI option, then the env
+    # (loaded here so an --env-file value is visible before run_sync loads it
+    # again later). One grammar on both surfaces.
     if env_file:
         from hsync_client.config import load_env_file
 
@@ -1336,34 +1296,42 @@ def p2p(
             print(f"Error: {e}", file=sys.stderr)
             raise typer.Exit(1)
 
-    bootnode_host, bootnode_port, upnp_enabled = _build_bootnode(
-        bootnode, port, upnp=upnp, use_env=True
-    )
+    discovery_endpoints = _build_discovery_servers(discovery_server, use_env=True)
+    if map_data_port:
+        effective_map_data_port = True
+    else:
+        from hsync_client.config import get_map_data_port
 
-    # Bootnode TLS trust (ADR-0034): --ca-cert is a server-mode knob, not a
-    # bootnode channel knob, so refuse it rather than silently ignore it.
+        effective_map_data_port = get_map_data_port()
+
+    # Discovery-server TLS trust (ADR-0034): --ca-cert is a server-mode knob, not
+    # a discovery-channel knob, so refuse it rather than silently ignore it.
     if ca_cert:
         raise typer.BadParameter(
-            "--ca-cert is not used for the bootnode channel; pin the node with "
-            "--bootnode-fingerprint (or use --bootnode-tofu) instead."
+            "--ca-cert is not used for the discovery-server channel; pin the server "
+            "with --discovery-server-fingerprint (or use --discovery-server-tofu) instead."
         )
 
-    fingerprints = tuple(bootnode_fingerprint or ())
+    fingerprints = tuple(discovery_server_fingerprint or ())
     if len(fingerprints) > 2:
         raise typer.BadParameter(
-            "at most two --bootnode-fingerprint values are allowed (rotation window)."
+            "at most two --discovery-server-fingerprint values are allowed (rotation window)."
         )
     for fp in fingerprints:
         if parse_fingerprint(fp) is None:
-            raise typer.BadParameter(f"invalid --bootnode-fingerprint value: {fp!r}")
+            raise typer.BadParameter(f"invalid --discovery-server-fingerprint value: {fp!r}")
 
-    if insecure and (fingerprints or bootnode_tofu):
+    if insecure and (fingerprints or discovery_server_tofu):
         raise typer.BadParameter(
-            "--insecure is mutually exclusive with --bootnode-fingerprint/--bootnode-tofu."
+            "--insecure is mutually exclusive with "
+            "--discovery-server-fingerprint/--discovery-server-tofu."
         )
 
-    if (fingerprints or bootnode_tofu) and not bootnode_host:
-        raise typer.BadParameter("--bootnode-fingerprint/--bootnode-tofu require a bootnode host.")
+    if (fingerprints or discovery_server_tofu) and not discovery_endpoints:
+        raise typer.BadParameter(
+            "--discovery-server-fingerprint/--discovery-server-tofu require at least "
+            "one --discovery-server endpoint."
+        )
 
     if p2p_trust is not None:
         try:
@@ -1381,13 +1349,12 @@ def p2p(
         p2p_passphrase_fd=p2p_passphrase_fd,
         p2p_mode=True,
         p2p_listen_port=p2p_listen_port,
-        p2p_bootnode=bootnode_host,
-        p2p_bootnode_port=bootnode_port,
-        p2p_upnp_enabled=upnp_enabled,
-        bootnode_fingerprints=fingerprints,
-        bootnode_tofu=bool(bootnode_tofu),
-        bootnode_trust=bootnode_trust,
-        discovery_timeout=discovery_timeout,
+        discovery_server_endpoints=discovery_endpoints,
+        map_data_port=effective_map_data_port,
+        discovery_server_fingerprints=fingerprints,
+        discovery_server_tofu=bool(discovery_server_tofu),
+        discovery_server_trust=discovery_server_trust,
+        peer_discovery_timeout=peer_discovery_timeout,
         p2p_group=p2p_group,
         prefer_master=prefer_master,
         never_master=never_master,
@@ -1412,8 +1379,8 @@ def derive_group_key_command(
 ) -> None:
     """Print the P2P group key (64 hex) derived from a shared password.
 
-    Use the output to populate a bootnode key file. Treat it as a secret: it is
-    the raw group key the bootnode derives bucket tokens from.
+    Use the output to populate a discovery-server key file. Treat it as a secret: it is
+    the raw group key the discovery server derives bucket tokens from.
     """
     import os
 
@@ -1443,20 +1410,21 @@ def derive_group_key_command(
 
 
 # =============================================================================
-# trust management (P2P peers, bootnode, server) — one ``hsync trust`` namespace
+# trust management (P2P peers, discovery server, sync server) — one ``hsync trust``
+# namespace
 # =============================================================================
 # ``hsync trust …`` mirrors OpenSSH's known-hosts workflow so an operator can
 # inspect, pre-pin and forget fingerprints without editing the JSON stores by
 # hand. One namespace covers the three certificate-pinning transports: the P2P
-# master/seeders (``known_peers``), the bootnode and the sync server
-# (``known_hosts``). ``hsync bootnode``/``hsync server`` stay actions, so the trust
+# master/seeders (``known_peers``), the discovery server and the sync server
+# (``known_hosts``). ``hsync server``/``hsync p2p`` stay actions, so the trust
 # surface lives here rather than under them (ADR-0036).
 _trust_root = typer.Typer(
-    help="Inspect and manage certificate trust for the P2P peers, bootnode and server.",
+    help="Inspect and manage certificate trust for the P2P peers, discovery server and server.",
     no_args_is_help=True,
 )
 _trust_bootnode_app = typer.Typer(
-    help="Manage the bootnode known-hosts store.",
+    help="Manage the discovery-server known-hosts store.",
     no_args_is_help=True,
 )
 _trust_peer_app = typer.Typer(
@@ -1468,7 +1436,7 @@ _trust_server_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(_trust_root, name="trust")
-_trust_root.add_typer(_trust_bootnode_app, name="bootnode")
+_trust_root.add_typer(_trust_bootnode_app, name="discovery-server")
 _trust_root.add_typer(_trust_peer_app, name="peer")
 _trust_root.add_typer(_trust_server_app, name="server")
 
@@ -1519,28 +1487,31 @@ def _trust_remove(store: _TrustStore, host: str, port: int) -> None:
         typer.echo(f"{format_authority(host, port)} was not in the known-hosts store.")
 
 
-def _trust_host_port(hostname: str | None, port: int | None) -> tuple[str, int]:
-    """Resolve ``hostname``/``--port`` for the trust subcommands (host required)."""
+def _trust_host_port(hostname: str | None) -> tuple[str, int]:
+    """Resolve the ``HOST[:PORT]`` argument of a trust subcommand.
+
+    The port is part of the endpoint (no ``--port`` flag): an entry without one
+    uses the channel default so a pin keyed ``host`` and one keyed ``host:443``
+    name the same node.
+    """
     if hostname is None:
-        raise typer.BadParameter("a bootnode hostname is required")
-    host, resolved_port, _ = _build_bootnode(hostname, port, upnp=False)
-    if host is None:  # ``_build_bootnode`` only returns None for an absent host
-        raise typer.BadParameter("a bootnode hostname is required")
-    return host, resolved_port
+        raise typer.BadParameter("a discovery-server host[:port] is required")
+    endpoint = _parse_host_port(hostname)
+    return endpoint.host, endpoint.port if endpoint.port is not None else BOOTNODE_DEFAULT_PORT
 
 
 @_trust_bootnode_app.command("list")
 def bootnode_trust_list(
     as_json: bool = typer.Option(False, "--json", help="Emit entries as JSON."),
 ) -> None:
-    """List the pinned bootnode fingerprints (like ``known_hosts``)."""
-    _trust_list(BootnodeTrustStore(), "No bootnodes are trusted yet.", as_json)
+    """List the pinned discovery-server fingerprints (like ``known_hosts``)."""
+    _trust_list(BootnodeTrustStore(), "No discovery servers are trusted yet.", as_json)
 
 
 @_trust_bootnode_app.command("show")
-def bootnode_trust_show(hostname: HostArg, port: BootnodePortOpt = None) -> None:
-    """Show the pinned fingerprint for one bootnode."""
-    host, resolved_port = _trust_host_port(hostname, port)
+def bootnode_trust_show(hostname: HostArg) -> None:
+    """Show the pinned fingerprint for one discovery server."""
+    host, resolved_port = _trust_host_port(hostname)
     _trust_show(BootnodeTrustStore(), host, resolved_port)
 
 
@@ -1548,26 +1519,25 @@ def bootnode_trust_show(hostname: HostArg, port: BootnodePortOpt = None) -> None
 def bootnode_trust_add(
     hostname: HostArg,
     fingerprint: str = typer.Argument(..., metavar="FINGERPRINT"),
-    port: BootnodePortOpt = None,
 ) -> None:
-    """Pin a bootnode fingerprint (verify it out of band first)."""
-    host, resolved_port = _trust_host_port(hostname, port)
+    """Pin a discovery-server fingerprint (verify it out of band first)."""
+    host, resolved_port = _trust_host_port(hostname)
     _trust_add(BootnodeTrustStore(), host, resolved_port, fingerprint)
 
 
 @_trust_bootnode_app.command("remove")
-def bootnode_trust_remove(hostname: HostArg, port: BootnodePortOpt = None) -> None:
-    """Forget a pinned bootnode (like ``ssh-keygen -R``)."""
-    host, resolved_port = _trust_host_port(hostname, port)
+def bootnode_trust_remove(hostname: HostArg) -> None:
+    """Forget a pinned discovery server (like ``ssh-keygen -R``)."""
+    host, resolved_port = _trust_host_port(hostname)
     _trust_remove(BootnodeTrustStore(), host, resolved_port)
 
 
 @_trust_bootnode_app.command("fingerprint")
-def bootnode_trust_fingerprint(hostname: HostArg, port: BootnodePortOpt = None) -> None:
-    """Print a bootnode's certificate fingerprint without trusting it."""
+def bootnode_trust_fingerprint(hostname: HostArg) -> None:
+    """Print a discovery server's certificate fingerprint without trusting it."""
     from hsync_client.boot_client import BootnodeClient, BootnodeError
 
-    host, resolved_port = _trust_host_port(hostname, port)
+    host, resolved_port = _trust_host_port(hostname)
     client = BootnodeClient(host, resolved_port, policy=TrustPolicy.none)
     try:
         observed = client.fetch_fingerprint()
@@ -1634,13 +1604,12 @@ def peer_trust_remove(
 # =============================================================================
 
 
-def _server_trust_host_port(hostname: str | None, port: int | None) -> tuple[str, int]:
-    """Resolve ``hostname``/``--port`` for the server trust subcommands."""
+def _server_trust_host_port(hostname: str | None) -> tuple[str, int]:
+    """Resolve the ``HOST[:PORT]`` argument of a server trust subcommand."""
     if hostname is None:
-        raise typer.BadParameter("a server hostname is required")
+        raise typer.BadParameter("a server host[:port] is required")
     hp = _parse_host_port(hostname)
-    effective_port = _merge_port(hostname.strip(), hp.port, port)
-    return hp.host, SERVER_DEFAULT_PORT if effective_port is None else effective_port
+    return hp.host, SERVER_DEFAULT_PORT if hp.port is None else hp.port
 
 
 @_trust_server_app.command("list")
@@ -1652,9 +1621,9 @@ def server_trust_list(
 
 
 @_trust_server_app.command("show")
-def server_trust_show(hostname: HostArg, port: ServerPortOpt = None) -> None:
+def server_trust_show(hostname: HostArg) -> None:
     """Show the pinned fingerprint for one server."""
-    host, resolved_port = _server_trust_host_port(hostname, port)
+    host, resolved_port = _server_trust_host_port(hostname)
     _trust_show(ServerTrustStore(), host, resolved_port)
 
 
@@ -1662,24 +1631,23 @@ def server_trust_show(hostname: HostArg, port: ServerPortOpt = None) -> None:
 def server_trust_add(
     hostname: HostArg,
     fingerprint: str = typer.Argument(..., metavar="FINGERPRINT"),
-    port: ServerPortOpt = None,
 ) -> None:
     """Pin a sync-server fingerprint (verify it out of band first)."""
-    host, resolved_port = _server_trust_host_port(hostname, port)
+    host, resolved_port = _server_trust_host_port(hostname)
     _trust_add(ServerTrustStore(), host, resolved_port, fingerprint)
 
 
 @_trust_server_app.command("remove")
-def server_trust_remove(hostname: HostArg, port: ServerPortOpt = None) -> None:
+def server_trust_remove(hostname: HostArg) -> None:
     """Forget a pinned sync server (like ``ssh-keygen -R``)."""
-    host, resolved_port = _server_trust_host_port(hostname, port)
+    host, resolved_port = _server_trust_host_port(hostname)
     _trust_remove(ServerTrustStore(), host, resolved_port)
 
 
 @_trust_server_app.command("fingerprint")
-def server_trust_fingerprint(hostname: HostArg, port: ServerPortOpt = None) -> None:
+def server_trust_fingerprint(hostname: HostArg) -> None:
     """Print a server's certificate fingerprint without trusting it."""
-    host, resolved_port = _server_trust_host_port(hostname, port)
+    host, resolved_port = _server_trust_host_port(hostname)
     observed = fetch_server_fingerprint(host, resolved_port)
     if observed is None:
         typer.echo(
@@ -1693,8 +1661,7 @@ def server_trust_fingerprint(hostname: HostArg, port: ServerPortOpt = None) -> N
 @app.command()
 def server(
     bucket: BucketOpt,
-    hostname: HostArg = None,
-    port: ServerPortOpt = None,
+    server_url: ServerUrlOpt = None,
     insecure: InsecureOpt = False,
     ca_cert: CaCertOpt = None,
     server_fingerprint: ServerFingerprintOpt = None,
@@ -1738,33 +1705,34 @@ def server(
     Synchronize a bucket with a central HSYNC server (REST + WebSocket).
 
     The server hosts the shared bucket and coordinates synchronization between
-    all connected clients. The bare hostname form implies ``https://`` and the
-    default port (9753, the hsync-server default): a reverse proxy on 443 is
-    supported with ``--port 443``.
+    all connected clients. ``--server-url`` accepts a full ``https://`` URL
+    (optionally with a reverse-proxy path) or a bare ``HOST[:PORT]``, which
+    implies ``https://`` on the default port (9753, the hsync-server default).
+    The port is always carried by the endpoint: there is no separate ``--port``.
 
     [bold]Examples:[/bold]
 
         [dim]# Basic sync[/dim]
-        $ hsync server server.example.com -b photos
+        $ hsync server --server-url server.example.com -b photos
 
         [dim]# Continuous sync (the default: keeps retrying if the server is unreachable)[/dim]
-        $ hsync server server.example.com -b projects
+        $ hsync server --server-url server.example.com -b projects
 
         [dim]# One-shot sync[/dim]
-        $ hsync server server.example.com -b projects --once
+        $ hsync server --server-url server.example.com -b projects --once
 
-        [dim]# Reverse proxy on the standard HTTPS port[/dim]
-        $ hsync server server.example.com --port 443 -b photos
+        [dim]# Reverse proxy on the standard HTTPS port, behind a path[/dim]
+        $ hsync server --server-url https://server.example.com/hsync -b photos
     """
-    # Bare-hostname form: assemble the https:// URL (port falls back to the
-    # hsync-server default). None → the documented HSYNC_SERVER env fallback.
-    server_url = _build_server_url(hostname, port)
+    # Bare-endpoint or full URL: normalize to the https:// URL the sync core
+    # consumes. None → the documented HSYNC_SERVER_URL env fallback.
+    resolved_url = _build_server_url(server_url)
 
-    # The bare hostname is mandatory in server mode: when it is omitted, the
-    # full URL must come from HSYNC_SERVER (shell env or --env-file). Resolve
-    # it here so a missing server fails fast with a clean usage error instead of
+    # The server URL is mandatory in server mode: when it is omitted, the full
+    # URL must come from HSYNC_SERVER_URL (shell env or --env-file). Resolve it
+    # here so a missing server fails fast with a clean usage error instead of
     # deep inside run_sync, after the banner and logging are already up.
-    if server_url is None:
+    if resolved_url is None:
         if env_file:
             from hsync_client.config import load_env_file
 
@@ -1775,12 +1743,12 @@ def server(
                 raise typer.Exit(1)
         from hsync_client.config import get_server_url
 
-        server_url = get_server_url()
-        if not server_url:
+        resolved_url = get_server_url()
+        if not resolved_url:
             raise typer.BadParameter(
-                "Missing server hostname: pass it as the HOSTNAME argument "
-                "(e.g. 'hsync server server.example.com') or set the "
-                "HSYNC_SERVER environment variable."
+                "Missing sync-server URL: pass --server-url (e.g. "
+                "'hsync server --server-url server.example.com') or set the "
+                "HSYNC_SERVER_URL environment variable."
             )
 
     (
@@ -1807,7 +1775,7 @@ def server(
 
     run_sync(
         **_common_run_sync_kwargs(locals()),
-        server_url=server_url,
+        server_url=resolved_url,
         api_key_fd=api_key_fd,
         p2p_key_fd=None,
         server_fingerprints=server_fingerprints,
@@ -1815,7 +1783,7 @@ def server(
         server_trust=server_trust,
         p2p_mode=False,
         p2p_listen_port=0,
-        discovery_timeout=None,
+        peer_discovery_timeout=None,
         p2p_group=None,
         prefer_master=False,
         never_master=False,

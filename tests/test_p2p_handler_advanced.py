@@ -39,7 +39,7 @@ def _make_p2p_config(tmp_path, **overrides: Any) -> HsyncConfig:
         "SYNC_DIRECTION": "bidirectional",
         "LOCAL_BUCKET": str(tmp_path),
         "P2P_KEY": None,
-        "DISCOVERY_TIMEOUT": 1,
+        "PEER_DISCOVERY_TIMEOUT": 1,
         "DRYRUN": False,
         "ONE_SHOT": True,
         "REQUEST_HEADERS": {"X-Client-Id": "test-cid"},
@@ -491,7 +491,7 @@ class TestRunLanModeOuterLoopMasterPath:
         from hsync_client import p2p_handler
         from hsync_client.exitcodes import ExitCode
 
-        config = _make_p2p_config(tmp_path, DISCOVERY_TIMEOUT=10, ONE_SHOT=True)
+        config = _make_p2p_config(tmp_path, PEER_DISCOVERY_TIMEOUT=10, ONE_SHOT=True)
         mock_log = MagicMock()
 
         mock_peer_mgr = MagicMock()
@@ -585,10 +585,10 @@ class TestRunLanModeDiscoveryTimeout:
     """Tests for discovery timeout sentinel semantics in the outer P2P loop."""
 
     def test_timeout_zero_uses_poll_interval_not_busy_spin(self, tmp_path):
-        """DISCOVERY_TIMEOUT=0 keeps waiting but still sleeps in finite polling windows."""
+        """PEER_DISCOVERY_TIMEOUT=0 keeps waiting but still sleeps in finite polling windows."""
         from hsync_client.p2p_handler import run_p2p_mode
 
-        config = _make_p2p_config(tmp_path, DISCOVERY_TIMEOUT=0, ONE_SHOT=True)
+        config = _make_p2p_config(tmp_path, PEER_DISCOVERY_TIMEOUT=0, ONE_SHOT=True)
         mock_log = MagicMock()
 
         mock_peer_mgr = MagicMock()
@@ -623,7 +623,7 @@ class TestRunLanModeDiscoveryTimeout:
         from hsync_client.exitcodes import ExitCode
         from hsync_client.p2p_handler import run_p2p_mode
 
-        config = _make_p2p_config(tmp_path, DISCOVERY_TIMEOUT=0, ONE_SHOT=True)
+        config = _make_p2p_config(tmp_path, PEER_DISCOVERY_TIMEOUT=0, ONE_SHOT=True)
         mock_log = MagicMock()
         mock_peer_mgr = MagicMock()
         mock_peer_mgr.is_master.return_value = False
@@ -649,7 +649,7 @@ class TestRunLanModeDiscoveryTimeout:
         """A seeder wakeup must not end discovery before a master appears."""
         from hsync_client import p2p_handler
 
-        config = _make_p2p_config(tmp_path, DISCOVERY_TIMEOUT=10, ONE_SHOT=True)
+        config = _make_p2p_config(tmp_path, PEER_DISCOVERY_TIMEOUT=10, ONE_SHOT=True)
         mock_log = MagicMock()
         mock_peer_mgr = MagicMock()
         mock_peer_mgr.is_master.return_value = False

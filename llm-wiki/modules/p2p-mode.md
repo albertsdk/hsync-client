@@ -276,7 +276,7 @@ group where no further peer event would otherwise arrive:
 | `HsyncServiceListener.remove_service` | `p2p_discovery_mdns.py::HsyncServiceListener.remove_service` | **goodbye grace** (`GOODBYE_GRACE_S`): delay `remove_peer` so an Android heartbeat re-register can cancel it (covers slave<->slave, not only WSS); a live WSS link is still an immediate ignore |
 | `PeerManager.reconcile_stale_peers` | `p2p_peers.py::PeerManager.reconcile_stale_peers` | expire peers whose liveness stopped and re-elect; invoked every discovery wake (`p2p_handler.run_p2p_mode`) and on a slave WebSocket drop (`_run_as_slave`) |
 | `_validate_peer_timeout_relationship` | `config.py::_validate_peer_timeout_relationship` | enforces `HSYNC_PEER_TIMEOUT ≥ 2× HSYNC_HEARTBEAT_INTERVAL` |
-| timeout wiring | `p2p_handler.py::run_p2p_mode` → `MdnsDiscovery` / `build_discovery_plan` → `PeerManager` | `HSYNC_PEER_TIMEOUT`/`HSYNC_HEARTBEAT_INTERVAL` reach `is_alive`/the discovery cadence; with a bootnode configured `build_discovery_plan` (`p2p_discovery.py`) floors it to `≥ 2 × HSYNC_BOOTNODE_REFRESH_INTERVAL` (default 60 s) so a live relayed peer is not expired between two random samples (`reconcile_stale_peers` would otherwise drop it and churn the election) |
+| timeout wiring | `p2p_handler.py::run_p2p_mode` → `MdnsDiscovery` / `build_discovery_plan` → `PeerManager` | `HSYNC_PEER_TIMEOUT`/`HSYNC_HEARTBEAT_INTERVAL` reach `is_alive`/the discovery cadence; with a bootnode configured `build_discovery_plan` (`p2p_discovery.py`) floors it to `≥ 2 × HSYNC_DISCOVERY_SERVER_REFRESH_INTERVAL` (default 60 s) so a live relayed peer is not expired between two random samples (`reconcile_stale_peers` would otherwise drop it and churn the election) |
 | `MdnsDiscovery._record_lock` | `p2p_discovery_mdns.py::MdnsDiscovery` | serializes every record publication (initial register, heartbeat re-announce, in-place refresh, teardown) across the heartbeat thread, the debounced presence timer and the main thread; `stop()` publishes `_running = False` under it so a queued refresh bails instead of racing the unregister |
 | `MdnsDiscovery._refresh_service` | `p2p_discovery_mdns.py::MdnsDiscovery._refresh_service` | **in-place** TXT update (`zeroconf.update_service`), never unregister+register: a goodbye would make slaves see a spurious master `remove_service` |
 | `MdnsDiscovery._heartbeat` / `_heartbeat_loop` | `p2p_discovery_mdns.py::MdnsDiscovery._heartbeat_loop` / `p2p_discovery_mdns.py::MdnsDiscovery._heartbeat` | liveness heartbeat: a background thread re-announces the TXT record every `heartbeat_interval` (env `HSYNC_HEARTBEAT_INTERVAL`, wired in `p2p_handler.py`) with an incremented opaque `heartbeat` counter |
@@ -526,7 +526,8 @@ peer state:
 | `BootnodeError` / `BootnodeUnreachable` / `BootnodeProtocolError` / `BootnodeRefused` / `BootnodeFingerprintMismatch` | `boot_client.py::BootnodeError`–`boot_client.py::BootnodeFingerprintMismatch` | transport failure vs contract violation vs **uniform refusal** (`token_required`/`rate_limited`/`overloaded` answered to `register`/`refresh`; `overloaded` is node capacity, not client abuse) vs pin/TOFU mismatch (disables the bootnode source; ADR-0045) |
 | `observed_address` | `stun.py::observed_address` | server-reflexive public `ip:port` from a validated `ack` (STUN-echo) |
 
-| `BootnodeDiscovery` | `p2p_discovery_bootnode.py::BootnodeDiscovery` | the `DiscoveryPlan` implementation (extends `DiscoveryPlanState`): lease loop (register → refresh → query) at the `boot/1` cadence `BOOTNODE_REFRESH_INTERVAL` (default 30 s, spec `boot-1.md`; env `HSYNC_BOOTNODE_REFRESH_INTERVAL`, range 1–300), peer sample → `PeerManager`, plus an **event-based** `wait_for_discovery` (`PeerManager.wait_for_change`, no network) so the wait never polls `query` — the node rate-limits queries to 5/min per (IP, bucket) and a refusal arms a `retry_after` backoff. A `BootnodeFingerprintMismatch` / `BootnodeNotTrusted` stops the lease loop (never retried, never contacted again) and disables **that source only** (`_disable_source`, `source_disabled()`): a structured warning (`reason="untrusted"`) is published and mDNS keeps the group discoverable, so the run continues (ADR-0045); an unreachable node keeps retrying with a transient warning (`reason="unreachable"`). Registration republishes the election advertisement on every role change (`_republish_advert`, `p2p_discovery_bootnode.py::BootnodeDiscovery`) and `update_server_ready`/`update_server_not_ready` mirror the incumbency into the shared `PeerManager`; relayed peers map the advertisement verbatim (`_peer_from_wire`, `p2p_discovery_bootnode.py::BootnodeDiscovery`) and keep the relayed `endpoints[]` candidates (at most four, the node's relay bound), promoting a same-subnet candidate to the peer's primary address so a same-NAT peer dials the local path (no NAT hairpin); a register is never sent without the local certificate fingerprint (the frame would carry an unusable pin) |
+| `BootnodeDiscovery` | `p2p_discovery_bootnode.py::BootnodeDiscovery` | the `DiscoveryPlan` implementation (extends `DiscoveryPlanState`): lease loop (register → refresh → query) at the `boot/1` cadence `DISCOVERY_SERVER_REFRESH_INTERVAL` (default 30 s, spec `boot-1.md`; env `HSYNC_DISCOVERY_SERVER_REFRESH_INTERVAL`, range 1–300), peer sample → `PeerManager`, plus an **event-based** `wait_for_discovery` (`PeerManager.wait_for_change`, no network) so the wait never polls `query` — the node rate-limits queries to 5/min per (IP, bucket) and a refusal arms a `retry_after` backoff. A `BootnodeFingerprintMismatch` / `BootnodeNotTrusted` stops the lease loop (never retried, never contacted again) and disables **that source only** (`_disable_source`, `source_disabled()`): a structured warning (`reason="untrusted"`) is published and mDNS keeps the group discoverable, so the run continues (ADR-0045); an unreachable node keeps retrying with a transient warning (`reason="unreachable"`). Registration republishes the election advertisement on every role change (`_republish_advert`, `p2p_discovery_bootnode.py::BootnodeDiscovery`) and `update_server_ready`/`update_server_not_ready` mirror the incumbency into the shared `PeerManager`; relayed peers map the advertisement verbatim (`_peer_from_wire`, `p2p_discovery_bootnode.py::BootnodeDiscovery`) and keep the relayed `endpoints[]` candidates (at most four, the node's relay bound), promoting a same-subnet candidate to the peer's primary address so a same-NAT peer dials the local path (no NAT hairpin); a register is never sent without the local certificate fingerprint (the frame would carry an unusable pin) |
+| `MultiBootnodeDiscovery` | `p2p_discovery_bootnode.py::MultiBootnodeDiscovery` | the fan-out over N discovery servers: one `BootnodeDiscovery` per endpoint (each keeps its own transport, trust policy, observed endpoint and published candidates) over **one** shared `PeerManager`, so `add_peer` merges the samples by CID and the election stays single. Readiness is *any usable source published* (a server that is down or refused must not delay the data plane); `source_disabled()` is true only when every source stopped for good. Relay wiring is composite too: `FailoverRelayDialer` tries the servers in order (the record does not say which node paired the peer) and `GroupRelayAcceptor` registers the listener on every server. `SharedUpnpMapping` (same module) keeps a single UPnP mapping for the whole process. |
 | `candidate_endpoints` | `nat_traversal.py::candidate_endpoints` | ordered, de-duplicated dialable endpoints for the `register` `endpoints[]` (observed → UPnP → local) |
 | `UpnpMapper` / `discover_igd` | `hsync_client/upnp.py` / `hsync_common/upnp.py` | best-effort TCP port mapping for the master (opt-in, off by default); the SSDP/SOAP core (SSRF-hardened) is the shared `hsync_common.upnp` SSOT, the client adds only the lifecycle; every failure degrades to "no UPnP" (node stays slave-only) |
 | `get_local_ip` | `net_utils.py::get_local_ip` | shared local-source-IP probe (mDNS advertiser, bootnode candidates, p2p handler) |
@@ -602,17 +603,17 @@ TLS trust (ADR-0034/0035): the bootnode is authenticated **before any frame is
 written** — after the QUIC handshake the client reads the peer certificate
 (aioquic's private `tls._peer_certificate`, isolated in `_peer_certificate`
 `boot_client.py`) and checks it against the accepted set: a terminal-confirmed
-`ask` prompt (the default policy), explicit `--bootnode-fingerprint` pins (up to
-two for a rotation window) or the opt-in `--bootnode-tofu` store
+`ask` prompt (the default policy), explicit `--discovery-server-fingerprint` pins (up to
+two for a rotation window) or the opt-in `--discovery-server-tofu` store
 (`bootnode_trust.py`, a `{host:port} → current` map under
-`HSYNC_BOOTNODE_TRUST_FILE`). A first pin (prompt accepted or TOFU) logs the
+`HSYNC_DISCOVERY_SERVER_TRUST_FILE`). A first pin (prompt accepted or TOFU) logs the
 SSH-style `Permanently added 'host:port' (SHA256) to the list of known hosts
 (<path>)` (`trust_messages.known_hosts_added_message`) so the operator learns
 where the pin lives. A refusal raises `BootnodeFingerprintMismatch`, whose `str`
 is the concise case-specific reason (changed pin, node not pinned under `strict`,
-no match against `--bootnode-fingerprint`) and whose `guidance` carries the
+no match against `--discovery-server-fingerprint`) and whose `guidance` carries the
 SSH-style recovery block — presented fingerprint, store path and the exact
-`hsync trust bootnode add|remove` commands — logged once by `_lease_loop`
+`hsync trust discovery-server add|remove` commands — logged once by `_lease_loop`
 (`p2p_discovery_bootnode.py`), which then disables the bootnode source; the
 structured warning repeats only the concise reason. The same refusal emits a
 structured event: a strict-unknown node emits `pairing_needed`
@@ -624,11 +625,11 @@ contacted again, and the mDNS source keeps the run alive.
 pin/TOFU); `--ca-cert` is **refused** in `hsync p2p` (it is a server-mode knob,
 and a self-signed bootnode has no usable CA/hostname). With no pin/TOFU the
 client keeps `verify_mode=CERT_REQUIRED` (fail-closed against a self-signed
-node). `DEFAULT_QUIC_IDLE_TIMEOUT = 30.0`. Config surface: `HSYNC_BOOTNODE`
+node). `DEFAULT_QUIC_IDLE_TIMEOUT = 30.0`. Config surface: `HSYNC_DISCOVERY_SERVER_ENDPOINTS`
 (a `HOST[:PORT]` endpoint: `host`, `host:port`, `[IPv6]`, `[IPv6]:port` via
 `hsync_common.endpoint.parse_host_port`; no scheme/path),
-`HSYNC_BOOTNODE_FINGERPRINT` (comma-separated pins), `HSYNC_BOOTNODE_TOFU`,
-`HSYNC_UPNP_ENABLED`, `HSYNC_P2P_LISTEN_PORT`
+`HSYNC_DISCOVERY_SERVER_FINGERPRINTS` (comma-separated pins), `HSYNC_DISCOVERY_SERVER_TOFU`,
+`HSYNC_MAP_DATA_PORT`, `HSYNC_P2P_LISTEN_PORT`
 (`constants.BOOTNODE_DEFAULT_PORT = 443`).
 
 Token authentication: a **protected bucket** or a **private node** gates
