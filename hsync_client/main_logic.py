@@ -10,6 +10,7 @@ This module contains the core synchronization logic extracted from main.py.
 
 import sys
 from asyncio import run
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, NoReturn
 from urllib.parse import urlsplit
@@ -770,107 +771,48 @@ def _evaluate_server_trust(config: HsyncConfig, log, host: str, port: int) -> st
     raise ServerTrustError("server certificate could not be trusted")
 
 
-def run_sync(options: RunOptions) -> None:
+@dataclass(frozen=True, slots=True)
+class _ResolvedSecrets:
+    """Key material and authorization postures resolved at startup."""
+
+    api_key: str
+    p2p_key: str | None
+    allow_deletions: bool
+    allow_unauthenticated_p2p: bool
+    allow_unauthenticated_p2p_writes: bool
+
+
+def _init_runtime(options: RunOptions) -> "Any":
+    """Load env/secrets, set up the emitter and logging; validate local paths.
+
+    Returns the configured logger. Fatal startup conditions (missing
+    ``--env-file``, missing local directory, invalid logfile) exit here with
+    the documented codes before any sync-side state is touched.
     """
-    Main synchronization logic.
-
-    This function orchestrates the entire sync process including:
-    - Loading environment files
-    - Setting up logging
-    - Validating configuration
-    - Running sync (single or continuous)
-
-    By default the client runs continuously (daemon): it keeps the connection
-    up and retries an unreachable server forever, mirroring P2P mode. A
-    one-shot run (CLI ``--once``) maps to ``continuous=False`` and exits after
-    a single cycle (or after the finite startup connectivity retries).
-    """
-    # Unpack the typed startup options (hsync_client.run_options) into the flat
-    # locals the rest of this function references; the grouping lives only in
-    # the CLI surface, so the body keeps one indirection level.
-    bucket = options.endpoints.bucket
-    env_file = options.secrets.env_file
-    server_url = options.endpoints.server_url
-    verify_ssl = options.safety.verify_ssl
-    ca_cert = options.safety.ca_cert
-    http_timeout = options.transfers.http_timeout
-    local_path = options.sync.local_path
-    continuous = options.sync.continuous
-    resync = options.sync.resync
-    reconnect_delay = options.transfers.reconnect_delay
-    stability_delay = options.sync.stability_delay
-    max_wait_timeout = options.sync.max_wait_timeout
-    filter_path = options.sync.filter_path
-    dryrun = options.sync.dryrun
-    deletion_policy = options.sync.deletion_policy
-    sync_direction = options.sync.sync_direction
-    compression_enabled = options.transfers.compression_enabled
-    max_bandwidth_upload = options.transfers.max_bandwidth_upload
-    max_bandwidth_download = options.transfers.max_bandwidth_download
-    p2p_mode = options.p2p.p2p_mode
-    p2p_listen_port = options.p2p.p2p_listen_port
-    peer_rendezvous_timeout = options.p2p.peer_rendezvous_timeout
-    p2p_group = options.p2p.p2p_group
-    prefer_master = options.p2p.prefer_master
-    never_master = options.p2p.never_master
-    debug = options.logging.debug
-    quiet = options.logging.quiet
-    logfile = options.logging.logfile
-    color = options.logging.color
-    p2p_trust = options.p2p.p2p_trust
-    api_key_fd = options.secrets.api_key_fd
-    p2p_key_fd = options.secrets.p2p_key_fd
-    p2p_passphrase_fd = options.secrets.p2p_passphrase_fd
-    events_json_fd = options.logging.events_json_fd
-    allow_deletions = options.safety.allow_deletions
-    p2p_allow_unauthenticated = options.p2p.p2p_allow_unauthenticated
-    min_free_disk_space = options.transfers.min_free_disk_space
-    max_inbound_size = options.transfers.max_inbound_size
-    ignore_patterns = options.transfers.ignore_patterns
-    max_concurrent_transfers = options.transfers.max_concurrent_transfers
-    no_autotune = options.transfers.no_autotune
-    mass_delete_guard = options.transfers.mass_delete_guard
-    mass_delete_threshold = options.transfers.mass_delete_threshold
-    mass_delete_percent = options.transfers.mass_delete_percent
-    delta_enabled = options.transfers.delta_enabled
-    delta_min_file_size = options.transfers.delta_min_file_size
-    delta_min_file_size_p2p = options.transfers.delta_min_file_size_p2p
-    p2p_peer_download_enabled = options.p2p.p2p_peer_download_enabled
-    p2p_allow_unauthenticated_writes = options.p2p.p2p_allow_unauthenticated_writes
-    rendezvous_server_endpoints = options.endpoints.rendezvous_server_endpoints
-    map_data_port = options.endpoints.map_data_port
-    rendezvous_server_pins = options.p2p.rendezvous_server_pins
-    rendezvous_server_tofu = options.p2p.rendezvous_server_tofu
-    rendezvous_server_trust = options.p2p.rendezvous_server_trust
-    server_fingerprints = options.safety.server_fingerprints
-    server_tofu = options.safety.server_tofu
-    server_trust = options.safety.server_trust
-
-    # Read secrets from file descriptors if provided (secure passing from parent)
-    api_key_from_fd = _read_secret_from_fd(api_key_fd)
-    p2p_key_from_fd = _read_secret_from_fd(p2p_key_fd)
-    p2p_passphrase_from_fd = _read_secret_from_fd(p2p_passphrase_fd)
-
     # Install the structured event emitter. No-op when the parent did
     # not pass --events-json-fd, so a plain CLI run is unaffected.
-    init_emitter(events_json_fd)
+    init_emitter(options.logging.events_json_fd)
 
-    if env_file:
+    if options.secrets.env_file:
         try:
-            load_env_file(env_file)
+            load_env_file(options.secrets.env_file)
         except FileNotFoundError as e:
             _fatal_startup(str(e))
 
     log = setup_logging(
-        debug=debug,
-        quiet=quiet,
-        logfile=logfile if logfile and is_valid_logfile(logfile) else None,
-        color=color,
+        debug=options.logging.debug,
+        quiet=options.logging.quiet,
+        logfile=(
+            options.logging.logfile
+            if options.logging.logfile and is_valid_logfile(options.logging.logfile)
+            else None
+        ),
+        color=options.logging.color,
     )
 
     # ── PyInstaller workaround: prevent corrupt netrc module crash ──────
     # The ``requests`` library calls ``get_netrc_auth()`` on every HTTP
-    # request, which does ``from netrc import …``.  In some PyInstaller
+    # request, which does ``from netrc import ...``.  In some PyInstaller
     # bundles the ``netrc`` module is corrupted (zlib decompression error)
     # and the resulting ``zlib.error`` is *not* caught by requests'
     # ``except (ImportError, AttributeError)`` handler.
@@ -891,29 +833,36 @@ def run_sync(options: RunOptions) -> None:
     log.info(f"HSYNC Client v{HSYNC_VERSION}")
     log.info(runtime_summary())
 
-    if not Path(local_path).exists():
-        log.error(f"Directory '{local_path}' does not exist")
-        emit_event(UiEventName.path_not_found, path=local_path)
+    if not Path(options.sync.local_path).exists():
+        log.error(f"Directory '{options.sync.local_path}' does not exist")
+        emit_event(UiEventName.path_not_found, path=options.sync.local_path)
         sys.exit(1)
 
-    if logfile and not is_valid_logfile(logfile):
-        _fatal_startup(f"Invalid output file '{logfile}'", log=log)
+    if options.logging.logfile and not is_valid_logfile(options.logging.logfile):
+        _fatal_startup(f"Invalid output file '{options.logging.logfile}'", log=log)
+    return log
 
+
+def _resolve_endpoints(options: RunOptions, log) -> tuple[str, str, bool]:
+    """Resolve the sync-server URL (or the P2P placeholder) and the WS URL.
+
+    Returns ``(effective_server_url, ws_url, using_p2p_placeholder)``. P2P mode
+    without a configured server runs on a placeholder until the master is
+    discovered: the RTT probe and the UI server event are deferred (probing the
+    placeholder would always fail with a spurious warning).
+    """
     # Determine server URL (CLI argument takes precedence over env var)
-    effective_server_url = server_url or get_server_url()
+    effective_server_url = options.endpoints.server_url or get_server_url()
 
-    # P2P mode without a configured server URL runs on a placeholder until the
-    # master is discovered: the RTT probe and the UI server event are deferred
-    # (probing the placeholder would always fail with a spurious warning).
-    using_p2p_placeholder = p2p_mode and not effective_server_url
+    using_p2p_placeholder = options.p2p.p2p_mode and not effective_server_url
 
-    if not effective_server_url and not p2p_mode:
+    if not effective_server_url and not options.p2p.p2p_mode:
         _fatal_startup(
             "Server URL is required (use 'hsync server HOSTNAME' or set HSYNC_SERVER_URL)",
             log=log,
         )
 
-    if p2p_mode and not effective_server_url:
+    if options.p2p.p2p_mode and not effective_server_url:
         effective_server_url = "http://localhost:9753"
 
     # At this point, effective_server_url is guaranteed to be set
@@ -924,14 +873,18 @@ def run_sync(options: RunOptions) -> None:
 
     # Convert HTTP URL to WebSocket URL for events endpoint
     ws_url = http_to_ws(effective_server_url)
+    return effective_server_url, ws_url, using_p2p_placeholder
 
+
+def _resolve_identity(options: RunOptions, log) -> str:
+    """Resolve and publish the client identity (CID) for this session."""
     # Client identity. P2P mode presents the persistent device identity
     # (Syncthing-style: one device ID per installation, anchored in
     # $HSYNC_DEVICE_DIR) so TOFU pins survive restarts and a changed
     # certificate for the same device ID is detectable. Remote mode keeps a
     # per-session random CID: it only feeds echo suppression — the API key
     # is the identity there.
-    if p2p_mode:
+    if options.p2p.p2p_mode:
         from hsync_client.identity import load_or_create_device_identity
 
         cid = load_or_create_device_identity().device_id
@@ -942,8 +895,15 @@ def run_sync(options: RunOptions) -> None:
         set_client_id(cid)
         log.info(f"Session CID: {cid}")
     emit_event(UiEventName.session, cid=cid)
+    return cid
 
+
+def _resolve_secrets(options: RunOptions, log, effective_server_url: str) -> _ResolvedSecrets:
+    """Resolve API/P2P keys, passphrase derivation and the security gates."""
     # Resolve API key once: FD-pipe value takes precedence over env var
+    api_key_from_fd = _read_secret_from_fd(options.secrets.api_key_fd)
+    p2p_key_from_fd = _read_secret_from_fd(options.secrets.p2p_key_fd)
+    p2p_passphrase_from_fd = _read_secret_from_fd(options.secrets.p2p_passphrase_fd)
     resolved_api_key = api_key_from_fd or get_api_key()
     resolved_p2p_key = p2p_key_from_fd or get_p2p_key() or None
     resolved_p2p_passphrase = p2p_passphrase_from_fd or get_p2p_passphrase() or None
@@ -974,16 +934,18 @@ def run_sync(options: RunOptions) -> None:
         except ValueError as exc:
             _fatal_startup(f"HSYNC_P2P_KEY is not acceptable: {exc}", log=log)
     allow_unauthenticated_p2p_writes = (
-        p2p_allow_unauthenticated_writes or get_p2p_allow_unauthenticated_writes()
+        options.p2p.p2p_allow_unauthenticated_writes or get_p2p_allow_unauthenticated_writes()
     )
-    allow_unauthenticated_p2p = p2p_allow_unauthenticated or get_p2p_allow_unauthenticated()
-    allow_deletions = allow_deletions or get_allow_deletions()
+    allow_unauthenticated_p2p = (
+        options.p2p.p2p_allow_unauthenticated or get_p2p_allow_unauthenticated()
+    )
+    allow_deletions = options.safety.allow_deletions or get_allow_deletions()
 
     # Fail fast on a missing API key: every authenticated server endpoint
     # requires a valid key, so an empty key can never sync. Reporting it here
     # avoids a late, opaque "Invalid API key" failure mid-sync. P2P mode has
     # its own shared-key policy and is exempt.
-    if not p2p_mode and not resolved_api_key:
+    if not options.p2p.p2p_mode and not resolved_api_key:
         _fatal_startup(
             "No API key configured. Set HSYNC_API_KEY (or pass it via "
             "--api-key-fd) to authenticate with the server.",
@@ -994,14 +956,102 @@ def run_sync(options: RunOptions) -> None:
     # The rule keys on the URL scheme the client connects to, so an HTTPS
     # reverse proxy in front of an HTTP backend is fully supported (the
     # client uses an https:// URL; the backend stays HTTP behind the proxy).
-    if not p2p_mode and not effective_server_url.lower().startswith("https://"):
+    if not options.p2p.p2p_mode and not effective_server_url.lower().startswith("https://"):
         _fatal_startup(
             f"API key provided but server URL is not HTTPS ('{effective_server_url}'). "
             "Refusing to send credentials over an unencrypted connection. "
             "Use an https:// URL (a reverse proxy terminating TLS is supported).",
             log=log,
         )
+    return _ResolvedSecrets(
+        api_key=resolved_api_key,
+        p2p_key=resolved_p2p_key,
+        allow_deletions=allow_deletions,
+        allow_unauthenticated_p2p=allow_unauthenticated_p2p,
+        allow_unauthenticated_p2p_writes=allow_unauthenticated_p2p_writes,
+    )
 
+
+def run_sync(options: RunOptions) -> None:
+    """
+    Main synchronization logic.
+
+    This function orchestrates the entire sync process including:
+    - Loading environment files
+    - Setting up logging
+    - Validating configuration
+    - Running sync (single or continuous)
+
+    By default the client runs continuously (daemon): it keeps the connection
+    up and retries an unreachable server forever, mirroring P2P mode. A
+    one-shot run (CLI ``--once``) maps to ``continuous=False`` and exits after
+    a single cycle (or after the finite startup connectivity retries).
+    """
+    # Unpack the typed startup options (hsync_client.run_options) into the flat
+    # locals the rest of this function references; the grouping lives only in
+    # the CLI surface, so the body keeps one indirection level.
+    bucket = options.endpoints.bucket
+    env_file = options.secrets.env_file
+    verify_ssl = options.safety.verify_ssl
+    ca_cert = options.safety.ca_cert
+    http_timeout = options.transfers.http_timeout
+    local_path = options.sync.local_path
+    continuous = options.sync.continuous
+    resync = options.sync.resync
+    reconnect_delay = options.transfers.reconnect_delay
+    stability_delay = options.sync.stability_delay
+    max_wait_timeout = options.sync.max_wait_timeout
+    filter_path = options.sync.filter_path
+    dryrun = options.sync.dryrun
+    deletion_policy = options.sync.deletion_policy
+    sync_direction = options.sync.sync_direction
+    compression_enabled = options.transfers.compression_enabled
+    max_bandwidth_upload = options.transfers.max_bandwidth_upload
+    max_bandwidth_download = options.transfers.max_bandwidth_download
+    p2p_mode = options.p2p.p2p_mode
+    p2p_listen_port = options.p2p.p2p_listen_port
+    peer_rendezvous_timeout = options.p2p.peer_rendezvous_timeout
+    p2p_group = options.p2p.p2p_group
+    prefer_master = options.p2p.prefer_master
+    never_master = options.p2p.never_master
+    debug = options.logging.debug
+    quiet = options.logging.quiet
+    logfile = options.logging.logfile
+    p2p_trust = options.p2p.p2p_trust
+    allow_deletions = options.safety.allow_deletions
+    min_free_disk_space = options.transfers.min_free_disk_space
+    max_inbound_size = options.transfers.max_inbound_size
+    ignore_patterns = options.transfers.ignore_patterns
+    max_concurrent_transfers = options.transfers.max_concurrent_transfers
+    no_autotune = options.transfers.no_autotune
+    mass_delete_guard = options.transfers.mass_delete_guard
+    mass_delete_threshold = options.transfers.mass_delete_threshold
+    mass_delete_percent = options.transfers.mass_delete_percent
+    delta_enabled = options.transfers.delta_enabled
+    delta_min_file_size = options.transfers.delta_min_file_size
+    delta_min_file_size_p2p = options.transfers.delta_min_file_size_p2p
+    p2p_peer_download_enabled = options.p2p.p2p_peer_download_enabled
+    rendezvous_server_endpoints = options.endpoints.rendezvous_server_endpoints
+    map_data_port = options.endpoints.map_data_port
+    rendezvous_server_pins = options.p2p.rendezvous_server_pins
+    rendezvous_server_tofu = options.p2p.rendezvous_server_tofu
+    rendezvous_server_trust = options.p2p.rendezvous_server_trust
+    server_fingerprints = options.safety.server_fingerprints
+    server_tofu = options.safety.server_tofu
+    server_trust = options.safety.server_trust
+
+    log = _init_runtime(options)
+
+    effective_server_url, ws_url, using_p2p_placeholder = _resolve_endpoints(options, log)
+
+    cid = _resolve_identity(options, log)
+
+    resolved = _resolve_secrets(options, log, effective_server_url)
+    resolved_api_key = resolved.api_key
+    resolved_p2p_key = resolved.p2p_key
+    allow_deletions = resolved.allow_deletions
+    allow_unauthenticated_p2p = resolved.allow_unauthenticated_p2p
+    allow_unauthenticated_p2p_writes = resolved.allow_unauthenticated_p2p_writes
     # Populate global configuration dictionary
 
     # ── Auto-tuning ────────────────────────────────────────────────────
