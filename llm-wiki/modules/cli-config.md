@@ -2,6 +2,12 @@
 
 How flags/env become the running `CONFIG` and how `run_sync` drives a session.
 
+The `p2p`/`server` commands build a typed `RunOptions`
+(`hsync_client/run_options.py::RunOptions`, seven grouped option
+sub-dataclasses) via `cli.py::_build_run_options`; `main_logic.py::run_sync`
+consumes it as its single argument (`run_sync(options)`), so the 57-parameter
+funnel signature is gone.
+
 ## CLI (`cli.py`)
 
 | Symbol | Location | Role |

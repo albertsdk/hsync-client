@@ -14,8 +14,14 @@ from typer.testing import CliRunner
 from hsync_client.cli import app
 from hsync_client.config import get_env_settings
 from hsync_client.constants import RENDEZVOUS_DEFAULT_PORT
+from hsync_client.run_options import RunOptions
 
 runner = CliRunner()
+
+
+def _run_options(mock) -> RunOptions:
+    """The typed options positional argument a run_sync mock captured."""
+    return mock.call_args.args[0]
 
 
 class TestEntryPoints:
@@ -159,8 +165,8 @@ class TestTyperCli:
         )
         assert result.exit_code == 0
         mock_run_sync.assert_called_once()
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["bucket"] == "testbucket"
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.endpoints.bucket == "testbucket"
 
     @patch("hsync_client.main_logic.run_sync")
     def test_accepts_bucket_long_option(self, mock_run_sync):
@@ -169,8 +175,8 @@ class TestTyperCli:
             app, ["server", "--bucket", "mybucket123", "--server-url", "test.example.com"]
         )
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["bucket"] == "mybucket123"
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.endpoints.bucket == "mybucket123"
 
     @patch("hsync_client.main_logic.run_sync")
     def test_accepts_bucket_with_hyphens_and_underscores(self, mock_run_sync):
@@ -179,12 +185,12 @@ class TestTyperCli:
             app, ["server", "-b", "test-bucket", "--server-url", "test.example.com"]
         )
         assert result.exit_code == 0
-        assert mock_run_sync.call_args.kwargs["bucket"] == "test-bucket"
+        assert _run_options(mock_run_sync).endpoints.bucket == "test-bucket"
         result = runner.invoke(
             app, ["server", "-b", "test_bucket", "--server-url", "test.example.com"]
         )
         assert result.exit_code == 0
-        assert mock_run_sync.call_args.kwargs["bucket"] == "test_bucket"
+        assert _run_options(mock_run_sync).endpoints.bucket == "test_bucket"
 
     def test_rejects_invalid_bucket_name(self):
         """CLI rejects bucket names with invalid characters or format."""
@@ -202,17 +208,17 @@ class TestTyperCli:
             app, ["server", "-b", "test", "--server-url", "test.example.com:8000"]
         )
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["bucket"] == "test"
-        assert call_kwargs["server_url"] == "https://test.example.com:8000"
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.endpoints.bucket == "test"
+        assert call_kwargs.endpoints.server_url == "https://test.example.com:8000"
 
     @patch("hsync_client.main_logic.run_sync")
     def test_default_is_continuous(self, mock_run_sync):
         """Without --once the client runs continuously (infinite retry)."""
         result = runner.invoke(app, ["server", "-b", "test", "--server-url", "test.example.com"])
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["continuous"] is True
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.sync.continuous is True
 
     @patch("hsync_client.main_logic.run_sync")
     def test_once_flag(self, mock_run_sync):
@@ -221,16 +227,16 @@ class TestTyperCli:
             app, ["server", "-b", "test", "--once", "--server-url", "test.example.com"]
         )
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["continuous"] is False
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.sync.continuous is False
 
     @patch("hsync_client.main_logic.run_sync")
     def test_once_in_p2p_is_one_shot(self, mock_run_sync):
         """--once in P2P mode selects a one-shot slave run."""
         result = runner.invoke(app, ["p2p", "--once", "-b", "test"])
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["continuous"] is False
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.sync.continuous is False
 
     @patch("hsync_client.main_logic.run_sync")
     def test_verbose_flag(self, mock_run_sync):
@@ -239,8 +245,8 @@ class TestTyperCli:
             app, ["server", "-b", "test", "--server-url", "test.example.com", "-v"]
         )
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["debug"] is True
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.logging.debug is True
 
     @patch("hsync_client.main_logic.run_sync")
     def test_quiet_flag(self, mock_run_sync):
@@ -249,8 +255,8 @@ class TestTyperCli:
             app, ["server", "-b", "test", "--server-url", "test.example.com", "-q"]
         )
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["quiet"] is True
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.logging.quiet is True
 
     @patch("hsync_client.main_logic.run_sync")
     def test_dry_run_flag(self, mock_run_sync):
@@ -259,8 +265,8 @@ class TestTyperCli:
             app, ["server", "-b", "test", "--server-url", "test.example.com", "-n"]
         )
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["dryrun"] is True
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.sync.dryrun is True
 
     @patch("hsync_client.main_logic.run_sync")
     def test_insecure_flag(self, mock_run_sync):
@@ -269,8 +275,8 @@ class TestTyperCli:
             app, ["server", "-b", "test", "--server-url", "test.example.com", "--insecure"]
         )
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["verify_ssl"] is False
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.safety.verify_ssl is False
 
     @patch("hsync_client.main_logic.run_sync")
     def test_color_flag(self, mock_run_sync):
@@ -281,8 +287,8 @@ class TestTyperCli:
             app, ["server", "-b", "test", "--server-url", "test.example.com", "--color", "never"]
         )
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["color"] is ColorMode.NEVER
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.logging.color is ColorMode.NEVER
 
     @patch("hsync_client.main_logic.run_sync")
     def test_help_symbols_flag(self, mock_run_sync):
@@ -299,8 +305,8 @@ class TestTyperCli:
             app, ["server", "-b", "test", "--server-url", "test.example.com", "-p", "/tmp/sync"]
         )
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["local_path"] == "/tmp/sync"
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.sync.local_path == "/tmp/sync"
 
     @patch("hsync_client.main_logic.run_sync")
     def test_ca_cert_option(self, mock_run_sync):
@@ -318,8 +324,8 @@ class TestTyperCli:
             ],
         )
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["ca_cert"] == "/path/to/ca.crt"
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.safety.ca_cert == "/path/to/ca.crt"
 
     @patch("hsync_client.main_logic.run_sync")
     def test_output_option(self, mock_run_sync):
@@ -337,8 +343,8 @@ class TestTyperCli:
             ],
         )
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["logfile"] == "/tmp/log.txt"
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.logging.logfile == "/tmp/log.txt"
 
     @patch("hsync_client.main_logic.run_sync")
     def test_subdir_option(self, mock_run_sync):
@@ -347,8 +353,8 @@ class TestTyperCli:
             app, ["server", "-b", "test", "--server-url", "test.example.com", "--subdir", "subdir"]
         )
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["filter_path"] == "subdir"
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.sync.filter_path == "subdir"
 
     @patch("hsync_client.main_logic.run_sync")
     def test_retry_delay_option(self, mock_run_sync):
@@ -357,34 +363,34 @@ class TestTyperCli:
             app, ["server", "-b", "test", "--server-url", "test.example.com", "--retry-delay", "10"]
         )
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["reconnect_delay"] == 10
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.transfers.reconnect_delay == 10
 
     @patch("hsync_client.main_logic.run_sync")
     def test_default_values(self, mock_run_sync):
         """CLI sets correct default values."""
         result = runner.invoke(app, ["server", "-b", "test", "--server-url", "test.example.com"])
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["continuous"] is True
-        assert call_kwargs["debug"] is False
-        assert call_kwargs["quiet"] is False
-        assert call_kwargs["dryrun"] is False
-        assert call_kwargs["verify_ssl"] is True
-        assert call_kwargs["reconnect_delay"] is None
-        assert call_kwargs["ca_cert"] is None
-        assert call_kwargs["filter_path"] is None
-        assert call_kwargs["logfile"] is None
-        assert call_kwargs["resync"] is None
-        assert call_kwargs["env_file"] is None
-        assert call_kwargs["peer_rendezvous_timeout"] is None
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.sync.continuous is True
+        assert call_kwargs.logging.debug is False
+        assert call_kwargs.logging.quiet is False
+        assert call_kwargs.sync.dryrun is False
+        assert call_kwargs.safety.verify_ssl is True
+        assert call_kwargs.transfers.reconnect_delay is None
+        assert call_kwargs.safety.ca_cert is None
+        assert call_kwargs.sync.filter_path is None
+        assert call_kwargs.logging.logfile is None
+        assert call_kwargs.sync.resync is None
+        assert call_kwargs.secrets.env_file is None
+        assert call_kwargs.p2p.peer_rendezvous_timeout is None
 
     @patch("hsync_client.main_logic.run_sync")
     def test_rendezvous_timeout_accepts_zero(self, mock_run_sync):
         """--peer-rendezvous-timeout 0 is accepted as wait-indefinitely."""
         result = runner.invoke(app, ["p2p", "-b", "test", "--peer-rendezvous-timeout", "0"])
         assert result.exit_code == 0
-        assert mock_run_sync.call_args.kwargs["peer_rendezvous_timeout"] == 0
+        assert _run_options(mock_run_sync).p2p.peer_rendezvous_timeout == 0
 
     @patch("hsync_client.main_logic.run_sync")
     def test_rendezvous_fingerprint_and_tofu_flow(self, mock_run_sync):
@@ -403,9 +409,9 @@ class TestTyperCli:
             ],
         )
         assert result.exit_code == 0
-        kwargs = mock_run_sync.call_args.kwargs
-        assert kwargs["rendezvous_server_pins"] == {"rdv.example.net:443": (hex64,)}
-        assert kwargs["rendezvous_server_tofu"] is True
+        kwargs = _run_options(mock_run_sync)
+        assert kwargs.p2p.rendezvous_server_pins == {"rdv.example.net:443": (hex64,)}
+        assert kwargs.p2p.rendezvous_server_tofu is True
 
     def test_rendezvous_ca_cert_is_refused(self):
         """--ca-cert has no rendezvous-channel meaning: refuse it, not silently ignore."""
@@ -503,7 +509,7 @@ class TestTyperCli:
                 ],
             )
         assert result.exit_code == 0, result.output
-        pins = run_sync.call_args.kwargs["rendezvous_server_pins"]
+        pins = _run_options(run_sync).p2p.rendezvous_server_pins
         assert pins["a.example:443"] == (fp_a,)
         assert pins["b.example:8443"] == (fp_b,)
 
@@ -547,46 +553,46 @@ class TestTyperCli:
             ],
         )
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["env_file"] == "/path/to/env"
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.secrets.env_file == "/path/to/env"
 
     @patch("hsync_client.main_logic.run_sync")
     def test_p2p_mode_option(self, mock_run_sync):
         """CLI accepts the lan subcommand."""
         result = runner.invoke(app, ["p2p", "-b", "test"])
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["p2p_mode"] is True
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.p2p.p2p_mode is True
 
     @patch("hsync_client.main_logic.run_sync")
     def test_p2p_trust_default_omitted(self, mock_run_sync):
         """Without --p2p-trust nothing is forwarded (the client default applies)."""
         result = runner.invoke(app, ["p2p", "-b", "test"])
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["p2p_trust"] is None
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.p2p.p2p_trust is None
 
     @patch("hsync_client.main_logic.run_sync")
     def test_p2p_trust_option(self, mock_run_sync):
         """CLI accepts --p2p-trust POLICY and forwards it unchanged."""
         result = runner.invoke(app, ["p2p", "-b", "test", "--p2p-trust", "strict"])
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["p2p_trust"] == "strict"
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.p2p.p2p_trust == "strict"
 
     @patch("hsync_client.main_logic.run_sync")
     def test_deletion_policy_default_omitted(self, mock_run_sync):
         """Without --deletion-policy nothing is forwarded (the default applies)."""
         result = runner.invoke(app, ["p2p", "-b", "test"])
         assert result.exit_code == 0
-        assert mock_run_sync.call_args.kwargs["deletion_policy"] is None
+        assert _run_options(mock_run_sync).sync.deletion_policy is None
 
     @patch("hsync_client.main_logic.run_sync")
     def test_deletion_policy_keep_is_forwarded(self, mock_run_sync):
         """--deletion-policy keep reaches run_sync unchanged."""
         result = runner.invoke(app, ["p2p", "-b", "test", "--deletion-policy", "keep"])
         assert result.exit_code == 0
-        assert mock_run_sync.call_args.kwargs["deletion_policy"] == "keep"
+        assert _run_options(mock_run_sync).sync.deletion_policy == "keep"
 
     def test_deletion_policy_rejects_unknown_values(self):
         """A policy outside the contract is a usage error, not a silent default."""
@@ -605,25 +611,25 @@ class TestTyperCli:
         """Peer downloading is on by default and --no-peer-download is final."""
         result = runner.invoke(app, ["p2p", "-b", "test"])
         assert result.exit_code == 0
-        assert mock_run_sync.call_args.kwargs["p2p_peer_download_enabled"] is True
+        assert _run_options(mock_run_sync).p2p.p2p_peer_download_enabled is True
 
         result = runner.invoke(app, ["p2p", "-b", "test", "--no-peer-download"])
         assert result.exit_code == 0
-        assert mock_run_sync.call_args.kwargs["p2p_peer_download_enabled"] is False
+        assert _run_options(mock_run_sync).p2p.p2p_peer_download_enabled is False
 
     @patch("hsync_client.main_logic.run_sync")
     def test_allow_unauthenticated_writes_option(self, mock_run_sync):
         """The dangerous no-key mutation opt-in is explicit and defaults off."""
         result = runner.invoke(app, ["p2p", "-b", "test"])
         assert result.exit_code == 0
-        assert mock_run_sync.call_args.kwargs["p2p_allow_unauthenticated_writes"] is False
+        assert _run_options(mock_run_sync).p2p.p2p_allow_unauthenticated_writes is False
 
         result = runner.invoke(
             app,
             ["p2p", "-b", "test", "--allow-unauthenticated-writes"],
         )
         assert result.exit_code == 0
-        assert mock_run_sync.call_args.kwargs["p2p_allow_unauthenticated_writes"] is True
+        assert _run_options(mock_run_sync).p2p.p2p_allow_unauthenticated_writes is True
 
     @patch("hsync_client.main_logic.run_sync")
     def test_allow_deletions_flag(self, mock_run_sync):
@@ -632,24 +638,24 @@ class TestTyperCli:
             app, ["server", "-b", "test", "--server-url", "test.example.com", "--allow-deletions"]
         )
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["allow_deletions"] is True
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.safety.allow_deletions is True
 
     @patch("hsync_client.main_logic.run_sync")
     def test_allow_unauthenticated_p2p_flag(self, mock_run_sync):
         """CLI accepts --allow-unauthenticated-p2p flag."""
         result = runner.invoke(app, ["p2p", "-b", "test", "--allow-unauthenticated-p2p"])
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["p2p_allow_unauthenticated"] is True
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.p2p.p2p_allow_unauthenticated is True
 
     @patch("hsync_client.main_logic.run_sync")
     def test_allow_deletions_defaults_false(self, mock_run_sync):
         """--allow-deletions flag defaults to False when not provided."""
         result = runner.invoke(app, ["server", "-b", "test", "--server-url", "test.example.com"])
         assert result.exit_code == 0
-        call_kwargs = mock_run_sync.call_args.kwargs
-        assert call_kwargs["allow_deletions"] is False
+        call_kwargs = _run_options(mock_run_sync)
+        assert call_kwargs.safety.allow_deletions is False
 
 
 class TestCLIValidation:
@@ -878,21 +884,21 @@ class TestServerHostnameArgument:
             app, ["server", "-b", "test", "--server-url", "hsync.example.com:443"]
         )
         assert result.exit_code == 0
-        assert mock_run_sync.call_args.kwargs["server_url"] == "https://hsync.example.com:443"
+        assert _run_options(mock_run_sync).endpoints.server_url == "https://hsync.example.com:443"
 
     @patch("hsync_client.main_logic.run_sync")
     def test_default_port_is_implied(self, mock_run_sync):
         """A bare host uses the hsync-server default port."""
         result = runner.invoke(app, ["server", "-b", "test", "--server-url", "hsync.example.com"])
         assert result.exit_code == 0
-        assert mock_run_sync.call_args.kwargs["server_url"] == "https://hsync.example.com:9753"
+        assert _run_options(mock_run_sync).endpoints.server_url == "https://hsync.example.com:9753"
 
     @patch("hsync_client.main_logic.run_sync")
     def test_bare_ipv6_literal_is_bracketed(self, mock_run_sync):
         """A bare IPv6 literal becomes the bracketed https:// host part."""
         result = runner.invoke(app, ["server", "-b", "test", "--server-url", "[::1]:9753"])
         assert result.exit_code == 0
-        assert mock_run_sync.call_args.kwargs["server_url"] == "https://[::1]:9753"
+        assert _run_options(mock_run_sync).endpoints.server_url == "https://[::1]:9753"
 
     @patch("hsync_client.main_logic.run_sync")
     def test_missing_hostname_resolves_from_env(self, mock_run_sync, monkeypatch):
@@ -902,7 +908,9 @@ class TestServerHostnameArgument:
         try:
             result = runner.invoke(app, ["server", "-b", "test"])
             assert result.exit_code == 0
-            assert mock_run_sync.call_args.kwargs["server_url"] == "https://env.example.com:9753"
+            assert (
+                _run_options(mock_run_sync).endpoints.server_url == "https://env.example.com:9753"
+            )
         finally:
             get_env_settings.cache_clear()
 
@@ -916,7 +924,9 @@ class TestServerHostnameArgument:
         try:
             result = runner.invoke(app, ["server", "-b", "test", "--env-file", str(env_file)])
             assert result.exit_code == 0
-            assert mock_run_sync.call_args.kwargs["server_url"] == "https://file.example.com:9753"
+            assert (
+                _run_options(mock_run_sync).endpoints.server_url == "https://file.example.com:9753"
+            )
         finally:
             get_env_settings.cache_clear()
 
@@ -940,7 +950,7 @@ class TestServerHostnameArgument:
                 app, ["server", "-b", "test", "--server-url", "https://hsync.example.com/hsync"]
             )
         assert result.exit_code == 0
-        assert mock_run_sync.call_args.kwargs["server_url"] == "https://hsync.example.com/hsync"
+        assert _run_options(mock_run_sync).endpoints.server_url == "https://hsync.example.com/hsync"
 
     @patch("hsync_client.main_logic.run_sync")
     def test_accepts_host_port_shorthand(self, mock_run_sync):
@@ -949,7 +959,7 @@ class TestServerHostnameArgument:
             app, ["server", "-b", "test", "--server-url", "hsync.example.com:9753"]
         )
         assert result.exit_code == 0
-        assert mock_run_sync.call_args.kwargs["server_url"] == "https://hsync.example.com:9753"
+        assert _run_options(mock_run_sync).endpoints.server_url == "https://hsync.example.com:9753"
 
     def test_rejects_plain_http_scheme(self):
         """Server mode always uses HTTPS: an http:// URL is a usage error."""
@@ -1325,8 +1335,8 @@ class TestServerTrustCommands:
         assert payload[0]["fingerprint"] == "a" * 64
 
 
-def test_common_run_sync_kwargs_maps_and_normalizes_shared_options():
-    """The shared CLI adapter keeps the two command keyword sets identical."""
+def test_build_run_options_maps_and_normalizes_shared_options():
+    """The shared CLI adapter maps the common options onto RunOptions."""
     from hsync_client import cli
 
     values = {
@@ -1367,12 +1377,12 @@ def test_common_run_sync_kwargs_maps_and_normalizes_shared_options():
         "mass_delete_percent": None,
     }
 
-    kwargs = cli._common_run_sync_kwargs(values)
+    opts = cli._build_run_options(values)
 
-    assert kwargs["bucket"] == "bucket"
-    assert kwargs["verify_ssl"] is True
-    assert kwargs["continuous"] is True
-    assert kwargs["compression_enabled"] is True
-    assert kwargs["delta_enabled"] is False
-    assert kwargs["ignore_patterns"] == ["a"]
-    assert kwargs["debug"] is False
+    assert opts.endpoints.bucket == "bucket"
+    assert opts.safety.verify_ssl is True
+    assert opts.sync.continuous is True
+    assert opts.transfers.compression_enabled is True
+    assert opts.transfers.delta_enabled is False
+    assert opts.transfers.ignore_patterns == ["a"]
+    assert opts.logging.debug is False

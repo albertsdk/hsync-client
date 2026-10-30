@@ -291,7 +291,7 @@ class TestRunSyncLanPlaceholder:
         ):
             mock_p2p.return_value = 0
             with pytest.raises(SystemExit) as exc_info:
-                run_sync(**kwargs)
+                run_sync(kwargs)
             assert exc_info.value.code == 0
         return mock_p2p, mock_emit, mock_rtt
 

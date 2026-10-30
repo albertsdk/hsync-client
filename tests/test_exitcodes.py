@@ -140,7 +140,7 @@ class TestOneShotExitCodeMapping:
             patch("hsync_client.main_logic.run", return_value=result),
         ):
             with pytest.raises(SystemExit) as exc_info:
-                run_sync(**kwargs)
+                run_sync(kwargs)
             return int(exc_info.value.code)
 
     @staticmethod
@@ -192,5 +192,5 @@ class TestSyncFatalMapsToExitOne:
             patch("hsync_client.main_logic.run", side_effect=NetworkError(message="down")),
         ):
             with pytest.raises(SystemExit) as exc_info:
-                run_sync(**kwargs)
+                run_sync(kwargs)
             assert int(exc_info.value.code) == 1

@@ -70,6 +70,16 @@ from hsync_client.constants import (
 )
 from hsync_client.pinning import PinStore
 from hsync_client.rendezvous_trust import RendezvousTrustStore
+from hsync_client.run_options import (
+    EndpointOptions,
+    LoggingOptions,
+    P2POptions,
+    RunOptions,
+    SafetyOptions,
+    SecretsOptions,
+    SyncOptions,
+    TransferOptions,
+)
 from hsync_client.server_trust import ServerTrustStore, fetch_server_fingerprint
 
 # =============================================================================
@@ -325,11 +335,13 @@ def _load_env_file_or_exit(env_file: str | None) -> None:
         raise typer.Exit(1) from None
 
 
-def _common_run_sync_kwargs(values: Mapping[str, Any]) -> dict[str, Any]:
-    """Map the shared CLI options to ``run_sync`` keyword arguments.
+def _build_run_options(values: Mapping[str, Any], **overrides: Any) -> RunOptions:
+    """Map the shared CLI options into the typed ``run_sync`` options.
 
-    The p2p and server commands expose the same sync/transfer options; keeping
-    the normalization here prevents the two command bodies from drifting.
+    ``values`` is the command frame's ``locals()`` (the common options); the
+    command-specific or body-computed values arrive as keyword ``overrides``
+    keyed by their ``run_options`` field names. Keeping the normalization here
+    prevents the p2p and server command bodies from drifting.
     """
     # Imported here: the config module pulls the pydantic models, which the CLI
     # must not load at import time (see tests/test_startup_imports.py).
@@ -339,43 +351,81 @@ def _common_run_sync_kwargs(values: Mapping[str, Any]) -> dict[str, Any]:
     if policy is not None and policy not in DELETION_POLICIES:
         allowed = ", ".join(DELETION_POLICIES)
         raise typer.BadParameter(f"invalid --deletion-policy value: {policy!r}; use {allowed}")
-    return {
-        "bucket": values["bucket"],
-        "env_file": values["env_file"],
-        "verify_ssl": not values["insecure"],
-        "ca_cert": values["ca_cert"],
-        "http_timeout": values["http_timeout"],
-        "events_json_fd": values["events_json_fd"],
-        "local_path": values["local_path"],
-        "continuous": not values["once"],
-        "resync": values["resync"],
-        "reconnect_delay": values["reconnect_delay"],
-        "stability_delay": values["stability_delay"],
-        "max_wait_timeout": values["max_wait_timeout"],
-        "filter_path": values["filter_path"],
-        "dryrun": values["dryrun"],
-        "deletion_policy": values["deletion_policy"],
-        "sync_direction": values["sync_direction"],
-        "compression_enabled": not values["no_compression"],
-        "delta_enabled": not values["no_delta"],
-        "delta_min_file_size": values["delta_min_file_size"],
-        "delta_min_file_size_p2p": values["delta_min_file_size_p2p"],
-        "max_bandwidth_upload": values["parsed_bw_upload"],
-        "max_bandwidth_download": values["parsed_bw_download"],
-        "debug": values["verbose"],
-        "quiet": values["quiet"],
-        "logfile": values["logfile"],
-        "color": values["color"],
-        "allow_deletions": values["allow_deletions"],
-        "min_free_disk_space": values["parsed_min_free_disk_space"],
-        "max_inbound_size": values["max_inbound_size"],
-        "ignore_patterns": [p.strip() for p in (values["ignore_patterns"] or []) if p.strip()],
-        "max_concurrent_transfers": values["max_concurrent_transfers"],
-        "no_autotune": values["no_autotune"],
-        "mass_delete_guard": values["mass_delete_guard"],
-        "mass_delete_threshold": values["mass_delete_threshold"],
-        "mass_delete_percent": values["mass_delete_percent"],
-    }
+    return RunOptions(
+        secrets=SecretsOptions(
+            env_file=values["env_file"],
+            api_key_fd=overrides.get("api_key_fd"),
+            p2p_key_fd=overrides.get("p2p_key_fd"),
+            p2p_passphrase_fd=overrides.get("p2p_passphrase_fd"),
+        ),
+        logging=LoggingOptions(
+            debug=values["verbose"],
+            quiet=values["quiet"],
+            logfile=values["logfile"],
+            color=values["color"],
+            events_json_fd=values["events_json_fd"],
+        ),
+        endpoints=EndpointOptions(
+            bucket=values["bucket"],
+            server_url=overrides.get("server_url"),
+            rendezvous_server_endpoints=overrides.get("rendezvous_server_endpoints", ()),
+            map_data_port=overrides.get("map_data_port"),
+        ),
+        sync=SyncOptions(
+            local_path=values["local_path"],
+            continuous=not values["once"],
+            resync=values["resync"],
+            stability_delay=values["stability_delay"],
+            max_wait_timeout=values["max_wait_timeout"],
+            filter_path=values["filter_path"],
+            dryrun=values["dryrun"],
+            deletion_policy=values["deletion_policy"],
+            sync_direction=values["sync_direction"],
+        ),
+        p2p=P2POptions(
+            p2p_mode=overrides.get("p2p_mode", False),
+            p2p_listen_port=overrides.get("p2p_listen_port", 0),
+            peer_rendezvous_timeout=overrides.get("peer_rendezvous_timeout"),
+            p2p_group=overrides.get("p2p_group"),
+            prefer_master=overrides.get("prefer_master", False),
+            never_master=overrides.get("never_master", False),
+            p2p_trust=overrides.get("p2p_trust"),
+            p2p_allow_unauthenticated=overrides.get("p2p_allow_unauthenticated", False),
+            p2p_allow_unauthenticated_writes=overrides.get(
+                "p2p_allow_unauthenticated_writes", False
+            ),
+            p2p_peer_download_enabled=overrides.get("p2p_peer_download_enabled", True),
+            rendezvous_server_pins=overrides.get("rendezvous_server_pins"),
+            rendezvous_server_tofu=overrides.get("rendezvous_server_tofu", False),
+            rendezvous_server_trust=overrides.get("rendezvous_server_trust"),
+        ),
+        transfers=TransferOptions(
+            http_timeout=values["http_timeout"],
+            reconnect_delay=values["reconnect_delay"],
+            compression_enabled=not values["no_compression"],
+            max_bandwidth_upload=values["parsed_bw_upload"],
+            max_bandwidth_download=values["parsed_bw_download"],
+            max_concurrent_transfers=values["max_concurrent_transfers"],
+            no_autotune=values["no_autotune"],
+            delta_enabled=not values["no_delta"],
+            delta_min_file_size=values["delta_min_file_size"],
+            delta_min_file_size_p2p=values["delta_min_file_size_p2p"],
+            min_free_disk_space=values["parsed_min_free_disk_space"],
+            max_inbound_size=values["max_inbound_size"],
+            ignore_patterns=[p.strip() for p in (values["ignore_patterns"] or []) if p.strip()],
+            mass_delete_guard=values["mass_delete_guard"],
+            mass_delete_threshold=values["mass_delete_threshold"],
+            mass_delete_percent=values["mass_delete_percent"],
+        ),
+        safety=SafetyOptions(
+            verify_ssl=not values["insecure"],
+            ca_cert=values["ca_cert"],
+            allow_deletions=values["allow_deletions"],
+            server_fingerprints=tuple(overrides.get("server_fingerprints", ()) or ()),
+            server_tofu=overrides.get("server_tofu", False),
+            server_trust=overrides.get("server_trust"),
+        ),
+    )
 
 
 class _SharedValidationValues(TypedDict):
@@ -412,7 +462,7 @@ def _validate_shared_options(values: Mapping[str, Any]) -> tuple[int | None, int
     """Validate the options shared by the ``p2p`` and ``server`` subcommands.
 
     ``values`` is the command frame's ``locals()`` — the same mapping
-    ``_common_run_sync_kwargs`` consumes — so validation and forwarding cannot
+    ``_build_run_options`` consumes — so validation and forwarding cannot
     disagree about which shared options exist, and neither command repeats the
     argument list. The accepted names are :class:`_SharedValidationValues`: a
     command that stops exposing one is a programming error, so it fails
@@ -1382,26 +1432,28 @@ def p2p(
     from hsync_client.main_logic import run_sync
 
     run_sync(
-        **_common_run_sync_kwargs(locals()),
-        server_url=None,
-        api_key_fd=None,
-        p2p_key_fd=p2p_key_fd,
-        p2p_passphrase_fd=p2p_passphrase_fd,
-        p2p_mode=True,
-        p2p_listen_port=p2p_listen_port,
-        rendezvous_server_endpoints=rendezvous_endpoints,
-        map_data_port=effective_map_data_port,
-        rendezvous_server_pins=pins,
-        rendezvous_server_tofu=bool(rendezvous_server_tofu),
-        rendezvous_server_trust=rendezvous_server_trust,
-        peer_rendezvous_timeout=peer_rendezvous_timeout,
-        p2p_group=p2p_group,
-        prefer_master=prefer_master,
-        never_master=never_master,
-        p2p_trust=p2p_trust,
-        p2p_peer_download_enabled=not no_peer_download,
-        p2p_allow_unauthenticated_writes=allow_unauthenticated_writes,
-        p2p_allow_unauthenticated=allow_unauthenticated_p2p,
+        _build_run_options(
+            locals(),
+            server_url=None,
+            api_key_fd=None,
+            p2p_key_fd=p2p_key_fd,
+            p2p_passphrase_fd=p2p_passphrase_fd,
+            p2p_mode=True,
+            p2p_listen_port=p2p_listen_port,
+            rendezvous_server_endpoints=rendezvous_endpoints,
+            map_data_port=effective_map_data_port,
+            rendezvous_server_pins=pins,
+            rendezvous_server_tofu=bool(rendezvous_server_tofu),
+            rendezvous_server_trust=rendezvous_server_trust,
+            peer_rendezvous_timeout=peer_rendezvous_timeout,
+            p2p_group=p2p_group,
+            prefer_master=prefer_master,
+            never_master=never_master,
+            p2p_trust=p2p_trust,
+            p2p_peer_download_enabled=not no_peer_download,
+            p2p_allow_unauthenticated_writes=allow_unauthenticated_writes,
+            p2p_allow_unauthenticated=allow_unauthenticated_p2p,
+        )
     )
 
 
@@ -1807,22 +1859,24 @@ def server(
     from hsync_client.main_logic import run_sync
 
     run_sync(
-        **_common_run_sync_kwargs(locals()),
-        server_url=resolved_url,
-        api_key_fd=api_key_fd,
-        p2p_key_fd=None,
-        server_fingerprints=server_fingerprints,
-        server_tofu=bool(server_tofu),
-        server_trust=server_trust,
-        p2p_mode=False,
-        p2p_listen_port=0,
-        peer_rendezvous_timeout=None,
-        p2p_group=None,
-        prefer_master=False,
-        never_master=False,
-        p2p_trust=None,
-        p2p_peer_download_enabled=False,
-        p2p_allow_unauthenticated_writes=False,
+        _build_run_options(
+            locals(),
+            server_url=resolved_url,
+            api_key_fd=api_key_fd,
+            p2p_key_fd=None,
+            server_fingerprints=server_fingerprints,
+            server_tofu=bool(server_tofu),
+            server_trust=server_trust,
+            p2p_mode=False,
+            p2p_listen_port=0,
+            peer_rendezvous_timeout=None,
+            p2p_group=None,
+            prefer_master=False,
+            never_master=False,
+            p2p_trust=None,
+            p2p_peer_download_enabled=False,
+            p2p_allow_unauthenticated_writes=False,
+        )
     )
 
 

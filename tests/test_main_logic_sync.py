@@ -5,13 +5,12 @@ Contains TestGetStabilityDelayValue, TestCheckServerConnectivity, TestRunSync cl
 """
 
 import os
-from typing import Unpack, cast
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 from hsync_common.protocol.events import parse_event_line
 from hsync_common.runtime import ColorMode, ContainerInfo
-from typing_extensions import TypedDict
 
 from hsync_client.config import CONFIG, HsyncConfig, get_env_settings
 from hsync_client.constants import (
@@ -33,6 +32,16 @@ from hsync_client.main_logic import (
     _safe_config_for_log,
     _warn_if_p2p_in_container,
     run_sync,
+)
+from hsync_client.run_options import (
+    EndpointOptions,
+    LoggingOptions,
+    P2POptions,
+    RunOptions,
+    SafetyOptions,
+    SecretsOptions,
+    SyncOptions,
+    TransferOptions,
 )
 from hsync_client.sync import SyncCycleResult
 
@@ -428,47 +437,9 @@ class TestDiagnoseConnectionError:
 # ── Helper for run_sync tests ────────────────────────────────────────
 
 
-class _RunSyncKwargs(TypedDict, total=False):
-    bucket: str
-    env_file: str | None
-    server_url: str | None
-    verify_ssl: bool
-    ca_cert: str | None
-    http_timeout: int
-    local_path: str
-    continuous: bool
-    resync: int | None
-    reconnect_delay: int
-    stability_delay: int | None
-    max_wait_timeout: int
-    filter_path: str | None
-    dryrun: bool
-    deletion_policy: str | None
-    sync_direction: str
-    compression_enabled: bool
-    max_bandwidth_upload: int | None
-    max_bandwidth_download: int | None
-    p2p_mode: bool
-    p2p_listen_port: int
-    peer_rendezvous_timeout: int | None
-    p2p_group: str | None
-    prefer_master: bool
-    never_master: bool
-    debug: bool
-    quiet: bool
-    logfile: str | None
-    color: ColorMode
-    api_key_fd: int | None
-    p2p_key_fd: int | None
-    p2p_allow_unauthenticated: bool
-    events_json_fd: int | None
-
-
-def _default_run_sync_kwargs(
-    tmp_path: object, **overrides: Unpack[_RunSyncKwargs]
-) -> _RunSyncKwargs:
-    """Return a dict with all required run_sync keyword arguments."""
-    defaults: _RunSyncKwargs = {
+def _default_run_sync_kwargs(tmp_path: object, **overrides: Any) -> RunOptions:
+    """Return the typed startup options used by the run_sync tests."""
+    defaults: dict[str, Any] = {
         "bucket": "test-bucket",
         "env_file": None,
         "server_url": "http://localhost:8000",
@@ -500,8 +471,57 @@ def _default_run_sync_kwargs(
         "color": ColorMode.NEVER,
         "events_json_fd": None,
     }
-    defaults.update(overrides)
-    return defaults
+    defaults.update(**overrides)
+    return RunOptions(
+        secrets=SecretsOptions(
+            env_file=defaults["env_file"],
+            api_key_fd=defaults.get("api_key_fd"),
+            p2p_key_fd=defaults.get("p2p_key_fd"),
+        ),
+        logging=LoggingOptions(
+            debug=defaults["debug"],
+            quiet=defaults["quiet"],
+            logfile=defaults["logfile"],
+            color=defaults["color"],
+            events_json_fd=defaults["events_json_fd"],
+        ),
+        endpoints=EndpointOptions(
+            bucket=defaults["bucket"],
+            server_url=defaults["server_url"],
+        ),
+        sync=SyncOptions(
+            local_path=defaults["local_path"],
+            continuous=defaults["continuous"],
+            resync=defaults["resync"],
+            stability_delay=defaults["stability_delay"],
+            max_wait_timeout=defaults["max_wait_timeout"],
+            filter_path=defaults["filter_path"],
+            dryrun=defaults["dryrun"],
+            deletion_policy=defaults["deletion_policy"],
+            sync_direction=defaults["sync_direction"],
+        ),
+        p2p=P2POptions(
+            p2p_mode=defaults["p2p_mode"],
+            p2p_listen_port=defaults["p2p_listen_port"],
+            peer_rendezvous_timeout=defaults["peer_rendezvous_timeout"],
+            p2p_group=defaults["p2p_group"],
+            prefer_master=defaults["prefer_master"],
+            never_master=defaults["never_master"],
+            p2p_peer_download_enabled=defaults.get("p2p_peer_download_enabled", True),
+            p2p_allow_unauthenticated=defaults.get("p2p_allow_unauthenticated", False),
+        ),
+        transfers=TransferOptions(
+            http_timeout=defaults["http_timeout"],
+            reconnect_delay=defaults["reconnect_delay"],
+            compression_enabled=defaults["compression_enabled"],
+            max_bandwidth_upload=defaults["max_bandwidth_upload"],
+            max_bandwidth_download=defaults["max_bandwidth_download"],
+        ),
+        safety=SafetyOptions(
+            verify_ssl=defaults["verify_ssl"],
+            ca_cert=defaults["ca_cert"],
+        ),
+    )
 
 
 class TestRunSync:
@@ -516,7 +536,7 @@ class TestRunSync:
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
             with pytest.raises(SystemExit) as exc_info:
-                run_sync(**kwargs)
+                run_sync(kwargs)
             assert exc_info.value.code != 0
             mock_logger.error.assert_called()
             assert any("does not exist" in str(c) for c in mock_logger.error.call_args_list)
@@ -532,7 +552,7 @@ class TestRunSync:
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
             with pytest.raises(SystemExit) as exc_info:
-                run_sync(**kwargs)
+                run_sync(kwargs)
             assert exc_info.value.code != 0
             mock_logger.error.assert_called()
             assert any("Server URL is required" in str(c) for c in mock_logger.error.call_args_list)
@@ -565,7 +585,7 @@ class TestRunSync:
                 patch("hsync_client.main_logic.get_server_url", return_value=None),
             ):
                 with pytest.raises(SystemExit) as exc_info:
-                    run_sync(**kwargs)
+                    run_sync(kwargs)
                 assert exc_info.value.code == 1
         finally:
             logger.remove(handler_id)
@@ -594,7 +614,7 @@ class TestRunSync:
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
             with pytest.raises(SystemExit) as exc_info:
-                run_sync(**kwargs)
+                run_sync(kwargs)
             assert exc_info.value.code == 0
             # run_p2p_mode should have been called
             mock_p2p.assert_called_once()
@@ -622,7 +642,7 @@ class TestRunSync:
             mock_p2p.return_value = 0
             mock_log_setup.return_value = MagicMock()
             with pytest.raises(SystemExit) as exc_info:
-                run_sync(**kwargs)
+                run_sync(kwargs)
             assert exc_info.value.code == 0
 
         config_arg = mock_p2p.call_args.args[0]
@@ -650,7 +670,7 @@ class TestRunSync:
                 mock_p2p.return_value = 0
                 mock_log_setup.return_value = MagicMock()
                 with pytest.raises(SystemExit) as exc_info:
-                    run_sync(**kwargs)
+                    run_sync(kwargs)
                 assert exc_info.value.code == 0
             config_arg = mock_p2p.call_args.args[0]
             assert config_arg["ONE_SHOT"] is expected
@@ -677,7 +697,7 @@ class TestRunSync:
             mock_p2p.return_value = 0
             mock_log_setup.return_value = MagicMock()
             with pytest.raises(SystemExit) as exc_info:
-                run_sync(**kwargs)
+                run_sync(kwargs)
             assert exc_info.value.code == 0
 
         config_arg = mock_p2p.call_args.args[0]
@@ -691,7 +711,7 @@ class TestRunSync:
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
             with pytest.raises(SystemExit) as exc_info:
-                run_sync(**kwargs)
+                run_sync(kwargs)
             assert exc_info.value.code != 0
             mock_logger.error.assert_called()
             assert any("Invalid output file" in str(c) for c in mock_logger.error.call_args_list)
@@ -710,7 +730,7 @@ class TestRunSync:
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
             with pytest.raises(SystemExit) as exc_info:
-                run_sync(**kwargs)
+                run_sync(kwargs)
             assert exc_info.value.code != 0
             # Should not call sync since connectivity failed
 
@@ -732,7 +752,7 @@ class TestRunSync:
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
             # Must NOT raise SystemExit: the reconnect loop takes over.
-            run_sync(**kwargs)
+            run_sync(kwargs)
             assert any(
                 "keeping the client alive" in str(c) for c in mock_logger.warning.call_args_list
             )
@@ -756,7 +776,7 @@ class TestRunSync:
             mock_log_setup.return_value = mock_logger
             mock_run.return_value = _cycle(transfers=1, failed=0, conflicts=0, guard=False)
             with pytest.raises(SystemExit) as exc_info:
-                run_sync(**kwargs)
+                run_sync(kwargs)
             assert exc_info.value.code == 0
             mock_run.assert_called_once()
 
@@ -785,7 +805,7 @@ class TestRunSync:
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
             with pytest.raises(SystemExit) as exc_info:
-                run_sync(**kwargs)
+                run_sync(kwargs)
             assert exc_info.value.code == 0
             # set_config should have been called with config containing the key
             config_arg = mock_set_cfg.call_args[0][0]
@@ -816,7 +836,7 @@ class TestRunSync:
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
             with pytest.raises(SystemExit) as exc_info:
-                run_sync(**kwargs)
+                run_sync(kwargs)
             assert exc_info.value.code != 0
             # Aborted before configuring: set_config is never called
             mock_set_cfg.assert_not_called()
@@ -836,7 +856,7 @@ class TestRunSync:
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
             with pytest.raises(SystemExit) as exc_info:
-                run_sync(**kwargs)
+                run_sync(kwargs)
             assert exc_info.value.code != 0
             # Aborted before configuring or contacting the server.
             mock_set_cfg.assert_not_called()
@@ -858,7 +878,7 @@ class TestRunSync:
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
             with pytest.raises(SystemExit) as exc_info:
-                run_sync(**kwargs)
+                run_sync(kwargs)
             assert exc_info.value.code != 0
             # Aborted before configuring or contacting the server.
             mock_set_cfg.assert_not_called()
@@ -884,7 +904,7 @@ class TestRunSync:
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
             with pytest.raises(SystemExit) as exc_info:
-                run_sync(**kwargs)
+                run_sync(kwargs)
             assert exc_info.value.code != 0
             mock_set_cfg.assert_not_called()
             mock_check.assert_not_called()
@@ -912,7 +932,7 @@ class TestRunSync:
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
             with pytest.raises(SystemExit) as exc_info:
-                run_sync(**kwargs)
+                run_sync(kwargs)
             assert exc_info.value.code != 0
             mock_set_cfg.assert_not_called()
             mock_check.assert_not_called()
@@ -943,7 +963,7 @@ class TestRunSync:
         ):
             mock_log_setup.return_value = MagicMock()
             with pytest.raises(SystemExit) as exc_info:
-                run_sync(**kwargs)
+                run_sync(kwargs)
             assert exc_info.value.code == 0
             config_arg = mock_set_cfg.call_args[0][0]
             assert config_arg["P2P_KEY"] == derive_group_key("abcdwxyz1234")
@@ -953,7 +973,7 @@ class TestRunSync:
         kwargs = _default_run_sync_kwargs(tmp_path, env_file="/nonexistent/.env")
 
         with pytest.raises(SystemExit):
-            run_sync(**kwargs)
+            run_sync(kwargs)
 
 
 class TestWarnIfLanInContainer:
@@ -1234,7 +1254,7 @@ class TestStartupErrorVisibility:
             ):
                 mock_log_setup.return_value = MagicMock()
                 with pytest.raises(SystemExit) as exc_info:
-                    run_sync(**kwargs)
+                    run_sync(kwargs)
             get_emitter().close()
             captured = self._drain(read_fd)
         finally:
@@ -1259,7 +1279,7 @@ class TestStartupErrorVisibility:
             ):
                 mock_log_setup.return_value = MagicMock()
                 with pytest.raises(SystemExit) as exc_info:
-                    run_sync(**kwargs)
+                    run_sync(kwargs)
             get_emitter().close()
             captured = self._drain(read_fd)
         finally:
@@ -1295,7 +1315,7 @@ class TestStartupErrorVisibility:
                 mock_p2p.return_value = 0
                 mock_log_setup.return_value = MagicMock()
                 with pytest.raises(SystemExit) as exc_info:
-                    run_sync(**kwargs)
+                    run_sync(kwargs)
             get_emitter().close()
             captured = self._drain(read_fd)
         finally:
@@ -1344,7 +1364,7 @@ class TestStartupErrorVisibility:
             ):
                 mock_log_setup.return_value = MagicMock()
                 with pytest.raises(SystemExit) as exc_info:
-                    run_sync(**kwargs)
+                    run_sync(kwargs)
             get_emitter().close()
             captured = self._drain(read_fd)
         finally:

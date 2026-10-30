@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any, Literal, NoReturn
 from urllib.parse import urlsplit
 
-from hsync_common.defaults import MIN_FREE_DISK_SPACE_DEFAULT
 from hsync_common.disk import check_free_space
 from hsync_common.endpoint import format_authority
 from hsync_common.format import format_bytes
@@ -34,7 +33,7 @@ from hsync_common.protocol.tls_trust import (
     resolve_self_signed_policy,
     resolve_trust_policy,
 )
-from hsync_common.runtime import ColorMode, detect_container, is_tty_interactive, runtime_summary
+from hsync_common.runtime import detect_container, is_tty_interactive, runtime_summary
 
 from hsync_client.config import (
     CONFIG,
@@ -96,7 +95,6 @@ from hsync_client.constants import (
     HEARTBEAT_INTERVAL,
     HSYNC_VERSION,
     HSYNCKEEP_FILENAME,
-    MAX_INBOUND_SIZE_MB_DEFAULT,
     PEER_TIMEOUT,
     RENDEZVOUS_REFRESH_INTERVAL,
     RENDEZVOUS_TIMEOUT_DEFAULT,
@@ -109,6 +107,7 @@ from hsync_client.events import UiEventName, emit_event, init_emitter
 from hsync_client.exitcodes import ExitCode, exit_code_for_result
 from hsync_client.logger import flush_logs, set_client_id, setup_logging
 from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
+from hsync_client.run_options import RunOptions
 from hsync_client.security_warnings import log_active_bypasses
 from hsync_client.server_trust import (
     default_server_trust_store,
@@ -771,65 +770,7 @@ def _evaluate_server_trust(config: HsyncConfig, log, host: str, port: int) -> st
     raise ServerTrustError("server certificate could not be trusted")
 
 
-def run_sync(
-    bucket: str,
-    env_file: str | None,
-    server_url: str | None,
-    verify_ssl: bool,
-    ca_cert: str | None,
-    http_timeout: int | None,
-    local_path: str,
-    continuous: bool,
-    resync: int | None,
-    reconnect_delay: int | None,
-    stability_delay: int | None,
-    max_wait_timeout: int,
-    filter_path: str | None,
-    dryrun: bool,
-    deletion_policy: str | None,
-    sync_direction: str,
-    compression_enabled: bool,
-    max_bandwidth_upload: int | None,
-    max_bandwidth_download: int | None,
-    p2p_mode: bool,
-    p2p_listen_port: int,
-    peer_rendezvous_timeout: int | None,
-    p2p_group: str | None,
-    prefer_master: bool,
-    never_master: bool,
-    debug: bool,
-    quiet: bool,
-    logfile: str | None,
-    color: ColorMode,
-    p2p_trust: str | None = None,
-    api_key_fd: int | None = None,
-    p2p_key_fd: int | None = None,
-    p2p_passphrase_fd: int | None = None,
-    events_json_fd: int | None = None,
-    allow_deletions: bool = False,
-    p2p_allow_unauthenticated: bool = False,
-    min_free_disk_space: int = MIN_FREE_DISK_SPACE_DEFAULT,
-    max_inbound_size: int = MAX_INBOUND_SIZE_MB_DEFAULT,
-    ignore_patterns: list[str] | None = None,
-    max_concurrent_transfers: int | None = None,
-    no_autotune: bool = False,
-    mass_delete_guard: bool | None = None,
-    mass_delete_threshold: int | None = None,
-    mass_delete_percent: int | None = None,
-    delta_enabled: bool = True,
-    delta_min_file_size: int | None = None,
-    delta_min_file_size_p2p: int | None = None,
-    p2p_peer_download_enabled: bool = True,
-    p2p_allow_unauthenticated_writes: bool = False,
-    rendezvous_server_endpoints: tuple[Any, ...] = (),
-    map_data_port: bool | None = None,
-    rendezvous_server_pins: FingerprintPins | None = None,
-    rendezvous_server_tofu: bool = False,
-    rendezvous_server_trust: str | None = None,
-    server_fingerprints: tuple[str, ...] = (),
-    server_tofu: bool = False,
-    server_trust: str | None = None,
-) -> None:
+def run_sync(options: RunOptions) -> None:
     """
     Main synchronization logic.
 
@@ -844,6 +785,67 @@ def run_sync(
     one-shot run (CLI ``--once``) maps to ``continuous=False`` and exits after
     a single cycle (or after the finite startup connectivity retries).
     """
+    # Unpack the typed startup options (hsync_client.run_options) into the flat
+    # locals the rest of this function references; the grouping lives only in
+    # the CLI surface, so the body keeps one indirection level.
+    bucket = options.endpoints.bucket
+    env_file = options.secrets.env_file
+    server_url = options.endpoints.server_url
+    verify_ssl = options.safety.verify_ssl
+    ca_cert = options.safety.ca_cert
+    http_timeout = options.transfers.http_timeout
+    local_path = options.sync.local_path
+    continuous = options.sync.continuous
+    resync = options.sync.resync
+    reconnect_delay = options.transfers.reconnect_delay
+    stability_delay = options.sync.stability_delay
+    max_wait_timeout = options.sync.max_wait_timeout
+    filter_path = options.sync.filter_path
+    dryrun = options.sync.dryrun
+    deletion_policy = options.sync.deletion_policy
+    sync_direction = options.sync.sync_direction
+    compression_enabled = options.transfers.compression_enabled
+    max_bandwidth_upload = options.transfers.max_bandwidth_upload
+    max_bandwidth_download = options.transfers.max_bandwidth_download
+    p2p_mode = options.p2p.p2p_mode
+    p2p_listen_port = options.p2p.p2p_listen_port
+    peer_rendezvous_timeout = options.p2p.peer_rendezvous_timeout
+    p2p_group = options.p2p.p2p_group
+    prefer_master = options.p2p.prefer_master
+    never_master = options.p2p.never_master
+    debug = options.logging.debug
+    quiet = options.logging.quiet
+    logfile = options.logging.logfile
+    color = options.logging.color
+    p2p_trust = options.p2p.p2p_trust
+    api_key_fd = options.secrets.api_key_fd
+    p2p_key_fd = options.secrets.p2p_key_fd
+    p2p_passphrase_fd = options.secrets.p2p_passphrase_fd
+    events_json_fd = options.logging.events_json_fd
+    allow_deletions = options.safety.allow_deletions
+    p2p_allow_unauthenticated = options.p2p.p2p_allow_unauthenticated
+    min_free_disk_space = options.transfers.min_free_disk_space
+    max_inbound_size = options.transfers.max_inbound_size
+    ignore_patterns = options.transfers.ignore_patterns
+    max_concurrent_transfers = options.transfers.max_concurrent_transfers
+    no_autotune = options.transfers.no_autotune
+    mass_delete_guard = options.transfers.mass_delete_guard
+    mass_delete_threshold = options.transfers.mass_delete_threshold
+    mass_delete_percent = options.transfers.mass_delete_percent
+    delta_enabled = options.transfers.delta_enabled
+    delta_min_file_size = options.transfers.delta_min_file_size
+    delta_min_file_size_p2p = options.transfers.delta_min_file_size_p2p
+    p2p_peer_download_enabled = options.p2p.p2p_peer_download_enabled
+    p2p_allow_unauthenticated_writes = options.p2p.p2p_allow_unauthenticated_writes
+    rendezvous_server_endpoints = options.endpoints.rendezvous_server_endpoints
+    map_data_port = options.endpoints.map_data_port
+    rendezvous_server_pins = options.p2p.rendezvous_server_pins
+    rendezvous_server_tofu = options.p2p.rendezvous_server_tofu
+    rendezvous_server_trust = options.p2p.rendezvous_server_trust
+    server_fingerprints = options.safety.server_fingerprints
+    server_tofu = options.safety.server_tofu
+    server_trust = options.safety.server_trust
+
     # Read secrets from file descriptors if provided (secure passing from parent)
     api_key_from_fd = _read_secret_from_fd(api_key_fd)
     p2p_key_from_fd = _read_secret_from_fd(p2p_key_fd)
