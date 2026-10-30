@@ -62,7 +62,7 @@ Verification done: `ruff check hsync_client`, `ruff format --check`,
 
 | Function | Location | Lines | Cyclomatic | Notes |
 | -------- | -------- | ----: | ---------: | ----- |
-| `run_sync` | `hsync_client/main_logic.py:774` | 666 | 101 | 57 parameters, 74 top-level statements |
+| `run_sync` | `hsync_client/main_logic.py` (**in progress, §5.4**) | 669 | 101 | 1 param (`RunOptions`, `run_options.py`); body still 669 lines until the phase extraction (signature funnel collapsed) |
 | `sync` | `hsync_client/sync.py` (**done, §5.3**) | 171 | 13 | orchestrator delegating 10 phase helpers (was 512 / 67) |
 | `_download_from_source_attempt` | `hsync_client/transfer.py` (**done, §5.1**) | 80 | 11 | orchestrator over `_prepare_download_target` / `_open_download_stream` / `_stream_download_body` (was 336 / 55) |
 | `_handle_upload` | `hsync_client/p2p_server.py` (**done, §5.2**) | 66 | 10 | orchestrator over `_admit_upload` / `_open_upload_destination` / `_close_upload_stream` / `_maybe_partial_upload_response` / `_finalize_upload` (was 401 / 66) |
@@ -219,7 +219,7 @@ bookkeeping and event order unchanged.
 
 ---
 
-### 5.4 `main_logic.py::run_sync` (666 lines, CC 101, 57 params)
+### 5.4 `main_logic.py::run_sync` (in progress 2026-10-30: RunOptions signature landed; phase extraction pending)
 
 **Why it is bloat.** The 57-argument "funnel signature" is threaded from the CLI
 through `_common_run_sync_kwargs` into `run_sync`, and the body is a linear
@@ -287,7 +287,7 @@ body ≤ ~120 lines; CLI and env behaviour byte-for-byte equivalent.
 2. `_download_from_source_attempt` (§5.1) ✅ `3633180` — best seams, strong tests.
 3. `sync` (§5.3) ✅ `0690ebc` — phase extraction only.
 4. `_handle_upload` (§5.2) ✅ `e45bdb0` — riskiest of the "medium" group.
-5. `run_sync` + `RunOptions` (§5.4) — last, staged.
+5. `run_sync` + `RunOptions` (§5.4) 🔄 in progress — RunOptions + 1-param signature landed (`a9a81dd`); phase extraction remains (target: body ≤ ~120 lines).
 
 For each step:
 
