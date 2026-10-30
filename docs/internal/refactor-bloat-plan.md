@@ -1,12 +1,10 @@
 # HSYNC Client — Code-bloat cleanup: implementation plan
 
-> **Status: Plan (Rev. 1, 2026-10-30). Partially implemented — §2, §5.1, §5.3, §5.2 done.**
-> The low-risk items (`7893eee`), the §5.1 decomposition (`3633180`), the §5.3
-> phase extraction (`0690ebc`) and the §5.2 `_handle_upload` split are
-> committed. Remaining: §5.4 (`run_sync`); this document records the
-> analysis so the work can be resumed without re-deriving it.
->
-> **Next action:** start §5.4 (`run_sync` + `RunOptions`), last and staged.
+> **Status: Plan (Rev. 1, 2026-10-30). All sections implemented — §2, §5.1, §5.3, §5.2, §5.4 done.**
+> The low-risk items (`7893eee`), §5.1 (`3633180`), §5.3 (`0690ebc`), §5.2
+> (`e45bdb0`) and §5.4 (RunOptions `a9a81dd` + phase extraction below) are
+> committed; all four oversized functions now meet their line/CC targets.
+> This document records the analysis behind the completed work.
 
 ## 1. Context and goal
 
@@ -62,7 +60,7 @@ Verification done: `ruff check hsync_client`, `ruff format --check`,
 
 | Function | Location | Lines | Cyclomatic | Notes |
 | -------- | -------- | ----: | ---------: | ----- |
-| `run_sync` | `hsync_client/main_logic.py` (**in progress, §5.4**) | 669 | 101 | 1 param (`RunOptions`, `run_options.py`); body still 669 lines until the phase extraction (signature funnel collapsed) |
+| `run_sync` | `hsync_client/main_logic.py` (**done, §5.4**) | 58 | 2 | `RunOptions` 1-param + phase helpers (`_init_runtime`, `_resolve_endpoints`, `_resolve_identity`, `_resolve_secrets`, `_resolve_autotune`, `_build_config`, `_finish_startup`, `_run_remote_mode`); was 666 / 101 / 57 params |
 | `sync` | `hsync_client/sync.py` (**done, §5.3**) | 171 | 13 | orchestrator delegating 10 phase helpers (was 512 / 67) |
 | `_download_from_source_attempt` | `hsync_client/transfer.py` (**done, §5.1**) | 80 | 11 | orchestrator over `_prepare_download_target` / `_open_download_stream` / `_stream_download_body` (was 336 / 55) |
 | `_handle_upload` | `hsync_client/p2p_server.py` (**done, §5.2**) | 66 | 10 | orchestrator over `_admit_upload` / `_open_upload_destination` / `_close_upload_stream` / `_maybe_partial_upload_response` / `_finalize_upload` (was 401 / 66) |
@@ -219,7 +217,7 @@ bookkeeping and event order unchanged.
 
 ---
 
-### 5.4 `main_logic.py::run_sync` (in progress 2026-10-30: RunOptions signature landed; phase extraction pending)
+### 5.4 `main_logic.py::run_sync` (implemented 2026-10-30: 666→58 lines, CC 101→2, 57 params → 1 `RunOptions`)
 
 **Why it is bloat.** The 57-argument "funnel signature" is threaded from the CLI
 through `_common_run_sync_kwargs` into `run_sync`, and the body is a linear
@@ -287,7 +285,7 @@ body ≤ ~120 lines; CLI and env behaviour byte-for-byte equivalent.
 2. `_download_from_source_attempt` (§5.1) ✅ `3633180` — best seams, strong tests.
 3. `sync` (§5.3) ✅ `0690ebc` — phase extraction only.
 4. `_handle_upload` (§5.2) ✅ `e45bdb0` — riskiest of the "medium" group.
-5. `run_sync` + `RunOptions` (§5.4) 🔄 in progress — RunOptions + 1-param signature landed (`a9a81dd`); phase extraction remains (target: body ≤ ~120 lines).
+5. `run_sync` + `RunOptions` (§5.4) ✅ `8d579de` — RunOptions + phase extraction complete; run_sync 666→58 lines, CC 101→2.
 
 For each step:
 
