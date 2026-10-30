@@ -104,9 +104,10 @@ and removes the old path instead of re-uploading it.
 
 Because the watcher mints a marker *immediately* on a local delete or rename,
 `destination_mutation_since` is the pre-commit re-validation of a transfer's
-final move: `transfer.py::_download_from_source_attempt` and
-`p2p_delta.py::handle_delta_apply` snapshot the destination (`existed_at_start`
-+ marker) before the body streams and re-check it right before `os.replace`.
+final move: `transfer.py::_prepare_download_target` snapshots the destination
+(`existed_at_start` + marker) before the body streams and
+`transfer.py::_stream_download_body` re-checks it right before `os.replace`;
+`p2p_delta.py::handle_delta_apply` does the same for delta payloads.
 A destination deleted, renamed away or deleted-and-recreated while the transfer
 ran is therefore never resurrected or clobbered by the commit; a marker already
 present at the snapshot and left unchanged does not block the commit (the plan

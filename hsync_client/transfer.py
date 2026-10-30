@@ -634,6 +634,26 @@ class _DownloadPlan:
     is_compressed: bool
 
 
+@dataclass(frozen=True, slots=True)
+class _DownloadTarget:
+    """Resolved destination for one download attempt (pre-flight state)."""
+
+    full_save_path: str
+    partial_file_path: str
+    dest_existed: bool
+    dest_marker: tuple[str, tuple[tuple[str, int], ...]] | None
+
+
+@dataclass(frozen=True, slots=True)
+class _OpenedDownload:
+    """Established upstream connection plus the validated resume offset."""
+
+    response: Any
+    headers: dict[str, str]
+    resume_offset: int
+    rtt_seconds: float
+
+
 def _already_up_to_date(
     file: File, full_save_path: str, inventory_observer: InventoryObserver
 ) -> bool:
@@ -999,77 +1019,44 @@ def _validate_download_headers(
     )
 
 
-def _download_from_source_attempt(
-    file: File,
-    inventory_observer: InventoryObserver = NOOP_INVENTORY_OBSERVER,
-    *,
-    source: P2PPeerSource | None = None,
-    source_resolver: P2PSourceResolver | None = None,
-    allow_delta: bool = True,
-    delta_only: bool = False,
-    force_restart: bool = False,
-) -> bool:
+def _prepare_download_target(file: File) -> _DownloadTarget | None:
+    """Resolve the destination, create its directory and snapshot it.
+
+    ``None`` means the caller must skip the file (unsafe path). The existence
+    and deletion-marker snapshot are taken before the body streams so the final
+    move can refuse to commit over a name deleted or recreated meanwhile.
     """
-    Perform a single download attempt with resume support.
-
-    Streams the file to a partial file location (.part extension), verifies
-    SHA-256 checksum, then moves it to the final destination. Preserves timestamps
-    and permissions from the remote file.
-
-    If a partial file exists from a previous interrupted download, resumes
-    from where it left off using HTTP Range requests.
-
-    Transient failures are raised (``RequestException`` for connection-level
-    errors, ``ServerError`` for 5xx) so the caller's retry policy can react;
-    permanent errors (4xx, checksum mismatch) are logged and swallowed.
-
-    Args:
-        file: File object with remote metadata (filepath, sha256sum, etc.).
-
-    Raises:
-        RequestException: On a connection-level error (retryable).
-        ServerError: On a server-side 5xx response (retryable).
-    """
-    t0 = monotonic()
-
     full_save_path = _local_dest_path(file)
     if full_save_path is None:
         # Already gated in download_file; stay defensive for direct callers.
         log.error(f'Refusing unsafe download path "{file.filepath}"')
-        return True
+        return None
     Path(full_save_path).parent.mkdir(parents=True, exist_ok=True)
-    partial_file_path = f"{full_save_path}{PARTIAL_DOWNLOAD_SUFFIX}"
-    # Snapshot the destination before the body streams: if it is deleted or
-    # renamed away — or its deletion marker appears or changes — while the
-    # transfer runs, the final move must not commit over it (it would resurrect
-    # a removed name or clobber a file the user recreated in place).
-    dest_existed = Path(full_save_path).exists()
-    dest_marker = deletion_marker_snapshot(full_save_path)
+    return _DownloadTarget(
+        full_save_path=full_save_path,
+        partial_file_path=f"{full_save_path}{PARTIAL_DOWNLOAD_SUFFIX}",
+        dest_existed=Path(full_save_path).exists(),
+        dest_marker=deletion_marker_snapshot(full_save_path),
+    )
 
-    if _already_up_to_date(file, full_save_path, inventory_observer):
-        return True
 
-    if allow_delta and _try_delta_download(file, full_save_path, t0, inventory_observer):
-        return True
-    if delta_only:
-        return False
+def _open_download_stream(
+    file: File,
+    target: _DownloadTarget,
+    *,
+    resume_offset: int,
+    source: P2PPeerSource | None,
+    source_resolver: P2PSourceResolver | None,
+) -> _OpenedDownload | None:
+    """Build the request, fetch the response and validate its status.
 
-    resume_offset = _resolve_resume_offset(file, partial_file_path, force_restart=force_restart)
-    if resume_offset is None:
-        return True
-
-    if not _has_download_space(file, full_save_path, resume_offset):
-        return True
-
-    max_inbound_size = CONFIG.get("MAX_INBOUND_SIZE", 0)
-    if max_inbound_size and file.size > max_inbound_size:
-        raise PermanentDownloadError(
-            f'"{file.filepath}" exceeds the maximum download size ({max_inbound_size} bytes)'
-        )
-
+    ``None`` means the attempt is done: the path could not be normalized or
+    ``_accept_download_response`` decided to skip the file (it already closed
+    the response). Retryable channels are raised for the caller's retry policy.
+    """
     normalized_path = _normalized_download_path(file)
     if normalized_path is None:
-        return True
+        return None
     own_cid = CONFIG.get("CID")
     uri, headers, params = _build_download_request(
         file, normalized_path, source, source_resolver, resume_offset, own_cid
@@ -1106,11 +1093,43 @@ def _download_from_source_attempt(
     log.debug(f"Request Header: {safe_json_for_log(headers)}")
     log.debug(f"Response status: {response.status_code}")
 
-    resume_offset = _accept_download_response(
-        response, file, source, resume_offset, partial_file_path
+    accepted_offset = _accept_download_response(
+        response, file, source, resume_offset, target.partial_file_path
     )
-    if resume_offset is None:
-        return True
+    if accepted_offset is None:
+        return None
+    return _OpenedDownload(
+        response=response,
+        headers=headers,
+        resume_offset=accepted_offset,
+        rtt_seconds=rtt_seconds,
+    )
+
+
+def _stream_download_body(
+    file: File,
+    target: _DownloadTarget,
+    opened: _OpenedDownload,
+    *,
+    source: P2PPeerSource | None,
+    source_resolver: P2PSourceResolver | None,
+    t0: float,
+    inventory_observer: InventoryObserver,
+) -> None:
+    """Stream the response body, verify digests and commit the destination.
+
+    Owns the in-flight ``.part`` registration, the write/decode loop, the
+    wire/size/checksum validation, the pre-commit destination re-check and
+    the ``finally`` cleanup; the in-flight marker is released last.
+    """
+    response = opened.response
+    headers = opened.headers
+    resume_offset = opened.resume_offset
+    rtt_seconds = opened.rtt_seconds
+    full_save_path = target.full_save_path
+    partial_file_path = target.partial_file_path
+    dest_existed = target.dest_existed
+    dest_marker = target.dest_marker
 
     cleanup_partial = True
     # Mark the artifact in flight for the whole body: the sync cycle's
@@ -1128,7 +1147,7 @@ def _download_from_source_attempt(
     try:
         plan = _validate_download_headers(response, file, source, headers)
         if plan is None:
-            return True
+            return
         content_length = plan.content_length
         expected_sha = plan.expected_sha
         server_sha256 = plan.server_sha256
@@ -1150,7 +1169,7 @@ def _download_from_source_attempt(
                     discard_partial=True,
                 )
                 log.error(f'Partial prefix changed for "{file.filepath}"')
-                return True
+                return
 
         body_started = monotonic()
         # The remote listing is authoritative for downloads, including an
@@ -1223,7 +1242,7 @@ def _download_from_source_attempt(
                 discard_partial=True,
             )
             log.error(f'Content-Length mismatch downloading "{file.filepath}"')
-            return True
+            return
 
         if written != file.size:
             if written < file.size:
@@ -1234,7 +1253,7 @@ def _download_from_source_attempt(
                     discard_partial=True,
                 )
                 log.error(f'Incomplete body downloading "{file.filepath}"')
-                return True
+                return
             _peer_only_failure(
                 source,
                 PeerFailureKind.malformed,
@@ -1242,7 +1261,7 @@ def _download_from_source_attempt(
                 discard_partial=True,
             )
             log.error(f'Body exceeds listing size downloading "{file.filepath}"')
-            return True
+            return
 
         sha256sum = sha256.hexdigest()
         if is_sha256_hex(server_sha256):
@@ -1257,7 +1276,7 @@ def _download_from_source_attempt(
                 if resume_offset:
                     raise _RestartMasterDownload
                 log.error(f'Server checksum mismatch downloading "{file.filepath}"')
-                return True
+                return
         if not hmac.compare_digest(sha256sum, expected_sha):
             _peer_only_failure(
                 source,
@@ -1268,7 +1287,7 @@ def _download_from_source_attempt(
             if resume_offset:
                 raise _RestartMasterDownload
             log.error(f'Invalid checksum downloading "{file.filepath}"')
-            return True
+            return
 
         if destination_mutation_since(full_save_path, dest_existed, dest_marker):
             log.info(
@@ -1276,7 +1295,7 @@ def _download_from_source_attempt(
                 "or renamed while downloading"
             )
             cleanup_partial = True
-            return True
+            return
         replace(partial_file_path, full_save_path)
         cleanup_partial = False
         _finalize_download(
@@ -1290,7 +1309,7 @@ def _download_from_source_attempt(
             body_seconds=body_seconds,
             inventory_observer=inventory_observer,
         )
-        return True
+        return
 
     except _PeerSourceFailure:
         raise
@@ -1305,7 +1324,7 @@ def _download_from_source_attempt(
         raise
     except PermissionError as exc:
         log.error(f'Permission denied saving "{file.filepath}": {exc}')
-        return True
+        return
     except zstd.ZstdError as exc:
         if counter is not None:
             wire_bytes = counter.bytes_read
@@ -1322,10 +1341,10 @@ def _download_from_source_attempt(
                 discard_partial=True,
             ) from exc
         log.error(f'Decompression failed for "{file.filepath}": {exc}')
-        return True
+        return
     except OSError as exc:
         log.error(f'Error saving file "{file.filepath}": {exc}')
-        return True
+        return
     finally:
         response.close()
         if cleanup_partial and partial_file_path and Path(partial_file_path).exists():
@@ -1335,6 +1354,88 @@ def _download_from_source_attempt(
         # so it cannot delete the leftover in the window between the two
         # statements (and a successful transfer already renamed it away).
         unregister_inflight_partial(partial_file_path)
+
+
+def _download_from_source_attempt(
+    file: File,
+    inventory_observer: InventoryObserver = NOOP_INVENTORY_OBSERVER,
+    *,
+    source: P2PPeerSource | None = None,
+    source_resolver: P2PSourceResolver | None = None,
+    allow_delta: bool = True,
+    delta_only: bool = False,
+    force_restart: bool = False,
+) -> bool:
+    """
+    Perform a single download attempt with resume support.
+
+    Streams the file to a partial file location (.part extension), verifies
+    SHA-256 checksum, then moves it to the final destination. Preserves timestamps
+    and permissions from the remote file.
+
+    If a partial file exists from a previous interrupted download, resumes
+    from where it left off using HTTP Range requests.
+
+    Transient failures are raised (``RequestException`` for connection-level
+    errors, ``ServerError`` for 5xx) so the caller's retry policy can react;
+    permanent errors (4xx, checksum mismatch) are logged and swallowed.
+
+    Args:
+        file: File object with remote metadata (filepath, sha256sum, etc.).
+
+    Raises:
+        RequestException: On a connection-level error (retryable).
+        ServerError: On a server-side 5xx response (retryable).
+    """
+    t0 = monotonic()
+
+    target = _prepare_download_target(file)
+    if target is None:
+        return True
+    full_save_path = target.full_save_path
+    partial_file_path = target.partial_file_path
+
+    if _already_up_to_date(file, full_save_path, inventory_observer):
+        return True
+
+    if allow_delta and _try_delta_download(file, full_save_path, t0, inventory_observer):
+        return True
+    if delta_only:
+        return False
+
+    resume_offset = _resolve_resume_offset(file, partial_file_path, force_restart=force_restart)
+    if resume_offset is None:
+        return True
+
+    if not _has_download_space(file, full_save_path, resume_offset):
+        return True
+
+    max_inbound_size = CONFIG.get("MAX_INBOUND_SIZE", 0)
+    if max_inbound_size and file.size > max_inbound_size:
+        raise PermanentDownloadError(
+            f'"{file.filepath}" exceeds the maximum download size ({max_inbound_size} bytes)'
+        )
+
+    opened = _open_download_stream(
+        file,
+        target,
+        resume_offset=resume_offset,
+        source=source,
+        source_resolver=source_resolver,
+    )
+    if opened is None:
+        return True
+
+    _stream_download_body(
+        file,
+        target,
+        opened,
+        source=source,
+        source_resolver=source_resolver,
+        t0=t0,
+        inventory_observer=inventory_observer,
+    )
+    return True
 
 
 def _download_file_attempt(
