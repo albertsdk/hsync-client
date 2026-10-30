@@ -972,89 +972,36 @@ def _resolve_secrets(options: RunOptions, log, effective_server_url: str) -> _Re
     )
 
 
-def run_sync(options: RunOptions) -> None:
-    """
-    Main synchronization logic.
+@dataclass(frozen=True, slots=True)
+class _ResolvedTuning:
+    """Autotune outcome and resolved tuning values (provenance-tagged)."""
 
-    This function orchestrates the entire sync process including:
-    - Loading environment files
-    - Setting up logging
-    - Validating configuration
-    - Running sync (single or continuous)
+    autotune_enabled: bool
+    profile: Any | None
+    tuning_keys: Any
+    resolved_http_timeout: Any
+    resolved_reconnect_delay: Any
+    resolved_retry_min: Any
+    resolved_retry_max: Any
+    resolved_max_concurrent: Any
+    conn_retry_attempts: int
+    conn_retry_min: float
+    conn_retry_max: float
 
-    By default the client runs continuously (daemon): it keeps the connection
-    up and retries an unreachable server forever, mirroring P2P mode. A
-    one-shot run (CLI ``--once``) maps to ``continuous=False`` and exits after
-    a single cycle (or after the finite startup connectivity retries).
-    """
-    # Unpack the typed startup options (hsync_client.run_options) into the flat
-    # locals the rest of this function references; the grouping lives only in
-    # the CLI surface, so the body keeps one indirection level.
-    bucket = options.endpoints.bucket
-    env_file = options.secrets.env_file
+
+def _resolve_autotune(
+    options: RunOptions, log, effective_server_url: str, using_p2p_placeholder: bool
+) -> _ResolvedTuning:
+    """Probe the network and resolve autotune-managed tuning values."""
     verify_ssl = options.safety.verify_ssl
-    ca_cert = options.safety.ca_cert
     http_timeout = options.transfers.http_timeout
     local_path = options.sync.local_path
     continuous = options.sync.continuous
-    resync = options.sync.resync
     reconnect_delay = options.transfers.reconnect_delay
-    stability_delay = options.sync.stability_delay
-    max_wait_timeout = options.sync.max_wait_timeout
-    filter_path = options.sync.filter_path
     dryrun = options.sync.dryrun
-    deletion_policy = options.sync.deletion_policy
-    sync_direction = options.sync.sync_direction
-    compression_enabled = options.transfers.compression_enabled
-    max_bandwidth_upload = options.transfers.max_bandwidth_upload
-    max_bandwidth_download = options.transfers.max_bandwidth_download
-    p2p_mode = options.p2p.p2p_mode
-    p2p_listen_port = options.p2p.p2p_listen_port
-    peer_rendezvous_timeout = options.p2p.peer_rendezvous_timeout
-    p2p_group = options.p2p.p2p_group
-    prefer_master = options.p2p.prefer_master
-    never_master = options.p2p.never_master
-    debug = options.logging.debug
-    quiet = options.logging.quiet
-    logfile = options.logging.logfile
-    p2p_trust = options.p2p.p2p_trust
-    allow_deletions = options.safety.allow_deletions
-    min_free_disk_space = options.transfers.min_free_disk_space
-    max_inbound_size = options.transfers.max_inbound_size
-    ignore_patterns = options.transfers.ignore_patterns
     max_concurrent_transfers = options.transfers.max_concurrent_transfers
     no_autotune = options.transfers.no_autotune
-    mass_delete_guard = options.transfers.mass_delete_guard
-    mass_delete_threshold = options.transfers.mass_delete_threshold
-    mass_delete_percent = options.transfers.mass_delete_percent
-    delta_enabled = options.transfers.delta_enabled
-    delta_min_file_size = options.transfers.delta_min_file_size
-    delta_min_file_size_p2p = options.transfers.delta_min_file_size_p2p
-    p2p_peer_download_enabled = options.p2p.p2p_peer_download_enabled
-    rendezvous_server_endpoints = options.endpoints.rendezvous_server_endpoints
-    map_data_port = options.endpoints.map_data_port
-    rendezvous_server_pins = options.p2p.rendezvous_server_pins
-    rendezvous_server_tofu = options.p2p.rendezvous_server_tofu
-    rendezvous_server_trust = options.p2p.rendezvous_server_trust
-    server_fingerprints = options.safety.server_fingerprints
-    server_tofu = options.safety.server_tofu
-    server_trust = options.safety.server_trust
 
-    log = _init_runtime(options)
-
-    effective_server_url, ws_url, using_p2p_placeholder = _resolve_endpoints(options, log)
-
-    cid = _resolve_identity(options, log)
-
-    resolved = _resolve_secrets(options, log, effective_server_url)
-    resolved_api_key = resolved.api_key
-    resolved_p2p_key = resolved.p2p_key
-    allow_deletions = resolved.allow_deletions
-    allow_unauthenticated_p2p = resolved.allow_unauthenticated_p2p
-    allow_unauthenticated_p2p_writes = resolved.allow_unauthenticated_p2p_writes
-    # Populate global configuration dictionary
-
-    # ── Auto-tuning ────────────────────────────────────────────────────
     autotune_enabled = not no_autotune and (not dryrun or continuous) and get_autotune_enabled()
     tuning: Any = None  # TuningProfile | None
     if autotune_enabled:
@@ -1164,6 +1111,89 @@ def run_sync(options: RunOptions) -> None:
     _conn_retry_max = get_connectivity_retry_max_wait()
     if _conn_retry_max is None:
         _conn_retry_max = float(CONNECTIVITY_RETRY_MAX_WAIT_DEFAULT)
+    return _ResolvedTuning(
+        autotune_enabled=autotune_enabled,
+        profile=tuning,
+        tuning_keys=_tuning_keys,
+        resolved_http_timeout=_resolved_http_timeout,
+        resolved_reconnect_delay=_resolved_reconnect_delay,
+        resolved_retry_min=_resolved_retry_min,
+        resolved_retry_max=_resolved_retry_max,
+        resolved_max_concurrent=_resolved_max_concurrent,
+        conn_retry_attempts=_conn_retry_attempts,
+        conn_retry_min=_conn_retry_min,
+        conn_retry_max=_conn_retry_max,
+    )
+
+
+def _build_config(
+    options: RunOptions,
+    resolved: _ResolvedSecrets,
+    cid: str,
+    effective_server_url: str,
+    ws_url: str,
+    _t: _ResolvedTuning,
+) -> HsyncConfig:
+    """Resolve the TLS pins and build the global CONFIG payload."""
+    bucket = options.endpoints.bucket
+    verify_ssl = options.safety.verify_ssl
+    ca_cert = options.safety.ca_cert
+    local_path = options.sync.local_path
+    continuous = options.sync.continuous
+    resync = options.sync.resync
+    stability_delay = options.sync.stability_delay
+    max_wait_timeout = options.sync.max_wait_timeout
+    filter_path = options.sync.filter_path
+    dryrun = options.sync.dryrun
+    deletion_policy = options.sync.deletion_policy
+    sync_direction = options.sync.sync_direction
+    compression_enabled = options.transfers.compression_enabled
+    max_bandwidth_upload = options.transfers.max_bandwidth_upload
+    max_bandwidth_download = options.transfers.max_bandwidth_download
+    p2p_mode = options.p2p.p2p_mode
+    p2p_listen_port = options.p2p.p2p_listen_port
+    peer_rendezvous_timeout = options.p2p.peer_rendezvous_timeout
+    p2p_group = options.p2p.p2p_group
+    prefer_master = options.p2p.prefer_master
+    never_master = options.p2p.never_master
+    quiet = options.logging.quiet
+    logfile = options.logging.logfile
+    p2p_trust = options.p2p.p2p_trust
+    allow_deletions = options.safety.allow_deletions
+    min_free_disk_space = options.transfers.min_free_disk_space
+    max_inbound_size = options.transfers.max_inbound_size
+    ignore_patterns = options.transfers.ignore_patterns
+    mass_delete_guard = options.transfers.mass_delete_guard
+    mass_delete_threshold = options.transfers.mass_delete_threshold
+    mass_delete_percent = options.transfers.mass_delete_percent
+    delta_enabled = options.transfers.delta_enabled
+    delta_min_file_size = options.transfers.delta_min_file_size
+    delta_min_file_size_p2p = options.transfers.delta_min_file_size_p2p
+    p2p_peer_download_enabled = options.p2p.p2p_peer_download_enabled
+    rendezvous_server_endpoints = options.endpoints.rendezvous_server_endpoints
+    map_data_port = options.endpoints.map_data_port
+    rendezvous_server_pins = options.p2p.rendezvous_server_pins
+    rendezvous_server_tofu = options.p2p.rendezvous_server_tofu
+    rendezvous_server_trust = options.p2p.rendezvous_server_trust
+    server_fingerprints = options.safety.server_fingerprints
+    server_tofu = options.safety.server_tofu
+    server_trust = options.safety.server_trust
+    resolved_api_key = resolved.api_key
+    resolved_p2p_key = resolved.p2p_key
+    allow_deletions = resolved.allow_deletions
+    allow_unauthenticated_p2p = resolved.allow_unauthenticated_p2p
+    allow_unauthenticated_p2p_writes = resolved.allow_unauthenticated_p2p_writes
+    autotune_enabled = _t.autotune_enabled
+    tuning = _t.profile
+    _tuning_keys = _t.tuning_keys
+    _resolved_http_timeout = _t.resolved_http_timeout
+    _resolved_reconnect_delay = _t.resolved_reconnect_delay
+    _resolved_retry_min = _t.resolved_retry_min
+    _resolved_retry_max = _t.resolved_retry_max
+    _resolved_max_concurrent = _t.resolved_max_concurrent
+    _conn_retry_attempts = _t.conn_retry_attempts
+    _conn_retry_min = _t.conn_retry_min
+    _conn_retry_max = _t.conn_retry_max
 
     # Pins are keyed by endpoint (CLI/config resolved); a missing map means "read
     # the environment", which is also the single-endpoint configuration path.
@@ -1286,9 +1316,27 @@ def run_sync(options: RunOptions) -> None:
             if src in ("autotune", "default")
         ],
     }
+    return config
 
-    set_config(config)
-    set_debug(debug)
+
+def _finish_startup(
+    options: RunOptions,
+    config: HsyncConfig,
+    _t: _ResolvedTuning,
+    resolved: _ResolvedSecrets,
+    log,
+) -> Any:
+    """Cache autotune state, install the matcher/observer, take the run lock."""
+    local_path = options.sync.local_path
+    dryrun = options.sync.dryrun
+    sync_direction = options.sync.sync_direction
+    p2p_mode = options.p2p.p2p_mode
+    prefer_master = options.p2p.prefer_master
+    allow_deletions = resolved.allow_deletions
+    min_free_disk_space = options.transfers.min_free_disk_space
+    env_file = options.secrets.env_file
+    autotune_enabled = _t.autotune_enabled
+    tuning = _t.profile
 
     # Store the effective autotune decision for the reconnect path
     CONFIG["AUTOTUNE_ENABLED"] = autotune_enabled
@@ -1382,6 +1430,133 @@ def run_sync(options: RunOptions) -> None:
     # trust and connectivity in remote mode) refuse through the exit code and the
     # log line, which the Desktop reports as a fatal exit.
     emit_event(UiEventName.ready)
+    return instance_lock
+
+
+def _run_remote_mode(
+    options: RunOptions, config: HsyncConfig, log, effective_server_url: str
+) -> None:
+    """Resolve server trust, probe connectivity, run the remote cycle loop."""
+    continuous = options.sync.continuous
+
+    # Server TLS trust (ADR-0036): resolve the pin BEFORE the connectivity
+    # probe so chain validation and the pinned fingerprint stay consistent.
+    # chain/none -> no pin; a refusal is fatal (fail closed).
+    _server_parts = urlsplit(effective_server_url)
+    server_host = _server_parts.hostname or ""
+    server_port = _server_parts.port or (443 if _server_parts.scheme == "https" else 80)
+    try:
+        server_pin = _evaluate_server_trust(config, log, server_host, server_port)
+    except ServerTrustError:
+        flush_logs()
+        sys.exit(1)
+    if server_pin:
+        CONFIG["SERVER_CERT_FINGERPRINT"] = server_pin
+
+    # Server Connectivity Check with retry. In one-shot mode an
+    # unreachable server is a failed run: exit non-zero instead of
+    # returning silently with a success exit code. In continuous mode
+    # (the default) the client stays alive and the reconnect loop below
+    # retries the connection forever, mirroring P2P mode.
+    if not _check_server_connectivity(
+        server_url=effective_server_url,
+        timeout=min(config["HTTP_TIMEOUT"], 10),
+        verify_ssl=not config["NO_VERIFY_SSL"] and not server_pin,
+        logger=log,
+    ):
+        if not continuous:
+            sys.exit(1)
+        log.warning(
+            "Server unreachable at startup; keeping the client alive and "
+            "retrying (continuous mode)."
+        )
+
+    # Clock offset (ADR-0023): the server is the time authority; failures
+    # degrade to offset 0 and never block the run.
+    from hsync_client.timesync import probe_server_clock_offset
+
+    probe_server_clock_offset(effective_server_url, logger=log)
+
+    # Reset bandwidth throttle state for this session
+    reset_bandwidth_throttle()
+
+    # Log bandwidth limits if configured
+    if (upload_limit := config.get("MAX_BANDWIDTH_UPLOAD")) is not None:
+        log.info(f"Upload bandwidth limit: {format_bytes(float(upload_limit))}/s")
+    if (download_limit := config.get("MAX_BANDWIDTH_DOWNLOAD")) is not None:
+        log.info(f"Download bandwidth limit: {format_bytes(float(download_limit))}/s")
+
+    # Execute Sync
+    if config["DRYRUN"] and continuous:
+        # Dry-run + continuous: show preview, wait for SYNC command,
+        # then switch to continuous sync.
+        _run_preview(log)
+        run(_run_stdin_wait(log))
+        # After SYNC command: DRYRUN is now False, run continuous sync
+        run(_run_with_stdin_commands(log))
+    elif not config["DRYRUN"] and continuous:
+        run(_run_with_stdin_commands(log))
+    elif config["DRYRUN"]:
+        # One-shot dry-run: show the preview only — running sync() here would
+        # perform real transfers despite --dry-run.
+        _run_preview(log)
+    else:
+        # One-shot sync. The exit code feeds the shell from here on: a
+        # completed cycle maps its verdict (transfer errors, deletion
+        # guard, conflicts) through the documented code table, while
+        # fatal failures already logged by sync() become FATAL (1)
+        # without a raw traceback on stderr.
+        try:
+            log_initial_sync_start()
+            result = run(sync())
+        except SystemExit:
+            raise
+        except Exception:
+            # sync() already logged the error and emitted the structured
+            # event (or the debug traceback when verbose). A bare
+            # exception here must simply fail the run.
+            sys.exit(int(ExitCode.FATAL))
+        sys.exit(
+            exit_code_for_result(
+                failed_transfers=result.failed,
+                guard_tripped=result.guard_tripped,
+                conflicts=result.conflicts,
+            )
+        )
+
+
+def run_sync(options: RunOptions) -> None:
+    """
+    Main synchronization logic.
+
+    This function orchestrates the entire sync process including:
+    - Loading environment files
+    - Setting up logging
+    - Validating configuration
+    - Running sync (single or continuous)
+
+    By default the client runs continuously (daemon): it keeps the connection
+    up and retries an unreachable server forever, mirroring P2P mode. A
+    one-shot run (CLI ``--once``) maps to ``continuous=False`` and exits after
+    a single cycle (or after the finite startup connectivity retries).
+    """
+
+    log = _init_runtime(options)
+
+    effective_server_url, ws_url, using_p2p_placeholder = _resolve_endpoints(options, log)
+
+    cid = _resolve_identity(options, log)
+
+    resolved = _resolve_secrets(options, log, effective_server_url)
+
+    tuning = _resolve_autotune(options, log, effective_server_url, using_p2p_placeholder)
+
+    config = _build_config(options, resolved, cid, effective_server_url, ws_url, tuning)
+
+    set_config(config)
+    set_debug(options.logging.debug)
+
+    instance_lock = _finish_startup(options, config, tuning, resolved, log)
     try:
         # P2P Mode: Peer Rendezvous and Master Election
         if config["P2P_MODE"]:
@@ -1390,90 +1565,7 @@ def run_sync(options: RunOptions) -> None:
             _warn_if_p2p_in_container(log)
             sys.exit(run_p2p_mode(config, log))
 
-        # Server TLS trust (ADR-0036): resolve the pin BEFORE the connectivity
-        # probe so chain validation and the pinned fingerprint stay consistent.
-        # chain/none -> no pin; a refusal is fatal (fail closed).
-        _server_parts = urlsplit(effective_server_url)
-        server_host = _server_parts.hostname or ""
-        server_port = _server_parts.port or (443 if _server_parts.scheme == "https" else 80)
-        try:
-            server_pin = _evaluate_server_trust(config, log, server_host, server_port)
-        except ServerTrustError:
-            flush_logs()
-            sys.exit(1)
-        if server_pin:
-            CONFIG["SERVER_CERT_FINGERPRINT"] = server_pin
-
-        # Server Connectivity Check with retry. In one-shot mode an
-        # unreachable server is a failed run: exit non-zero instead of
-        # returning silently with a success exit code. In continuous mode
-        # (the default) the client stays alive and the reconnect loop below
-        # retries the connection forever, mirroring P2P mode.
-        if not _check_server_connectivity(
-            server_url=effective_server_url,
-            timeout=min(config["HTTP_TIMEOUT"], 10),
-            verify_ssl=not config["NO_VERIFY_SSL"] and not server_pin,
-            logger=log,
-        ):
-            if not continuous:
-                sys.exit(1)
-            log.warning(
-                "Server unreachable at startup; keeping the client alive and "
-                "retrying (continuous mode)."
-            )
-
-        # Clock offset (ADR-0023): the server is the time authority; failures
-        # degrade to offset 0 and never block the run.
-        from hsync_client.timesync import probe_server_clock_offset
-
-        probe_server_clock_offset(effective_server_url, logger=log)
-
-        # Reset bandwidth throttle state for this session
-        reset_bandwidth_throttle()
-
-        # Log bandwidth limits if configured
-        if (upload_limit := config.get("MAX_BANDWIDTH_UPLOAD")) is not None:
-            log.info(f"Upload bandwidth limit: {format_bytes(float(upload_limit))}/s")
-        if (download_limit := config.get("MAX_BANDWIDTH_DOWNLOAD")) is not None:
-            log.info(f"Download bandwidth limit: {format_bytes(float(download_limit))}/s")
-
-        # Execute Sync
-        if config["DRYRUN"] and continuous:
-            # Dry-run + continuous: show preview, wait for SYNC command,
-            # then switch to continuous sync.
-            _run_preview(log)
-            run(_run_stdin_wait(log))
-            # After SYNC command: DRYRUN is now False, run continuous sync
-            run(_run_with_stdin_commands(log))
-        elif not config["DRYRUN"] and continuous:
-            run(_run_with_stdin_commands(log))
-        elif config["DRYRUN"]:
-            # One-shot dry-run: show the preview only — running sync() here would
-            # perform real transfers despite --dry-run.
-            _run_preview(log)
-        else:
-            # One-shot sync. The exit code feeds the shell from here on: a
-            # completed cycle maps its verdict (transfer errors, deletion
-            # guard, conflicts) through the documented code table, while
-            # fatal failures already logged by sync() become FATAL (1)
-            # without a raw traceback on stderr.
-            try:
-                log_initial_sync_start()
-                result = run(sync())
-            except SystemExit:
-                raise
-            except Exception:
-                # sync() already logged the error and emitted the structured
-                # event (or the debug traceback when verbose). A bare
-                # exception here must simply fail the run.
-                sys.exit(int(ExitCode.FATAL))
-            sys.exit(
-                exit_code_for_result(
-                    failed_transfers=result.failed,
-                    guard_tripped=result.guard_tripped,
-                    conflicts=result.conflicts,
-                )
-            )
+        _run_remote_mode(options, config, log, effective_server_url)
     finally:
         # The async sinks must be drained before the process leaves: this
         # finally runs for every exit inside the run (including the sys.exit
