@@ -517,6 +517,466 @@ def emit_folder_size(local_files: list[dict], remote_files: list[dict]) -> None:
     emit_event(UiEventName.folder_size, local_bytes=totals[0], total_bytes=totals[1])
 
 
+def _collect_listings(
+    inventory_observer: InventoryObserver,
+) -> tuple[list[dict], list[dict]]:
+    """Snapshot local and remote file lists and publish folder-size status."""
+    local_files = get_files_local()
+    inventory_observer.replace_snapshot(local_files)
+    remote_files = get_files_remote()
+    emit_folder_size(local_files, remote_files)
+    if not CONFIG.get("P2P_MODE"):
+        # The REST round just proved the server link, so report it here
+        # instead of waiting for the event channel — which, in remote mode,
+        # only connects *after* the initial sync: the status used to read
+        # "waiting" while the cycle was transferring data.
+        set_link_status("connected")
+    return local_files, remote_files
+
+
+def _reconcile_tombstones() -> tuple[list[str], dict[str, dict]]:
+    """Merge remote deletion markers, mint offline-deletion markers, push the union.
+
+    Returns the ignore-agnostic on-disk path snapshot (used by merge-base
+    retention) and the merged marker payload the reconciliation consumes.
+    """
+    tombstones = get_tombstones_remote()
+
+    # Merge the remote markers into our persistent local store and push the
+    # accumulated union back so the server / master converges to every known
+    # deletion.  In P2P mode the master can change (elected), making gossip
+    # mandatory; in remote mode the server is the single authority, but
+    # pushing our local tombstones is necessary when this peer deleted files
+    # while offline and is now reconnecting — otherwise those files would be
+    # resurrected from the server.
+    from hsync_client.tombstones import get_payload, merge_payload
+
+    merge_payload(tombstones)
+    union = get_payload()
+    push_tombstones_remote(union)
+    tombstones = cast("dict[str, dict]", union)
+
+    # Record tombstones for files tracked by the merge base that are no
+    # longer present locally: they were deleted while the peer was offline or
+    # deleted below the watcher's radar (the live watcher records its own
+    # markers, but it is inactive during a one-shot sync, so this scan is the
+    # one-shot catch-all). The tombstone is keyed by the last-known content
+    # hash so the server can distinguish a true deletion from a path that was
+    # merely renamed or moved.
+    # Merge-base keys are hashed (tombstone_key), so compare them against the
+    # hashed local paths — a raw relpath would never match and every tracked
+    # file would be mistaken for deleted. The existence snapshot deliberately
+    # ignores .hsyncignore rules: a file hidden by an ignore pattern is NOT
+    # deleted ("exclude protects, it does not delete"), so it must never mint
+    # a tombstone that would make peers remove their copies.
+    # get_files_local() yields *absolute* filepaths while the store keys hash
+    # *bucket-relative* paths: normalize through relpath_in_bucket (a raw
+    # path hash would never match, mistaking every visible file for a
+    # deletion).
+    existing_paths = _existing_file_paths(CONFIG["LOCAL_BUCKET"])
+    existing_keys = {
+        tombstone_key(rp)
+        for p in existing_paths
+        if (rp := relpath_in_bucket(p, CONFIG["LOCAL_BUCKET"]))
+    }
+    # Causal provenance (ADR-0003): the marker inherits the path's recorded
+    # clock and is ticked by this peer.
+    #
+    # The existence check uses the ignore-agnostic ``existing_keys`` snapshot
+    # only: it is a superset of the syncable ``local_keys`` for on-disk files,
+    # so dropping ``local_keys`` is behaviour-preserving in the steady state.
+    # It fixes a mid-scan race where ``get_files_local`` (run early in the
+    # cycle) snapshots a file that is then deleted while ``get_files_remote``
+    # retries bridge a transiently-unreachable master: the stale
+    # ``local_keys`` would block minting and the file would be resurrected.
+    # ``existing_keys`` is computed right before this loop, so it reflects the
+    # live filesystem at mint time.
+    minted = False
+    # Collect only the deletions first (usually a handful): the previous
+    # ``list(iter_merge_bases())`` materialised every merge base as an extra
+    # O(N) list on top of the store's own snapshot.
+    offline_deletions: list[tuple[str, str, dict[str, int]]] = []
+    for key, base_hash, vclock in sync_state.iter_merge_bases():
+        if key and key not in existing_keys:
+            offline_deletions.append((key, base_hash, vclock))
+
+    from hsync_client.tombstones import record_deletion_by_key
+
+    # ``keep`` never records a deletion: a file the user removed on this
+    # device must not become a marker that makes the peers delete their copy
+    # (the live watcher already returns before recording one).
+    if not deletions_are_kept(CONFIG):
+        for key, base_hash, vclock in offline_deletions:
+            record_deletion_by_key(
+                key,
+                sha256sum=base_hash or None,
+                origin_cid=_local_cid_or_none(),
+                prev_vclock=vclock,
+                persist=False,
+            )
+            minted = True
+    # Persist the minted markers once (one SQLite transaction) and push the
+    # union once after all offline-deletion markers are recorded: the
+    # intermediate per-marker persists/pushes were redundant (the master only
+    # ever consumes the final union, and each push is a full HTTP round-trip /
+    # each persist a SQLite write).
+    if minted:
+        from hsync_client.tombstones import flush as flush_tombstones
+
+        flush_tombstones()
+        union = get_payload()
+        push_tombstones_remote(union)
+        tombstones = cast("dict[str, dict]", union)
+    return existing_paths, tombstones
+
+
+def _retain_merge_bases(local_files: list[dict], existing_paths: list[str]) -> None:
+    """Drop merge bases for vanished files so the version store stays bounded."""
+    # Drop merge-base records for files that no longer exist locally so the
+    # version store stays bounded (downloads re-record after transfer).
+    # ``local_files`` entries carry bucket-relative paths, so resolve them
+    # against LOCAL_BUCKET: ``retain`` expects absolute paths and a bare
+    # relative path would never match a recorded entry, silently dropping
+    # every merge base at the end of each cycle. Files hidden by
+    # .hsyncignore are added back via the ignore-agnostic existence
+    # snapshot: "exclude protects" means their merge base also survives, so
+    # re-including them later does not degrade to a false conflict.
+    listed_abs = []
+    for file_info in local_files:
+        fp = str(file_info.get("filepath", ""))
+        if not fp:
+            continue
+        p = Path(fp)
+        listed_abs.append(str(p) if p.is_absolute() else str(Path(CONFIG["LOCAL_BUCKET"]) / fp))
+    sync_state.retain(listed_abs + existing_paths)
+
+
+@dataclass(frozen=True, slots=True)
+class _SyncPartition:
+    """One-pass buckets of the sync actions, ready for execution."""
+
+    downloads: list
+    uploads: list
+    permission_uploads: list
+    nothing: list
+    symlink_uploads: list
+    symlink_downloads: list
+    tombstone_deletes: list
+    guarded_deletes: list
+    delete_remotes: list
+
+
+def _partition_sync_actions(sync_actions: list[SyncAction]) -> _SyncPartition:
+    """Bucket actions by type in a single pass; drop permanently-failed downloads."""
+    # No raw ``deletes`` bucket: the value execution consumes is rebuilt after
+    # the mass-deletion guard as ``tombstone_deletes + guarded_deletes``.
+    downloads: list = []
+    uploads: list = []
+    permission_uploads: list = []
+    nothing: list = []
+    symlink_uploads: list = []
+    symlink_downloads: list = []
+    tombstone_deletes: list = []
+    guarded_deletes: list = []
+    delete_remotes: list = []
+    for a in sync_actions:
+        match a.name:
+            case SyncActionName.download:
+                downloads.append(a.file)
+            case SyncActionName.upload:
+                if a.permissions_only:
+                    permission_uploads.append(a.file)
+                else:
+                    uploads.append(a.file)
+            case SyncActionName.delete:
+                if a.tombstone_confirmed:
+                    tombstone_deletes.append(a.file)
+                else:
+                    guarded_deletes.append(a.file)
+            case SyncActionName.delete_remote:
+                delete_remotes.append(a.file)
+            case SyncActionName.nothing:
+                nothing.append(a.file)
+            case SyncActionName.upload_symlink:
+                symlink_uploads.append(a.file)
+            case SyncActionName.download_symlink:
+                symlink_downloads.append(a.file)
+
+    # Drop downloads that already failed permanently earlier in this same
+    # cycle (e.g. two sync_actions entries for the same file, or a real-time
+    # event re-queuing it while the full sync is running).
+    downloads = [f for f in downloads if not _is_permanently_failed(f)]
+    return _SyncPartition(
+        downloads=downloads,
+        uploads=uploads,
+        permission_uploads=permission_uploads,
+        nothing=nothing,
+        symlink_uploads=symlink_uploads,
+        symlink_downloads=symlink_downloads,
+        tombstone_deletes=tombstone_deletes,
+        guarded_deletes=guarded_deletes,
+        delete_remotes=delete_remotes,
+    )
+
+
+def _apply_offline_renames(
+    downloads: list[File],
+    tombstone_deletes: list[File],
+    uploads: list[File],
+    delete_remotes: list[File],
+) -> tuple[list[File], list[File], list[File], list[File], int]:
+    """Move tombstone-confirmed renames on both sides; return the mutated lists + count."""
+    # A rename performed elsewhere arrives as a tombstone-confirmed delete
+    # of the old path plus a download of the new one: move the file instead
+    # of deleting and re-transferring identical bytes. A failed move puts
+    # both halves back on the ordinary path.
+    rename_pairs, downloads, tombstone_deletes = split_rename_pairs(downloads, tombstone_deletes)
+    renamed = 0
+    for old_file, new_file in rename_pairs:
+        if _apply_local_rename(old_file, new_file):
+            renamed += 1
+        else:
+            tombstone_deletes.append(old_file)
+            downloads.append(new_file)
+
+    # The mirror case: a rename performed HERE while this peer was offline
+    # arrives as a tombstone-confirmed delete of the stale remote old path
+    # plus an upload of the new one. Both entries advertise the same
+    # content, so moving the remote copy converges without re-sending the
+    # bytes. A refused move puts both halves back on the ordinary path.
+    remote_rename_pairs, uploads, delete_remotes = split_rename_pairs(uploads, delete_remotes)
+    for old_file, new_file in remote_rename_pairs:
+        if _apply_remote_rename(old_file, new_file):
+            renamed += 1
+        else:
+            delete_remotes.append(old_file)
+            uploads.append(new_file)
+    return downloads, tombstone_deletes, uploads, delete_remotes, renamed
+
+
+def _apply_deletions(
+    tombstone_deletes: list[File],
+    guarded_deletes: list[File],
+    delete_remotes: list[File],
+    local_files: list[dict],
+    remote_files: list[dict],
+    inventory_observer: InventoryObserver,
+) -> tuple[int, bool]:
+    """Apply the keep-policy, the mass-deletion guard and the delete executions."""
+    # ``keep`` drops every local deletion **before** the guard runs: with
+    # the policy on, no deletion is even a candidate, so the guard must
+    # neither pause the cycle, nor report a batch, nor turn a clean run into
+    # the deletion-guard exit code.
+    kept_deletes = len(tombstone_deletes) + len(guarded_deletes)
+    if kept_deletes and deletions_are_kept(CONFIG):
+        log.info(
+            f"{ActionLabel.GUARD} Keeping {kept_deletes} local deletion(s) (deletion policy: keep)"
+        )
+        tombstone_deletes = []
+        guarded_deletes = []
+
+    # Deletions were already split into tombstone-confirmed (backed by a
+    # deletion marker proving the file was removed elsewhere) and
+    # unconfirmed in the single partition pass above. The mass-deletion
+    # guard must never block a tombstone-confirmed deletion: a tombstone
+    # is positive proof the removal is intentional, so an empty master
+    # bucket is the expected outcome, not a suspect transient state.
+    # Only unconfirmed deletions are subject to the guard.
+    blocked, reason = _mass_deletion_blocked(
+        len(guarded_deletes), len(local_files), len(remote_files)
+    )
+    guard_tripped = blocked
+    if blocked:
+        log.warning(
+            f"{ActionLabel.GUARD} Mass-deletion guard tripped ({reason}); "
+            f"skipping {len(guarded_deletes)} unconfirmed deletion(s) this cycle "
+            f"({len(tombstone_deletes)} tombstone-confirmed deletion(s) still applied)"
+        )
+        emit_event(
+            UiEventName.sync_paused,
+            reason=reason,
+            deletes=len(guarded_deletes),
+            local=len(local_files),
+        )
+        guarded_deletes = []
+
+    # Merge the surviving deletions back for execution
+    deletes = tombstone_deletes + guarded_deletes
+
+    # Handle deletions (files that exist only locally in P2P mode)
+    deleted = 0
+    for file in deletes:
+        if file.filepath and Path(file.filepath).exists():
+            try:
+                remove(file.filepath)
+                deleted += 1
+                inventory_observer.remove_file(file.filepath)
+                sync_state.clear_base(file.filepath)
+                log.info(f'{ActionLabel.DELETE} "{file.filepath}" (not on master)')
+                emit_event(UiEventName.transfer, op="delete", file=file.filepath)
+            except OSError as e:
+                log.error(f'Error deleting "{file.filepath}": {e}')
+
+    # Handle remote deletions: files that exist only on the server but carry
+    # a matching local tombstone (deleted here while offline). The stale
+    # server copy must be removed, not downloaded back. Rename pairs were
+    # already executed above and their halves removed from this list.
+    from hsync_client.transfer import delete_file_remote
+
+    for file in delete_remotes:
+        try:
+            delete_file_remote(file)
+        except Exception as e:
+            # Best-effort: the tombstone stays in the local store, so
+            # the next cycle will retry the remote deletion.
+            log.error(f'Error deleting "{file.filepath}" on server: {e}')
+    return deleted, guard_tripped
+
+
+def _preserve_conflicts(
+    sync_actions: list[SyncAction], inventory_observer: InventoryObserver
+) -> int:
+    """Save local copies of files a conflicting download is about to overwrite."""
+    # Preserve locally-modified files before a conflicting download
+    # overwrites them (concurrent clocks lost the causal tie-break —
+    # there is never a wall-clock winner).
+    conflicts = 0
+    for action in sync_actions:
+        if action.name == SyncActionName.download and action.conflict:
+            conflicts += 1
+            conflict_path = _save_conflict_copy(action.file)
+            if conflict_path:
+                conflict_file = File.get(conflict_path)
+                if conflict_file is not None:
+                    inventory_observer.upsert(conflict_file)
+    return conflicts
+
+
+def _replicate_symlinks(
+    symlink_uploads: list,
+    symlink_downloads: list,
+    inventory_observer: InventoryObserver,
+) -> None:
+    """Inline structural symlink replication (sequential, best-effort)."""
+    # Uploads and downloads of symlinks run inline (they carry no payload:
+    # a single POST /symlinks or a local os.symlink each), so no thread
+    # pool is needed. Execution is sequential and best-effort: a failure
+    # leaves the action for the next cycle.
+    if symlink_uploads or symlink_downloads:
+        from hsync_client.transfer import download_symlink, upload_symlink
+
+        for link in symlink_uploads:
+            try:
+                upload_symlink(link)
+            except Exception as e:  # pragma: no cover - best-effort
+                log.error(f'Error uploading symlink "{link.filepath}": {e}')
+        for link in symlink_downloads:
+            try:
+                download_symlink(link, inventory_observer=inventory_observer)
+            except Exception as e:  # pragma: no cover - best-effort
+                log.error(f'Error downloading symlink "{link.filepath}": {e}')
+
+
+def _finalize_cycle(
+    transfer_counters: dict[str, int],
+    deleted: int,
+    renamed: int,
+    nothing: list,
+    conflicts: int,
+    guard_tripped: bool,
+) -> SyncCycleResult:
+    """Flush the version store, report the outcome and build the cycle result."""
+    # Persist refreshed merge bases (in-sync refresh, retain, clear-on-delete,
+    # and every _record_synced_base() from completed transfers) in a single
+    # atomic write at the end of the cycle, avoiding redundant per-file
+    # rewrites of the entire version map.
+    sync_state.flush()
+
+    # Reclaim freed pages from state DB (throttled; lightweight no-op
+    # when nothing was pruned this cycle or the interval has not elapsed).
+    from hsync_client.state_maintenance import incremental_vacuum_if_due
+
+    incremental_vacuum_if_due()
+
+    failed = transfer_counters["failed"]
+    if failed:
+        log.warning(f"Sync completed with {failed} failed transfer(s)")
+    else:
+        log.info("Sync completed successfully")
+    skipped = len(nothing)
+    emit_event(
+        UiEventName.sync_complete,
+        downloaded=transfer_counters["downloaded"],
+        uploaded=transfer_counters["uploaded"],
+        deleted=deleted,
+        renamed=renamed,
+        skipped=skipped,
+        failed=failed,
+        conflicts=conflicts,
+    )
+    from hsync_client.utils import _write_ready_file as _signal_ready
+
+    _signal_ready()
+    return SyncCycleResult(
+        completed=True,
+        downloaded=transfer_counters["downloaded"],
+        uploaded=transfer_counters["uploaded"],
+        deleted=deleted,
+        renamed=renamed,
+        skipped=skipped,
+        failed=failed,
+        conflicts=conflicts,
+        guard_tripped=guard_tripped,
+    )
+
+
+def _cycle_preflight() -> None:
+    """Probe the disk reserve and clear leftover transfer artifacts."""
+    # Pre-emptive storage guard: a per-file space check (transfer.py) can only
+    # skip that file, and it reports nothing the user can act on until the
+    # transfer fails. One probe per cycle is a statvfs call, and it is the
+    # only place where "free some space" can reach the user before a batch of
+    # downloads quietly skips.
+    _warn_disk_reserve(CONFIG["LOCAL_BUCKET"])
+    # The SHA-256 cache is intentionally NOT cleared per cycle anymore:
+    # entries are keyed on the nanosecond stat identity (mtime_ns, ctime_ns,
+    # size) validated on every hit, and watchers invalidate single entries
+    # on observed mutations — so an unchanged file is never re-hashed by a
+    # later cycle (continuous-mode force resyncs become metadata-only),
+    # while any real write evicts the stale digest. One-shot runs get one
+    # cycle per process, so the old clear was a no-op there.
+
+    # Clean up any leftover partial downloads from previous sessions
+    _cleanup_partial_files()
+
+    # Ensure empty directories have sentinel files
+    ensure_hsynckeep_files()
+
+
+def _report_sync_failure(e: Exception) -> None:
+    """Log and surface a failed sync cycle (auth vs connection vs generic)."""
+    if isinstance(e, AuthenticationError):
+        # Authentication failures get a dedicated event so the GUI prompts
+        # for the shared password instead of only logging a generic error.
+        log.error(f"Sync failed: {e}")
+        emit_event(UiEventName.auth_error, message=f"Sync failed: {e}")
+    elif isinstance(e, (NetworkError, ServerError)):
+        log.error(f"Sync failed: {e}")
+        # Tag a connection-level failure so the GUI can say "could not reach
+        # the server" instead of a generic error.
+        reason = (
+            "connection" if isinstance(e, NetworkError) and not isinstance(e, ServerError) else ""
+        )
+        emit_event(UiEventName.error, message=f"Sync failed: {e}", reason=reason)
+    else:
+        log.error(f"Unexpected error during sync: {e}")
+        emit_event(UiEventName.error, message=f"Unexpected error during sync: {e}")
+    if is_debug():
+        exc_tb = exc_info()[2]
+        if exc_tb:
+            print_tb(exc_tb)
+
+
 async def sync(
     p2p_mode: bool = False,
     inventory_observer: InventoryObserver | None = None,
@@ -578,128 +1038,11 @@ async def sync(
     _sync_cycle_active.set()
     try:
         offset_store.begin_epoch()
-        # Pre-emptive storage guard: a per-file space check (transfer.py) can only
-        # skip that file, and it reports nothing the user can act on until the
-        # transfer fails. One probe per cycle is a statvfs call, and it is the
-        # only place where "free some space" can reach the user before a batch of
-        # downloads quietly skips.
-        _warn_disk_reserve(CONFIG["LOCAL_BUCKET"])
-        # The SHA-256 cache is intentionally NOT cleared per cycle anymore:
-        # entries are keyed on the nanosecond stat identity (mtime_ns, ctime_ns,
-        # size) validated on every hit, and watchers invalidate single entries
-        # on observed mutations — so an unchanged file is never re-hashed by a
-        # later cycle (continuous-mode force resyncs become metadata-only),
-        # while any real write evicts the stale digest. One-shot runs get one
-        # cycle per process, so the old clear was a no-op there.
+        _cycle_preflight()
 
-        # Clean up any leftover partial downloads from previous sessions
-        _cleanup_partial_files()
+        local_files, remote_files = _collect_listings(inventory_observer)
 
-        # Ensure empty directories have sentinel files
-        ensure_hsynckeep_files()
-
-        # Get file lists from both sides
-        local_files = get_files_local()
-        inventory_observer.replace_snapshot(local_files)
-        remote_files = get_files_remote()
-        emit_folder_size(local_files, remote_files)
-        if not CONFIG.get("P2P_MODE"):
-            # The REST round just proved the server link, so report it here
-            # instead of waiting for the event channel — which, in remote mode,
-            # only connects *after* the initial sync: the status used to read
-            # "waiting" while the cycle was transferring data.
-            set_link_status("connected")
-
-        # Fetch deletion markers so files deleted while this peer was offline
-        # are not resurrected during the full reconciliation below.
-        tombstones = get_tombstones_remote()
-
-        # Merge the remote markers into our persistent local store and push the
-        # accumulated union back so the server / master converges to every known
-        # deletion.  In P2P mode the master can change (elected), making gossip
-        # mandatory; in remote mode the server is the single authority, but
-        # pushing our local tombstones is necessary when this peer deleted files
-        # while offline and is now reconnecting — otherwise those files would be
-        # resurrected from the server.
-        from hsync_client.tombstones import get_payload, merge_payload
-
-        merge_payload(tombstones)
-        union = get_payload()
-        push_tombstones_remote(union)
-        tombstones = cast("dict[str, dict]", union)
-
-        # Record tombstones for files tracked by the merge base that are no
-        # longer present locally: they were deleted while the peer was offline
-        # or deleted below the watcher's radar (the live watcher records its
-        # own markers, but it is inactive during a one-shot sync, so this scan
-        # is the one-shot catch-all). The tombstone is keyed by the
-        # last-known content hash so the server can distinguish a true
-        # deletion from a path that was merely renamed or moved.
-        # Merge-base keys are hashed (tombstone_key), so compare them against
-        # the hashed local paths — a raw relpath would never match and every
-        # tracked file would be mistaken for deleted. The existence snapshot
-        # deliberately ignores .hsyncignore rules: a file hidden by an ignore
-        # pattern is NOT deleted ("exclude protects, it does not delete"), so
-        # it must never mint a tombstone that would make peers remove their
-        # copies.
-        # get_files_local() yields *absolute* filepaths while the store keys
-        # hash *bucket-relative* paths: normalize through relpath_in_bucket
-        # (a raw path hash would never match, mistaking every visible file
-        # for a deletion).
-        existing_paths = _existing_file_paths(CONFIG["LOCAL_BUCKET"])
-        existing_keys = {
-            tombstone_key(rp)
-            for p in existing_paths
-            if (rp := relpath_in_bucket(p, CONFIG["LOCAL_BUCKET"]))
-        }
-        # Causal provenance (ADR-0003): the marker inherits the path's
-        # recorded clock and is ticked by this peer.
-        #
-        # The existence check uses the ignore-agnostic ``existing_keys``
-        # snapshot only: it is a superset of the syncable ``local_keys`` for
-        # on-disk files, so dropping ``local_keys`` is behaviour-preserving in
-        # the steady state. It fixes a mid-scan race where ``get_files_local``
-        # (run early in the cycle) snapshots a file that is then deleted while
-        # ``get_files_remote`` retries bridge a transiently-unreachable master:
-        # the stale ``local_keys`` would block minting and the file would be
-        # resurrected. ``existing_keys`` is computed right before this loop, so
-        # it reflects the live filesystem at mint time.
-        minted = False
-        # Collect only the deletions first (usually a handful): the previous
-        # ``list(iter_merge_bases())`` materialised every merge base as an extra
-        # O(N) list on top of the store's own snapshot.
-        offline_deletions: list[tuple[str, str, dict[str, int]]] = []
-        for key, base_hash, vclock in sync_state.iter_merge_bases():
-            if key and key not in existing_keys:
-                offline_deletions.append((key, base_hash, vclock))
-
-        from hsync_client.tombstones import record_deletion_by_key
-
-        # ``keep`` never records a deletion: a file the user removed on this
-        # device must not become a marker that makes the peers delete their
-        # copy (the live watcher already returns before recording one).
-        if not deletions_are_kept(CONFIG):
-            for key, base_hash, vclock in offline_deletions:
-                record_deletion_by_key(
-                    key,
-                    sha256sum=base_hash or None,
-                    origin_cid=_local_cid_or_none(),
-                    prev_vclock=vclock,
-                    persist=False,
-                )
-                minted = True
-        # Persist the minted markers once (one SQLite transaction) and push the
-        # union once after all offline-deletion markers are recorded: the
-        # intermediate per-marker persists/pushes were redundant (the master
-        # only ever consumes the final union, and each push is a full HTTP
-        # round-trip / each persist a SQLite write).
-        if minted:
-            from hsync_client.tombstones import flush as flush_tombstones
-
-            flush_tombstones()
-            union = get_payload()
-            push_tombstones_remote(union)
-            tombstones = cast("dict[str, dict]", union)
+        existing_paths, tombstones = _reconcile_tombstones()
 
         # Determine what actions need to be taken
         sync_actions = get_sync_actions(
@@ -713,197 +1056,39 @@ async def sync(
 
         log.info(f"Sync actions: {len(sync_actions)} files to process")
 
-        # Drop merge-base records for files that no longer exist locally so the
-        # version store stays bounded (downloads re-record after transfer).
-        # ``local_files`` entries carry bucket-relative paths, so resolve them
-        # against LOCAL_BUCKET: ``retain`` expects absolute paths and a bare
-        # relative path would never match a recorded entry, silently dropping
-        # every merge base at the end of each cycle. Files hidden by
-        # .hsyncignore are added back via the ignore-agnostic existence
-        # snapshot: "exclude protects" means their merge base also survives,
-        # so re-including them later does not degrade to a false conflict.
-        listed_abs = []
-        for file_info in local_files:
-            fp = str(file_info.get("filepath", ""))
-            if not fp:
-                continue
-            p = Path(fp)
-            listed_abs.append(str(p) if p.is_absolute() else str(Path(CONFIG["LOCAL_BUCKET"]) / fp))
-        sync_state.retain(listed_abs + existing_paths)
+        _retain_merge_bases(local_files, existing_paths)
 
-        # Partition actions by type in a single pass (one O(n) scan replaces
-        # eight separate list comprehensions over the same list).
-        downloads: list = []
-        uploads: list = []
-        permission_uploads: list = []
-        deletes: list = []
-        nothing: list = []
-        symlink_uploads: list = []
-        symlink_downloads: list = []
-        tombstone_deletes: list = []
-        guarded_deletes: list = []
-        delete_remotes: list = []
-        for a in sync_actions:
-            match a.name:
-                case SyncActionName.download:
-                    downloads.append(a.file)
-                case SyncActionName.upload:
-                    if a.permissions_only:
-                        permission_uploads.append(a.file)
-                    else:
-                        uploads.append(a.file)
-                case SyncActionName.delete:
-                    deletes.append(a.file)
-                    if a.tombstone_confirmed:
-                        tombstone_deletes.append(a.file)
-                    else:
-                        guarded_deletes.append(a.file)
-                case SyncActionName.delete_remote:
-                    delete_remotes.append(a.file)
-                case SyncActionName.nothing:
-                    nothing.append(a.file)
-                case SyncActionName.upload_symlink:
-                    symlink_uploads.append(a.file)
-                case SyncActionName.download_symlink:
-                    symlink_downloads.append(a.file)
+        partition = _partition_sync_actions(sync_actions)
+        downloads = partition.downloads
+        uploads = partition.uploads
+        permission_uploads = partition.permission_uploads
+        nothing = partition.nothing
+        symlink_uploads = partition.symlink_uploads
+        symlink_downloads = partition.symlink_downloads
+        tombstone_deletes = partition.tombstone_deletes
+        guarded_deletes = partition.guarded_deletes
+        delete_remotes = partition.delete_remotes
 
-        # Drop downloads that already failed permanently earlier in this
-        # same cycle (e.g. two sync_actions entries for the same file, or a
-        # real-time event re-queuing it while the full sync is running).
-        downloads = [f for f in downloads if not _is_permanently_failed(f)]
-
-        # A rename performed elsewhere arrives as a tombstone-confirmed delete
-        # of the old path plus a download of the new one: move the file instead
-        # of deleting and re-transferring identical bytes. A failed move puts
-        # both halves back on the ordinary path.
-        rename_pairs, downloads, tombstone_deletes = split_rename_pairs(
-            downloads, tombstone_deletes
+        downloads, tombstone_deletes, uploads, delete_remotes, renamed = _apply_offline_renames(
+            downloads, tombstone_deletes, uploads, delete_remotes
         )
-        renamed = 0
-        for old_file, new_file in rename_pairs:
-            if _apply_local_rename(old_file, new_file):
-                renamed += 1
-            else:
-                tombstone_deletes.append(old_file)
-                downloads.append(new_file)
-
-        # The mirror case: a rename performed HERE while this peer was offline
-        # arrives as a tombstone-confirmed delete of the stale remote old path
-        # plus an upload of the new one. Both entries advertise the same
-        # content, so moving the remote copy converges without re-sending the
-        # bytes. A refused move puts both halves back on the ordinary path.
-        remote_rename_pairs, uploads, delete_remotes = split_rename_pairs(uploads, delete_remotes)
-        for old_file, new_file in remote_rename_pairs:
-            if _apply_remote_rename(old_file, new_file):
-                renamed += 1
-            else:
-                delete_remotes.append(old_file)
-                uploads.append(new_file)
 
         # Log files that are already in sync (no I/O needed)
         for file in nothing:
             nothing_to_do(file)
 
-        # ``keep`` drops every local deletion **before** the guard runs: with
-        # the policy on, no deletion is even a candidate, so the guard must
-        # neither pause the cycle, nor report a batch, nor turn a clean run into
-        # the deletion-guard exit code.
-        kept_deletes = len(tombstone_deletes) + len(guarded_deletes)
-        if kept_deletes and deletions_are_kept(CONFIG):
-            log.info(
-                f"{ActionLabel.GUARD} Keeping {kept_deletes} local deletion(s) "
-                "(deletion policy: keep)"
-            )
-            tombstone_deletes = []
-            guarded_deletes = []
-
-        # Deletions were already split into tombstone-confirmed (backed by a
-        # deletion marker proving the file was removed elsewhere) and
-        # unconfirmed in the single partition pass above. The mass-deletion
-        # guard must never block a tombstone-confirmed deletion: a tombstone
-        # is positive proof the removal is intentional, so an empty master
-        # bucket is the expected outcome, not a suspect transient state.
-        # Only unconfirmed deletions are subject to the guard.
-        blocked, reason = _mass_deletion_blocked(
-            len(guarded_deletes), len(local_files), len(remote_files)
+        deleted, guard_tripped = _apply_deletions(
+            tombstone_deletes,
+            guarded_deletes,
+            delete_remotes,
+            local_files,
+            remote_files,
+            inventory_observer,
         )
-        guard_tripped = blocked
-        if blocked:
-            log.warning(
-                f"{ActionLabel.GUARD} Mass-deletion guard tripped ({reason}); "
-                f"skipping {len(guarded_deletes)} unconfirmed deletion(s) this cycle "
-                f"({len(tombstone_deletes)} tombstone-confirmed deletion(s) still applied)"
-            )
-            emit_event(
-                UiEventName.sync_paused,
-                reason=reason,
-                deletes=len(guarded_deletes),
-                local=len(local_files),
-            )
-            guarded_deletes = []
 
-        # Merge the surviving deletions back for execution
-        deletes = tombstone_deletes + guarded_deletes
+        conflicts = _preserve_conflicts(sync_actions, inventory_observer)
 
-        # Handle deletions (files that exist only locally in P2P mode)
-        deleted = 0
-        for file in deletes:
-            if file.filepath and Path(file.filepath).exists():
-                try:
-                    remove(file.filepath)
-                    deleted += 1
-                    inventory_observer.remove_file(file.filepath)
-                    sync_state.clear_base(file.filepath)
-                    log.info(f'{ActionLabel.DELETE} "{file.filepath}" (not on master)')
-                    emit_event(UiEventName.transfer, op="delete", file=file.filepath)
-                except OSError as e:
-                    log.error(f'Error deleting "{file.filepath}": {e}')
-
-        # Handle remote deletions: files that exist only on the server but carry
-        # a matching local tombstone (deleted here while offline). The stale
-        # server copy must be removed, not downloaded back. Rename pairs were
-        # already executed above and their halves removed from this list.
-        from hsync_client.transfer import delete_file_remote
-
-        for file in delete_remotes:
-            try:
-                delete_file_remote(file)
-            except Exception as e:
-                # Best-effort: the tombstone stays in the local store, so
-                # the next cycle will retry the remote deletion.
-                log.error(f'Error deleting "{file.filepath}" on server: {e}')
-
-        # Preserve locally-modified files before a conflicting download
-        # overwrites them (concurrent clocks lost the causal tie-break —
-        # there is never a wall-clock winner).
-        conflicts = 0
-        for action in sync_actions:
-            if action.name == SyncActionName.download and action.conflict:
-                conflicts += 1
-                conflict_path = _save_conflict_copy(action.file)
-                if conflict_path:
-                    conflict_file = File.get(conflict_path)
-                    if conflict_file is not None:
-                        inventory_observer.upsert(conflict_file)
-
-        # ── Symlink structural replication ──────────────────────────────
-        # Uploads and downloads of symlinks run inline (they carry no payload:
-        # a single POST /symlinks or a local os.symlink each), so no thread
-        # pool is needed. Execution is sequential and best-effort: a failure
-        # leaves the action for the next cycle.
-        if symlink_uploads or symlink_downloads:
-            from hsync_client.transfer import download_symlink, upload_symlink
-
-            for link in symlink_uploads:
-                try:
-                    upload_symlink(link)
-                except Exception as e:  # pragma: no cover - best-effort
-                    log.error(f'Error uploading symlink "{link.filepath}": {e}')
-            for link in symlink_downloads:
-                try:
-                    download_symlink(link, inventory_observer=inventory_observer)
-                except Exception as e:  # pragma: no cover - best-effort
-                    log.error(f'Error downloading symlink "{link.filepath}": {e}')
+        _replicate_symlinks(symlink_uploads, symlink_downloads, inventory_observer)
 
         # Execute transfers in parallel using thread pool
         transfer_counters: dict[str, int] = {
@@ -950,78 +1135,12 @@ async def sync(
                     reconcile_directories(remote_dirs, p2p_mode=p2p_mode)
             converge_directory_permissions(remote_dirs or [])
 
-        # Persist refreshed merge bases (in-sync refresh, retain, clear-on-delete,
-        # and every _record_synced_base() from completed transfers) in a single
-        # atomic write at the end of the cycle, avoiding redundant per-file
-        # rewrites of the entire version map.
-        sync_state.flush()
-
-        # Reclaim freed pages from state DB (throttled; lightweight no-op
-        # when nothing was pruned this cycle or the interval has not elapsed).
-        from hsync_client.state_maintenance import incremental_vacuum_if_due
-
-        incremental_vacuum_if_due()
-
-        failed = transfer_counters["failed"]
-        if failed:
-            log.warning(f"Sync completed with {failed} failed transfer(s)")
-        else:
-            log.info("Sync completed successfully")
-        skipped = len(nothing)
-        emit_event(
-            UiEventName.sync_complete,
-            downloaded=transfer_counters["downloaded"],
-            uploaded=transfer_counters["uploaded"],
-            deleted=deleted,
-            renamed=renamed,
-            skipped=skipped,
-            failed=failed,
-            conflicts=conflicts,
-        )
-        from hsync_client.utils import _write_ready_file as _signal_ready
-
-        _signal_ready()
-        return SyncCycleResult(
-            completed=True,
-            downloaded=transfer_counters["downloaded"],
-            uploaded=transfer_counters["uploaded"],
-            deleted=deleted,
-            renamed=renamed,
-            skipped=skipped,
-            failed=failed,
-            conflicts=conflicts,
-            guard_tripped=guard_tripped,
+        return _finalize_cycle(
+            transfer_counters, deleted, renamed, nothing, conflicts, guard_tripped
         )
 
-    except (AuthenticationError, NetworkError, ServerError) as e:
-        log.error(f"Sync failed: {e}")
-        if isinstance(e, AuthenticationError):
-            # Authentication failures get a dedicated event so the GUI prompts
-            # for the shared password instead of only logging a generic error.
-            emit_event(UiEventName.auth_error, message=f"Sync failed: {e}")
-        else:
-            # Tag a connection-level failure so the GUI can say "could not reach
-            # the server" instead of a generic error.
-            reason = (
-                "connection"
-                if isinstance(e, NetworkError) and not isinstance(e, ServerError)
-                else ""
-            )
-            emit_event(UiEventName.error, message=f"Sync failed: {e}", reason=reason)
-        if is_debug():
-            exc_tb = exc_info()[2]
-            if exc_tb:
-                print_tb(exc_tb)
-        # Propagate so the CLI exits non-zero: a failed sync must never be
-        # reported to the caller (or to a shell script) as success.
-        raise
     except Exception as e:
-        log.error(f"Unexpected error during sync: {e}")
-        emit_event(UiEventName.error, message=f"Unexpected error during sync: {e}")
-        if is_debug():
-            exc_tb = exc_info()[2]
-            if exc_tb:
-                print_tb(exc_tb)
+        _report_sync_failure(e)
         raise
     finally:
         offset_store.end_epoch()
