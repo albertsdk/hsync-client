@@ -1,13 +1,13 @@
 # HSYNC Client — Code-bloat cleanup: implementation plan
 
-> **Status: Plan (Rev. 1, 2026-10-30). Partially implemented — §2 and §5.1 done.**
-> The low-risk items are committed (`7893eee`) and the §5.1 decomposition is
-> committed (`transfer.py::_download_from_source_attempt` now an 80-line /
-> CC 11 orchestrator). The remaining decompositions are §5.3 (`sync`), §5.2
-> (`_handle_upload`), §5.4 (`run_sync`); this document records the analysis so
-> the work can be resumed without re-deriving it.
+> **Status: Plan (Rev. 1, 2026-10-30). Partially implemented — §2, §5.1, §5.3 done.**
+> The low-risk items (`7893eee`), the §5.1 decomposition (`3633180`) and the
+> §5.3 phase extraction (`sync` now a 171-line / CC 13 orchestrator) are
+> committed. Remaining: §5.2 (`_handle_upload`), §5.4 (`run_sync`); this
+> document records the analysis so the work can be resumed without re-deriving
+> it.
 >
-> **Next action:** start §5.3 (`sync`), phase extraction only.
+> **Next action:** start §5.2 (`_handle_upload`), the riskiest of the two.
 
 ## 1. Context and goal
 
@@ -64,7 +64,7 @@ Verification done: `ruff check hsync_client`, `ruff format --check`,
 | Function | Location | Lines | Cyclomatic | Notes |
 | -------- | -------- | ----: | ---------: | ----- |
 | `run_sync` | `hsync_client/main_logic.py:774` | 666 | 101 | 57 parameters, 74 top-level statements |
-| `sync` | `hsync_client/sync.py:520` | 512 | 67 | 7 top-level statements; complexity is inside one long `try` |
+| `sync` | `hsync_client/sync.py` (**done, §5.3**) | 171 | 13 | orchestrator delegating 10 phase helpers (was 512 / 67) |
 | `_download_from_source_attempt` | `hsync_client/transfer.py` (**done, §5.1**) | 80 | 11 | orchestrator over `_prepare_download_target` / `_open_download_stream` / `_stream_download_body` (was 336 / 55) |
 | `_handle_upload` | `hsync_client/p2p_server.py:2130` | 401 | 66 | multipart streaming + inner `_file_open` closure |
 
@@ -175,7 +175,7 @@ context object). Preserve 202 partial semantics, marker snapshots and the
 
 ---
 
-### 5.3 `sync.py::sync` (512 lines, CC 67)
+### 5.3 `sync.py::sync` (implemented 2026-10-30: 512→171 lines, CC 67→13)
 
 **Why it is bloat.** The body is a single long `try` under
 `_cycle_bookkeeping_lock`; a reader cannot see the cycle boundaries. Complexity
@@ -286,7 +286,7 @@ body ≤ ~120 lines; CLI and env behaviour byte-for-byte equivalent.
 
 1. **Commit §2** (the already-done work) ✅ `7893eee`
 2. `_download_from_source_attempt` (§5.1) ✅ `3633180` — best seams, strong tests.
-3. `sync` (§5.3) — phase extraction only.
+3. `sync` (§5.3) ✅ `0690ebc` — phase extraction only.
 4. `_handle_upload` (§5.2) — riskiest of the "medium" group.
 5. `run_sync` + `RunOptions` (§5.4) — last, staged.
 
