@@ -1,12 +1,13 @@
 # HSYNC Client — Code-bloat cleanup: implementation plan
 
-> **Status: Plan (Rev. 1, 2026-10-30). Partially implemented — §2 done.**
-> The low-risk items are committed (`7893eee`). The four large decompositions
-> remain; this document records the analysis so the work can be resumed without
-> re-deriving it.
+> **Status: Plan (Rev. 1, 2026-10-30). Partially implemented — §2 and §5.1 done.**
+> The low-risk items are committed (`7893eee`) and the §5.1 decomposition is
+> committed (`transfer.py::_download_from_source_attempt` now an 80-line /
+> CC 11 orchestrator). The remaining decompositions are §5.3 (`sync`), §5.2
+> (`_handle_upload`), §5.4 (`run_sync`); this document records the analysis so
+> the work can be resumed without re-deriving it.
 >
-> **Next action:** start §5.1 (`_download_from_source_attempt`), because it has
-> the most isolated seams and the strongest existing test suite.
+> **Next action:** start §5.3 (`sync`), phase extraction only.
 
 ## 1. Context and goal
 
@@ -64,7 +65,7 @@ Verification done: `ruff check hsync_client`, `ruff format --check`,
 | -------- | -------- | ----: | ---------: | ----- |
 | `run_sync` | `hsync_client/main_logic.py:774` | 666 | 101 | 57 parameters, 74 top-level statements |
 | `sync` | `hsync_client/sync.py:520` | 512 | 67 | 7 top-level statements; complexity is inside one long `try` |
-| `_download_from_source_attempt` | `hsync_client/transfer.py:1002` | 336 | 55 | linear pipeline with nested cleanup |
+| `_download_from_source_attempt` | `hsync_client/transfer.py` (**done, §5.1**) | 80 | 11 | orchestrator over `_prepare_download_target` / `_open_download_stream` / `_stream_download_body` (was 336 / 55) |
 | `_handle_upload` | `hsync_client/p2p_server.py:2130` | 401 | 66 | multipart streaming + inner `_file_open` closure |
 
 Metrics were produced with a small AST script (CC counts `if/for/while/except`,
@@ -73,7 +74,7 @@ confirm the target drops and nothing else regresses.
 
 ## 5. Deferred work
 
-### 5.1 `transfer.py::_download_from_source_attempt` (336 lines, CC 55)
+### 5.1 `transfer.py::_download_from_source_attempt` (implemented 2026-10-30: 336→80 lines, CC 55→11)
 
 **Why it is bloat.** One linear pipeline mixes destination resolution, delta
 and resume negotiation, the request build, response validation, body streaming,
@@ -283,9 +284,8 @@ body ≤ ~120 lines; CLI and env behaviour byte-for-byte equivalent.
 
 ## 6. Execution order and per-step workflow
 
-1. **Commit §2** (the already-done work) so the following steps start from a
-   clean tree.
-2. `_download_from_source_attempt` (§5.1) — best seams, strong tests.
+1. **Commit §2** (the already-done work) ✅ `7893eee`
+2. `_download_from_source_attempt` (§5.1) ✅ `3633180` — best seams, strong tests.
 3. `sync` (§5.3) — phase extraction only.
 4. `_handle_upload` (§5.2) — riskiest of the "medium" group.
 5. `run_sync` + `RunOptions` (§5.4) — last, staged.
