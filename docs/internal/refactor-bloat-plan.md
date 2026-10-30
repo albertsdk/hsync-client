@@ -1,13 +1,12 @@
 # HSYNC Client — Code-bloat cleanup: implementation plan
 
-> **Status: Plan (Rev. 1, 2026-10-30). Partially implemented — §2, §5.1, §5.3 done.**
-> The low-risk items (`7893eee`), the §5.1 decomposition (`3633180`) and the
-> §5.3 phase extraction (`sync` now a 171-line / CC 13 orchestrator) are
-> committed. Remaining: §5.2 (`_handle_upload`), §5.4 (`run_sync`); this
-> document records the analysis so the work can be resumed without re-deriving
-> it.
+> **Status: Plan (Rev. 1, 2026-10-30). Partially implemented — §2, §5.1, §5.3, §5.2 done.**
+> The low-risk items (`7893eee`), the §5.1 decomposition (`3633180`), the §5.3
+> phase extraction (`0690ebc`) and the §5.2 `_handle_upload` split are
+> committed. Remaining: §5.4 (`run_sync`); this document records the
+> analysis so the work can be resumed without re-deriving it.
 >
-> **Next action:** start §5.2 (`_handle_upload`), the riskiest of the two.
+> **Next action:** start §5.4 (`run_sync` + `RunOptions`), last and staged.
 
 ## 1. Context and goal
 
@@ -66,7 +65,7 @@ Verification done: `ruff check hsync_client`, `ruff format --check`,
 | `run_sync` | `hsync_client/main_logic.py:774` | 666 | 101 | 57 parameters, 74 top-level statements |
 | `sync` | `hsync_client/sync.py` (**done, §5.3**) | 171 | 13 | orchestrator delegating 10 phase helpers (was 512 / 67) |
 | `_download_from_source_attempt` | `hsync_client/transfer.py` (**done, §5.1**) | 80 | 11 | orchestrator over `_prepare_download_target` / `_open_download_stream` / `_stream_download_body` (was 336 / 55) |
-| `_handle_upload` | `hsync_client/p2p_server.py:2130` | 401 | 66 | multipart streaming + inner `_file_open` closure |
+| `_handle_upload` | `hsync_client/p2p_server.py` (**done, §5.2**) | 66 | 10 | orchestrator over `_admit_upload` / `_open_upload_destination` / `_close_upload_stream` / `_maybe_partial_upload_response` / `_finalize_upload` (was 401 / 66) |
 
 Metrics were produced with a small AST script (CC counts `if/for/while/except`,
 boolean operands, ternaries and `match` cases). Re-run it after each change to
@@ -128,7 +127,7 @@ CC ≤ ~25; no behaviour change in the size-mismatch / retry / cleanup paths.
 
 ---
 
-### 5.2 `p2p_server.py::_handle_upload` (401 lines, CC 66)
+### 5.2 `p2p_server.py::_handle_upload` (implemented 2026-10-30: 401→66 lines, CC 66→10)
 
 **Why it is bloat.** Multipart parsing, free-space admission, an inner
 `_file_open` closure that validates form fields and resolves the destination
@@ -287,7 +286,7 @@ body ≤ ~120 lines; CLI and env behaviour byte-for-byte equivalent.
 1. **Commit §2** (the already-done work) ✅ `7893eee`
 2. `_download_from_source_attempt` (§5.1) ✅ `3633180` — best seams, strong tests.
 3. `sync` (§5.3) ✅ `0690ebc` — phase extraction only.
-4. `_handle_upload` (§5.2) — riskiest of the "medium" group.
+4. `_handle_upload` (§5.2) ✅ `e45bdb0` — riskiest of the "medium" group.
 5. `run_sync` + `RunOptions` (§5.4) — last, staged.
 
 For each step:
