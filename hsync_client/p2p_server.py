@@ -33,10 +33,11 @@ import tempfile
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import contextmanager
+from dataclasses import dataclass
 from enum import StrEnum
 from http import HTTPStatus
 from pathlib import Path
@@ -522,6 +523,19 @@ else:  # pragma: no cover - runtime shim, never instantiated on its own
 # ``hsync_common.protocol.p2p``), served by the unified listener on the same TLS
 # port as the REST data plane.
 WS_EVENTS_PATH = P2P_WS_EVENTS_PATH
+
+
+@dataclass
+class _UploadContext:
+    """Mutable state of one streaming upload (explicit closure over nonlocals)."""
+
+    dest_path: str | None = None
+    tmp_path: str | None = None
+    raw_file: IO[bytes] | None = None
+    out_file: IO[bytes] | None = None
+    response_sent: bool = False
+    dest_existed_at_start: bool = False
+    dest_marker_snapshot: tuple[str, tuple[tuple[str, int], ...]] | None = None
 
 
 class P2PEndpointMixin(_HTTPTransportBase):
@@ -2127,6 +2141,376 @@ class P2PEndpointMixin(_HTTPTransportBase):
             return None
         return content_length, boundary
 
+    def _admit_upload(self, content_length: int, local_bucket: str) -> bool:
+        """Reject (413) uploads the target filesystem cannot hold."""
+        # Size-aware disk space guard: reject before writing if the target
+        # filesystem cannot hold the incoming bytes plus the configured reserve,
+        # avoiding a mid-transfer ENOSPC that leaves a .part behind. The rule is
+        # shared with the client download path and the server (`check_free_space`).
+        space = check_free_space(
+            local_bucket or ".",
+            reserve_bytes=CONFIG.get("MIN_FREE_DISK_SPACE", 0),
+            incoming_bytes=content_length,
+        )
+        if space.error is not None:
+            log.warning(f"Could not check disk space: {space.error}")
+        elif not space.ok:
+            log.error(
+                f"Insufficient disk space for upload: {space.free_mb} MB available, "
+                f"{space.required_mb} MB required"
+            )
+            self._send_error_response(HTTP_INSUFFICIENT_STORAGE, "Insufficient disk space")
+            return False
+        return True
+
+    def _open_upload_destination(
+        self,
+        ctx: _UploadContext,
+        form_fields: dict[str, str],
+        filename: str,
+        local_bucket: str,
+    ) -> Callable[[bytes], Any]:
+        """Validate the upload form and open the write path for the file part."""
+        path = form_fields.get("path", "")
+        is_compressed_local = form_fields.get("compressed", "false").lower() == "true"
+
+        # Peer-supplied destination is untrusted: validate the relative
+        # directory and the filename (rejecting traversal, absolute
+        # paths, backslashes and internal engine artifacts) and confine
+        # the result to the bucket. ``resolve_within`` also resolves
+        # existing symlink components, so a path crossing an escaping
+        # in-bucket symlink is rejected here.
+        rel_dest = f"{path.rstrip('/')}/{filename}" if path else filename
+        dest_path_local = resolve_within(local_bucket, rel_dest)
+        if dest_path_local is None:
+            raise PermissionError("Access denied")
+        Path(dest_path_local).parent.mkdir(parents=True, exist_ok=True)
+
+        ctx.dest_path = dest_path_local
+        ctx.tmp_path = dest_path_local + PARTIAL_DOWNLOAD_SUFFIX
+        # Snapshot the destination when the body starts writing: a delete or
+        # rename that happens while it streams must not be undone by the
+        # commit below (same contract as the central server gate).
+        ctx.dest_existed_at_start = Path(dest_path_local).exists()
+        from hsync_client.tombstones import deletion_marker_snapshot
+
+        ctx.dest_marker_snapshot = deletion_marker_snapshot(dest_path_local)
+
+        # Resumable upload: if offset > 0, append to an existing
+        # .part file whose size must match the declared offset.
+        # Compressed uploads are not resumable (the resumable path
+        # never decompresses, mirroring the central server).
+        try:
+            offset_val = int(form_fields.get("offset", "0") or "0")
+        except (TypeError, ValueError):
+            offset_val = 0
+        is_resumable = offset_val > 0
+        if is_resumable and is_compressed_local:
+            raise ValueError("Compressed uploads are not resumable")
+        if is_resumable:
+            if not Path(ctx.tmp_path).exists():
+                raise ValueError("Cannot resume: partial file not found")
+            current_size = Path(ctx.tmp_path).stat().st_size
+            if current_size != offset_val:
+                raise ValueError(f"Offset mismatch: expected {current_size}, got {offset_val}")
+            raw = open_partial_no_follow(ctx.tmp_path, "ab")
+        else:
+            # O_NOFOLLOW where supported: a pre-existing/raced .part symlink
+            # must not redirect the streamed write outside the bucket.
+            raw = open_partial_no_follow(ctx.tmp_path, "wb")
+        ctx.raw_file = raw
+        # Cap the bytes landing on disk (decompression bomb containment
+        # on the receiving side). The peer-declared size alone is not a
+        # safe bound: a hostile peer could declare an arbitrary size and
+        # expand a bomb up to it before the SHA-256 check discards the
+        # content. The shared inbound_size_cap policy applies
+        # min(declared, MAX_INBOUND_SIZE), with MAX_INBOUND_SIZE as the
+        # only bound when no size is declared at all.
+        try:
+            declared_size = int(form_fields.get("size", ""))
+        except (TypeError, ValueError):
+            declared_size = -1
+        cap = inbound_size_cap(
+            declared_size if declared_size > 0 else None,
+            CONFIG.get("MAX_INBOUND_SIZE", 0),
+        )
+        # Report the bytes landing on disk (decompressed when the peer sent
+        # zstd, which is what the file ends up with). A resumed upload starts
+        # from the offset already on disk, so the percentage covers the whole
+        # file; an undeclared size throttles by time only.
+        reporter = progress_reporter(
+            dest_path_local,
+            declared_size if declared_size > 0 else 0,
+            "download",
+        )
+        counted = ProgressWriter(raw.write, reporter, start=offset_val if is_resumable else 0)
+        # Either sink exposes write()/close(); the union type is not IO[bytes],
+        # so annotate Any for the zstd stream_writer below.
+        capped: Any = _CappedBytesWriter(counted.write, cap) if cap is not None else counted
+        if is_compressed_local:
+            import zstandard as zstd
+
+            if declared_size <= 0:
+                raise ValueError("Missing/invalid 'size' for compressed upload")
+
+            # closefd=False so closing the decompressor flushes the frame
+            # into ``raw`` without closing it, allowing an explicit fsync.
+            writer = zstd.ZstdDecompressor().stream_writer(capped, closefd=False)
+            ctx.out_file = writer
+            return writer.write
+        ctx.out_file = capped
+        return capped.write
+
+    def _close_upload_stream(self, ctx: _UploadContext) -> None:
+        """Close the writer (flushes a zstd frame if used) and fsync the raw part."""
+        out_file = ctx.out_file
+        raw_file = ctx.raw_file
+        # Close the writer (flushes zstd frame if used), then fsync the
+        # underlying file so the bytes are durable before the atomic rename.
+        try:
+            if out_file is not None and out_file is not raw_file:
+                out_file.close()
+        finally:
+            if raw_file is not None:
+                try:
+                    raw_file.flush()
+                    os.fsync(raw_file.fileno())
+                except OSError:
+                    pass
+                raw_file.close()
+        ctx.out_file = None
+        ctx.raw_file = None
+
+    def _maybe_partial_upload_response(
+        self, ctx: _UploadContext, form_fields: dict[str, str]
+    ) -> bool:
+        """Answer 202 with the new offset when the declared size is not reached."""
+        tmp_path = ctx.tmp_path
+        assert tmp_path is not None
+        # Resumable upload: check if the file is complete. If the
+        # declared size has not been reached, keep the .part file and
+        # return 202 so the client can resume from the new offset.
+        try:
+            declared_size = int(form_fields.get("size", "0") or "0")
+        except (TypeError, ValueError):
+            declared_size = 0
+        if declared_size > 0:
+            written_bytes = Path(tmp_path).stat().st_size
+            if written_bytes < declared_size:
+                self._send_json_response(
+                    HTTP_ACCEPTED,
+                    {
+                        "info": "Partial upload received",
+                        "offset": written_bytes,
+                        "remaining": declared_size - written_bytes,
+                    },
+                )
+                ctx.response_sent = True
+                # Prevent the finally block from deleting the .part
+                # file (it is needed for the next resume attempt).
+                ctx.tmp_path = None
+                return True
+        return False
+
+    def _finalize_upload(self, ctx: _UploadContext, form_fields: dict[str, str]) -> None:
+        """Arbitrate, commit and answer a completed (non-partial) upload."""
+        cid = form_fields.get("cid", "")
+        if self._reject_duplicate_cid(cid):
+            return
+        mtime = form_fields.get("mtime", "")
+        ctime = form_fields.get("ctime", "")
+        permissions = form_fields.get("permissions", "664")
+
+        dest_path = ctx.dest_path
+        tmp_path = ctx.tmp_path
+        assert dest_path is not None
+        assert tmp_path is not None
+
+        # Integrity is mandatory: the received bytes must hash to the
+        # declared SHA-256 before they are committed over the destination
+        # (a hostile or corrupt peer must not propagate content to slaves).
+        # The declared digest must be well-formed: compare_digest raises
+        # TypeError on non-ASCII input.
+        expected_sha = form_fields.get("sha256sum", "")
+        if not expected_sha:
+            self._send_error_response(HTTP_BAD_REQUEST, "Missing 'sha256sum' field")
+            return
+        if not is_sha256_hex(expected_sha):
+            self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'sha256sum' format")
+            return
+        actual_sha = compute_sha256(tmp_path)
+        if not hmac.compare_digest(actual_sha, expected_sha):
+            log.warning(
+                f'Rejected upload "{dest_path}": checksum mismatch '
+                f"(declared {expected_sha}, computed {actual_sha})"
+            )
+            self._send_error_response(HTTP_BAD_REQUEST, "Checksum mismatch")
+            return
+
+        # Record the CID for accurate logging.  Only authenticated CIDs
+        # are used for echo suppression (consume_inbound_origin gate).
+        if cid and is_valid_cid(cid):
+            from hsync_client.p2p_websocket import mark_inbound_origin
+
+            authenticated = bool(CONFIG.get("P2P_KEY"))
+            mark_inbound_origin(dest_path, cid, authenticated=authenticated)
+
+        # Causal arbitration (ADR-0022): the master is a transport hub,
+        # not an authority. Compare the incoming version against the stored
+        # version for this path and decide accept / supersede / conflict.
+        incoming_vclock_raw = form_fields.get("vclock", "")
+        incoming_version_id = form_fields.get("version_id", "")
+        try:
+            parsed_vclock = json.loads(incoming_vclock_raw) if incoming_vclock_raw else None
+        except (ValueError, TypeError):
+            parsed_vclock = None
+        # ADR-0023: the uploader's corrected mtime (0 ⇒ unknown ⇒ hash
+        # fallback). Receiver-side guard: a far-future peer value is
+        # clamped against the master's corrected clock so no device can
+        # win every tie-break (conflict engineering).
+        raw_corrected = form_fields.get("corrected_mtime", "0")
+        try:
+            incoming_corrected = int(raw_corrected)
+            incoming_corrected = max(incoming_corrected, 0)
+        except (ValueError, TypeError):
+            incoming_corrected = 0
+        if incoming_corrected > 0:
+            incoming_corrected = int(clamp_incoming_corrected_mtime(float(incoming_corrected)))
+
+        disk_hash = compute_sha256(dest_path) if Path(dest_path).exists() else None
+
+        from hsync_client.arbitration import ArbitrationOutcome, arbitrate_upload
+
+        arb = arbitrate_upload(
+            abs_path=dest_path,
+            incoming_hash=expected_sha,
+            incoming_vclock_raw=parsed_vclock,
+            incoming_version_id=incoming_version_id,
+            incoming_origin_cid=cid if is_valid_cid(cid) else None,
+            disk_hash=disk_hash,
+            incoming_corrected_mtime=incoming_corrected,
+        )
+
+        if arb.outcome is ArbitrationOutcome.superseded:
+            # Incoming is causally dominated (stale): reject, no copy.
+            log.info(
+                f'{ActionLabel.CONFLICT} Upload of "{dest_path}" superseded '
+                f"by a newer local version"
+            )
+            self._send_error_response(HTTP_CONFLICT, "superseded")
+            ctx.response_sent = True
+            return
+
+        if arb.outcome is ArbitrationOutcome.conflict_lost:
+            # Concurrent: incoming loses the tie-break. Preserve the
+            # incoming bytes as a conflicted copy, keep the local winner.
+            from hsync_common.time_utils import conflict_timestamp
+
+            ts = conflict_timestamp()
+            loser_cid = arb.loser_cid
+            conflict_path = conflicted_copy_name(dest_path, loser_cid, ts)
+            try:
+                os.replace(tmp_path, conflict_path)
+                ctx.tmp_path = None
+                log.warning(
+                    f'{ActionLabel.CONFLICT} "{dest_path}" concurrent edit; '
+                    f'incoming version saved as "{conflict_path}"'
+                )
+            except OSError as e:
+                log.error(f'Could not save conflict copy for "{dest_path}": {e}')
+            self._send_error_response(HTTP_CONFLICT, "conflict_lost")
+            ctx.response_sent = True
+            return
+
+        # The destination must still be the entry the upload set out to
+        # write: a deletion/rename that happened while the body streamed
+        # must neither be undone by the commit nor hidden by the conflict
+        # dance (checked before the accepted_conflict_won move below).
+        from hsync_client.tombstones import destination_mutation_since
+
+        if destination_mutation_since(
+            dest_path, ctx.dest_existed_at_start, ctx.dest_marker_snapshot
+        ):
+            log.info(
+                f'Upload of "{dest_path}" rejected: the destination was '
+                "deleted or renamed while uploading"
+            )
+            self._send_error_response(HTTP_CONFLICT, "destination_changed")
+            ctx.response_sent = True
+            return
+
+        # accepted / accepted_conflict_won: commit the incoming bytes.
+        if arb.outcome is ArbitrationOutcome.accepted_conflict_won and disk_hash is not None:
+            # Preserve the displaced local content as a conflict copy
+            # before overwriting it with the incoming winner.
+            from hsync_common.time_utils import conflict_timestamp
+
+            ts = conflict_timestamp()
+            conflict_path = conflicted_copy_name(dest_path, arb.loser_cid, ts)
+            try:
+                Path(conflict_path).parent.mkdir(parents=True, exist_ok=True)
+                os.replace(dest_path, conflict_path)
+                log.warning(
+                    f'{ActionLabel.CONFLICT} "{dest_path}" concurrent edit; '
+                    f'local version saved as "{conflict_path}"'
+                )
+            except OSError as e:
+                log.error(f'Could not save conflict copy for "{dest_path}": {e}')
+
+        os.replace(tmp_path, dest_path)
+        ctx.tmp_path = None
+
+        # Record the agreed version with the merged clock (ADR-0022 §5).
+        from hsync_common.models.tombstone import relpath_in_bucket
+
+        rel = relpath_in_bucket(dest_path, str(CONFIG.get("LOCAL_BUCKET", "")))
+        if rel:
+            from hsync_client.sync_state import get_sync_state_store
+
+            get_sync_state_store().record(
+                rel,
+                base_hash=expected_sha,
+                vclock=arb.record_vclock,
+                version_id=incoming_version_id or None,
+                origin_cid=cid if is_valid_cid(cid) else None,
+                corrected_mtime=arb.record_corrected_mtime,
+            )
+
+        if mtime or ctime:
+            try:
+                max_ts = time.time() + MTIME_MAX_FUTURE_SKEW_SECONDS
+                mtime_val = float(mtime) if mtime else None
+                atime_val = mtime_val or (float(ctime) if ctime else None)
+                if mtime_val:
+                    # Clamp far-future peer-supplied timestamps (conflict
+                    # engineering would favour the newest mtime).
+                    mtime_val = min(mtime_val, max_ts)
+                    atime_val = min(atime_val, max_ts) if atime_val else mtime_val
+                    os.utime(dest_path, (atime_val, mtime_val))
+            except (ValueError, OSError):
+                pass
+
+        if permissions:
+            from hsync_client.utils import set_permissions
+
+            set_permissions(dest_path, permissions)
+
+        # The incoming bytes are committed: publish the terminal transfer so
+        # the Desktop closes the row and counts the file as received. Emitted
+        # after the metadata is applied, so the re-stat sees the final size
+        # and mtime.
+        try:
+            committed_size = Path(dest_path).stat().st_size
+        except OSError:
+            committed_size = 0
+        emit_completed_transfer("download", dest_path, committed_size)
+
+        self._send_json_response(
+            HTTP_CREATED,
+            {"info": "File uploaded successfully", "file": dest_path},
+        )
+        ctx.response_sent = True
+
     def _handle_upload(self) -> None:
         """Handle file upload endpoint (streaming).
 
@@ -2145,389 +2529,54 @@ class P2PEndpointMixin(_HTTPTransportBase):
             return
         content_length, boundary = parsed
 
-        from hsync_client.utils import set_permissions
-
         local_bucket = CONFIG.get("LOCAL_BUCKET", "")
-
-        # Size-aware disk space guard: reject before writing if the target
-        # filesystem cannot hold the incoming bytes plus the configured reserve,
-        # avoiding a mid-transfer ENOSPC that leaves a .part behind. The rule is
-        # shared with the client download path and the server (`check_free_space`).
-        space = check_free_space(
-            local_bucket or ".",
-            reserve_bytes=CONFIG.get("MIN_FREE_DISK_SPACE", 0),
-            incoming_bytes=content_length,
-        )
-        if space.error is not None:
-            log.warning(f"Could not check disk space: {space.error}")
-        elif not space.ok:
-            log.error(
-                f"Insufficient disk space for upload: {space.free_mb} MB available, "
-                f"{space.required_mb} MB required"
-            )
-            self._send_error_response(HTTP_INSUFFICIENT_STORAGE, "Insufficient disk space")
+        if not self._admit_upload(content_length, local_bucket):
             return
 
         parser = _StreamingMultipartParser(self.rfile, content_length, boundary)
+        ctx = _UploadContext()
 
-        # Mutable state shared with the file_open callback (set by _file_open)
-        dest_path: str | None = None
-        tmp_path: str | None = None
-        raw_file: IO[bytes] | None = None
-        out_file: IO[bytes] | None = None
-        response_sent = False
-        dest_existed_at_start = False
-        dest_marker_snapshot: tuple[str, tuple[tuple[str, int], ...]] | None = None
-
-        def _file_open(form_fields, field_name, filename):
-            nonlocal dest_path, tmp_path, raw_file, out_file, dest_existed_at_start
-            nonlocal dest_marker_snapshot
-            path = form_fields.get("path", "")
-            is_compressed_local = form_fields.get("compressed", "false").lower() == "true"
-
-            # Peer-supplied destination is untrusted: validate the relative
-            # directory and the filename (rejecting traversal, absolute
-            # paths, backslashes and internal engine artifacts) and confine
-            # the result to the bucket. ``resolve_within`` also resolves
-            # existing symlink components, so a path crossing an escaping
-            # in-bucket symlink is rejected here.
-            rel_dest = f"{path.rstrip('/')}/{filename}" if path else filename
-            dest_path_local = resolve_within(local_bucket, rel_dest)
-            if dest_path_local is None:
-                raise PermissionError("Access denied")
-            Path(dest_path_local).parent.mkdir(parents=True, exist_ok=True)
-
-            dest_path = dest_path_local
-            tmp_path = dest_path_local + PARTIAL_DOWNLOAD_SUFFIX
-            # Snapshot the destination when the body starts writing: a delete or
-            # rename that happens while it streams must not be undone by the
-            # commit below (same contract as the central server gate).
-            dest_existed_at_start = Path(dest_path).exists()
-            from hsync_client.tombstones import deletion_marker_snapshot
-
-            dest_marker_snapshot = deletion_marker_snapshot(dest_path)
-
-            # Resumable upload: if offset > 0, append to an existing
-            # .part file whose size must match the declared offset.
-            # Compressed uploads are not resumable (the resumable path
-            # never decompresses, mirroring the central server).
-            try:
-                offset_val = int(form_fields.get("offset", "0") or "0")
-            except (TypeError, ValueError):
-                offset_val = 0
-            is_resumable = offset_val > 0
-            if is_resumable and is_compressed_local:
-                raise ValueError("Compressed uploads are not resumable")
-            if is_resumable:
-                if not Path(tmp_path).exists():
-                    raise ValueError("Cannot resume: partial file not found")
-                current_size = Path(tmp_path).stat().st_size
-                if current_size != offset_val:
-                    raise ValueError(f"Offset mismatch: expected {current_size}, got {offset_val}")
-                raw = open_partial_no_follow(tmp_path, "ab")
-            else:
-                # O_NOFOLLOW where supported: a pre-existing/raced .part symlink
-                # must not redirect the streamed write outside the bucket.
-                raw = open_partial_no_follow(tmp_path, "wb")
-            raw_file = raw
-            # Cap the bytes landing on disk (decompression bomb containment
-            # on the receiving side). The peer-declared size alone is not a
-            # safe bound: a hostile peer could declare an arbitrary size and
-            # expand a bomb up to it before the SHA-256 check discards the
-            # content. The shared inbound_size_cap policy applies
-            # min(declared, MAX_INBOUND_SIZE), with MAX_INBOUND_SIZE as the
-            # only bound when no size is declared at all.
-            try:
-                declared_size = int(form_fields.get("size", ""))
-            except (TypeError, ValueError):
-                declared_size = -1
-            cap = inbound_size_cap(
-                declared_size if declared_size > 0 else None,
-                CONFIG.get("MAX_INBOUND_SIZE", 0),
-            )
-            # Report the bytes landing on disk (decompressed when the peer sent
-            # zstd, which is what the file ends up with). A resumed upload starts
-            # from the offset already on disk, so the percentage covers the whole
-            # file; an undeclared size throttles by time only.
-            reporter = progress_reporter(
-                dest_path_local,
-                declared_size if declared_size > 0 else 0,
-                "download",
-            )
-            counted = ProgressWriter(raw.write, reporter, start=offset_val if is_resumable else 0)
-            capped = _CappedBytesWriter(counted.write, cap) if cap is not None else counted
-            if is_compressed_local:
-                import zstandard as zstd
-
-                if declared_size <= 0:
-                    raise ValueError("Missing/invalid 'size' for compressed upload")
-
-                # closefd=False so closing the decompressor flushes the frame
-                # into ``raw`` without closing it, allowing an explicit fsync.
-                writer = zstd.ZstdDecompressor().stream_writer(capped, closefd=False)
-                out_file = writer
-                return writer.write
-            out_file = capped
-            return capped.write
+        def _make_writer(form_fields, field_name, filename):
+            """Callable the multipart parser invokes once for the file part."""
+            return self._open_upload_destination(ctx, form_fields, filename, local_bucket)
 
         try:
-            form_fields, file_meta = parser.parse(_file_open)
+            form_fields, file_meta = parser.parse(_make_writer)
 
-            if file_meta is None or out_file is None:
+            if file_meta is None or ctx.out_file is None:
                 self._send_error_response(HTTP_BAD_REQUEST, "No file uploaded")
                 return
 
-            # _file_open succeeded, so the destination paths are set
-            assert dest_path is not None
-            assert tmp_path is not None
+            # _open_upload_destination succeeded, so the destination paths are set
+            assert ctx.dest_path is not None
+            assert ctx.tmp_path is not None
 
-            # Close the writer (flushes zstd frame if used), then fsync the
-            # underlying file so the bytes are durable before the atomic rename.
-            try:
-                if out_file is not raw_file:
-                    out_file.close()
-            finally:
-                if raw_file is not None:
-                    try:
-                        raw_file.flush()
-                        os.fsync(raw_file.fileno())
-                    except OSError:
-                        pass
-                    raw_file.close()
-            out_file = None
-            raw_file = None
+            self._close_upload_stream(ctx)
 
-            # Resumable upload: check if the file is complete. If the
-            # declared size has not been reached, keep the .part file and
-            # return 202 so the client can resume from the new offset.
-            try:
-                declared_size = int(form_fields.get("size", "0") or "0")
-            except (TypeError, ValueError):
-                declared_size = 0
-            if declared_size > 0:
-                written_bytes = Path(tmp_path).stat().st_size
-                if written_bytes < declared_size:
-                    self._send_json_response(
-                        HTTP_ACCEPTED,
-                        {
-                            "info": "Partial upload received",
-                            "offset": written_bytes,
-                            "remaining": declared_size - written_bytes,
-                        },
-                    )
-                    response_sent = True
-                    # Prevent the finally block from deleting the .part
-                    # file (it is needed for the next resume attempt).
-                    tmp_path = None
-                    return
-
-            cid = form_fields.get("cid", "")
-            if self._reject_duplicate_cid(cid):
-                return
-            mtime = form_fields.get("mtime", "")
-            ctime = form_fields.get("ctime", "")
-            permissions = form_fields.get("permissions", "664")
-
-            # Integrity is mandatory: the received bytes must hash to the
-            # declared SHA-256 before they are committed over the destination
-            # (a hostile or corrupt peer must not propagate content to slaves).
-            # The declared digest must be well-formed: compare_digest raises
-            # TypeError on non-ASCII input.
-            expected_sha = form_fields.get("sha256sum", "")
-            if not expected_sha:
-                self._send_error_response(HTTP_BAD_REQUEST, "Missing 'sha256sum' field")
-                return
-            if not is_sha256_hex(expected_sha):
-                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'sha256sum' format")
-                return
-            actual_sha = compute_sha256(tmp_path)
-            if not hmac.compare_digest(actual_sha, expected_sha):
-                log.warning(
-                    f'Rejected upload "{dest_path}": checksum mismatch '
-                    f"(declared {expected_sha}, computed {actual_sha})"
-                )
-                self._send_error_response(HTTP_BAD_REQUEST, "Checksum mismatch")
+            if self._maybe_partial_upload_response(ctx, form_fields):
                 return
 
-            # Record the CID for accurate logging.  Only authenticated CIDs
-            # are used for echo suppression (consume_inbound_origin gate).
-            if cid and is_valid_cid(cid):
-                from hsync_client.p2p_websocket import mark_inbound_origin
-
-                authenticated = bool(CONFIG.get("P2P_KEY"))
-                mark_inbound_origin(dest_path, cid, authenticated=authenticated)
-
-            # Causal arbitration (ADR-0022): the master is a transport hub,
-            # not an authority. Compare the incoming version against the stored
-            # version for this path and decide accept / supersede / conflict.
-            incoming_vclock_raw = form_fields.get("vclock", "")
-            incoming_version_id = form_fields.get("version_id", "")
-            try:
-                parsed_vclock = json.loads(incoming_vclock_raw) if incoming_vclock_raw else None
-            except (ValueError, TypeError):
-                parsed_vclock = None
-            # ADR-0023: the uploader's corrected mtime (0 ⇒ unknown ⇒ hash
-            # fallback). Receiver-side guard: a far-future peer value is
-            # clamped against the master's corrected clock so no device can
-            # win every tie-break (conflict engineering).
-            raw_corrected = form_fields.get("corrected_mtime", "0")
-            try:
-                incoming_corrected = int(raw_corrected)
-                incoming_corrected = max(incoming_corrected, 0)
-            except (ValueError, TypeError):
-                incoming_corrected = 0
-            if incoming_corrected > 0:
-                incoming_corrected = int(clamp_incoming_corrected_mtime(float(incoming_corrected)))
-
-            disk_hash = compute_sha256(dest_path) if Path(dest_path).exists() else None
-
-            from hsync_client.arbitration import ArbitrationOutcome, arbitrate_upload
-
-            arb = arbitrate_upload(
-                abs_path=dest_path,
-                incoming_hash=expected_sha,
-                incoming_vclock_raw=parsed_vclock,
-                incoming_version_id=incoming_version_id,
-                incoming_origin_cid=cid if is_valid_cid(cid) else None,
-                disk_hash=disk_hash,
-                incoming_corrected_mtime=incoming_corrected,
-            )
-
-            if arb.outcome is ArbitrationOutcome.superseded:
-                # Incoming is causally dominated (stale): reject, no copy.
-                log.info(
-                    f'{ActionLabel.CONFLICT} Upload of "{dest_path}" superseded '
-                    f"by a newer local version"
-                )
-                self._send_error_response(HTTP_CONFLICT, "superseded")
-                response_sent = True
-                return
-
-            if arb.outcome is ArbitrationOutcome.conflict_lost:
-                # Concurrent: incoming loses the tie-break. Preserve the
-                # incoming bytes as a conflicted copy, keep the local winner.
-                from hsync_common.time_utils import conflict_timestamp
-
-                ts = conflict_timestamp()
-                loser_cid = arb.loser_cid
-                conflict_path = conflicted_copy_name(dest_path, loser_cid, ts)
-                try:
-                    os.replace(tmp_path, conflict_path)
-                    tmp_path = None
-                    log.warning(
-                        f'{ActionLabel.CONFLICT} "{dest_path}" concurrent edit; '
-                        f'incoming version saved as "{conflict_path}"'
-                    )
-                except OSError as e:
-                    log.error(f'Could not save conflict copy for "{dest_path}": {e}')
-                self._send_error_response(HTTP_CONFLICT, "conflict_lost")
-                response_sent = True
-                return
-
-            # The destination must still be the entry the upload set out to
-            # write: a deletion/rename that happened while the body streamed
-            # must neither be undone by the commit nor hidden by the conflict
-            # dance (checked before the accepted_conflict_won move below).
-            from hsync_client.tombstones import destination_mutation_since
-
-            if destination_mutation_since(dest_path, dest_existed_at_start, dest_marker_snapshot):
-                log.info(
-                    f'Upload of "{dest_path}" rejected: the destination was '
-                    "deleted or renamed while uploading"
-                )
-                self._send_error_response(HTTP_CONFLICT, "destination_changed")
-                response_sent = True
-                return
-
-            # accepted / accepted_conflict_won: commit the incoming bytes.
-            if arb.outcome is ArbitrationOutcome.accepted_conflict_won and disk_hash is not None:
-                # Preserve the displaced local content as a conflict copy
-                # before overwriting it with the incoming winner.
-                from hsync_common.time_utils import conflict_timestamp
-
-                ts = conflict_timestamp()
-                conflict_path = conflicted_copy_name(dest_path, arb.loser_cid, ts)
-                try:
-                    Path(conflict_path).parent.mkdir(parents=True, exist_ok=True)
-                    os.replace(dest_path, conflict_path)
-                    log.warning(
-                        f'{ActionLabel.CONFLICT} "{dest_path}" concurrent edit; '
-                        f'local version saved as "{conflict_path}"'
-                    )
-                except OSError as e:
-                    log.error(f'Could not save conflict copy for "{dest_path}": {e}')
-
-            os.replace(tmp_path, dest_path)
-            tmp_path = None
-
-            # Record the agreed version with the merged clock (ADR-0022 §5).
-            from hsync_common.models.tombstone import relpath_in_bucket
-
-            rel = relpath_in_bucket(dest_path, str(CONFIG.get("LOCAL_BUCKET", "")))
-            if rel:
-                from hsync_client.sync_state import get_sync_state_store
-
-                get_sync_state_store().record(
-                    rel,
-                    base_hash=expected_sha,
-                    vclock=arb.record_vclock,
-                    version_id=incoming_version_id or None,
-                    origin_cid=cid if is_valid_cid(cid) else None,
-                    corrected_mtime=arb.record_corrected_mtime,
-                )
-
-            if mtime or ctime:
-                try:
-                    max_ts = time.time() + MTIME_MAX_FUTURE_SKEW_SECONDS
-                    mtime_val = float(mtime) if mtime else None
-                    atime_val = mtime_val or (float(ctime) if ctime else None)
-                    if mtime_val:
-                        # Clamp far-future peer-supplied timestamps (conflict
-                        # engineering would favour the newest mtime).
-                        mtime_val = min(mtime_val, max_ts)
-                        atime_val = min(atime_val, max_ts) if atime_val else mtime_val
-                        os.utime(dest_path, (atime_val, mtime_val))
-                except (ValueError, OSError):
-                    pass
-
-            if permissions:
-                set_permissions(dest_path, permissions)
-
-            # The incoming bytes are committed: publish the terminal transfer so
-            # the Desktop closes the row and counts the file as received. Emitted
-            # after the metadata is applied, so the re-stat sees the final size
-            # and mtime.
-            try:
-                committed_size = Path(dest_path).stat().st_size
-            except OSError:
-                committed_size = 0
-            emit_completed_transfer("download", dest_path, committed_size)
-
-            self._send_json_response(
-                HTTP_CREATED,
-                {"info": "File uploaded successfully", "file": dest_path},
-            )
-            response_sent = True
+            self._finalize_upload(ctx, form_fields)
 
         except PermissionError:
-            self._discard_temp_artifact(tmp_path, out_file, raw_file)
+            self._discard_temp_artifact(ctx.tmp_path, ctx.out_file, ctx.raw_file)
             self._send_error_response_safe(HTTP_FORBIDDEN, "Access denied")
-            response_sent = True
+            ctx.response_sent = True
         except ValueError as e:
             # Malformed upload metadata (e.g. missing size on a compressed
             # upload) or decompressed bytes beyond the declared size.
-            self._discard_temp_artifact(tmp_path, out_file, raw_file)
+            self._discard_temp_artifact(ctx.tmp_path, ctx.out_file, ctx.raw_file)
             self._send_error_response_safe(HTTP_BAD_REQUEST, f"Invalid upload: {e}")
-            response_sent = True
+            ctx.response_sent = True
         except Exception as e:
             log.error(f"Error handling upload: {e}")
-            self._discard_temp_artifact(tmp_path, out_file, raw_file)
-            if not response_sent:
+            self._discard_temp_artifact(ctx.tmp_path, ctx.out_file, ctx.raw_file)
+            if not ctx.response_sent:
                 self._send_error_response_safe(HTTP_INTERNAL_ERROR, f"Upload error: {e}")
         finally:
             # Idempotent safety net for paths that did not go through an
-            # error branch (on success tmp_path/raw_file/out_file are None).
-            self._discard_temp_artifact(tmp_path, out_file, raw_file)
+            # error branch (on success ctx tmp_path/raw_file/out_file are None).
+            self._discard_temp_artifact(ctx.tmp_path, ctx.out_file, ctx.raw_file)
 
     @staticmethod
     def _discard_temp_artifact(path: str | None, *files) -> None:
