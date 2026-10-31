@@ -28,6 +28,9 @@ network without a round trip through the node.
   holds the **raw derived key** in its `bucket=<key>` line: for a passphrase
   group, obtain it once with `hsync derive-group-key` and paste the 64-hex
   output. An open node with no protected buckets needs no key to discover peers.
+  Node side: the operator stores one `bucket=<key>` line per bucket in the
+  rendezvous's group-keys file and repeats `--protected-bucket` once per bucket —
+  see the [rendezvous usage → Group keys](https://github.com/albertsdk/hsync-rendezvous/blob/main/docs/usage.md#group-keys---keys-fd----keys-file).
 
 The rendezvous operator prints the fingerprint with `hsync-rendezvous identity show`
 and distributes it out of band (it is never sent on the wire), for the devices
