@@ -266,7 +266,11 @@ when a p2p one-shot aborts because no peer was discovered (`ExitCode.P2P_NO_PEER
 so a GUI can say "no devices to send to" instead of inferring from the exit code.
 The generic `error` event carries `reason="connection"` for a connection-level
 failure (`NetworkError`, not `ServerError`) in preview/sync, so a GUI can name the
-cause ("could not reach the server"); `auth_error` stays separate.
+cause ("could not reach the server"); `auth_error` stays separate. The console
+line for a failed comparison is deduplicated
+(`preview.py::_log_preview_failure`): the comparison is retried until the link is
+back, so only the first failure of an episode is an `ERROR` and the repeats stay
+at `DEBUG` until a comparison answers (`preview.py::_note_preview_success`).
 
 `folder_size` (`UiEventName.folder_size`, `sync.py::emit_folder_size`) is emitted
 after a full-share sync/preview fetches both listings: `local_bytes` is the sum of

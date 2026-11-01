@@ -41,6 +41,10 @@ from hsync_client.utils import reset_bandwidth_throttle
 
 _BANDWIDTH_KEY = Literal["MAX_BANDWIDTH_UPLOAD", "MAX_BANDWIDTH_DOWNLOAD"]
 
+# The summary of the last comparison failure reported at ERROR level, so the
+# retry loop does not repeat it (see ``_log_preview_failure``).
+_preview_failure_seen: str | None = None
+
 
 def _p2p_write_blocked(direction: str, allow_unauthenticated_writes: bool, log, hint: str) -> bool:
     """Return True (and report) when a P2P write requires auth that is missing.
@@ -126,6 +130,29 @@ async def _handle_set_bandwidth(log, **kw: object) -> None:
     log.info(f"Bandwidth limits updated: upload={upload_str}, download={download_str}")
     # Reset throttle state to apply new limits.
     reset_bandwidth_throttle()
+
+
+def _log_preview_failure(log, exc: Exception) -> None:
+    """Report a failed comparison once per episode, then drop to DEBUG.
+
+    The comparison is retried until the link is back, so the same failure repeats
+    every cycle: only the first occurrence is an ERROR, the repeats are kept at
+    DEBUG level (they are still in the file for a diagnosis) and the next
+    successful comparison starts a new episode.
+    """
+    global _preview_failure_seen
+    summary = f"{type(exc).__name__}: {exc}"
+    if summary == _preview_failure_seen:
+        log.debug(f"Preview failed again: {exc}")
+        return
+    _preview_failure_seen = summary
+    log.error(f"Preview failed: {exc}")
+
+
+def _note_preview_success() -> None:
+    """A comparison answered: the next failure is a new episode."""
+    global _preview_failure_seen
+    _preview_failure_seen = None
 
 
 def _run_preview(log) -> None:
@@ -264,8 +291,9 @@ def _run_preview(log) -> None:
             f"{len(uploads)} uploads, {len(deletes) + len(delete_remotes)} deletes, "
             f"{len(renames)} renames"
         )
+        _note_preview_success()
     except Exception as e:
-        log.error(f"Preview failed: {e}")
+        _log_preview_failure(log, e)
         if isinstance(e, AuthenticationError):
             # An authentication failure is not a generic preview error: surface
             # it as ``auth_error`` so the GUI can prompt for the shared password.

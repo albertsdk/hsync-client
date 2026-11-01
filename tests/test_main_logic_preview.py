@@ -464,3 +464,43 @@ class TestRunPreviewAuthErrors:
         error_kw = next(kw for name, kw in emitted if name == UiEventName.error)
 
         assert error_kw["reason"] == ""
+
+
+class TestPreviewFailureLogging:
+    """The comparison is retried: one failure must not repeat at ERROR level.
+
+    The client re-runs a comparison whose link dropped, so without this the log
+    filled with identical ERROR lines and buried the first cause.
+    """
+
+    class _Log:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+
+        def error(self, message: str) -> None:
+            self.calls.append(("error", message))
+
+        def debug(self, message: str) -> None:
+            self.calls.append(("debug", message))
+
+    def test_the_same_failure_is_reported_once(self):
+        from hsync_client.preview import _log_preview_failure, _note_preview_success
+
+        log = self._Log()
+        _note_preview_success()
+        try:
+            _log_preview_failure(log, ConnectionError("the peer is unreachable"))
+            _log_preview_failure(log, ConnectionError("the peer is unreachable"))
+
+            assert [kind for kind, _ in log.calls] == ["error", "debug"]
+
+            # A different failure is news again...
+            _log_preview_failure(log, ValueError("boom"))
+            assert [kind for kind, _ in log.calls] == ["error", "debug", "error"]
+
+            # ...and so is the same one after a comparison that answered.
+            _note_preview_success()
+            _log_preview_failure(log, ConnectionError("the peer is unreachable"))
+            assert [kind for kind, _ in log.calls] == ["error", "debug", "error", "error"]
+        finally:
+            _note_preview_success()
