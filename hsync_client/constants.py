@@ -236,6 +236,15 @@ MIN_BANDWIDTH_BPS = 10 * 1024 * 1024
 HEARTBEAT_INTERVAL = 5
 PEER_TIMEOUT = 15
 
+# mDNS announce burst. A peer that is already running learns about this node only
+# from an announce, so a fresh record (process start, network change, recovered
+# interface) is repeated every second for the first few cycles — RFC 6762's
+# query-burst behaviour — before settling on ``HEARTBEAT_INTERVAL``. The burst is
+# a multicast TXT update, so it costs nothing and takes LAN discovery from a
+# heartbeat interval to about a second.
+MDNS_ANNOUNCE_BURST_INTERVAL = 1.0
+MDNS_ANNOUNCE_BURST_COUNT = 10
+
 # Bounds for the configurable HSYNC_HEARTBEAT_INTERVAL / HSYNC_PEER_TIMEOUT
 # overrides. The peer timeout must stay comfortably above the heartbeat so a
 # single missed announce (packet loss, transient congestion) never marks a live
@@ -263,6 +272,23 @@ RENDEZVOUS_REFRESH_INTERVAL_MAX = 300
 # sample at all and never counts (see ``p2p_peers.LivenessSource``).
 RENDEZVOUS_MISSED_SAMPLES = 2
 
+# How long a discovery server's own evidence stays valid without a new answer.
+# The node keeps a record for its TTL (spec ``rdv-1.md``: 60 s) and the client
+# refreshes it every ``RENDEZVOUS_REFRESH_INTERVAL``: a server silent for two
+# TTLs has forgotten the group, so a peer it once introduced cannot be held by it
+# any more (a node that went away must not keep a dead master alive).
+RENDEZVOUS_SOURCE_LEASE_S = 120.0
+
+# Sampling cadence. A node joins (or loses its master) and must find the group
+# quickly, so the first samples run in a burst: the spec's budget allows a burst
+# of ten queries per (IP, bucket) and then five per minute, so the burst stays
+# inside it and the sustainable cadence — one query per minute/limit — is the
+# floor for a node still looking for a master. Once the group is complete the
+# lease cadence applies.
+RENDEZVOUS_QUERY_BURST_INTERVAL = 1.0
+RENDEZVOUS_QUERY_BURST_COUNT = 8
+RENDEZVOUS_QUERY_ACTIVE_INTERVAL = 12.0
+
 # Data relay over rdv/1 (peers behind CGNAT). The forwarding chunk is fixed so
 # a session's memory is bounded; the idle timeout counts *session* silence (no
 # bytes in either direction — an upload replies only once the request ends, so
@@ -279,6 +305,14 @@ RELAY_KEEPALIVE_INTERVAL = 20.0
 RELAY_OPEN_TIMEOUT_S = 15.0
 # Bounded per-candidate probe budget the relay replaces only as a last resort.
 RELAY_ACCEPT_TIMEOUT_S = 10.0
+
+# Master-candidate probing. A candidate that is dialable at all answers in
+# milliseconds (LAN) or a few hundred (routable WAN), so the first round is short
+# and only the candidates that stayed silent get the full budget: a peer that
+# advertises several undialable endpoints — two peers behind carrier-grade NAT —
+# then costs one short round plus one full round instead of a timeout per
+# candidate.
+MASTER_PROBE_FAST_TIMEOUT_S = 0.7
 # How long a caller waits for a tunnel that is repairing its session to have one
 # again. The tunnel keeps its loopback port, so waiting is what avoids replacing
 # it (a new port strands the pooled connections the HTTP client and the WebSocket

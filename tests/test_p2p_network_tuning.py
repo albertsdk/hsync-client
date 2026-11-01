@@ -451,7 +451,8 @@ class TestSelectMasterEndpoint:
         ):
             assert _select_master_endpoint(master, MagicMock()) is None
 
-    def test_same_subnet_candidate_is_probed_first_and_selected(self):
+    def test_the_lan_candidate_is_preferred_when_both_answer(self):
+        """Both reachable: the LAN candidate wins, whatever the probe timing."""
         from hsync_client.p2p_handler import _select_master_endpoint
 
         master = _master_with_endpoints([("203.0.113.10", 9000), ("192.168.1.42", 9000)])
@@ -459,15 +460,57 @@ class TestSelectMasterEndpoint:
 
         def reachable(host, port, fingerprint, timeout):
             probed.append((host, port))
-            return host == "192.168.1.42"
+            return True
 
         with (
             patch("hsync_client.p2p_handler.get_local_ip", return_value="192.168.1.50"),
             patch("hsync_client.p2p_handler._probe_master_endpoint", side_effect=reachable),
         ):
             assert _select_master_endpoint(master, MagicMock()) == ("192.168.1.42", 9000)
-        # The LAN candidate is tried before the public one.
-        assert probed[0] == ("192.168.1.42", 9000)
+        # Every candidate of the round is probed; the *order* is the preference,
+        # so the probe that comes back first does not decide the endpoint.
+        assert set(probed) == {("192.168.1.42", 9000), ("203.0.113.10", 9000)}
+
+    def test_a_round_costs_one_timeout_not_the_sum_of_them(self):
+        """The CGNAT case: several silent candidates must not add up."""
+        import time
+
+        from hsync_client.p2p_handler import _probe_round
+
+        def probe(host, port, fingerprint, timeout):
+            time.sleep(0.3 if host == "10.0.0.1" else 0.6)
+            return host == "203.0.113.7"
+
+        started = time.monotonic()
+        with patch("hsync_client.p2p_handler._probe_master_endpoint", side_effect=probe):
+            selected = _probe_round((("10.0.0.1", 9000), ("203.0.113.7", 9000)), "aa", 3.0)
+        elapsed = time.monotonic() - started
+
+        assert selected == ("203.0.113.7", 9000)
+        assert elapsed < 0.8, "the candidates were probed one after the other"
+
+    def test_a_candidate_needing_longer_than_the_short_round_is_still_found(self):
+        """The full budget applies to whatever the short round could not answer."""
+        from hsync_client.constants import MASTER_PROBE_FAST_TIMEOUT_S
+        from hsync_client.p2p_handler import (
+            MASTER_CANDIDATE_PROBE_TIMEOUT_S,
+            _select_master_endpoint,
+        )
+
+        master = _master_with_endpoints([("203.0.113.10", 9000), ("192.168.1.42", 9000)])
+        rounds: list[float] = []
+
+        def slow(host, port, fingerprint, timeout):
+            rounds.append(timeout)
+            return timeout > MASTER_PROBE_FAST_TIMEOUT_S
+
+        with (
+            patch("hsync_client.p2p_handler.get_local_ip", return_value="192.168.1.50"),
+            patch("hsync_client.p2p_handler._probe_master_endpoint", side_effect=slow),
+        ):
+            assert _select_master_endpoint(master, MagicMock()) == ("192.168.1.42", 9000)
+
+        assert rounds == [MASTER_PROBE_FAST_TIMEOUT_S] * 2 + [MASTER_CANDIDATE_PROBE_TIMEOUT_S] * 2
 
     def test_no_reachable_candidate_returns_none(self):
         from hsync_client.p2p_handler import _select_master_endpoint

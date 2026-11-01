@@ -42,8 +42,12 @@ from hsync_client.constants import (
     PEER_TIMEOUT,
     RENDEZVOUS_DEFAULT_PORT,
     RENDEZVOUS_MISSED_SAMPLES,
+    RENDEZVOUS_QUERY_ACTIVE_INTERVAL,
+    RENDEZVOUS_QUERY_BURST_COUNT,
+    RENDEZVOUS_QUERY_BURST_INTERVAL,
     RENDEZVOUS_REFRESH_INTERVAL,
     RENDEZVOUS_REFRESH_INTERVAL_MIN,
+    RENDEZVOUS_SOURCE_LEASE_S,
 )
 from hsync_client.events import emit_warning
 from hsync_client.nat_traversal import CandidateEndpoint, candidate_endpoints
@@ -218,6 +222,9 @@ class RdvRendezvous(RendezvousPlanState):
         # inside the rendezvous's 5/min per-(IP, bucket) query budget and honours a
         # ``rate_limited`` ``retry_after`` instead of hammering the node.
         self._next_query_at = 0.0
+        # Queries left in the start-up burst (see ``_query_interval``); a network
+        # change restarts it, because a new network is a new chance to be seen.
+        self._burst_left = 0
         self._upnp_enabled = upnp_enabled
         self._capacity = capacity if peer_download_enabled else 0
         self._local_ip = local_ip
@@ -300,14 +307,21 @@ class RdvRendezvous(RendezvousPlanState):
         # Register this server as a sample source before the first query: the
         # peers it reports are then judged by the answered samples it returns,
         # while the mDNS heartbeat window keeps judging the peers it announced.
+        # The lease bounds how long its evidence outlives its last answer.
         manager.register_source(
-            self._source_name, unit="samples", window=float(RENDEZVOUS_MISSED_SAMPLES)
+            self._source_name,
+            unit="samples",
+            window=float(RENDEZVOUS_MISSED_SAMPLES),
+            lease=float(RENDEZVOUS_SOURCE_LEASE_S),
         )
         # Resolve the local role before the first wait: a lone --prefer-master
         # node must become master and serve immediately so a joining slave can
         # connect (the election otherwise runs only on peer events).
         manager.elect()
         self._running = True
+        # The first samples run in a burst: a node that is joining (or restarting)
+        # must find the group in seconds, not in a lease cycle.
+        self._burst_left = RENDEZVOUS_QUERY_BURST_COUNT
         self._thread = threading.Thread(
             target=self._lease_loop, name="p2p-rendezvous-lease", daemon=True
         )
@@ -488,6 +502,8 @@ class RdvRendezvous(RendezvousPlanState):
         """
         if not signature.online:
             return
+        # A new network is a new chance to be seen: sample in a burst again.
+        self._burst_left = RENDEZVOUS_QUERY_BURST_COUNT
         self._wake.set()
 
     def _republish_stale_endpoint(self) -> bool:
@@ -602,8 +618,26 @@ class RdvRendezvous(RendezvousPlanState):
                     f"Rendezvous {format_authority(self._rendezvous_host, self._rendezvous_port)}: "
                     f"{action} ok ({len(peers)} peer(s))"
                 )
-            self._wake.wait(timeout=max(self._refresh_interval, backoff))
+            self._wake.wait(timeout=max(self._query_interval(), backoff))
             self._wake.clear()
+
+    def _query_interval(self) -> float:
+        """How soon the next sample may run.
+
+        A node that is joining — or that lost its master — must find the group
+        quickly, so the first samples run every
+        ``RENDEZVOUS_QUERY_BURST_INTERVAL`` for ``RENDEZVOUS_QUERY_BURST_COUNT``
+        cycles (inside the spec's burst budget) and, while no master is known,
+        the fastest sustainable cadence (``RENDEZVOUS_QUERY_ACTIVE_INTERVAL``,
+        one query per ``60 s / 5``). Once the group is complete the lease cadence
+        applies, which is what keeps the client inside the query budget.
+        """
+        if self._burst_left > 0:
+            return RENDEZVOUS_QUERY_BURST_INTERVAL
+        manager = self._peer_manager
+        if manager is not None and manager.get_master_cid() is None:
+            return RENDEZVOUS_QUERY_ACTIVE_INTERVAL
+        return self._refresh_interval
 
     def _republish_advert(self) -> None:
         """Re-``register`` with the current advertisement (role changed).
@@ -637,6 +671,11 @@ class RdvRendezvous(RendezvousPlanState):
             source="rendezvous",
             reason="untrusted",
         )
+        if self._peer_manager is not None:
+            # The node will never be contacted again, so the evidence it
+            # contributed must go with it: the peers it introduced are re-judged
+            # by the remaining sources (and dropped when nothing else holds them).
+            self._peer_manager.forget_source(self._source_name)
 
     def _log_refusal(self, exc: RendezvousRefused) -> None:
         """Report a uniform rdv/1 refusal once per error, then at DEBUG."""
@@ -768,12 +807,17 @@ class RdvRendezvous(RendezvousPlanState):
                 self._next_query_at = now + float(retry_after)
             else:
                 self._next_query_at = now + self._refresh_interval
+            # A refusal ends the burst: the node asked us to slow down, so the
+            # unspent tokens stay unspent instead of deepening the refusal.
+            self._burst_left = 0
             log.info(
                 f"Rendezvous {authority} query refused: {response['error']}; "
                 f"next sample in {self._next_query_at - now:.0f}s"
             )
             return
-        self._next_query_at = now + self._refresh_interval
+        self._next_query_at = now + self._query_interval()
+        if self._burst_left > 0:
+            self._burst_left -= 1
         sampled = {wire["cid"] for wire in response["peers"]}
         # One answered sample: the source moves forward and the peers it drew are
         # stamped with the new generation. A peer missing from `window` answered

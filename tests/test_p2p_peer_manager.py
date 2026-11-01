@@ -6,7 +6,7 @@
 import time
 from unittest.mock import patch
 
-from hsync_client.constants import PEER_TIMEOUT
+from hsync_client.constants import PEER_TIMEOUT, RENDEZVOUS_SOURCE_LEASE_S
 from hsync_client.p2p_peers import HEARTBEAT_SOURCE, Peer, PeerManager
 from hsync_client.p2p_rendezvous_mdns import HsyncServiceListener
 
@@ -1355,7 +1355,12 @@ class TestLivenessSources:
     @staticmethod
     def _manager(**kwargs) -> PeerManager:
         pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0, **kwargs)
-        pm.register_source(TestLivenessSources.SOURCE, unit="samples", window=2.0)
+        pm.register_source(
+            TestLivenessSources.SOURCE,
+            unit="samples",
+            window=2.0,
+            lease=RENDEZVOUS_SOURCE_LEASE_S,
+        )
         return pm
 
     @staticmethod
@@ -1423,3 +1428,31 @@ class TestLivenessSources:
 
         assert pm.reconcile_stale_peers() is False
         assert "aaa111" in pm._peers
+
+    def test_a_source_that_stops_answering_releases_its_peers(self):
+        """A node that went away must not hold a dead master forever.
+
+        The sample window counts answers, so a source that never answers again
+        would hold its peers indefinitely. Its own lease bounds that, and the
+        group can fail over once it lapses.
+        """
+        pm = self._manager()
+        pm.add_peer(self._peer(), source=self.SOURCE)
+        assert pm.reconcile_stale_peers() is False
+
+        pm._sources[self.SOURCE].last_answer = time.monotonic() - RENDEZVOUS_SOURCE_LEASE_S - 1
+
+        assert pm.reconcile_stale_peers() is True
+        assert pm.get_master_cid() == "zzz999"
+
+    def test_forgetting_a_source_drops_the_peers_it_introduced(self):
+        """An untrusted node is never contacted again: its peers go with it."""
+        pm = self._manager()
+        pm.add_peer(self._peer(), source=self.SOURCE)
+        assert [peer.cid for peer in pm.get_alive_peers()] == ["aaa111"]
+
+        pm.forget_source(self.SOURCE)
+
+        assert pm.get_alive_peers() == []
+        assert "aaa111" not in pm._peers
+        assert pm.get_master_cid() == "zzz999"

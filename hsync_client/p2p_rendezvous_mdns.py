@@ -34,6 +34,8 @@ from hsync_client.config import CONFIG
 from hsync_client.constants import (
     HEARTBEAT_INTERVAL,
     HSYNC_VERSION,
+    MDNS_ANNOUNCE_BURST_COUNT,
+    MDNS_ANNOUNCE_BURST_INTERVAL,
     PEER_TIMEOUT,
     RENDEZVOUS_TIMEOUT_DEFAULT,
 )
@@ -345,6 +347,8 @@ class MdnsRendezvous(RendezvousPlanState):
             peer_timeout=peer_timeout,
         )
         self._heartbeat_interval = heartbeat_interval
+        # Announces left in the start-up burst (see ``_heartbeat_loop``).
+        self._announce_burst = 0
         # If port is 0, get a random free port
         self._port = port if port != 0 else get_free_port()
         # The IP this node advertises over mDNS. Sampled once here and refreshed
@@ -640,8 +644,19 @@ class MdnsRendezvous(RendezvousPlanState):
             self._service_info = new_info
 
     def _heartbeat_loop(self) -> None:
-        """Background loop that emits the liveness heartbeat at a fixed cadence."""
-        while not self._heartbeat_stop.wait(self._heartbeat_interval):
+        """Re-announce the record: a burst on start, then the steady cadence.
+
+        A peer that is already running learns about this node only from an
+        announce, so a fresh record (process start, a changed address, a recovered
+        interface) is repeated every ``MDNS_ANNOUNCE_BURST_INTERVAL`` for the
+        first ``MDNS_ANNOUNCE_BURST_COUNT`` cycles — RFC 6762's query-burst
+        behaviour — and then at ``heartbeat_interval``. The burst is a multicast
+        TXT update, so it takes LAN discovery from up to a heartbeat interval to
+        about a second and costs nothing.
+        """
+        interval = MDNS_ANNOUNCE_BURST_INTERVAL
+        self._announce_burst = MDNS_ANNOUNCE_BURST_COUNT
+        while not self._heartbeat_stop.wait(interval):
             try:
                 self._heartbeat()
             except Exception:
@@ -649,6 +664,13 @@ class MdnsRendezvous(RendezvousPlanState):
                 # A failed announcement is how a bounced interface manifests:
                 # repair instead of staying silent until the process restarts.
                 self._recover_mdns()
+            if self._announce_burst > 0:
+                self._announce_burst -= 1
+            interval = (
+                MDNS_ANNOUNCE_BURST_INTERVAL
+                if self._announce_burst > 0
+                else self._heartbeat_interval
+            )
 
     def _on_network_change(self, signature: NetworkSignature) -> None:
         """Recover the mDNS stack after the host lost or regained its link.
@@ -666,6 +688,8 @@ class MdnsRendezvous(RendezvousPlanState):
         if not self._network_offline and signature.source_ip == self._local_ip:
             return
         self._network_offline = False
+        # The rebuilt record is new to every peer: announce it in a burst again.
+        self._announce_burst = MDNS_ANNOUNCE_BURST_COUNT
         self._rebuild_mdns(signature.source_ip)
 
     def _recover_mdns(self) -> None:

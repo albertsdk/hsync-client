@@ -113,8 +113,8 @@ Both must be explicit: a TTY or `--allow-deletions` never grants them.
 | `HSYNC_RENDEZVOUS_SERVER_TRUST_FILE` | Trusted rendezvous fingerprints (known-hosts store) | `$HSYNC_STATE_DIR/rendezvous_server_known_hosts.json`; the XDG/local-state path when the state dir is unset |
 | `HSYNC_P2P_TRUST` | P2P master trust policy: `ask`, `accept-new` or `strict` | `ask` |
 | `HSYNC_PEER_RENDEZVOUS_TIMEOUT` | p2p peer rendezvous timeout in seconds (`0` = indefinitely) | `0` |
-| `HSYNC_HEARTBEAT_INTERVAL` | LAN mDNS re-announce / liveness-evaluation cadence in seconds (`1`–`60`) | `5` |
-| `HSYNC_RENDEZVOUS_SERVER_REFRESH_INTERVAL` | `rdv/1` lease/query cadence in seconds (`1`–`300`): how often the client registers, refreshes and queries the rendezvous. Sized against the node's rate limits (spec refresh: 30 s) | `30` |
+| `HSYNC_HEARTBEAT_INTERVAL` | LAN mDNS re-announce / liveness-evaluation cadence in seconds (`1`–`60`). A fresh record is announced in a burst first (every second for the first ten cycles, also after a network change), so a peer that is already running sees this node in about a second | `5` |
+| `HSYNC_RENDEZVOUS_SERVER_REFRESH_INTERVAL` | `rdv/1` lease cadence in seconds (`1`–`300`): the steady rate at which the client registers, refreshes and queries the rendezvous once the group is complete. While a node is joining — or has no master — it samples faster (a start-up burst, then one query per 12 s), staying inside the node's query budget (spec: burst 10, then 5/min) | `30` |
 | `HSYNC_PEER_TIMEOUT` | Seconds without a peer's heartbeat before it is considered dead and excluded from election (`3`–`600`); must be ≥ 2× the heartbeat. It judges the peers mDNS announces: a peer found through a discovery server is judged by that server's answered samples, not by this window | `15` |
 | `HSYNC_STABILITY_DELAY` | Seconds a file must stay unchanged before upload (already-idle files skip the wait) | `5` |
 | `HSYNC_DELTA_MIN_FILE_SIZE_P2P` | Min file size for delta transfer in p2p mode | `1048576` (1 MB) |

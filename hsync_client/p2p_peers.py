@@ -134,6 +134,13 @@ class LivenessSource:
     window: float
     # Answered samples so far; only the ``samples`` unit reads it.
     generation: float = 0.0
+    # How long the source's own evidence stays valid without a new answer. A
+    # sample source is only as good as its own liveness: a node that went away —
+    # or was distrusted and disabled — would otherwise hold a dead peer forever.
+    # ``0`` means "no lease": the window is already a clock (heartbeat).
+    lease: float = 0.0
+    # Monotonic time of the last answered sample (or of the registration).
+    last_answer: float = 0.0
 
 
 @dataclass
@@ -648,33 +655,61 @@ class PeerManager:
             return cid in self._relay_cids
 
     def register_source(
-        self, name: str, *, unit: Literal["seconds", "samples"], window: float
+        self,
+        name: str,
+        *,
+        unit: Literal["seconds", "samples"],
+        window: float,
+        lease: float = 0.0,
     ) -> None:
-        """Declare a liveness source with its own unit and window.
+        """Declare a liveness source with its own unit, window and lease.
 
         A discovery server registers itself when it starts, so its window is
         expressed in its own unit — answered samples for a rendezvous, seconds
-        for a heartbeat — instead of borrowing the heartbeat's clock. A source
-        that is registered again (a plan restarted on the same server) keeps its
-        sample counter, so the peers it already stamped stay comparable.
+        for a heartbeat — instead of borrowing the heartbeat's clock. ``lease``
+        bounds how long the source's own evidence stays valid without a new
+        answer; a source that is registered again (a plan restarted on the same
+        server) keeps its sample counter, so the peers it already stamped stay
+        comparable.
         """
         with self._lock:
             existing = self._sources.get(name)
             self._sources[name] = LivenessSource(
-                name, unit, window, generation=existing.generation if existing else 0.0
+                name,
+                unit,
+                window,
+                generation=existing.generation if existing else 0.0,
+                lease=lease,
+                last_answer=time.monotonic(),
             )
+
+    def forget_source(self, name: str) -> None:
+        """Drop a liveness source and the evidence it contributed.
+
+        A source disabled for the rest of the run (an untrusted node) must not
+        keep holding the peers it introduced: their stamp goes with it and the
+        sweep plus the election re-run without them, instead of leaving a peer
+        alive on evidence that will never be refreshed again.
+        """
+        with self._lock:
+            self._sources.pop(name, None)
+            for peer in self._peers.values():
+                peer.evidence.pop(name, None)
+        self.reconcile_stale_peers()
 
     def advance_source(self, name: str) -> None:
         """Move a sample source forward: one **answered** sample was received.
 
         Only answered samples move it, so a refused or unanswered query leaves
         the window where it was: the peers such a sample did not mention are not
-        thereby absent, they simply were not asked about.
+        thereby absent, they simply were not asked about. An answer also renews
+        the source's own lease.
         """
         with self._lock:
             source = self._sources.get(name)
             if source is not None and source.unit == "samples":
                 source.generation += 1.0
+                source.last_answer = time.monotonic()
 
     def _stamp(self, source: str) -> float:
         """The stamp *source* writes for a peer it has just observed.
@@ -694,9 +729,15 @@ class PeerManager:
 
         A peer is alive while at least one source holds it: a heartbeat inside
         its window, a sample that drew it within the last ``window`` **answered**
-        samples of that discovery server, or a live data-plane channel
-        (WebSocket, relay tunnel). Only evidence can expire a peer — a source
-        with no information about it never counts against it.
+        samples of that discovery server while the server itself is still
+        answering (its ``lease``), or a live data-plane channel (WebSocket, relay
+        tunnel). Only evidence can expire a peer — a source with no information
+        about it never counts against it — but evidence that can no longer be
+        refreshed does not hold one either.
+
+        Callers hold ``_lock`` (``_sources`` is only ever replaced under it), so
+        this reads a snapshot instead of taking the lock again: ``Lock`` is not
+        reentrant and the sweep already holds it.
         """
         now = time.monotonic()
         for source in tuple(self._sources.values()):
@@ -704,6 +745,8 @@ class PeerManager:
             if stamp is None:
                 continue
             if source.unit == "samples":
+                if source.lease and now - source.last_answer > source.lease:
+                    continue
                 if source.generation - stamp < source.window:
                     return True
             elif now - stamp < source.window:
@@ -720,9 +763,10 @@ class PeerManager:
                 continue
             if source.unit == "samples":
                 missed = source.generation - stamp
+                silent = now - source.last_answer
                 parts.append(
                     f"{source.name}: {missed:.0f} answered sample(s) without it "
-                    f"(window {source.window:.0f})"
+                    f"(window {source.window:.0f}, source silent for {silent:.0f}s)"
                 )
             else:
                 parts.append(

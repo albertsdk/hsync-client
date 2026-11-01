@@ -86,9 +86,15 @@ class _Dialer:
         self.waited: list[float] = []
         # A tunnel that paired is alive (its endpoint is bound) and serving until
         # it is closed; a fake may override either to describe a tunnel whose QUIC
-        # session died or one that is repairing it.
+        # session died or one that is repairing it. A refusal names the code the
+        # node answered with, which is what makes a tunnel *not* repairing.
         self.alive = endpoint is not None if alive is None else alive
         self.session_up = endpoint is not None if session_up is None else session_up
+        self.refusal: str | None = None
+
+    @property
+    def repairing(self) -> bool:
+        return self.alive and not self.session_up and self.refusal is None
 
     def open(self, timeout: float = 15.0) -> tuple[str, int] | None:
         self.opened = True
@@ -198,6 +204,25 @@ def test_a_repairing_tunnel_is_waited_for_not_replaced(monkeypatch) -> None:
         _close_relay_dialer()
     assert plan.asked == [], "the repairing tunnel was replaced"
     assert repairing.waited == [RELAY_SESSION_WAIT_S]
+
+
+def test_a_refused_tunnel_is_not_waited_for(monkeypatch) -> None:
+    """A refusal has nothing to wait for: the cycle must not stall on it.
+
+    The rendezvous loop re-enters this path every wake, so waiting on a tunnel
+    whose pairing the node just refused would hold the loop (which also serves as
+    master) for the whole wait, on every cycle.
+    """
+    refused = _Dialer(("127.0.0.1", 41234), session_up=False)
+    refused.refusal = "relay_unavailable"
+    plan = _Plan(_Dialer(("127.0.0.1", 55555)))
+    monkeypatch.setattr(p2p_handler, "_active_relay_dialer", refused)
+    try:
+        assert _relay_master_endpoint(plan, _Master(), log, _PEERS) is None
+    finally:
+        _close_relay_dialer()
+    assert refused.waited == [], "the cycle waited on a refused tunnel"
+    assert plan.asked == [], "the refused tunnel was replaced"
 
 
 def test_a_dead_tunnel_is_replaced(monkeypatch) -> None:
@@ -760,3 +785,29 @@ def test_the_acceptor_reports_success_when_any_server_registers() -> None:
     assert acceptor.active is True
     acceptor.stop()
     assert first.stopped == 1 and second.stopped == 1
+
+
+def test_a_refusal_carries_the_wait_the_node_asked_for() -> None:
+    """``rate_limited`` names the wait, and it is the only signal that the
+    ``relay_connect`` budget is spent: the tunnel must honour it."""
+    from hsync_client.rdv_relay import refusal_retry_after
+
+    raw = json.dumps(
+        {
+            "protocol_version": "rdv/1",
+            "type": "relay_error",
+            "error": "rate_limited",
+            "retry_after": 30,
+        }
+    ).encode()
+
+    assert refusal_retry_after(raw) == 30
+    assert refusal_code(raw) == "rate_limited"
+    assert refusal_retry_after(b"not-json") is None
+    assert refusal_retry_after(b"") is None
+
+
+def test_a_failover_dialer_needs_at_least_one_server() -> None:
+    """An empty set cannot pair anything: reject it instead of failing later."""
+    with pytest.raises(ValueError):
+        FailoverRelayDialer([])

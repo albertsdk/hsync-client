@@ -84,31 +84,50 @@ def refusal_code(raw: bytes) -> str | None:
     return None if refusal is None else str(refusal["error"])
 
 
+def refusal_retry_after(raw: bytes) -> int | None:
+    """Return the ``retry_after`` a ``relay_error`` line carries, if any.
+
+    The node answers ``rate_limited`` with the wait it wants: honouring it is what
+    keeps a client from deepening its own refusal, and it is the only signal that
+    the ``relay_connect`` budget is spent.
+    """
+    try:
+        decoded = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    refusal = validate_rdv_relay_error(decoded)
+    if refusal is None:
+        return None
+    retry_after = refusal.get("retry_after")
+    return retry_after if isinstance(retry_after, int) else None
+
+
 async def _probe_relay_connect(quic: Any, frame: dict[str, object], timeout: float) -> tuple:
-    """Open one relay session and return ``(reader, writer, refusal)``.
+    """Open one relay session and return ``(reader, writer, refusal, retry_after)``.
 
     Success keeps the fresh stream open and returns it with ``refusal=None``;
     the caller owns both ends and must close them. On refusal, protocol error or
-    transport error the stream is closed and ``(None, None, code)`` is returned,
-    so the caller can tell a node without the relay from a torn connection.
+    transport error the stream is closed and ``(None, None, code, retry_after)``
+    is returned, so the caller can tell a node without the relay from a torn
+    connection and can honour the wait a rate limit asked for.
     """
     try:
         stream_reader, stream_writer = await quic.create_stream()
     except (ConnectionError, OSError) as exc:
-        return None, None, f"stream_failed: {exc}"
+        return None, None, f"stream_failed: {exc}", None
     try:
         stream_writer.write(frame_line(frame))
         await stream_writer.drain()
         reply = await asyncio.wait_for(stream_reader.readline(), timeout)
     except (TimeoutError, ConnectionError, OSError):
         stream_writer.close()
-        return None, None, "relay_unavailable"
+        return None, None, "relay_unavailable", None
     raw = bytes(reply).rstrip(b"\n")
     refusal = refusal_code(raw)
     if refusal is not None or (raw and validate_rdv_relay_ok(json.loads(raw)) is None):
         stream_writer.close()
-        return None, None, refusal or "relay_protocol"
-    return stream_reader, stream_writer, None
+        return None, None, refusal or "relay_protocol", refusal_retry_after(raw)
+    return stream_reader, stream_writer, None, None
 
 
 class _SessionActivity:
@@ -272,6 +291,11 @@ class RelayDialer:
         # caller asks for a *live* session rather than for the tunnel's existence.
         self._session: Any | None = None
         self._session_up = threading.Event()
+        # The wait the node asked for when it refused the last pairing attempt
+        # (``retry_after``), and how many sessions dropped since the last one was
+        # held: the first drop is news, the repeats are not.
+        self._retry_after = 0.0
+        self._drops = 0
         # Uniform refusal code from the node's last ``relay_error`` (if any), so
         # the caller can tell "the node did not pair the relay" from a tunnel
         # that opened; ``None`` before a refusal is seen.
@@ -326,6 +350,30 @@ class RelayDialer:
     def session_up(self) -> bool:
         """True while a relay session is paired and the tunnel can serve."""
         return self._session_up.is_set()
+
+    @property
+    def repairing(self) -> bool:
+        """True while the tunnel exists and is re-pairing its session.
+
+        A caller waits for a tunnel that is repairing — the session is coming
+        back — and never for one whose last attempt the node *refused*: there is
+        nothing to wait for until the tunnel's own retry runs, and blocking on it
+        would stall the caller's loop for nothing.
+        """
+        return self.alive and not self._session_up.is_set() and self._refusal is None
+
+    def _note_session_lost(self) -> None:
+        """Report a dropped session once per episode, then at DEBUG.
+
+        A node that keeps closing the tunnel (a restart loop, a spent
+        ``relay_connect`` budget) would otherwise write the same line at every
+        retry: the first drop is news, the repeats are not.
+        """
+        self._drops += 1
+        if self._drops == 1:
+            log.info("Relay session lost; re-pairing the tunnel")
+        else:
+            log.debug(f"Relay session lost again ({self._drops}); re-pairing the tunnel")
 
     def wait_session(self, timeout: float) -> tuple[str, int] | None:
         """Wait up to *timeout* for a live session; ``None`` when there is none.
@@ -387,8 +435,11 @@ class RelayDialer:
                     # ``None`` and the caller keeps its own retry path.
                     return
                 # A refusal after the endpoint was exposed (the master stopped
-                # listening) keeps the tunnel and its port; it retries here.
-                await self._sleep_or_stop(RELAY_RETRY_BACKOFF_S)
+                # listening) keeps the tunnel and its port; it retries here. The
+                # node's own wait wins when it asked for one — a spent
+                # ``relay_connect`` budget is answered as ``rate_limited`` with
+                # ``retry_after`` — because retrying sooner only deepens it.
+                await self._sleep_or_stop(max(RELAY_RETRY_BACKOFF_S, self._retry_after))
         finally:
             server, self._server = self._server, None
             self._endpoint = None if server is not None else self._endpoint
@@ -409,16 +460,19 @@ class RelayDialer:
             # for a node without the relay (the caller backs off instead of
             # re-dialling on every rendezvous tick). The probe stream is closed
             # right after the reply; real sessions are paired per connection.
-            probe_reader, probe_writer, refusal = await _probe_relay_connect(
+            probe_reader, probe_writer, refusal, retry_after = await _probe_relay_connect(
                 quic, self._connect_frame(), self._client.timeout
             )
             if probe_reader is None:
                 self._refusal = refusal
+                self._retry_after = float(retry_after or 0)
                 if refusal is not None:
                     log.debug(f"Relay session refused by the node: {refusal}")
                 return False
             probe_writer.close()
             self._refusal = None
+            self._retry_after = 0.0
+            self._drops = 0
             self._session = quic
             self._session_up.set()
             try:
@@ -440,7 +494,7 @@ class RelayDialer:
                         task.cancel()
                     await asyncio.gather(stop_task, keepalive, return_exceptions=True)
                     if not self._stop.is_set():  # type: ignore[union-attr]
-                        log.info("Relay session lost; re-pairing the tunnel")
+                        self._note_session_lost()
             finally:
                 self._session = None
                 self._session_up.clear()
@@ -688,6 +742,8 @@ class FailoverRelayDialer:
     """
 
     def __init__(self, dialers: Sequence[RelayDialer]) -> None:
+        if not dialers:
+            raise ValueError("a failover dialer needs at least one server to try")
         self._dialers = list(dialers)
         self._winner: RelayDialer | None = None
         # Refusal of the last failed attempt, so the caller can report why the
@@ -715,6 +771,12 @@ class FailoverRelayDialer:
         """True while the winning tunnel has a relay session paired."""
         winner = self._winner
         return winner is not None and winner.session_up
+
+    @property
+    def repairing(self) -> bool:
+        """True while the winning tunnel is re-pairing its session."""
+        winner = self._winner
+        return winner is not None and winner.repairing
 
     def wait_session(self, timeout: float) -> tuple[str, int] | None:
         """Wait for the winning tunnel's session (see :meth:`RelayDialer.wait_session`)."""

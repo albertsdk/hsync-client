@@ -13,6 +13,7 @@ import os
 import socket
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, cast
 
 from hsync_common.endpoint import format_authority
@@ -34,6 +35,7 @@ from hsync_client.autotune import classify_network, derive_managed_rtt_updates, 
 from hsync_client.config import CONFIG, set_config
 from hsync_client.constants import (
     HEARTBEAT_INTERVAL,
+    MASTER_PROBE_FAST_TIMEOUT_S,
     RELAY_ACCEPT_TIMEOUT_S,
     RELAY_OPEN_TIMEOUT_S,
     RELAY_RETRY_BACKOFF_S,
@@ -1158,22 +1160,57 @@ def _probe_master_endpoint(host: str, port: int, fingerprint: str, timeout: floa
         return False
 
 
+def _probe_round(
+    candidates: tuple[tuple[str, int], ...], fingerprint: str, timeout: float
+) -> tuple[str, int] | None:
+    """Probe every candidate at once and return the highest-priority reachable one.
+
+    The candidate order is the *preference* (host/LAN candidates first, so two
+    peers behind the same NAT use the local path), and the probes run in
+    parallel: probing them one at a time made a peer that advertises several
+    undialable endpoints — the carrier-grade-NAT case — wait one timeout per
+    candidate before the relay was even considered. Every probe of a round still
+    finishes before the round returns, so the round costs one timeout, not the
+    sum of them.
+    """
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        host, port = candidates[0]
+        return candidates[0] if _probe_master_endpoint(host, port, fingerprint, timeout) else None
+    with ThreadPoolExecutor(max_workers=len(candidates)) as pool:
+        futures = [
+            pool.submit(_probe_master_endpoint, host, port, fingerprint, timeout)
+            for host, port in candidates
+        ]
+        reachable = [bool(future.result()) for future in futures]
+    for index, ok in enumerate(reachable):
+        if ok:
+            return candidates[index]
+    return None
+
+
 def _select_master_endpoint(master, log) -> tuple[str, int] | None:
     """Pick the first reachable master candidate, host/LAN candidates first.
 
     A peer that advertised several candidates is probed in host/LAN-first order
-    with a bounded per-candidate timeout; the first candidate whose pinned
-    handshake succeeds wins. This is what lets two peers behind the same NAT use
-    the local path while a remote peer still falls back to its public endpoint.
-    A **rendezvous** peer that advertised a single candidate is probed the same
-    way: returning it unverified would strand a slave on an advertising-only
-    private IP — the data-plane connect fails, and because an endpoint was
-    returned the caller never falls back to the rendezvous data relay, so two
-    peers behind carrier-grade NAT would loop on ``Connecting…`` forever even
-    with ``--relay`` on. An **mDNS** peer (no advertised candidate list) keeps
-    its single address without a probe: its data-plane connection is its own
-    reachability check, exactly as before. ``None`` means no candidate is
-    reachable now and the caller may try the relay.
+    and the first candidate whose pinned handshake succeeds wins. This is what
+    lets two peers behind the same NAT use the local path while a remote peer
+    still falls back to its public endpoint. A **rendezvous** peer that
+    advertised a single candidate is probed the same way: returning it unverified
+    would strand a slave on an advertising-only private IP — the data-plane
+    connect fails, and because an endpoint was returned the caller never falls
+    back to the rendezvous data relay, so two peers behind carrier-grade NAT
+    would loop on ``Connecting…`` forever even with ``--relay`` on. An **mDNS**
+    peer (no advertised candidate list) keeps its single address without a probe:
+    its data-plane connection is its own reachability check, exactly as before.
+    ``None`` means no candidate is reachable now and the caller may try the relay.
+
+    The probes run in two rounds: a short one first, which answers for every peer
+    that is dialable at all (a LAN connect completes in milliseconds), and the
+    full budget only for the candidates that stayed silent. A reachable candidate
+    therefore costs milliseconds instead of a timeout, while a slow-but-valid
+    public endpoint still gets its chance.
     """
     advertised = tuple(getattr(master, "endpoints", ()) or ())
     candidates = dial_candidates(
@@ -1186,15 +1223,14 @@ def _select_master_endpoint(master, log) -> tuple[str, int] | None:
         # mDNS: the peer announced one address directly; connect-time is the
         # check (no rendezvous relay exists for a LAN-only plan anyway).
         return candidates[0]
-    for host, port in candidates:
-        if _probe_master_endpoint(
-            host, port, master.cert_fingerprint, MASTER_CANDIDATE_PROBE_TIMEOUT_S
-        ):
-            if (host, port) != (master.address, master.port):
+    for timeout in (MASTER_PROBE_FAST_TIMEOUT_S, MASTER_CANDIDATE_PROBE_TIMEOUT_S):
+        selected = _probe_round(candidates, master.cert_fingerprint, timeout)
+        if selected is not None:
+            if selected != (master.address, master.port):
                 log.info(
-                    f"Selected master endpoint {format_authority(host, port)} of {len(candidates)}"
+                    f"Selected master endpoint {format_authority(*selected)} of {len(candidates)}"
                 )
-            return host, port
+            return selected
     return None
 
 
@@ -1276,14 +1312,20 @@ def _relay_master_endpoint(
     # that is gone, or one that targets another master, is recreated.
     dialer = _active_relay_dialer
     if dialer is not None and dialer.alive and dialer.target_cid == master.cid:
-        endpoint = dialer.wait_session(RELAY_SESSION_WAIT_S)
-        if endpoint is None:
-            # The tunnel exists but the node is not pairing sessions (the master
-            # stopped listening): no endpoint for this cycle, and no retry
-            # backoff — the tunnel's own repair loop paces its attempts.
-            _warn_relay_unavailable(master, dialer, log)
-            return None
-        return endpoint
+        if dialer.session_up:
+            return dialer.endpoint
+        if dialer.repairing:
+            # The session is coming back: wait for it instead of replacing the
+            # tunnel (a new tunnel would bind a new loopback port and strand the
+            # connections the HTTP client and the WebSocket already hold).
+            endpoint = dialer.wait_session(RELAY_SESSION_WAIT_S)
+            if endpoint is not None:
+                return endpoint
+        # The node refused the last attempt (the master stopped listening) or the
+        # wait expired: no endpoint for this cycle, and no retry backoff — the
+        # tunnel's own repair loop paces its attempts.
+        _warn_relay_unavailable(master, dialer, log)
+        return None
     _close_relay_dialer()
     dialer = plan.relay_dialer(master.cid)
     if dialer is None:
