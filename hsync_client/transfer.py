@@ -2286,9 +2286,13 @@ def _handle_upload_response(file: File, response, t0: float) -> None:
             _record_201_upload(file, response)
         case 200:
             # Permissions updated on the same-SHA branch (permission-only
-            # change): local and remote content agree; record the base.
+            # change): local and remote content agree; record the base. The
+            # remote has the file, so this is a committed outcome like 201 and
+            # publishes the same terminal event — a progress stream without it
+            # would leave the Desktop row in flight forever.
             log.info(f'{ActionLabel.PERMISSION} "{file.filepath}" (permissions updated)')
             _record_synced_base(file, vclock=_resolve_local_vclock(file))
+            emit_event(UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0)
         case 401:
             _emit_auth_error("Authentication failed", "uploading", file.filepath)
         case 403:
@@ -2588,8 +2592,10 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
                 _handle_upload_response(file, response, t0)
     except FileNotFoundError:
         log.error(f'File not found: "{file.filepath}"')
+        _emit_transfer_failed("upload", file.filepath, "the local file disappeared while uploading")
     except PermissionError:
         log.error(f'Permission denied reading: "{file.filepath}"')
+        _emit_transfer_failed("upload", file.filepath, "permission denied reading the local file")
 
 
 # =============================================================================

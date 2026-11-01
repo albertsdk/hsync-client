@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
 from hsync_client.config import CONFIG
-from hsync_client.constants import HTTP_TIMEOUT_DEFAULT
+from hsync_client.constants import HTTP_TIMEOUT_DEFAULT, UPLOAD_STALL_TIMEOUT_S
 
 if TYPE_CHECKING:
     from requests import Response, Session
@@ -57,9 +57,15 @@ def http_connect_timeout() -> float:
     return float(CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT))
 
 
-def upload_timeout() -> tuple[float, None]:
-    """Upload-style timeout: connect-bounded, read-unbounded."""
-    return (http_connect_timeout(), None)
+def upload_timeout() -> tuple[float, float]:
+    """Upload-style timeout: connect-bounded, stalled I/O bounded.
+
+    Not a total budget: the socket timer resets on every byte, so a slow link
+    uploads to completion while a peer that stops accepting (or a relay that
+    stops forwarding) fails the request instead of leaving the transfer — and
+    its Desktop row — in flight forever.
+    """
+    return (http_connect_timeout(), UPLOAD_STALL_TIMEOUT_S)
 
 
 def redact_headers[T: Mapping[str, object]](headers: T) -> T:

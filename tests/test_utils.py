@@ -31,6 +31,24 @@ from hsync_client.utils import (
 )
 
 
+class TestUploadTimeout:
+    """An upload request is bounded by a stall timeout, never by nothing.
+
+    An unbounded read left a transfer whose peer stopped answering — a dropped
+    relay, a wedged master — in flight forever: no progress sample, no terminal
+    event, and a Desktop row stuck at its last percentage.
+    """
+
+    def test_the_io_side_is_bounded(self):
+        from hsync_client.constants import UPLOAD_STALL_TIMEOUT_S
+        from hsync_client.utils.http import upload_timeout
+
+        connect, io_timeout = upload_timeout()
+
+        assert connect > 0
+        assert io_timeout == UPLOAD_STALL_TIMEOUT_S
+
+
 class TestIsValidLogfile:
     """Tests for is_valid_logfile function."""
 

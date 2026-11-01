@@ -462,6 +462,67 @@ class TestWaitForStableFile:
             assert file.sha256sum == "d" * 64
 
 
+class TestUploadTerminalEvents:
+    """Every finished upload ends the Desktop row exactly once.
+
+    A row that started moving bytes stays in flight until one terminal event
+    arrives (``transfer`` on success, ``transfer_failed`` on abort), so every
+    outcome of the upload path must publish one — including the same-content
+    response and a local file that disappears mid-stream.
+    """
+
+    @staticmethod
+    def _file(tmp_path) -> File:
+        path = tmp_path / "f.bin"
+        path.write_bytes(b"x" * 8)
+        return File(
+            filepath=str(path),
+            sha256sum="a" * 64,
+            size=8,
+            mtime=1000,
+            ctime=1000,
+            permissions="644",
+        )
+
+    def test_the_same_content_response_still_ends_the_row(self, tmp_path, monkeypatch):
+        from hsync_client import transfer as transfer_mod
+
+        file = self._file(tmp_path)
+        response = MagicMock()
+        response.status_code = 200
+        emitted: list[tuple[str, dict]] = []
+        monkeypatch.setattr(
+            transfer_mod, "emit_event", lambda event, **payload: emitted.append((event, payload))
+        )
+        monkeypatch.setattr(transfer_mod, "_record_synced_base", lambda *a, **k: None)
+
+        transfer_mod._handle_upload_response(file, response, 0.0)
+
+        assert emitted == [
+            (transfer_mod.UiEventName.transfer, {"op": "upload", "file": file.filepath, "size": 8})
+        ]
+
+    def test_a_file_that_disappears_mid_upload_ends_the_row(self, tmp_path, monkeypatch):
+        from hsync_client import transfer as transfer_mod
+
+        file = self._file(tmp_path)
+        emitted: list[tuple[str, dict]] = []
+        monkeypatch.setattr(
+            transfer_mod, "emit_event", lambda event, **payload: emitted.append((event, payload))
+        )
+        monkeypatch.setattr(transfer_mod, "CONFIG", {**_BASE_CONFIG, "LOCAL_BUCKET": str(tmp_path)})
+        monkeypatch.setattr(transfer_mod, "is_file_stable", lambda *a, **k: True)
+        monkeypatch.setattr(transfer_mod, "get_ssl_verify", lambda: False)
+        monkeypatch.setattr(transfer_mod, "prepare_delta_upload", lambda *a, **k: None)
+        monkeypatch.setattr(transfer_mod, "post", MagicMock(side_effect=FileNotFoundError("gone")))
+
+        transfer_mod._upload_file_attempt(file)
+
+        assert [event for event, _ in emitted] == [transfer_mod.UiEventName.transfer_failed]
+        assert emitted[0][1]["op"] == "upload"
+        assert emitted[0][1]["file"] == file.filepath
+
+
 class TestNothingToDo:
     """Tests for nothing_to_do function."""
 

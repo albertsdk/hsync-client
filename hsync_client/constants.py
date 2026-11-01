@@ -215,6 +215,14 @@ HTTP_TIMEOUT_MIN = _defaults.HTTP_TIMEOUT_MIN
 HTTP_TIMEOUT_MAX = _defaults.HTTP_TIMEOUT_MAX
 HTTP_TIMEOUT_DEFAULT = _defaults.HTTP_TIMEOUT_DEFAULT
 
+# Stall timeout for an upload request (seconds). It is not a total budget: the
+# socket timer resets on every byte, so a slow link uploads to completion while
+# a silent peer — or a dropped relay that never forwards the body — fails the
+# request instead of leaving the transfer (and its Desktop row) in flight
+# forever. Downloads have their own bounded read timeout; the upload is the
+# request that streams a body.
+UPLOAD_STALL_TIMEOUT_S = 60.0
+
 # P2P heartbeat / peer timeout defaults (seconds)
 HEARTBEAT_INTERVAL = 5
 PEER_TIMEOUT = 15

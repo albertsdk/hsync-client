@@ -130,10 +130,10 @@ def emit_failed_transfer(op: str, path: str, message: str) -> None:
     """Publish the terminal ``transfer_failed`` event of an aborted transfer.
 
     The counterpart of :func:`emit_completed_transfer`: a path that started
-    moving bytes and then gave up must publish exactly one of the two. Without
-    it the Desktop row keeps its last progress sample — a bar frozen at its last
-    percentage, at 100% once the bytes were written to the socket — because only
-    a terminal event resets an in-flight row (``transfer_table.py::mark_failed``).
+    moving bytes and then gave up must publish exactly one of the two. An
+    in-flight row is ended by a terminal event only — a lost one leaves the bar
+    at its last sample, so the Desktop asks the engine for a status refresh when
+    a row stops reporting (`hsync-desktop` file panel).
     """
     if not path or is_sentinel_file(path):
         return

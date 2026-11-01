@@ -182,10 +182,21 @@ source (`progress.py::progress_reporter`).
 An **aborted** transfer ends with exactly one `UiEventName.transfer_failed`
 instead (`progress.py::emit_failed_transfer`, `transfer.py::_emit_transfer_failed`).
 Every path that started moving bytes and then gave up must publish a terminal
-event: the retry-exhausted upload/download, and the serving-side aborts in
-`p2p_server.py` (peer gone, file changed mid-serve, socket error). Without it the
-desktop row keeps its last progress sample — a bar frozen at its last percentage,
-at 100% once the bytes reached the socket — until the process ends.
+event: the retry-exhausted upload/download, a local file that disappears or
+becomes unreadable mid-upload (`transfer.py::_upload_file_attempt`), and the
+serving-side aborts in `p2p_server.py` (peer gone, file changed mid-serve,
+socket error). A **committed upload publishes it on both success responses** —
+201 (created) and 200 (same content, permissions updated,
+`transfer.py::_handle_upload_response`) — because a row ends only on a terminal
+event: the Desktop asks for a status refresh when an in-flight row stops
+reporting, so a lost event cannot leave a bar frozen.
+
+The upload request itself is bounded by a **stall** timeout
+(`utils/http.py::upload_timeout` → `constants.py::UPLOAD_STALL_TIMEOUT_S`), not a
+total budget: the socket timer resets on every byte, so a slow link uploads to
+completion while a peer that stops accepting — or a relay that stops forwarding
+the body — fails the request and hands it to the retry policy, instead of leaving
+the transfer, and its Desktop row, in flight forever.
 
 `progress` samples travel on a non-blocking, lock-free path
 (`events.py::EventEmitter.emit_progress`: one `os.write` on a duplicated
