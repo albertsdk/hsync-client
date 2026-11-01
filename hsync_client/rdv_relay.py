@@ -275,6 +275,7 @@ class RelayDialer:
             loop.close()
 
     async def _run(self) -> None:
+        tasks: list[asyncio.Task[Any]] = []
         async with _quic_session(self._client) as quic:
             # Pre-flight: prove the node pairs a session for this target before
             # exposing a loopback endpoint, so ``open()`` keeps returning ``None``
@@ -292,13 +293,34 @@ class RelayDialer:
             probe_writer.close()
             server = await asyncio.start_server(self._handle(quic), "127.0.0.1", 0)
             try:
+                # Keep the QUIC connection alive between data-plane sessions.
+                # The node's QUIC idle timeout (30 s) is the effective bound once
+                # no stream carries traffic, so without a keepalive a relayed
+                # tunnel silently dies during any pause and the loopback endpoint
+                # starts answering ``Connection refused`` mid-sync.
+                # A dedicated stream owns the keepalive pings; the probe stream
+                # was closed above, so without the pings the connection would
+                # read as idle to the node.
+                control_writer = (await quic.create_stream())[1]
+                tasks.append(asyncio.create_task(self._keepalive(control_writer)))
                 socket = server.sockets[0]
                 self._endpoint = ("127.0.0.1", int(socket.getsockname()[1]))
                 self._ready.set()
                 await self._stop.wait()  # type: ignore[union-attr]
             finally:
+                for task in tasks:
+                    task.cancel()
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
                 server.close()
                 await server.wait_closed()
+
+    async def _keepalive(self, writer: Any) -> None:
+        """Keep the QUIC connection (and thus the loopback tunnel) alive."""
+        while True:
+            await asyncio.sleep(RELAY_KEEPALIVE_INTERVAL)
+            writer.write(frame_line(build_relay_ping_frame(cid=self._cid, bucket=self._bucket)))
+            await writer.drain()
 
     def _connect_frame(self) -> dict[str, object]:
         """The ``relay_connect`` frame for this tunnel's target, built once."""

@@ -293,6 +293,43 @@ def test_a_relay_error_line_reports_its_uniform_code() -> None:
     assert refusal_code(b"") == "relay_unavailable"
 
 
+def test_the_dialer_keepalive_keeps_the_tunnel_alive(monkeypatch) -> None:
+    """The dialer must ping the node so its 30 s QUIC idle does not kill the
+    tunnel between data-plane sessions (the acceptor already does this; without
+    it a relayed endpoint starts answering ``Connection refused`` mid-sync).
+
+    ``RELAY_KEEPALIVE_INTERVAL`` (20 s) is shorter than the node's QUIC idle
+    (30 s), so only a keepalive that actually sends frames closes the gap. This
+    test drives the loop directly with a fake writer and a zero interval.
+    """
+    import hsync_client.rdv_relay as relay_mod
+
+    dialer = RelayDialer(object(), cid=_Master.cid, bucket="b", target_cid="peer")
+    writer = _FakeWriter()
+    monkeypatch.setattr(relay_mod, "RELAY_KEEPALIVE_INTERVAL", 0.0)
+
+    async def drive() -> None:
+        task = asyncio.create_task(dialer._keepalive(writer))
+        # Let the loop write at least one ping, then stop it.
+        for _ in range(50):
+            await asyncio.sleep(0.001)
+            if writer.chunks:
+                break
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(drive())
+
+    assert writer.chunks, "the dialer keepalive never wrote a frame"
+    frame = json.loads(writer.chunks[0].decode())
+    assert frame["type"] == "relay_ping"
+    assert frame["cid"] == _Master.cid
+    assert frame["bucket"] == "b"
+
+
 def test_frame_line_validates_before_sending() -> None:
     """A malformed relay frame fails locally instead of being dropped remotely."""
     line = frame_line(

@@ -1151,22 +1151,30 @@ def _probe_master_endpoint(host: str, port: int, fingerprint: str, timeout: floa
 def _select_master_endpoint(master, log) -> tuple[str, int] | None:
     """Pick the first reachable master candidate, host/LAN candidates first.
 
-    A single-candidate peer (mDNS, or a rendezvous peer that advertised one
-    address) is returned as-is: the data-plane connection is its own
-    reachability check, so no extra probe is spent. A peer that advertised
-    several candidates is probed in host/LAN-first order with a bounded
-    per-candidate timeout; the first candidate whose pinned handshake succeeds
-    wins. This is what lets two peers behind the same NAT use the local path
-    while a remote peer still falls back to its public endpoint. Returns ``None``
-    when no candidate is reachable now.
+    A peer that advertised several candidates is probed in host/LAN-first order
+    with a bounded per-candidate timeout; the first candidate whose pinned
+    handshake succeeds wins. This is what lets two peers behind the same NAT use
+    the local path while a remote peer still falls back to its public endpoint.
+    A **rendezvous** peer that advertised a single candidate is probed the same
+    way: returning it unverified would strand a slave on an advertising-only
+    private IP — the data-plane connect fails, and because an endpoint was
+    returned the caller never falls back to the rendezvous data relay, so two
+    peers behind carrier-grade NAT would loop on ``Connecting…`` forever even
+    with ``--relay`` on. An **mDNS** peer (no advertised candidate list) keeps
+    its single address without a probe: its data-plane connection is its own
+    reachability check, exactly as before. ``None`` means no candidate is
+    reachable now and the caller may try the relay.
     """
+    advertised = tuple(getattr(master, "endpoints", ()) or ())
     candidates = dial_candidates(
-        getattr(master, "endpoints", ()),
+        advertised,
         master.address,
         master.port,
         get_local_ip(),
     )
-    if len(candidates) == 1:
+    if not advertised and len(candidates) == 1:
+        # mDNS: the peer announced one address directly; connect-time is the
+        # check (no rendezvous relay exists for a LAN-only plan anyway).
         return candidates[0]
     for host, port in candidates:
         if _probe_master_endpoint(

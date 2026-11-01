@@ -246,6 +246,7 @@ class TestSlaveTuningRefreshOrdering:
                 "hsync_client.p2p_handler._refresh_p2p_network_tuning",
                 side_effect=lambda *_a, **_k: calls.append("refresh"),
             ),
+            patch("hsync_client.p2p_handler._master_endpoint_reachable", return_value=True),
             patch("hsync_client.p2p_handler.sync", new=MagicMock()),
             patch("asyncio.run"),
         ):
@@ -409,12 +410,12 @@ class TestRunSyncLanPlaceholder:
         assert set(config_arg["AUTOTUNE_MANAGED_KEYS"]) == set(_ALL_TUNING_KEYS) - {"HTTP_TIMEOUT"}
 
 
-def _master_with_endpoints(endpoints):
+def _master_with_endpoints(endpoints, *, address=None, port=None):
     return Peer(
         cid="abc123",
         bucket="shared",
-        address=endpoints[0][0],
-        port=endpoints[0][1],
+        address=address or (endpoints[0][0] if endpoints else "192.168.1.1"),
+        port=port or (endpoints[0][1] if endpoints else 9000),
         use_https=True,
         cert_fingerprint="a" * 64,
         endpoints=tuple(endpoints),
@@ -424,16 +425,31 @@ def _master_with_endpoints(endpoints):
 class TestSelectMasterEndpoint:
     """The slave picks the first reachable candidate, host/LAN first (ICE-lite)."""
 
-    def test_single_candidate_skips_the_probe(self):
+    def test_an_mdns_peer_with_one_address_skips_the_probe(self):
+        """A LAN-only peer (mDNS, no advertised candidate list) keeps its single
+        address without a probe: the data-plane connection re-checks it."""
         from hsync_client.p2p_handler import _select_master_endpoint
 
-        master = _master_with_endpoints([("192.168.1.1", 9000)])
+        master = _master_with_endpoints([])  # mDNS: no advertised candidates
         with (
             patch("hsync_client.p2p_handler.get_local_ip", return_value="10.0.0.5"),
             patch("hsync_client.p2p_handler._probe_master_endpoint") as probe,
         ):
             assert _select_master_endpoint(master, MagicMock()) == ("192.168.1.1", 9000)
         probe.assert_not_called()
+
+    def test_single_rendezvous_candidate_unreachable_returns_none_for_the_relay(self):
+        """A rendezvous peer that advertised only an unreachable private IP must
+        fall back to the data relay instead of being returned as-is (the slave
+        would then dial the private IP forever and never try ``--relay``)."""
+        from hsync_client.p2p_handler import _select_master_endpoint
+
+        master = _master_with_endpoints([("192.168.1.1", 9000)])
+        with (
+            patch("hsync_client.p2p_handler.get_local_ip", return_value="10.0.0.5"),
+            patch("hsync_client.p2p_handler._probe_master_endpoint", return_value=False),
+        ):
+            assert _select_master_endpoint(master, MagicMock()) is None
 
     def test_same_subnet_candidate_is_probed_first_and_selected(self):
         from hsync_client.p2p_handler import _select_master_endpoint
