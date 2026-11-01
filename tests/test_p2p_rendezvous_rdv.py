@@ -451,6 +451,56 @@ class TestAdvertisement:
         assert not thread.is_alive()
         assert len(registrations) == 1
 
+    def test_a_token_required_refusal_reaches_the_front_end(self, monkeypatch):
+        """A protected-bucket refusal is the one the user can act on.
+
+        ``_log_refusal`` keeps ``rate_limited``/``overloaded`` log-only, but a
+        ``token_required`` answer means the group key (shared password) is
+        missing or wrong: emit a structured warning so the desktop shows it as
+        a toast, not just as a log line.
+        """
+        plan, _ = make_plan()
+        emitted: list[tuple[str, str, str]] = []
+        monkeypatch.setattr(
+            "hsync_client.p2p_rendezvous_rdv.emit_warning",
+            lambda message, *, source, reason="": emitted.append((message, source, reason)),
+        )
+
+        plan._log_refusal(RendezvousRefused("token_required"))
+
+        assert len(emitted) == 1
+        message, source, reason = emitted[0]
+        assert source == "rendezvous"
+        assert reason == "token_required"
+        assert "token_required" in message
+
+    def test_a_transient_refusal_stays_log_only(self, monkeypatch):
+        """``rate_limited``/``overloaded`` heal themselves: no structured event."""
+        plan, _ = make_plan()
+        emitted: list = []
+        monkeypatch.setattr(
+            "hsync_client.p2p_rendezvous_rdv.emit_warning",
+            lambda *a, **k: emitted.append((a, k)),
+        )
+
+        plan._log_refusal(RendezvousRefused("rate_limited", 30))
+
+        assert emitted == []
+
+    def test_a_repeated_token_refusal_is_surfaced_once(self, monkeypatch):
+        """The per-error dedup keeps the front-end from being re-notified."""
+        plan, _ = make_plan()
+        emitted: list = []
+        monkeypatch.setattr(
+            "hsync_client.p2p_rendezvous_rdv.emit_warning",
+            lambda *a, **k: emitted.append((a, k)),
+        )
+
+        plan._log_refusal(RendezvousRefused("token_required"))
+        plan._log_refusal(RendezvousRefused("token_required"))
+
+        assert len(emitted) == 1
+
     def test_query_refusal_keeps_the_peers_already_known(self):
         """A refused query yields an empty sample by contract, not an exception."""
         plan, _ = make_plan()

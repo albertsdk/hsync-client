@@ -638,9 +638,16 @@ class RdvRendezvous(RendezvousPlanState):
             message += f" (retry after {exc.retry_after}s)"
         if exc.error in self._refusals_logged:
             log.debug(message)
-        else:
-            self._refusals_logged.add(exc.error)
-            log.warning(message)
+            return
+        self._refusals_logged.add(exc.error)
+        log.warning(message)
+        if exc.error == "token_required":
+            # The node protects its bucket with a token derived from the P2P key,
+            # so this is the one refusal the user can act on (set the shared
+            # password). Reach the front-end (the desktop toast + notification)
+            # instead of staying a log-only line; ``rate_limited``/``overloaded``
+            # are transient and self-healing, so they stay log-only.
+            emit_warning(message, source="rendezvous", reason="token_required")
 
     def _current_connected(self) -> int:
         if self._connected_clients_provider is not None:
