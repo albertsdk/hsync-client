@@ -458,6 +458,19 @@ for that path (`progress.py::note_delivery_progress`). The frame is defined once
 in `hsync-common` (`hsync_common/protocol/transfer_progress.py`, schema
 `protocol/p2p/wss-schema.json`, fixture `p2p-wss-file-progress`).
 
+**The relayed data plane is addressed by a loopback endpoint** the dialer binds
+once (`rdv_relay.py::RelayDialer.endpoint`): every accepted TCP connection pairs
+its own `relay_connect` session, so the REST client and the WebSocket keep
+their pooled connections on that port. A tunnel still open to the same master is
+therefore **reused across slave sessions**
+(`p2p_handler.py::_relay_master_endpoint`); it is closed only when it is gone or
+the master changed, because re-binding a new port would strand every pooled
+connection (and any request in flight) — the peer sees that as an SSL EOF.
+Independently, the shared HTTP session retries a **dropped connection** for
+idempotent methods only (`utils/http.py::_retry_policy`): one dead keep-alive
+socket no longer fails a whole comparison, while an upload (POST) is never
+replayed blindly.
+
 The reconcile action `transfer.delete_file_remote` speaks **both transports'
 DELETE contracts**: form fields (`filename`, `cid`) against the central server
 and query params (`path`, `is_dir`, `cid`) against the p2p master

@@ -52,10 +52,20 @@ class _Master:
 
 
 class _Dialer:
-    def __init__(self, endpoint: tuple[str, int] | None) -> None:
+    def __init__(
+        self,
+        endpoint: tuple[str, int] | None,
+        *,
+        target_cid: str = _Master.cid,
+        alive: bool | None = None,
+    ) -> None:
         self._endpoint = endpoint
+        self._target_cid = target_cid
         self.opened = False
         self.closed = False
+        # A tunnel that paired is alive until it is closed; a fake may override
+        # this to describe a tunnel whose QUIC session died.
+        self.alive = endpoint is not None if alive is None else alive
 
     def open(self, timeout: float = 15.0) -> tuple[str, int] | None:
         self.opened = True
@@ -63,6 +73,15 @@ class _Dialer:
 
     def close(self) -> None:
         self.closed = True
+        self.alive = False
+
+    @property
+    def endpoint(self) -> tuple[str, int] | None:
+        return self._endpoint
+
+    @property
+    def target_cid(self) -> str:
+        return self._target_cid
 
 
 class _RefusingDialer(_Dialer):
@@ -114,6 +133,50 @@ def test_the_tunnel_is_opened_only_after_the_direct_candidates_failed() -> None:
     finally:
         _close_relay_dialer()
     assert dialer.closed is True
+
+
+def test_a_live_tunnel_to_the_same_master_is_reused(monkeypatch) -> None:
+    """Re-opening the tunnel would kill every pooled connection on it.
+
+    The slave session is re-established on every reconnect: a fresh loopback port
+    each time left the HTTP client (and the WebSocket) dialling a dead endpoint,
+    which the peer saw as an SSL EOF.
+    """
+    live = _Dialer(("127.0.0.1", 41234))
+    plan = _Plan(_Dialer(("127.0.0.1", 55555)))
+    monkeypatch.setattr(p2p_handler, "_active_relay_dialer", live)
+    try:
+        assert _relay_master_endpoint(plan, _Master(), log) == ("127.0.0.1", 41234)
+    finally:
+        _close_relay_dialer()
+    assert plan.asked == [], "a live tunnel was replaced"
+    assert live.closed is True  # only the teardown closed it
+
+
+def test_a_dead_tunnel_is_replaced(monkeypatch) -> None:
+    """A tunnel whose session died is re-paired (its endpoint no longer serves)."""
+    dead = _Dialer(("127.0.0.1", 41234), alive=False)
+    plan = _Plan(_Dialer(("127.0.0.1", 55555)))
+    monkeypatch.setattr(p2p_handler, "_active_relay_dialer", dead)
+    try:
+        assert _relay_master_endpoint(plan, _Master(), log) == ("127.0.0.1", 55555)
+    finally:
+        _close_relay_dialer()
+    assert dead.closed is True
+    assert plan.asked == [_Master.cid]
+
+
+def test_a_tunnel_to_another_master_is_replaced(monkeypatch) -> None:
+    """A tunnel only ever reaches one peer: a new master needs its own."""
+    other = _Dialer(("127.0.0.1", 41234), target_cid="Zz9Yy8Xx7Ww6Vv5Uu4Tt3")
+    plan = _Plan(_Dialer(("127.0.0.1", 55555)))
+    monkeypatch.setattr(p2p_handler, "_active_relay_dialer", other)
+    try:
+        assert _relay_master_endpoint(plan, _Master(), log) == ("127.0.0.1", 55555)
+    finally:
+        _close_relay_dialer()
+    assert other.closed is True
+    assert plan.asked == [_Master.cid]
 
 
 def test_a_refused_session_keeps_the_retry_loop() -> None:
@@ -345,17 +408,23 @@ async def test_the_relay_acceptor_stops_when_its_control_stream_dies(monkeypatch
     assert acceptor.active is False
 
 
-def test_a_previous_tunnel_is_closed_before_a_new_attempt() -> None:
-    """A dialer from an earlier session never outlives the next attempt."""
+def test_a_live_tunnel_outlives_a_new_plan_for_the_same_master() -> None:
+    """The endpoint stays put while the tunnel is alive (no stale pool).
+
+    A rendezvous plan is rebuilt on every cycle, but a tunnel still open to the
+    same master keeps serving: replacing it would invalidate every connection the
+    HTTP client and the WebSocket hold on its loopback port.
+    """
     first = _Dialer(("127.0.0.1", 40000))
     second = _Dialer(("127.0.0.1", 40001))
     try:
         _relay_master_endpoint(_Plan(first), _Master(), log)
-        assert _relay_master_endpoint(_Plan(second), _Master(), log) == ("127.0.0.1", 40001)
-        assert first.closed is True
-        assert second.closed is False
+        assert _relay_master_endpoint(_Plan(second), _Master(), log) == ("127.0.0.1", 40000)
+        assert first.closed is False
+        assert second.opened is False
     finally:
         _close_relay_dialer()
+    assert first.closed is True
 
 
 def test_a_relay_error_line_reports_its_uniform_code() -> None:

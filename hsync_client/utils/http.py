@@ -18,6 +18,36 @@ from hsync_client.constants import (
 if TYPE_CHECKING:
     from requests import Response, Session
 
+# A pooled keep-alive connection can be closed by the peer — or by the relay in
+# front of it — between two requests: the next request then fails with an SSL EOF
+# before a byte of the response arrives, and `requests` retries nothing by
+# default. One dead socket therefore used to fail a whole comparison. Retrying
+# the *connection* is safe only for idempotent methods: an upload (POST) must
+# never be replayed blindly, its resumable path already handles that.
+_HTTP_RETRY_TOTAL = 2
+_HTTP_RETRY_BACKOFF_S = 0.2
+_HTTP_RETRY_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def _retry_policy():
+    """Connection-level retries for the requests that may safely be repeated."""
+    from urllib3.util.retry import Retry
+
+    return Retry(
+        total=_HTTP_RETRY_TOTAL,
+        connect=_HTTP_RETRY_TOTAL,
+        # A dropped keep-alive connection can surface as a read failure (the
+        # status line never arrives) or as a connect failure; both are safe to
+        # repeat for the methods allowed above.
+        read=_HTTP_RETRY_TOTAL,
+        status=0,
+        redirect=0,
+        backoff_factor=_HTTP_RETRY_BACKOFF_S,
+        allowed_methods=_HTTP_RETRY_METHODS,
+        raise_on_status=False,
+    )
+
+
 # Track if we've already suppressed the InsecureRequestWarning
 _insecure_warning_suppressed = False
 
@@ -181,13 +211,15 @@ def get_http_session(
         return session
 
     from requests import Session
+    from requests.adapters import HTTPAdapter
 
     session = Session()
+    retries = _retry_policy()
     if fingerprint:
         from hsync_client.ssl_utils import FingerprintHTTPAdapter
 
         _suppress_insecure_warning()
-        session.mount("https://", FingerprintHTTPAdapter(str(fingerprint)))
+        session.mount("https://", FingerprintHTTPAdapter(str(fingerprint), max_retries=retries))
         # The pinned fingerprint IS the P2P trust anchor (TOFU): the environment
         # must not add a second, conflicting one. `trust_env = False` stops
         # `requests` from consulting `*_proxy`, `REQUESTS_CA_BUNDLE` /
@@ -203,6 +235,9 @@ def get_http_session(
         # that is 5 calls per transferred file, 3.8% of the apply-path profile
         # (~0.6-0.85 ms CPU/file at ~90 files/s).
         session.trust_env = False
+    else:
+        session.mount("http://", HTTPAdapter(max_retries=retries))
+        session.mount("https://", HTTPAdapter(max_retries=retries))
     store[cache_key] = session
     return session
 

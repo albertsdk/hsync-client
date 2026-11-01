@@ -1247,12 +1247,20 @@ def _relay_master_endpoint(plan: RendezvousPlan | None, master: Any, log) -> tup
     keeps the caller's normal "no reachable endpoint, retry rendezvous" behaviour.
     """
     global _active_relay_dialer, _relay_retry_at
-    _close_relay_dialer()
     if plan is None:
+        _close_relay_dialer()
         return None
     now = time.monotonic()
     if now < _relay_retry_at:
         return None
+    # A tunnel that is still open to the same master stays: closing it would
+    # invalidate every connection the HTTP client and the WebSocket already hold
+    # on its loopback endpoint — and any request in flight — which the peer sees
+    # as an SSL EOF. It is recreated only when it is gone or the master changed.
+    dialer = _active_relay_dialer
+    if dialer is not None and dialer.alive and dialer.target_cid == master.cid:
+        return dialer.endpoint
+    _close_relay_dialer()
     dialer = plan.relay_dialer(master.cid)
     if dialer is None:
         return None

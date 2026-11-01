@@ -299,6 +299,22 @@ class RelayDialer:
         """
         return self._refusal
 
+    @property
+    def endpoint(self) -> tuple[str, int] | None:
+        """The loopback ``(host, port)`` this tunnel serves, or ``None``."""
+        return self._endpoint
+
+    @property
+    def target_cid(self) -> str:
+        """The peer this tunnel reaches."""
+        return self._target_cid
+
+    @property
+    def alive(self) -> bool:
+        """True while the tunnel is open and its loopback endpoint is serving."""
+        thread = self._thread
+        return self._endpoint is not None and thread is not None and thread.is_alive()
+
     def close(self) -> None:
         """Tear the tunnel down (idempotent)."""
         loop, stop, thread = self._loop, self._stop, self._thread

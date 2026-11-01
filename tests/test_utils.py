@@ -450,6 +450,86 @@ class TestSuppressInsecureWarning:
             utils_mod.http._insecure_warning_suppressed = old_flag
 
 
+class TestHttpRetryPolicy:
+    """A pooled connection the peer closed is retried; an upload never is.
+
+    A keep-alive socket can be closed by the peer (or by the relay in front of
+    it) between two requests: the next request then fails with an SSL EOF before
+    a byte of the response, which used to fail a whole comparison. Retrying is
+    safe only for idempotent methods — replaying a POST could duplicate a write.
+    """
+
+    def test_the_policy_retries_connections_of_idempotent_methods_only(self):
+        from hsync_client.utils.http import _retry_policy
+
+        retries = _retry_policy()
+
+        assert retries.connect == 2
+        assert retries.read == 2
+        assert retries.status == 0
+        assert retries.allowed_methods == frozenset({"GET", "HEAD", "OPTIONS"})
+
+    def test_the_plain_session_mounts_the_policy(self):
+        from requests.adapters import HTTPAdapter
+
+        original = CONFIG.copy()
+        try:
+            CONFIG.pop("MASTER_CERT_FINGERPRINT", None)
+            session = get_http_session()
+            try:
+                adapter = session.get_adapter("http://server.invalid/x")
+                assert isinstance(adapter, HTTPAdapter)
+                assert adapter.max_retries.connect == 2
+                assert adapter.max_retries.allowed_methods == frozenset({"GET", "HEAD", "OPTIONS"})
+            finally:
+                session.close()
+        finally:
+            set_config(original)
+
+    def test_a_get_survives_a_connection_the_peer_closed(self):
+        """The stale-keep-alive case: the first attempt dies, the retry answers."""
+        import http.server
+        import threading
+
+        seen: list[int] = []
+
+        class _Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802 - http.server API
+                seen.append(1)
+                if len(seen) == 1:
+                    # Answer nothing and let the handler close the socket: what a
+                    # dropped pooled connection looks like to the client.
+                    self.close_connection = True
+                    return
+                body = b"ok"
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        original = CONFIG.copy()
+        try:
+            CONFIG.pop("MASTER_CERT_FINGERPRINT", None)
+            session = get_http_session()
+            try:
+                response = session.get(f"http://127.0.0.1:{server.server_address[1]}/x", timeout=5)
+            finally:
+                session.close()
+        finally:
+            set_config(original)
+            server.shutdown()
+            server.server_close()
+
+        assert response.status_code == 200
+        assert len(seen) >= 2, "the dropped connection was not retried"
+
+
 class TestGetHttpSession:
     """Tests for get_http_session and connection-level fingerprint pinning."""
 
