@@ -22,6 +22,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from typing import Literal
 
 from hsync_common.endpoint import build_url
 from hsync_common.protocol.p2p import (
@@ -45,6 +46,11 @@ HSYNC_SERVICE_TYPE = "_hsync._tcp.local."
 # Default port for the embedded HTTP server (when acting as master).
 # 0 means "use a random available port".
 HSYNC_P2P_LISTEN_PORT = 0
+
+# Name of the heartbeat source every manager has: the mDNS plan announces a peer
+# (and re-announces it every ``HEARTBEAT_INTERVAL``), so a peer it announced is
+# stale once ``peer_timeout`` passes without another announce.
+HEARTBEAT_SOURCE = "heartbeat"
 
 
 def get_free_port() -> int:
@@ -105,6 +111,32 @@ def dial_candidates(
 
 
 @dataclass
+class LivenessSource:
+    """One source of peer-liveness evidence, in its own unit.
+
+    Peers are discovered by independent sources that see them at different
+    cadences: the mDNS plan announces every ``HEARTBEAT_INTERVAL``, while a
+    rendezvous server answers a *random sample* of the group at the lease
+    cadence. Measuring both with one clock forces the timeout to encode a
+    discovery cadence it knows nothing about, so each source carries its own:
+
+    * ``seconds`` — a source that is expected to report at a cadence (the
+      heartbeat): the stamp is the clock and the window is a duration.
+    * ``samples`` — a source that answers samples: the stamp is the
+      ``generation`` of the answered sample that drew the peer, and the window
+      counts **answered** samples. A query that is refused or never answered
+      carries no information about any peer, so it must not consume the window
+      (the peer is not absent, it simply was not asked about).
+    """
+
+    name: str
+    unit: Literal["seconds", "samples"]
+    window: float
+    # Answered samples so far; only the ``samples`` unit reads it.
+    generation: float = 0.0
+
+
+@dataclass
 class Peer:
     """Represents a discovered peer on the P2P."""
 
@@ -126,7 +158,11 @@ class Peer:
     capabilities_known: bool = False
     server_ready: bool = False  # True when HTTP server is listening
     connected: int = 0  # slaves currently connected to the master's WebSocket
-    last_seen: float = field(default_factory=time.time)
+    # Liveness evidence, per source and **in that source's own unit** (a clock
+    # stamp for a heartbeat source, a sample counter for a discovery server).
+    # See ``LivenessSource``: a peer is alive while any source holds it, and a
+    # source that has no information about a peer never counts against it.
+    evidence: dict[str, float] = field(default_factory=dict)
     prefer_master: bool = False  # True if peer wants to prefer master role
     never_master: bool = False  # True if peer refuses to ever be master
     startup_time: float = 0.0  # Unix timestamp when peer started
@@ -137,19 +173,9 @@ class Peer:
     # remain the primary endpoint for callers that need one URL.
     endpoints: tuple[tuple[str, int], ...] = ()
 
-    def is_alive(self, timeout: float = PEER_TIMEOUT) -> bool:
-        """Check if peer is still considered alive based on last_seen time.
-
-        Args:
-            timeout: Staleness threshold in seconds. Defaults to the module
-                ``PEER_TIMEOUT``; ``PeerManager`` passes its configured
-                ``peer_timeout`` (which honours ``HSYNC_PEER_TIMEOUT``).
-        """
-        return (time.time() - self.last_seen) < timeout
-
-    def update_last_seen(self) -> None:
-        """Update the last seen timestamp."""
-        self.last_seen = time.time()
+    def note_evidence(self, source: str, stamp: float) -> None:
+        """Record that *source* has just observed this peer, at its own stamp."""
+        self.evidence[source] = stamp
 
     def get_server_url(self) -> str:
         """Get the HTTP/HTTPS server URL for this peer's primary endpoint."""
@@ -239,6 +265,17 @@ class PeerManager:
         # its asyncio loop thread, so it must never contend with ``_lock``,
         # which other threads hold across the (heavier) election/emit work.
         self._connected_lock = threading.Lock()
+        # Peers this node has a live relay tunnel to (the rendezvous data plane).
+        # A paired tunnel is proof the peer is registered and reachable, so it
+        # holds the peer exactly like the WebSocket does.
+        self._relay_cids: set[str] = set()
+        # The liveness sources, each in its own unit. The heartbeat source is
+        # always present; a rendezvous plan registers one per discovery server
+        # when it starts (``register_source``), so its sample cadence never has
+        # to be encoded in the heartbeat timeout.
+        self._sources: dict[str, LivenessSource] = {
+            HEARTBEAT_SOURCE: LivenessSource(HEARTBEAT_SOURCE, "seconds", peer_timeout)
+        }
         self._lock = threading.Lock()
         # Dedup guard for the duplicate-identity warning: mDNS heartbeats
         # re-deliver the same foreign record every few seconds, so the error is
@@ -349,8 +386,13 @@ class PeerManager:
         """
         return self._group == peer_group
 
-    def add_peer(self, peer: Peer) -> None:
-        """Add or update a discovered peer."""
+    def add_peer(self, peer: Peer, source: str = HEARTBEAT_SOURCE) -> None:
+        """Add or update a peer *source* has just observed.
+
+        The stamp the source writes is its own (a clock reading for the
+        heartbeat, the current sample generation for a discovery server), so a
+        peer discovered by one source is never judged by another source's clock.
+        """
         if peer.bucket != self._bucket:
             log.debug(f"Ignoring peer {peer.cid} - different bucket: {peer.bucket}")
             return
@@ -437,9 +479,10 @@ class PeerManager:
                 existing.never_master = peer.never_master
                 existing.startup_time = peer.startup_time
                 existing.sync_direction = peer.sync_direction
-                existing.update_last_seen()
+                existing.note_evidence(source, self._stamp(source))
                 log.debug(f"Updated peer: {peer.cid}")
             else:
+                peer.note_evidence(source, self._stamp(source))
                 self._peers[peer.cid] = peer
                 log.info(f"Discovered new peer: {peer.cid} at {peer.address}:{peer.port}")
                 election_changed = True
@@ -528,7 +571,7 @@ class PeerManager:
             re-run), ``False`` otherwise.
         """
         with self._lock:
-            now = time.time()
+            now = time.monotonic()
             stale = [cid for cid, p in self._peers.items() if not self._is_peer_alive(p)]
             if not stale:
                 return False
@@ -536,13 +579,11 @@ class PeerManager:
                 peer = self._peers[cid]
                 del self._peers[cid]
                 log.info(f"Peer timed out: {cid}")
-                # Liveness forensics: the window already spans two discovery
-                # samples, so an expiry means this node stopped seeing the peer —
-                # not that the peer died. Losing the elected master is what turns
-                # it into an election churn, so that case is called out.
-                detail = (
-                    f"unseen for {now - peer.last_seen:.0f}s (window {self._peer_timeout:.0f}s)"
-                )
+                # Liveness forensics: an expiry means every source that had seen
+                # the peer stopped holding it — never that a source merely had no
+                # information. Losing the elected master is what turns it into an
+                # election churn, so that case is called out.
+                detail = self._liveness_detail(peer, now)
                 if cid == self._master_cid:
                     log.warning(f"Peer liveness lost for the elected master: {cid} {detail}")
                 else:
@@ -588,12 +629,106 @@ class PeerManager:
         with self._connected_lock:
             return cid in self._connected_cids
 
-    def _is_peer_alive(self, peer: Peer) -> bool:
-        """Return whether *peer* is alive by mDNS heartbeat or WSS liveness."""
-        if peer.is_alive(self._peer_timeout):
-            return True
+    def mark_relay_tunnel(self, cid: str, up: bool) -> None:
+        """Mark *cid* as reachable through a relay tunnel, or clear the mark.
+
+        A paired relay tunnel is proof the peer is registered with its discovery
+        server and serving: the node pairs a session only for a target that has a
+        listener, so an open tunnel holds the peer exactly like the WebSocket.
+        """
         with self._connected_lock:
-            return peer.cid in self._connected_cids
+            if up:
+                self._relay_cids.add(cid)
+            else:
+                self._relay_cids.discard(cid)
+
+    def is_relay_tunnel(self, cid: str) -> bool:
+        """Return whether *cid* is currently reachable through a relay tunnel."""
+        with self._connected_lock:
+            return cid in self._relay_cids
+
+    def register_source(
+        self, name: str, *, unit: Literal["seconds", "samples"], window: float
+    ) -> None:
+        """Declare a liveness source with its own unit and window.
+
+        A discovery server registers itself when it starts, so its window is
+        expressed in its own unit — answered samples for a rendezvous, seconds
+        for a heartbeat — instead of borrowing the heartbeat's clock. A source
+        that is registered again (a plan restarted on the same server) keeps its
+        sample counter, so the peers it already stamped stay comparable.
+        """
+        with self._lock:
+            existing = self._sources.get(name)
+            self._sources[name] = LivenessSource(
+                name, unit, window, generation=existing.generation if existing else 0.0
+            )
+
+    def advance_source(self, name: str) -> None:
+        """Move a sample source forward: one **answered** sample was received.
+
+        Only answered samples move it, so a refused or unanswered query leaves
+        the window where it was: the peers such a sample did not mention are not
+        thereby absent, they simply were not asked about.
+        """
+        with self._lock:
+            source = self._sources.get(name)
+            if source is not None and source.unit == "samples":
+                source.generation += 1.0
+
+    def _stamp(self, source: str) -> float:
+        """The stamp *source* writes for a peer it has just observed.
+
+        Callers hold ``_lock`` (see :meth:`add_peer`). An unknown source is
+        treated as a heartbeat at the configured timeout, so a caller cannot
+        stamp evidence with a unit no predicate reads.
+        """
+        entry = self._sources.get(source)
+        if entry is None:
+            entry = LivenessSource(source, "seconds", self._peer_timeout)
+            self._sources[source] = entry
+        return entry.generation if entry.unit == "samples" else time.monotonic()
+
+    def _is_peer_alive(self, peer: Peer) -> bool:
+        """Return whether *peer* is alive by any source of evidence.
+
+        A peer is alive while at least one source holds it: a heartbeat inside
+        its window, a sample that drew it within the last ``window`` **answered**
+        samples of that discovery server, or a live data-plane channel
+        (WebSocket, relay tunnel). Only evidence can expire a peer — a source
+        with no information about it never counts against it.
+        """
+        now = time.monotonic()
+        for source in tuple(self._sources.values()):
+            stamp = peer.evidence.get(source.name)
+            if stamp is None:
+                continue
+            if source.unit == "samples":
+                if source.generation - stamp < source.window:
+                    return True
+            elif now - stamp < source.window:
+                return True
+        with self._connected_lock:
+            return peer.cid in self._connected_cids or peer.cid in self._relay_cids
+
+    def _liveness_detail(self, peer: Peer, now: float) -> str:
+        """Why *peer* expired, source by source (forensics for a churn)."""
+        parts: list[str] = []
+        for source in tuple(self._sources.values()):
+            stamp = peer.evidence.get(source.name)
+            if stamp is None:
+                continue
+            if source.unit == "samples":
+                missed = source.generation - stamp
+                parts.append(
+                    f"{source.name}: {missed:.0f} answered sample(s) without it "
+                    f"(window {source.window:.0f})"
+                )
+            else:
+                parts.append(
+                    f"{source.name}: unseen for {now - stamp:.0f}s (window {source.window:.0f}s)"
+                )
+        return "; ".join(parts) if parts else "no source ever reported it"
 
     def get_alive_peers(self) -> list[Peer]:
         """Get all peers that are still alive."""

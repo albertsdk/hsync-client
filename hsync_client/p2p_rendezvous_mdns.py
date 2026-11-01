@@ -45,6 +45,7 @@ from hsync_client.net_watch import (
     network_signature,
 )
 from hsync_client.p2p_peers import (
+    HEARTBEAT_SOURCE,
     HSYNC_P2P_LISTEN_PORT,
     Peer,
     PeerManager,
@@ -245,7 +246,7 @@ class HsyncServiceListener(ServiceListener):
                 sync_direction=sync_direction,
             )
             self._cancel_pending_goodbye(cid)
-            self._peer_manager.add_peer(peer)
+            self._peer_manager.add_peer(peer, source=HEARTBEAT_SOURCE)
 
         except Exception as e:
             log.error(f"Error registering peer from service info: {e}")

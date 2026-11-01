@@ -223,14 +223,15 @@ Kotlin mirror + trust review. Medium-high cost; benefit is cheap hosting and
 
 ## 6. Decision criteria (go/no-go)
 
-The thresholds are derived from the existing cadence, not invented: with a
-rendezvous the client raises liveness to `max(configured, 2 ×
-RENDEZVOUS_REFRESH_INTERVAL)` = 120 s in the worst case, so a relay latency of a
-few seconds is harmless. **Latency is not the risk — rate limits and loss are.**
+The thresholds are derived from the existing cadence, not invented: a peer found
+through a rendezvous server is judged by that server's **answered samples**
+(`RENDEZVOUS_MISSED_SAMPLES`), so a relay latency of a few seconds is a fraction
+of one lease cycle and harmless. **Latency is not the risk — rate limits and loss
+are.**
 
 | Gate | Requirement | Rationale |
 |---|---|---|
-| G1 | publish→receive p95 ≤ 2 s, p99 ≤ 4 s | far below `PEER_TIMEOUT` (60–120 s) |
+| G1 | publish→receive p95 ≤ 2 s, p99 ≤ 4 s | far below one `RENDEZVOUS_REFRESH_INTERVAL` (30 s) |
 | G2 | message loss **0** over 30 samples | a lost presence update is recovered by the next refresh, but should not happen |
 | G3 | **zero** HTTP 429 with 1 publish/30 s **per bucket**, up to 3 buckets from one IP | otherwise the free tier is unusable for a real multi-bucket user → opt-in only |
 | G4 | recovery after a 90 s subscriber outage ≤ 60 s (via `since`) | bounded catch-up |

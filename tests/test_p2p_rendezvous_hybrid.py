@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 from hsync_common.endpoint import HostPort
 
+from hsync_client.constants import PEER_TIMEOUT, RENDEZVOUS_REFRESH_INTERVAL
 from hsync_client.p2p_rendezvous import build_rendezvous_plan
 from hsync_client.p2p_rendezvous_hybrid import HybridRendezvous
 
@@ -63,15 +64,12 @@ class TestBuildRendezvousPlan:
         assert rendezvous.call_args.kwargs["rendezvous_host"] == "node.example"
         assert rendezvous.call_args.kwargs["rendezvous_port"] == 443
 
-    def test_rendezvous_mode_floors_the_peer_liveness_timeout(self):
-        """Regression: the liveness window must span >= 2 rendezvous query cycles.
+    def test_rendezvous_mode_keeps_the_heartbeat_window(self):
+        """A discovery cadence never stretches the heartbeat window.
 
-        A rendezvous peer is re-seen only when its CID is drawn in the node's
-        random sample, which arrives at the lease cadence. The shared
-        PeerManager otherwise used the mDNS-derived window (default 15 s) and
-        declared live cross-network peers stale between two samples, churning
-        the election. Both children of the one shared manager must carry the
-        same floored value.
+        A peer found through a rendezvous server is judged by that server's
+        **answered samples** (``RENDEZVOUS_MISSED_SAMPLES``), so the configured
+        mDNS window reaches both children of the one shared manager unchanged.
         """
         with (
             patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous") as mdns,
@@ -82,12 +80,12 @@ class TestBuildRendezvousPlan:
                 cert_fingerprint="aa",
                 port=9000,
             )
-        # default PEER_TIMEOUT 15 < 2 * refresh 30 => floored to 60
-        assert rendezvous.call_args.kwargs["peer_timeout"] == 60
-        assert mdns.call_args.kwargs["peer_timeout"] == 60
-        assert rendezvous.call_args.kwargs["refresh_interval"] == 30
+        assert rendezvous.call_args.kwargs["peer_timeout"] == PEER_TIMEOUT
+        assert mdns.call_args.kwargs["peer_timeout"] == PEER_TIMEOUT
+        assert rendezvous.call_args.kwargs["refresh_interval"] == RENDEZVOUS_REFRESH_INTERVAL
 
-    def test_rendezvous_mode_floor_follows_a_custom_refresh_interval(self):
+    def test_a_custom_rendezvous_cadence_does_not_move_the_heartbeat_window(self):
+        """The lease cadence is the sample source's own business."""
         with (
             patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous") as mdns,
             patch("hsync_client.p2p_rendezvous_rdv.RdvRendezvous") as rendezvous,
@@ -100,9 +98,9 @@ class TestBuildRendezvousPlan:
                 cert_fingerprint="aa",
                 port=9000,
             )
-        # 2 * 10 = 20 > default 15 => floored to 20
-        assert rendezvous.call_args.kwargs["peer_timeout"] == 20
-        assert mdns.call_args.kwargs["peer_timeout"] == 20
+        assert rendezvous.call_args.kwargs["refresh_interval"] == 10
+        assert rendezvous.call_args.kwargs["peer_timeout"] == PEER_TIMEOUT
+        assert mdns.call_args.kwargs["peer_timeout"] == PEER_TIMEOUT
 
     def test_rendezvous_mode_preserves_an_explicitly_larger_timeout(self):
         with (

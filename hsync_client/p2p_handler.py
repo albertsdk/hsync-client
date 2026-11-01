@@ -37,6 +37,7 @@ from hsync_client.constants import (
     RELAY_ACCEPT_TIMEOUT_S,
     RELAY_OPEN_TIMEOUT_S,
     RELAY_RETRY_BACKOFF_S,
+    RELAY_SESSION_WAIT_S,
     RENDEZVOUS_DEFAULT_PORT,
     WATCHER_START_RETRY_DELAY_S,
     ActionLabel,
@@ -100,6 +101,11 @@ NO_PEERS_MESSAGE = NO_DEVICE_MESSAGE
 # tunnel must outlive that call.
 _active_relay_acceptor: RelayAcceptor | None = None
 _active_relay_dialer: RelayDialer | None = None
+# The peer the active tunnel reaches, with the manager that must be told: a
+# paired tunnel is liveness evidence for that peer (the node pairs a session only
+# for a target with a listener), so it is marked while the tunnel is open and
+# cleared when it closes.
+_relay_liveness: tuple[Any, str] | None = None
 # Monotonic deadline before which no relay attempt is made. The rendezvous loop
 # runs once per second, so a node that does not offer the relay would be dialled
 # at that rate without it (and would answer ``rate_limited``).
@@ -1232,21 +1238,30 @@ def _stop_master_relay() -> None:
 
 def _close_relay_dialer() -> None:
     """Drop the requester-side tunnel (idempotent)."""
-    global _active_relay_dialer
+    global _active_relay_dialer, _relay_liveness
     dialer, _active_relay_dialer = _active_relay_dialer, None
     if dialer is not None:
         dialer.close()
+    liveness, _relay_liveness = _relay_liveness, None
+    if liveness is not None:
+        peer_manager, cid = liveness
+        peer_manager.mark_relay_tunnel(cid, False)
 
 
-def _relay_master_endpoint(plan: RendezvousPlan | None, master: Any, log) -> tuple[str, int] | None:
+def _relay_master_endpoint(
+    plan: RendezvousPlan | None, master: Any, log, peer_manager
+) -> tuple[str, int] | None:
     """Open a relayed tunnel to the master; return the loopback endpoint.
 
     This is the last resort after every advertised candidate failed: two peers
     behind carrier-grade NAT have no dialable address at all, so the only
     remaining path is through the rendezvous that already introduced them. ``None``
     keeps the caller's normal "no reachable endpoint, retry rendezvous" behaviour.
+    An adopted tunnel also marks *master* as reachable through it: the node pairs
+    a session only for a target that has a listener, so the open tunnel holds the
+    peer's liveness whatever the discovery samples say.
     """
-    global _active_relay_dialer, _relay_retry_at
+    global _active_relay_dialer, _relay_liveness, _relay_retry_at
     if plan is None:
         _close_relay_dialer()
         return None
@@ -1256,10 +1271,19 @@ def _relay_master_endpoint(plan: RendezvousPlan | None, master: Any, log) -> tup
     # A tunnel that is still open to the same master stays: closing it would
     # invalidate every connection the HTTP client and the WebSocket already hold
     # on its loopback endpoint — and any request in flight — which the peer sees
-    # as an SSL EOF. It is recreated only when it is gone or the master changed.
+    # as an SSL EOF. The tunnel keeps that port while it repairs its own session,
+    # so the caller waits for a session instead of replacing it; only a tunnel
+    # that is gone, or one that targets another master, is recreated.
     dialer = _active_relay_dialer
     if dialer is not None and dialer.alive and dialer.target_cid == master.cid:
-        return dialer.endpoint
+        endpoint = dialer.wait_session(RELAY_SESSION_WAIT_S)
+        if endpoint is None:
+            # The tunnel exists but the node is not pairing sessions (the master
+            # stopped listening): no endpoint for this cycle, and no retry
+            # backoff — the tunnel's own repair loop paces its attempts.
+            _warn_relay_unavailable(master, dialer, log)
+            return None
+        return endpoint
     _close_relay_dialer()
     dialer = plan.relay_dialer(master.cid)
     if dialer is None:
@@ -1270,6 +1294,8 @@ def _relay_master_endpoint(plan: RendezvousPlan | None, master: Any, log) -> tup
         _warn_relay_unavailable(master, dialer, log)
         return None
     _active_relay_dialer = dialer
+    _relay_liveness = (peer_manager, master.cid)
+    peer_manager.mark_relay_tunnel(master.cid, True)
     _relay_hint_masters.discard(master.cid)
     log.info(
         f"{ActionLabel.RELAY} master {master.cid} has no reachable inbound port; "
@@ -1374,7 +1400,7 @@ def _run_as_slave(
         endpoint = _select_master_endpoint(master, log)
         relayed = False
         if endpoint is None:
-            endpoint = _relay_master_endpoint(plan, master, log)
+            endpoint = _relay_master_endpoint(plan, master, log, peer_manager)
             relayed = endpoint is not None
         if endpoint is None:
             log.warning(f"No reachable endpoint for master {master.cid}; retrying rendezvous.")

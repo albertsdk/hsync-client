@@ -115,7 +115,7 @@ Both must be explicit: a TTY or `--allow-deletions` never grants them.
 | `HSYNC_PEER_RENDEZVOUS_TIMEOUT` | p2p peer rendezvous timeout in seconds (`0` = indefinitely) | `0` |
 | `HSYNC_HEARTBEAT_INTERVAL` | LAN mDNS re-announce / liveness-evaluation cadence in seconds (`1`–`60`) | `5` |
 | `HSYNC_RENDEZVOUS_SERVER_REFRESH_INTERVAL` | `rdv/1` lease/query cadence in seconds (`1`–`300`): how often the client registers, refreshes and queries the rendezvous. Sized against the node's rate limits (spec refresh: 30 s) | `30` |
-| `HSYNC_PEER_TIMEOUT` | Seconds without a peer's heartbeat before it is considered dead and excluded from election (`3`–`600`); must be ≥ 2× the heartbeat, and with a discovery server configured the client raises it to at least 2× `HSYNC_RENDEZVOUS_SERVER_REFRESH_INTERVAL` (default 60 s) so a relayed peer is not expired between two random samples | `15` |
+| `HSYNC_PEER_TIMEOUT` | Seconds without a peer's heartbeat before it is considered dead and excluded from election (`3`–`600`); must be ≥ 2× the heartbeat. It judges the peers mDNS announces: a peer found through a discovery server is judged by that server's answered samples, not by this window | `15` |
 | `HSYNC_STABILITY_DELAY` | Seconds a file must stay unchanged before upload (already-idle files skip the wait) | `5` |
 | `HSYNC_DELTA_MIN_FILE_SIZE_P2P` | Min file size for delta transfer in p2p mode | `1048576` (1 MB) |
 

@@ -3,9 +3,6 @@
 
 """Tests for Peer data class in P2P module."""
 
-import time
-
-from hsync_client.constants import PEER_TIMEOUT
 from hsync_client.p2p_peers import Peer, dial_candidates
 
 
@@ -37,52 +34,28 @@ class TestPeer:
         )
         assert peer.version == "1.0.0"
 
-    def test_peer_is_alive_when_recently_seen(self):
-        """Test that a recently seen peer is considered alive."""
-        peer = Peer(
-            cid="abc123",
-            bucket="photos",
-            address="192.168.1.100",
-            port=9753,
-        )
-        assert peer.is_alive() is True
+    def test_peer_records_evidence_per_source(self):
+        """``Peer`` stores stamps per source; the manager decides what they mean.
 
-    def test_peer_is_not_alive_when_timed_out(self):
-        """Test that an old peer is considered not alive."""
+        A peer can be observed by several sources at once (an mDNS announce and a
+        rendezvous sample), each in its own unit, so the record keeps them apart
+        instead of collapsing them into one clock.
+        """
         peer = Peer(
             cid="abc123",
             bucket="photos",
             address="192.168.1.100",
             port=9753,
-            last_seen=time.time() - PEER_TIMEOUT - 1,
         )
-        assert peer.is_alive() is False
+        assert peer.evidence == {}
 
-    def test_peer_update_last_seen(self):
-        """Test updating last seen timestamp."""
-        peer = Peer(
-            cid="abc123",
-            bucket="photos",
-            address="192.168.1.100",
-            port=9753,
-            last_seen=time.time() - 100,
-        )
-        assert peer.is_alive() is False
-        peer.update_last_seen()
-        assert peer.is_alive() is True
+        peer.note_evidence("heartbeat", 123.0)
+        peer.note_evidence("rdv:rdv.example.net:443", 7.0)
+        assert peer.evidence == {"heartbeat": 123.0, "rdv:rdv.example.net:443": 7.0}
 
-    def test_peer_is_alive_custom_timeout(self):
-        """Test is_alive honours an explicit staleness threshold."""
-        peer = Peer(
-            cid="abc123",
-            bucket="photos",
-            address="192.168.1.100",
-            port=9753,
-            last_seen=time.time() - 10,
-        )
-        # Within the default 15s window, but stale under a custom 5s threshold.
-        assert peer.is_alive() is True
-        assert peer.is_alive(timeout=5) is False
+        peer.note_evidence("heartbeat", 456.0)
+        assert peer.evidence["heartbeat"] == 456.0
+        assert peer.evidence["rdv:rdv.example.net:443"] == 7.0
 
     def test_peer_get_server_url(self):
         """Test getting the server URL for a peer."""

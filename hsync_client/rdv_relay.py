@@ -49,6 +49,7 @@ from hsync_client.constants import (
     RELAY_BUFFER_BYTES,
     RELAY_IDLE_TIMEOUT_S,
     RELAY_KEEPALIVE_INTERVAL,
+    RELAY_RETRY_BACKOFF_S,
 )
 from hsync_client.rdv_client import (
     RendezvousClient,
@@ -265,6 +266,12 @@ class RelayDialer:
         self._stop: asyncio.Event | None = None
         self._ready = threading.Event()
         self._endpoint: tuple[str, int] | None = None
+        self._server: Any | None = None
+        # The QUIC session the tunnel bridges over right now, and the flag a caller
+        # waits on: the endpoint outlives the session (it is bound once), so a
+        # caller asks for a *live* session rather than for the tunnel's existence.
+        self._session: Any | None = None
+        self._session_up = threading.Event()
         # Uniform refusal code from the node's last ``relay_error`` (if any), so
         # the caller can tell "the node did not pair the relay" from a tunnel
         # that opened; ``None`` before a refusal is seen.
@@ -311,9 +318,26 @@ class RelayDialer:
 
     @property
     def alive(self) -> bool:
-        """True while the tunnel is open and its loopback endpoint is serving."""
+        """True while the tunnel exists: its endpoint is bound and still serving."""
         thread = self._thread
         return self._endpoint is not None and thread is not None and thread.is_alive()
+
+    @property
+    def session_up(self) -> bool:
+        """True while a relay session is paired and the tunnel can serve."""
+        return self._session_up.is_set()
+
+    def wait_session(self, timeout: float) -> tuple[str, int] | None:
+        """Wait up to *timeout* for a live session; ``None`` when there is none.
+
+        The tunnel repairs itself in the background and keeps its port, so a
+        caller that finds it between two sessions waits instead of replacing it:
+        a new tunnel would bind a new loopback port and strand every connection
+        the HTTP client and the WebSocket already hold on the old one.
+        """
+        if not self._session_up.wait(timeout):
+            return None
+        return self._endpoint
 
     def close(self) -> None:
         """Tear the tunnel down (idempotent)."""
@@ -326,6 +350,8 @@ class RelayDialer:
         if thread is not None and thread.is_alive():
             thread.join(timeout=5.0)
         self._thread = None
+        # Prompt for a waiter: the loop clears it too, but only once it unwinds.
+        self._session_up.clear()
 
     def _thread_main(self) -> None:
         loop = asyncio.new_event_loop()
@@ -340,7 +366,43 @@ class RelayDialer:
             loop.close()
 
     async def _run(self) -> None:
-        tasks: list[asyncio.Task[Any]] = []
+        """Hold a relay session for the tunnel's whole life, repairing it on a drop.
+
+        The loopback endpoint is bound once (:meth:`_bind_endpoint`) and never
+        moves: the HTTP client and the WebSocket keep pooled connections on its
+        port, so re-binding after a dropped session would strand them on a dead
+        port — the peer sees that as an SSL EOF. A session that dies is re-paired
+        at once (a reset heals in milliseconds) and only a *failed* attempt arms
+        the retry backoff, so a node that is down is not hammered.
+        """
+        try:
+            while not self._stop.is_set():  # type: ignore[union-attr]
+                held = await self._hold_session()
+                if self._stop.is_set():  # type: ignore[union-attr]
+                    break
+                if held:
+                    continue  # the session ended: repair immediately
+                if self._server is None:
+                    # Refused before any endpoint existed: ``open()`` reports
+                    # ``None`` and the caller keeps its own retry path.
+                    return
+                # A refusal after the endpoint was exposed (the master stopped
+                # listening) keeps the tunnel and its port; it retries here.
+                await self._sleep_or_stop(RELAY_RETRY_BACKOFF_S)
+        finally:
+            server, self._server = self._server, None
+            self._endpoint = None if server is not None else self._endpoint
+            if server is not None:
+                server.close()
+                await server.wait_closed()
+
+    async def _hold_session(self) -> bool:
+        """Pair one relay session and hold it until it dies or the tunnel stops.
+
+        ``True`` means a session was paired (and has now ended), ``False`` that
+        the node refused it. The loopback endpoint is bound on the first
+        successful pairing and kept for the tunnel's life.
+        """
         async with _quic_session(self._client) as quic:
             # Pre-flight: prove the node pairs a session for this target before
             # exposing a loopback endpoint, so ``open()`` keeps returning ``None``
@@ -354,31 +416,50 @@ class RelayDialer:
                 self._refusal = refusal
                 if refusal is not None:
                     log.debug(f"Relay session refused by the node: {refusal}")
-                return
+                return False
             probe_writer.close()
-            server = await asyncio.start_server(self._handle(quic), "127.0.0.1", 0)
+            self._refusal = None
+            self._session = quic
+            self._session_up.set()
             try:
-                # Keep the QUIC connection alive between data-plane sessions.
-                # The node's QUIC idle timeout (30 s) is the effective bound once
-                # no stream carries traffic, so without a keepalive a relayed
-                # tunnel silently dies during any pause and the loopback endpoint
-                # starts answering ``Connection refused`` mid-sync.
-                # A dedicated stream owns the keepalive pings; the probe stream
-                # was closed above, so without the pings the connection would
-                # read as idle to the node.
+                if self._server is None:
+                    await self._bind_endpoint()
+                # Keep the QUIC connection alive between data-plane sessions: the
+                # node's QUIC idle timeout is the effective bound once no stream
+                # carries traffic, so without the pings a relayed tunnel silently
+                # dies during any pause and the loopback endpoint starts answering
+                # ``Connection refused`` mid-sync. The keepalive is also the
+                # session's death signal: its ``drain`` raises once it is gone.
                 control_writer = (await quic.create_stream())[1]
-                tasks.append(asyncio.create_task(self._keepalive(control_writer)))
-                socket = server.sockets[0]
-                self._endpoint = ("127.0.0.1", int(socket.getsockname()[1]))
-                self._ready.set()
-                await self._stop.wait()  # type: ignore[union-attr]
+                keepalive = asyncio.create_task(self._keepalive(control_writer))
+                stop_task = asyncio.create_task(self._stop.wait())  # type: ignore[union-attr]
+                try:
+                    await asyncio.wait({stop_task, keepalive}, return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    for task in (stop_task, keepalive):
+                        task.cancel()
+                    await asyncio.gather(stop_task, keepalive, return_exceptions=True)
+                    if not self._stop.is_set():  # type: ignore[union-attr]
+                        log.info("Relay session lost; re-pairing the tunnel")
             finally:
-                for task in tasks:
-                    task.cancel()
-                if tasks:
-                    await asyncio.gather(*tasks, return_exceptions=True)
-                server.close()
-                await server.wait_closed()
+                self._session = None
+                self._session_up.clear()
+        return True
+
+    async def _bind_endpoint(self) -> None:
+        """Bind the loopback endpoint the caller dials, once per tunnel."""
+        server = await asyncio.start_server(self._handle(), "127.0.0.1", 0)
+        socket = server.sockets[0]
+        self._endpoint = ("127.0.0.1", int(socket.getsockname()[1]))
+        self._server = server
+        self._ready.set()
+
+    async def _sleep_or_stop(self, seconds: float) -> None:
+        """Sleep *seconds* unless the tunnel is stopped first."""
+        try:
+            await asyncio.wait_for(self._stop.wait(), timeout=seconds)  # type: ignore[union-attr]
+        except TimeoutError:
+            pass
 
     async def _keepalive(self, writer: Any) -> None:
         """Keep the QUIC connection (and thus the loopback tunnel) alive."""
@@ -397,16 +478,23 @@ class RelayDialer:
             bucket_token=self._token,
         )
 
-    def _handle(self, quic: Any) -> Any:
+    def _handle(self) -> Any:
         """Loopback accept callback: one relay session per HTTPS connection.
 
         A sync cycle opens several TCP connections to the loopback endpoint
-        (REST requests plus the WSS channel); the tunnel survives each of
-        them, so every accepted connection pairs its **own** ``relay_connect``
-        session and is bridged over it.
+        (REST requests plus the WSS channel); the tunnel survives each of them, so
+        every accepted connection pairs its **own** ``relay_connect`` session and
+        is bridged over it. A connection that arrives while the tunnel repairs its
+        session is closed at once: the caller's own retry and the WebSocket
+        reconnect recover, while holding the socket would only park a request on a
+        tunnel that is not there.
         """
 
         async def _handle(tcp_reader: Any, tcp_writer: Any) -> None:
+            quic = self._session
+            if quic is None:
+                tcp_writer.close()
+                return
             stream_reader, stream_writer, refusal = await _probe_relay_connect(
                 quic, self._connect_frame(), self._client.timeout
             )
@@ -605,6 +693,37 @@ class FailoverRelayDialer:
         # Refusal of the last failed attempt, so the caller can report why the
         # combined dial could not pair even when no single dialer is the cause.
         self._refusal: str | None = None
+
+    @property
+    def target_cid(self) -> str:
+        """The peer every dialer in this set reaches (one target per set)."""
+        return self._current().target_cid
+
+    @property
+    def endpoint(self) -> tuple[str, int] | None:
+        """The winning tunnel's loopback ``(host, port)``, or ``None``."""
+        return self._current().endpoint
+
+    @property
+    def alive(self) -> bool:
+        """True while the winning tunnel exists and its endpoint is serving."""
+        winner = self._winner
+        return winner is not None and winner.alive
+
+    @property
+    def session_up(self) -> bool:
+        """True while the winning tunnel has a relay session paired."""
+        winner = self._winner
+        return winner is not None and winner.session_up
+
+    def wait_session(self, timeout: float) -> tuple[str, int] | None:
+        """Wait for the winning tunnel's session (see :meth:`RelayDialer.wait_session`)."""
+        winner = self._winner
+        return None if winner is None else winner.wait_session(timeout)
+
+    def _current(self) -> RelayDialer:
+        """The dialer the accessors speak for: the winner, else the first try."""
+        return self._winner if self._winner is not None else self._dialers[0]
 
     def open(self, timeout: float = 15.0) -> tuple[str, int] | None:
         """Try each server in order within one deadline; ``None`` when none pairs.

@@ -41,6 +41,7 @@ from hsync_client.constants import (
     HSYNC_VERSION,
     PEER_TIMEOUT,
     RENDEZVOUS_DEFAULT_PORT,
+    RENDEZVOUS_MISSED_SAMPLES,
     RENDEZVOUS_REFRESH_INTERVAL,
     RENDEZVOUS_REFRESH_INTERVAL_MIN,
 )
@@ -197,6 +198,9 @@ class RdvRendezvous(RendezvousPlanState):
     ) -> None:
         self._rendezvous_host = rendezvous_host
         self._rendezvous_port = rendezvous_port
+        # This server is one liveness source of its own: its peers are judged by
+        # the samples it answers, never by the mDNS heartbeat clock.
+        self._source_name = f"rdv:{rendezvous_host}:{rendezvous_port}"
         self._init_common_fields(
             cid=cid,
             bucket=bucket,
@@ -293,6 +297,12 @@ class RdvRendezvous(RendezvousPlanState):
         """
         manager = peer_manager or self.create_peer_manager()
         self._peer_manager = manager
+        # Register this server as a sample source before the first query: the
+        # peers it reports are then judged by the answered samples it returns,
+        # while the mDNS heartbeat window keeps judging the peers it announced.
+        manager.register_source(
+            self._source_name, unit="samples", window=float(RENDEZVOUS_MISSED_SAMPLES)
+        )
         # Resolve the local role before the first wait: a lone --prefer-master
         # node must become master and serve immediately so a joining slave can
         # connect (the election otherwise runs only on peer events).
@@ -748,15 +758,16 @@ class RdvRendezvous(RendezvousPlanState):
             # Uniform refusal (rate limit / token): the sample is empty by
             # contract — keep the peers already known and honour ``retry_after``
             # (falling back to the normal cadence) so the client backs off
-            # instead of deepening the refusal.
+            # instead of deepening the refusal. A refusal is *no* sample: it
+            # carries no information about any peer, so it must not move the
+            # liveness window (the peers are not absent, they were not asked
+            # about). INFO (not DEBUG) is what makes the gap visible in a field
+            # log.
             retry_after = response.get("retry_after")
             if isinstance(retry_after, int) and retry_after > 0:
                 self._next_query_at = now + float(retry_after)
             else:
                 self._next_query_at = now + self._refresh_interval
-            # A refusal costs liveness: the sample is empty, so the next one
-            # decides whether a live peer expires. INFO (not DEBUG) is what makes
-            # that gap visible in a field log.
             log.info(
                 f"Rendezvous {authority} query refused: {response['error']}; "
                 f"next sample in {self._next_query_at - now:.0f}s"
@@ -764,15 +775,18 @@ class RdvRendezvous(RendezvousPlanState):
             return
         self._next_query_at = now + self._refresh_interval
         sampled = {wire["cid"] for wire in response["peers"]}
+        # One answered sample: the source moves forward and the peers it drew are
+        # stamped with the new generation. A peer missing from `window` answered
+        # samples (``RENDEZVOUS_MISSED_SAMPLES``) is the one that expires.
+        self._peer_manager.advance_source(self._source_name)
         for wire_peer in response["peers"]:
             peer = self._peer_from_wire(wire_peer)
             if peer is not None and peer.cid != self._cid:
-                self._peer_manager.add_peer(peer)
+                self._peer_manager.add_peer(peer, source=self._source_name)
         master = self._peer_manager.get_master_cid()
         if master is not None and master != self._cid and master not in sampled:
-            # The elected master was not drawn: the liveness window spans exactly
-            # two query cycles, so two consecutive misses expire a live peer and
-            # the deterministic election churns the group.
+            # The elected master was not drawn: forensics for the election, since
+            # enough consecutive misses is what expires it.
             log.info(
                 f"Rendezvous {authority} sample without the elected master "
                 f"{master} ({len(sampled)} peer(s) drawn)"

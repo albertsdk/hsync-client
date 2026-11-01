@@ -257,6 +257,12 @@ RENDEZVOUS_REFRESH_INTERVAL = 30
 RENDEZVOUS_REFRESH_INTERVAL_MIN = 1
 RENDEZVOUS_REFRESH_INTERVAL_MAX = 300
 
+# Answered rendezvous samples a peer may be missing before it is expired. The
+# node answers a random sample of the group, so a single sample without the peer
+# says little; two *answered* samples do. A refused or unanswered query is not a
+# sample at all and never counts (see ``p2p_peers.LivenessSource``).
+RENDEZVOUS_MISSED_SAMPLES = 2
+
 # Data relay over rdv/1 (peers behind CGNAT). The forwarding chunk is fixed so
 # a session's memory is bounded; the idle timeout counts *session* silence (no
 # bytes in either direction — an upload replies only once the request ends, so
@@ -273,6 +279,11 @@ RELAY_KEEPALIVE_INTERVAL = 20.0
 RELAY_OPEN_TIMEOUT_S = 15.0
 # Bounded per-candidate probe budget the relay replaces only as a last resort.
 RELAY_ACCEPT_TIMEOUT_S = 10.0
+# How long a caller waits for a tunnel that is repairing its session to have one
+# again. The tunnel keeps its loopback port, so waiting is what avoids replacing
+# it (a new port strands the pooled connections the HTTP client and the WebSocket
+# hold on the old one); the budget stays well inside the callers' own timeouts.
+RELAY_SESSION_WAIT_S = 5.0
 # After a refused/failed relay attempt, wait this long before trying again: the
 # rendezvous loop re-enters the role functions every second, and a node without
 # the relay enabled would otherwise be re-dialled once per second.

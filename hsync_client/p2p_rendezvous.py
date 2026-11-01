@@ -33,7 +33,6 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from hsync_common.protocol.pairing import endpoint_pin_key
 from hsync_common.protocol.tls_trust import TrustPolicy
-from loguru import logger as log
 
 from hsync_client.constants import (
     HEARTBEAT_INTERVAL,
@@ -379,22 +378,11 @@ def build_rendezvous_plan(
         config.get("RENDEZVOUS_SERVER_REFRESH_INTERVAL") or RENDEZVOUS_REFRESH_INTERVAL
     )
     peer_timeout: float = float(config.get("PEER_TIMEOUT") or PEER_TIMEOUT)
-    # A rendezvous-server peer is only re-seen when its CID is drawn in the
-    # node's random sample, and samples arrive at the lease cadence
-    # (``RENDEZVOUS_SERVER_REFRESH_INTERVAL``, spec ``rdv-1.md``: 30 s). The
-    # shared PeerManager holds ONE liveness window for every source, so with a
-    # a discovery server that window must span at least two query cycles —
-    # mirroring the mDNS rule ``PEER_TIMEOUT >= 2 * HEARTBEAT_INTERVAL`` — or a
-    # live cross-network peer is declared stale between two samples and the
-    # election churns. An explicit larger ``HSYNC_PEER_TIMEOUT`` is preserved.
-    if endpoints:
-        required_timeout = 2.0 * float(rendezvous_refresh)
-        if peer_timeout < required_timeout:
-            log.warning(
-                f"Raising the peer liveness timeout to {required_timeout:.0f}s: "
-                f"rendezvous-server sampling runs every {rendezvous_refresh}s"
-            )
-            peer_timeout = required_timeout
+    # ``peer_timeout`` is the **heartbeat** window: it judges the peers the mDNS
+    # plan announces, which arrive every ``HEARTBEAT_INTERVAL``. A peer discovered
+    # through a rendezvous server is judged by that server's own sample window
+    # (``p2p_peers.LivenessSource``), so a discovery cadence is never encoded in
+    # this timeout.
     shared: dict[str, object] = {
         "cid": config["CID"],
         "bucket": config["REMOTE_BUCKET"],

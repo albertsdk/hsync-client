@@ -307,22 +307,40 @@ group where no further peer event would otherwise arrive:
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `Peer.is_alive(timeout)` | `p2p_peers.py::Peer.is_alive` | mDNS-staleness liveness check against a configurable threshold |
-| `PeerManager._is_peer_alive` | `p2p_peers.py::PeerManager._is_peer_alive` | liveness = mDNS staleness **or** WSS-connected (`_connected_cids`) |
+| `LivenessSource` | `p2p_peers.py::LivenessSource` | one source of liveness evidence in **its own unit**: `seconds` for a heartbeat (a clock stamp against a duration), `samples` for a discovery server (the answered-sample generation that drew the peer, against a window of answered samples) |
+| `Peer.note_evidence` / `Peer.evidence` | `p2p_peers.py::Peer.note_evidence` | the stamp a source wrote for a peer; the record keeps one entry per source, so a peer seen by an announce *and* by a sample is held by both |
+| `PeerManager._is_peer_alive` | `p2p_peers.py::PeerManager._is_peer_alive` | liveness = **any** source holding the peer: the heartbeat window, an answered-sample window, the WebSocket mark (`_connected_cids`) or the relay tunnel mark (`_relay_cids`) |
+| `PeerManager.register_source` / `advance_source` | `p2p_peers.py::PeerManager.register_source` / `p2p_peers.py::PeerManager.advance_source` | a rendezvous server declares its sample window when it starts and moves it once per **answered** sample; a refused or unanswered query moves nothing (no information about any peer) |
+| `PeerManager.mark_relay_tunnel` | `p2p_peers.py::PeerManager.mark_relay_tunnel` | the relay data plane as evidence: the node pairs a session only for a target with a listener, so an open tunnel holds the peer while it is open |
 | `PeerManager.mark_peer_connected` / `mark_peer_disconnected` | `p2p_peers.py::PeerManager.mark_peer_connected` / `p2p_peers.py::PeerManager.mark_peer_disconnected` | feed the WebSocket-authoritative liveness signal (set by the master's WSS admission/release and by the slave around its WSS connection) |
 | `PeerManager.is_wss_connected` | `p2p_peers.py::PeerManager.is_wss_connected` | lock-guarded query on `_connected_cids`; used by the listener's goodbye grace |
 | `HsyncServiceListener.remove_service` | `p2p_rendezvous_mdns.py::HsyncServiceListener.remove_service` | **goodbye grace** (`GOODBYE_GRACE_S`): delay `remove_peer` so an Android heartbeat re-register can cancel it (covers slave<->slave, not only WSS); a live WSS link is still an immediate ignore |
-| `PeerManager.reconcile_stale_peers` | `p2p_peers.py::PeerManager.reconcile_stale_peers` | expire peers whose liveness stopped and re-elect; invoked every rendezvous wake (`p2p_handler.run_p2p_mode`) and on a slave WebSocket drop (`_run_as_slave`) |
-| `_validate_peer_timeout_relationship` | `config.py::_validate_peer_timeout_relationship` | enforces `HSYNC_PEER_TIMEOUT ≥ 2× HSYNC_HEARTBEAT_INTERVAL` |
-| timeout wiring | `p2p_handler.py::run_p2p_mode` → `MdnsRendezvous` / `build_rendezvous_plan` → `PeerManager` | `HSYNC_PEER_TIMEOUT`/`HSYNC_HEARTBEAT_INTERVAL` reach `is_alive`/the rendezvous cadence; with a rendezvous configured `build_rendezvous_plan` (`p2p_rendezvous.py`) floors it to `≥ 2 × HSYNC_RENDEZVOUS_SERVER_REFRESH_INTERVAL` (default 60 s) so a live relayed peer is not expired between two random samples (`reconcile_stale_peers` would otherwise drop it and churn the election) |
+| `PeerManager.reconcile_stale_peers` | `p2p_peers.py::PeerManager.reconcile_stale_peers` | expire peers no source holds any more and re-elect; invoked every rendezvous wake (`p2p_handler.run_p2p_mode`) and on a slave WebSocket drop (`_run_as_slave`) |
+| `_validate_peer_timeout_relationship` | `config.py::_validate_peer_timeout_relationship` | enforces `HSYNC_PEER_TIMEOUT ≥ 2× HSYNC_HEARTBEAT_INTERVAL` for the heartbeat source |
+| timeout wiring | `p2p_handler.py::run_p2p_mode` → `MdnsRendezvous` / `build_rendezvous_plan` → `PeerManager` | `HSYNC_PEER_TIMEOUT` is the **heartbeat** window (it judges the peers mDNS announces every `HSYNC_HEARTBEAT_INTERVAL`); a rendezvous server's peers are judged by that server's own sample window (`RENDEZVOUS_MISSED_SAMPLES`), so no discovery cadence is encoded in the timeout |
+| `RdvRendezvous._source_name` / `RdvRendezvous.start` | `p2p_rendezvous_rdv.py::RdvRendezvous.start` | registers one sample source per discovery server (`rdv:<host>:<port>`); `RdvRendezvous._query_peers` advances it on every answered sample and stamps the peers it drew |
 | `MdnsRendezvous._record_lock` | `p2p_rendezvous_mdns.py::MdnsRendezvous` | serializes every record publication (initial register, heartbeat re-announce, in-place refresh, teardown) across the heartbeat thread, the debounced presence timer and the main thread; `stop()` publishes `_running = False` under it so a queued refresh bails instead of racing the unregister |
 | `MdnsRendezvous._refresh_service` | `p2p_rendezvous_mdns.py::MdnsRendezvous._refresh_service` | **in-place** TXT update (`zeroconf.update_service`), never unregister+register: a goodbye would make slaves see a spurious master `remove_service` |
 | `MdnsRendezvous._heartbeat` / `_heartbeat_loop` | `p2p_rendezvous_mdns.py::MdnsRendezvous._heartbeat_loop` / `p2p_rendezvous_mdns.py::MdnsRendezvous._heartbeat` | liveness heartbeat: a background thread re-announces the TXT record every `heartbeat_interval` (env `HSYNC_HEARTBEAT_INTERVAL`, wired in `p2p_handler.py`) with an incremented opaque `heartbeat` counter |
 | `MdnsRendezvous.update_server_not_ready` | `p2p_rendezvous_mdns.py::MdnsRendezvous.update_server_not_ready` | leadership lease (ADR-0027): on yield, clear the local `server_ready` flag and update mDNS in place without `server_ready`/`connected` |
 | yield path | `p2p_handler.py::run_p2p_mode` | when `is_master()` flips false after serving, stop servers **and** revoke incumbency + log `[MASTER YIELD]` (mirrored in Android `LogAction.MASTER_YIELD`) |
 
-**Liveness is two-layer.** The **WebSocket link is authoritative** for the
-master↔slave channels: the master marks each admitted slave CID as connected
+**Liveness is evidence from independent sources.** A peer is alive while **any**
+source holds it, and it is expired only when every source that had seen it has
+positively stopped: absence of evidence is never evidence of absence.
+
+| Source | Unit and window | Holds the peer while |
+| --- | --- | --- |
+| heartbeat (mDNS) | seconds, `HSYNC_PEER_TIMEOUT` (≥ 2× the announce cadence) | an announce arrived within the window |
+| sample (each discovery server) | answered samples, `RENDEZVOUS_MISSED_SAMPLES` | it was drawn within the last N **answered** samples of that server |
+| data plane — WebSocket | none | the channel is open (`_connected_cids`) |
+| data plane — relay tunnel | none | the tunnel is open (`_relay_cids`) |
+
+A sample source is moved by `RdvRendezvous._query` only when the node answered:
+a refused (`rate_limited`, `relay_unavailable`, token) or unanswered query carries
+no information about any peer, so it can never expire one — the window is
+expressed in answered samples precisely so that a discovery cadence never has to
+be encoded in a timeout. The **WebSocket link is authoritative** for the master↔slave channels: the master marks each admitted slave CID as connected
 (`P2PWebSocketServer.set_peer_connection_callback`, wired in
 `p2p_handler._run_as_master` **before** the WSS server starts accepting
 connections so no admission is missed), and a slave marks the master connected
@@ -358,9 +376,9 @@ behaviour:
 
 | Line | Source | Answers |
 | --- | --- | --- |
-| `Peer timed out: <cid>` + `Peer liveness lost: <cid> unseen for Ns (window Ns)` | `p2p_peers.py::PeerManager.reconcile_stale_peers` | how far past the window the record was; WARNING instead when the expired record was the elected master (the churn trigger) |
-| `Rendezvous <node> query refused: <error>; next sample in Ns` | `p2p_rendezvous_rdv.py::RdvRendezvous._query_peers` | a refused sample (rate limit / token) and the backoff it armed |
-| `Rendezvous <node> sample without the elected master <cid> (N peer(s) drawn)` | `p2p_rendezvous_rdv.py::RdvRendezvous._query_peers` | the drawn sample omitted the master, i.e. one of the two misses the window tolerates |
+| `Peer timed out: <cid>` + `Peer liveness lost: <cid> <source>: …` | `p2p_peers.py::PeerManager.reconcile_stale_peers` | one entry per source that had seen the peer: `unseen for Ns (window Ns)` for a heartbeat, `N answered sample(s) without it (window N)` for a discovery server; WARNING instead when the expired record was the elected master (the churn trigger) |
+| `Rendezvous <node> query refused: <error>; next sample in Ns` | `p2p_rendezvous_rdv.py::RdvRendezvous._query_peers` | a refused sample (rate limit / token) and the backoff it armed; it moves no source, so it cannot expire a peer |
+| `Rendezvous <node> sample without the elected master <cid> (N peer(s) drawn)` | `p2p_rendezvous_rdv.py::RdvRendezvous._query_peers` | the drawn sample omitted the master, i.e. one of the `RENDEZVOUS_MISSED_SAMPLES` misses the window tolerates |
 | `WebSocket greeting received in Ns` / `WebSocket handshake completed in Ns` / `WebSocket connection error after Ns` | `p2p_websocket.py::p2p_websocket_client` | how much of the fixed per-frame handshake budget the (possibly relayed) path consumed |
 
 The query loop runs in the lease-loop thread and keeps sampling while a slave
@@ -459,13 +477,21 @@ in `hsync-common` (`hsync_common/protocol/transfer_progress.py`, schema
 `protocol/p2p/wss-schema.json`, fixture `p2p-wss-file-progress`).
 
 **The relayed data plane is addressed by a loopback endpoint** the dialer binds
-once (`rdv_relay.py::RelayDialer.endpoint`): every accepted TCP connection pairs
-its own `relay_connect` session, so the REST client and the WebSocket keep
-their pooled connections on that port. A tunnel still open to the same master is
-therefore **reused across slave sessions**
-(`p2p_handler.py::_relay_master_endpoint`); it is closed only when it is gone or
-the master changed, because re-binding a new port would strand every pooled
-connection (and any request in flight) — the peer sees that as an SSL EOF.
+once (`rdv_relay.py::RelayDialer._bind_endpoint`): every accepted TCP connection
+pairs its own `relay_connect` session, so the REST client and the WebSocket keep
+their pooled connections on that port. The endpoint never moves — a tunnel that
+loses its QUIC session **re-pairs underneath the same port**
+(`rdv_relay.py::RelayDialer._hold_session`, immediate on a drop and then at
+`RELAY_RETRY_BACKOFF_S` while attempts keep failing), because re-binding a new
+port would strand every pooled connection (and any request in flight) — the peer
+sees that as an SSL EOF. A tunnel that exists but is repairing its session is
+therefore **kept and waited for**, not replaced
+(`rdv_relay.py::RelayDialer.wait_session` from
+`p2p_handler.py::_relay_master_endpoint`), and the cycle simply reports no
+endpoint when the wait expires. `RelayDialer.alive` says the tunnel exists,
+`RelayDialer.session_up` that it can serve now; `FailoverRelayDialer` exposes the
+same four members for its winning tunnel, so the caller speaks to one contract
+whatever the number of discovery servers.
 Independently, the shared HTTP session retries a **dropped connection** for
 idempotent methods only (`utils/http.py::_retry_policy`): one dead keep-alive
 socket no longer fails a whole comparison, while an upload (POST) is never

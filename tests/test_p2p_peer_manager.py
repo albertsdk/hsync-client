@@ -7,8 +7,18 @@ import time
 from unittest.mock import patch
 
 from hsync_client.constants import PEER_TIMEOUT
-from hsync_client.p2p_peers import Peer, PeerManager
+from hsync_client.p2p_peers import HEARTBEAT_SOURCE, Peer, PeerManager
 from hsync_client.p2p_rendezvous_mdns import HsyncServiceListener
+
+
+def _age_heartbeat(peer: Peer, seconds: float) -> None:
+    """Age *peer*'s heartbeat evidence by *seconds*.
+
+    The heartbeat window is a clock, so aging its stamp is how a test stands in
+    for a peer that stopped announcing (a hard-crashed peer sends no further
+    record, and only the periodic sweep can observe the expiry).
+    """
+    peer.note_evidence(HEARTBEAT_SOURCE, time.monotonic() - seconds)
 
 
 class TestPeerManager:
@@ -167,7 +177,7 @@ class TestPeerManager:
         assert elapsed < 1.0, "a connected-count update must wake the loop"
 
     def test_wait_for_change_ignores_heartbeat_only_refresh(self):
-        """A last_seen-only mDNS refresh must not wake the rendezvous loop."""
+        """A heartbeat-only evidence bump must not wake the rendezvous loop."""
         pm = PeerManager(local_cid="local123", bucket="photos")
         pm.add_peer(Peer(cid="peer1", bucket="photos", address="192.168.1.100", port=9753))
         pm.wait_for_change(timeout=0.0)
@@ -330,16 +340,16 @@ class TestPeerManager:
                 port=9753,
             )
         )
-        # Add dead peer
+        # Add dead peer: its heartbeat source stopped reporting it.
         pm.add_peer(
             Peer(
                 cid="dead1",
                 bucket="photos",
                 address="192.168.1.101",
                 port=9753,
-                last_seen=time.time() - PEER_TIMEOUT - 10,
             )
         )
+        _age_heartbeat(pm._peers["dead1"], PEER_TIMEOUT + 10)
 
         alive = pm.get_alive_peers()
         assert len(alive) == 1
@@ -681,17 +691,11 @@ class TestAddPeerUpdate:
         assert peer.startup_time == 42.0
         assert peer.sync_direction == "upload-only"
 
-    def test_update_refreshes_last_seen(self):
+    def test_update_refreshes_the_heartbeat_evidence(self):
+        """A new announce re-stamps the peer, so a stale record comes back."""
         pm = PeerManager(local_cid="local123", bucket="photos")
-        pm.add_peer(
-            Peer(
-                cid="peer1",
-                bucket="photos",
-                address="192.168.1.100",
-                port=9753,
-                last_seen=time.time() - PEER_TIMEOUT - 1,
-            )
-        )
+        pm.add_peer(Peer(cid="peer1", bucket="photos", address="192.168.1.100", port=9753))
+        _age_heartbeat(pm._peers["peer1"], PEER_TIMEOUT + 1)
         assert pm.get_alive_peers() == []
         pm.add_peer(Peer(cid="peer1", bucket="photos", address="192.168.1.100", port=9753))
         assert len(pm.get_alive_peers()) == 1
@@ -1105,7 +1109,7 @@ class TestReconcileStalePeers:
         # Age the master past the timeout without going through add_peer (a
         # hard-crashed peer sends no further announce, so only the periodic
         # sweep can observe the expiry).
-        pm._peers["aaa111"].last_seen = time.time() - PEER_TIMEOUT - 1
+        _age_heartbeat(pm._peers["aaa111"], PEER_TIMEOUT + 1)
         assert pm.reconcile_stale_peers() is True
         assert pm.get_master_cid() == "zzz999"
 
@@ -1113,7 +1117,7 @@ class TestReconcileStalePeers:
         """A peer still within the (custom) timeout is not expired."""
         pm = PeerManager(local_cid="local123", bucket="photos", peer_timeout=10.0)
         pm.add_peer(Peer(cid="peer1", bucket="photos", address="192.168.1.100", port=9753))
-        pm._peers["peer1"].last_seen = time.time() - 5.0  # under the 10s threshold
+        _age_heartbeat(pm._peers["peer1"], 5.0)  # under the 10s threshold
         assert pm.reconcile_stale_peers() is False
         assert "peer1" in pm._peers
 
@@ -1140,7 +1144,7 @@ class TestWebSocketLiveness:
         )
         assert pm.get_master_cid() == "aaa111"
         # The master's mDNS heartbeat stopped, but its WebSocket link is live.
-        pm._peers["aaa111"].last_seen = time.time() - PEER_TIMEOUT - 1
+        _age_heartbeat(pm._peers["aaa111"], PEER_TIMEOUT + 1)
         pm.mark_peer_connected("aaa111")
         assert pm.reconcile_stale_peers() is False
         assert pm.get_master_cid() == "aaa111"
@@ -1158,7 +1162,7 @@ class TestWebSocketLiveness:
                 startup_time=100.0,
             )
         )
-        pm._peers["aaa111"].last_seen = time.time() - PEER_TIMEOUT - 1
+        _age_heartbeat(pm._peers["aaa111"], PEER_TIMEOUT + 1)
         pm.mark_peer_connected("aaa111")
         pm.mark_peer_disconnected("aaa111")
         assert pm.reconcile_stale_peers() is True
@@ -1176,7 +1180,7 @@ class TestWebSocketLiveness:
                 startup_time=100.0,
             )
         )
-        pm._peers["aaa111"].last_seen = time.time() - PEER_TIMEOUT - 1
+        _age_heartbeat(pm._peers["aaa111"], PEER_TIMEOUT + 1)
         pm.mark_peer_connected("aaa111")
         assert pm.get_alive_peers() == [pm._peers["aaa111"]]
 
@@ -1203,7 +1207,7 @@ class TestPeerTimeoutOverride:
         assert pm.get_master_cid() == "aaa111"
         # 10s old is within the default 15s window but past the custom 5s one:
         # the override must take effect and demote the stale master.
-        pm._peers["aaa111"].last_seen = time.time() - 10.0
+        _age_heartbeat(pm._peers["aaa111"], 10.0)
         assert pm.reconcile_stale_peers() is True
         assert pm.get_master_cid() == "zzz999"
 
@@ -1335,3 +1339,87 @@ class TestInitialElection:
         pm = PeerManager(local_cid="aaa111", bucket="photos")
         pm.elect()
         assert pm.is_master() is True
+
+
+class TestLivenessSources:
+    """Liveness is the union of independent sources, each in its own unit.
+
+    A discovery server answers a *random sample* of the group at the lease
+    cadence while mDNS announces every few seconds: judging both with one clock
+    is what made a live master expire between two samples, so each source
+    carries its own unit and only positive evidence can expire a peer.
+    """
+
+    SOURCE = "rdv:rdv.example.net:443"
+
+    @staticmethod
+    def _manager(**kwargs) -> PeerManager:
+        pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0, **kwargs)
+        pm.register_source(TestLivenessSources.SOURCE, unit="samples", window=2.0)
+        return pm
+
+    @staticmethod
+    def _peer(cid: str = "aaa111", *, startup_time: float = 100.0) -> Peer:
+        return Peer(
+            cid=cid,
+            bucket="photos",
+            address="192.168.1.100",
+            port=9753,
+            startup_time=startup_time,
+        )
+
+    def test_a_rendezvous_peer_is_not_judged_by_the_heartbeat_window(self):
+        """Its evidence is a sample counter, so the mDNS clock has nothing to say."""
+        pm = self._manager()
+        pm.add_peer(self._peer(), source=self.SOURCE)
+
+        assert pm._peers["aaa111"].evidence == {self.SOURCE: 0.0}
+        assert [peer.cid for peer in pm.get_alive_peers()] == ["aaa111"]
+
+    def test_an_unanswered_sample_never_expires_a_peer(self):
+        """A query with no answer carries no information: it must not count."""
+        pm = self._manager()
+        pm.add_peer(self._peer(), source=self.SOURCE)
+
+        for _ in range(10):  # ten cadences with no sample at all
+            assert pm.reconcile_stale_peers() is False
+
+        assert pm.get_master_cid() == "aaa111"
+
+    def test_two_answered_samples_without_the_peer_expire_it(self):
+        """Real evidence still fails the group over when the master is gone."""
+        pm = self._manager()
+        pm.add_peer(self._peer(), source=self.SOURCE)
+
+        pm.advance_source(self.SOURCE)  # one answered sample without it
+        assert pm.reconcile_stale_peers() is False
+
+        pm.advance_source(self.SOURCE)  # the window is two answered samples
+        assert pm.reconcile_stale_peers() is True
+        assert pm.get_master_cid() == "zzz999"
+
+    def test_a_live_relay_tunnel_holds_a_peer(self):
+        """A paired tunnel is data-plane evidence, like the WebSocket link."""
+        pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0)
+        pm.add_peer(self._peer())
+        _age_heartbeat(pm._peers["aaa111"], PEER_TIMEOUT + 1)
+
+        pm.mark_relay_tunnel("aaa111", True)
+        assert pm.is_relay_tunnel("aaa111") is True
+        assert pm.reconcile_stale_peers() is False
+        assert pm.get_master_cid() == "aaa111"
+
+        pm.mark_relay_tunnel("aaa111", False)
+        assert pm.reconcile_stale_peers() is True
+        assert pm.get_master_cid() == "zzz999"
+
+    def test_a_heartbeat_peer_is_not_judged_by_the_sample_window(self):
+        """The mirror case: an mDNS peer is held by its own clock, not by samples."""
+        pm = self._manager()
+        pm.add_peer(self._peer())
+
+        for _ in range(10):  # samples that never mention it
+            pm.advance_source(self.SOURCE)
+
+        assert pm.reconcile_stale_peers() is False
+        assert "aaa111" in pm._peers

@@ -27,12 +27,15 @@ def _reset_relay_state() -> None:
     p2p_handler._close_relay_dialer()
     p2p_handler._relay_retry_at = 0.0
     p2p_handler._relay_hint_masters.clear()
+    _PEERS.relay.clear()
     yield
     p2p_handler._close_relay_dialer()
     p2p_handler._relay_retry_at = 0.0
     p2p_handler._relay_hint_masters.clear()
+    _PEERS.relay.clear()
 
 
+from hsync_client.constants import RELAY_SESSION_WAIT_S
 from hsync_client.p2p_handler import _close_relay_dialer, _relay_master_endpoint
 from hsync_client.p2p_rendezvous import RendezvousPlanState
 from hsync_client.rdv_client import RendezvousProtocolError, frame_line
@@ -43,6 +46,22 @@ from hsync_client.rdv_relay import (
     bridge,
     refusal_code,
 )
+
+
+class _Peers:
+    """Minimal peer manager: records the relay-tunnel liveness marks."""
+
+    def __init__(self) -> None:
+        self.relay: dict[str, bool] = {}
+
+    def mark_relay_tunnel(self, cid: str, up: bool) -> None:
+        self.relay[cid] = up
+
+
+# One recorder for the whole module: the adopted tunnel's target must be marked
+# while it is open (``PeerManager.mark_relay_tunnel``); the autouse fixture below
+# clears it between tests.
+_PEERS = _Peers()
 
 
 class _Master:
@@ -58,14 +77,18 @@ class _Dialer:
         *,
         target_cid: str = _Master.cid,
         alive: bool | None = None,
+        session_up: bool | None = None,
     ) -> None:
         self._endpoint = endpoint
         self._target_cid = target_cid
         self.opened = False
         self.closed = False
-        # A tunnel that paired is alive until it is closed; a fake may override
-        # this to describe a tunnel whose QUIC session died.
+        self.waited: list[float] = []
+        # A tunnel that paired is alive (its endpoint is bound) and serving until
+        # it is closed; a fake may override either to describe a tunnel whose QUIC
+        # session died or one that is repairing it.
         self.alive = endpoint is not None if alive is None else alive
+        self.session_up = endpoint is not None if session_up is None else session_up
 
     def open(self, timeout: float = 15.0) -> tuple[str, int] | None:
         self.opened = True
@@ -74,6 +97,11 @@ class _Dialer:
     def close(self) -> None:
         self.closed = True
         self.alive = False
+        self.session_up = False
+
+    def wait_session(self, timeout: float = 5.0) -> tuple[str, int] | None:
+        self.waited.append(timeout)
+        return self._endpoint if self.session_up else None
 
     @property
     def endpoint(self) -> tuple[str, int] | None:
@@ -118,7 +146,7 @@ def test_a_lan_only_plan_never_relays() -> None:
     plan = object.__new__(RendezvousPlanState)
     assert plan.relay_dialer("whatever") is None
     assert plan.relay_acceptor(8443) is None
-    assert _relay_master_endpoint(plan, _Master(), log) is None
+    assert _relay_master_endpoint(plan, _Master(), log, _PEERS) is None
 
 
 def test_the_tunnel_is_opened_only_after_the_direct_candidates_failed() -> None:
@@ -126,7 +154,7 @@ def test_the_tunnel_is_opened_only_after_the_direct_candidates_failed() -> None:
     dialer = _Dialer(("127.0.0.1", 41234))
     plan = _Plan(dialer)
     try:
-        assert _relay_master_endpoint(plan, _Master(), log) == ("127.0.0.1", 41234)
+        assert _relay_master_endpoint(plan, _Master(), log, _PEERS) == ("127.0.0.1", 41234)
         assert plan.asked == [_Master.cid]
         assert dialer.opened is True
         assert p2p_handler._active_relay_dialer is dialer
@@ -146,11 +174,30 @@ def test_a_live_tunnel_to_the_same_master_is_reused(monkeypatch) -> None:
     plan = _Plan(_Dialer(("127.0.0.1", 55555)))
     monkeypatch.setattr(p2p_handler, "_active_relay_dialer", live)
     try:
-        assert _relay_master_endpoint(plan, _Master(), log) == ("127.0.0.1", 41234)
+        assert _relay_master_endpoint(plan, _Master(), log, _PEERS) == ("127.0.0.1", 41234)
     finally:
         _close_relay_dialer()
     assert plan.asked == [], "a live tunnel was replaced"
     assert live.closed is True  # only the teardown closed it
+
+
+def test_a_repairing_tunnel_is_waited_for_not_replaced(monkeypatch) -> None:
+    """A tunnel repairing its session keeps its port; the caller waits for it.
+
+    The endpoint is bound once and the HTTP client and the WebSocket hold pooled
+    connections on it, so binding a new one for a transient drop would strand
+    them (the peer sees an SSL EOF). The cycle reports no endpoint instead, and
+    the tunnel's own repair loop brings the session back.
+    """
+    repairing = _Dialer(("127.0.0.1", 41234), session_up=False)
+    plan = _Plan(_Dialer(("127.0.0.1", 55555)))
+    monkeypatch.setattr(p2p_handler, "_active_relay_dialer", repairing)
+    try:
+        assert _relay_master_endpoint(plan, _Master(), log, _PEERS) is None
+    finally:
+        _close_relay_dialer()
+    assert plan.asked == [], "the repairing tunnel was replaced"
+    assert repairing.waited == [RELAY_SESSION_WAIT_S]
 
 
 def test_a_dead_tunnel_is_replaced(monkeypatch) -> None:
@@ -159,7 +206,7 @@ def test_a_dead_tunnel_is_replaced(monkeypatch) -> None:
     plan = _Plan(_Dialer(("127.0.0.1", 55555)))
     monkeypatch.setattr(p2p_handler, "_active_relay_dialer", dead)
     try:
-        assert _relay_master_endpoint(plan, _Master(), log) == ("127.0.0.1", 55555)
+        assert _relay_master_endpoint(plan, _Master(), log, _PEERS) == ("127.0.0.1", 55555)
     finally:
         _close_relay_dialer()
     assert dead.closed is True
@@ -172,7 +219,7 @@ def test_a_tunnel_to_another_master_is_replaced(monkeypatch) -> None:
     plan = _Plan(_Dialer(("127.0.0.1", 55555)))
     monkeypatch.setattr(p2p_handler, "_active_relay_dialer", other)
     try:
-        assert _relay_master_endpoint(plan, _Master(), log) == ("127.0.0.1", 55555)
+        assert _relay_master_endpoint(plan, _Master(), log, _PEERS) == ("127.0.0.1", 55555)
     finally:
         _close_relay_dialer()
     assert other.closed is True
@@ -183,7 +230,7 @@ def test_a_refused_session_keeps_the_retry_loop() -> None:
     """A node that cannot pair returns ``None``: no tunnel, no state."""
     dialer = _Dialer(None)
     plan = _Plan(dialer)
-    assert _relay_master_endpoint(plan, _Master(), log) is None
+    assert _relay_master_endpoint(plan, _Master(), log, _PEERS) is None
     assert dialer.opened is True
     assert p2p_handler._active_relay_dialer is None
 
@@ -192,8 +239,8 @@ def test_a_refused_relay_is_not_retried_on_every_tick() -> None:
     """A node without the relay must not be re-dialled once per rendezvous tick."""
     dialer = _Dialer(None)
     plan = _Plan(dialer)
-    assert _relay_master_endpoint(plan, _Master(), log) is None
-    assert _relay_master_endpoint(plan, _Master(), log) is None
+    assert _relay_master_endpoint(plan, _Master(), log, _PEERS) is None
+    assert _relay_master_endpoint(plan, _Master(), log, _PEERS) is None
     assert plan.asked == [_Master.cid]
 
 
@@ -207,7 +254,7 @@ def test_a_node_without_the_relay_surfaces_an_actionable_hint(monkeypatch) -> No
     dialer = _RefusingDialer("relay_unavailable")
     plan = _Plan(dialer)
 
-    assert _relay_master_endpoint(plan, _Master(), log) is None
+    assert _relay_master_endpoint(plan, _Master(), log, _PEERS) is None
 
     assert [(w["source"], w["reason"]) for w in warnings] == [("relay", "relay_unavailable")]
     assert "--relay" in warnings[0]["message"]
@@ -219,9 +266,9 @@ def test_the_actionable_hint_is_emitted_once_per_master(monkeypatch) -> None:
     warnings = _capture_warnings(monkeypatch)
     plan = _Plan(_RefusingDialer("relay_unavailable"))
 
-    assert _relay_master_endpoint(plan, _Master(), log) is None
+    assert _relay_master_endpoint(plan, _Master(), log, _PEERS) is None
     p2p_handler._relay_retry_at = 0.0  # next attempt as the loop would
-    assert _relay_master_endpoint(plan, _Master(), log) is None
+    assert _relay_master_endpoint(plan, _Master(), log, _PEERS) is None
 
     assert len(warnings) == 1
 
@@ -230,9 +277,12 @@ def test_a_non_relay_refusal_never_claims_the_relay_is_disabled(monkeypatch) -> 
     """A rate limit or protocol error must not produce the ``--relay`` advice."""
     warnings = _capture_warnings(monkeypatch)
 
-    assert _relay_master_endpoint(_Plan(_RefusingDialer("rate_limited")), _Master(), log) is None
+    assert (
+        _relay_master_endpoint(_Plan(_RefusingDialer("rate_limited")), _Master(), log, _PEERS)
+        is None
+    )
     p2p_handler._relay_retry_at = 0.0
-    assert _relay_master_endpoint(_Plan(_Dialer(None)), _Master(), log) is None
+    assert _relay_master_endpoint(_Plan(_Dialer(None)), _Master(), log, _PEERS) is None
 
     assert warnings == []
     assert p2p_handler._relay_hint_masters == set()
@@ -418,13 +468,104 @@ def test_a_live_tunnel_outlives_a_new_plan_for_the_same_master() -> None:
     first = _Dialer(("127.0.0.1", 40000))
     second = _Dialer(("127.0.0.1", 40001))
     try:
-        _relay_master_endpoint(_Plan(first), _Master(), log)
-        assert _relay_master_endpoint(_Plan(second), _Master(), log) == ("127.0.0.1", 40000)
+        _relay_master_endpoint(_Plan(first), _Master(), log, _PEERS)
+        assert _relay_master_endpoint(_Plan(second), _Master(), log, _PEERS) == ("127.0.0.1", 40000)
         assert first.closed is False
         assert second.opened is False
     finally:
         _close_relay_dialer()
     assert first.closed is True
+
+
+def test_a_dropped_session_is_re_paired_on_the_same_endpoint(monkeypatch) -> None:
+    """A session that dies is repaired underneath the same loopback port.
+
+    The endpoint is what the HTTP client and the WebSocket hold pooled
+    connections on, so re-binding it after a drop would strand them (the peer
+    sees an SSL EOF): the tunnel re-pairs while the port stays put, and only a
+    refused attempt arms the retry backoff.
+    """
+    import contextlib
+
+    import hsync_client.rdv_relay as relay_mod
+    from hsync_client.rdv_relay import RelayDialer
+
+    ok = (
+        json.dumps({"protocol_version": "rdv/1", "type": "relay_ok", "relay_id": "0" * 32}) + "\n"
+    ).encode()
+
+    class _ControlWriter(_FakeWriter):
+        """Control stream whose drains start failing on demand."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.dead = False
+
+        async def drain(self) -> None:
+            if self.dead:
+                raise ConnectionError("the session is gone")
+
+    writers: list[_ControlWriter] = []
+    sessions = 0
+
+    @contextlib.asynccontextmanager
+    async def _fake_quic_session(client):
+        nonlocal sessions
+        sessions += 1
+        writer = _ControlWriter()
+        writers.append(writer)
+        yield _FakeQuic(_FakeReader([ok]), writer)
+
+    monkeypatch.setattr(relay_mod, "_quic_session", _fake_quic_session)
+    monkeypatch.setattr(relay_mod, "RELAY_KEEPALIVE_INTERVAL", 0.0)
+
+    async def scenario() -> tuple[tuple[str, int] | None, tuple[str, int] | None, bool]:
+        client = type("_Client", (), {"timeout": 5.0})()
+        dialer = RelayDialer(
+            client, cid=_Master.cid, bucket="b", target_cid="Zz9Yy8Xx7Ww6Vv5Uu4Tt3"
+        )
+        dialer._stop = asyncio.Event()
+        task = asyncio.create_task(dialer._run())
+        try:
+            for _ in range(400):
+                await asyncio.sleep(0.005)
+                if dialer.session_up and dialer.endpoint is not None:
+                    break
+            before = dialer.endpoint
+            writers[0].dead = True  # the QUIC session dies under the tunnel
+            for _ in range(400):
+                await asyncio.sleep(0.005)
+                if sessions >= 2 and dialer.session_up:
+                    break
+            return before, dialer.endpoint, dialer.session_up
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    before, after, session_up = asyncio.run(scenario())
+
+    assert sessions >= 2, "the dropped session was not re-paired"
+    assert before is not None and before == after, "the endpoint moved on a repair"
+    assert session_up is True
+
+
+def test_an_adopted_tunnel_marks_its_target_alive() -> None:
+    """An open tunnel is liveness evidence for the peer it reaches, and only then.
+
+    The node pairs a relay session only for a target that has a listener, so an
+    open tunnel proves the peer is registered and serving: it must hold the peer
+    even while the discovery samples have stopped reporting it.
+    """
+    dialer = _Dialer(("127.0.0.1", 41234))
+    plan = _Plan(dialer)
+
+    assert _relay_master_endpoint(plan, _Master(), log, _PEERS) == ("127.0.0.1", 41234)
+    assert _PEERS.relay == {_Master.cid: True}
+
+    _close_relay_dialer()
+
+    assert _PEERS.relay == {_Master.cid: False}
 
 
 def test_a_relay_error_line_reports_its_uniform_code() -> None:

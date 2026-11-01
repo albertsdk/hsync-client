@@ -148,12 +148,17 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
 - **Failover via periodic staleness sweep**: a hard-crashed master sends no
   mDNS goodbye and no further announce, so election is also re-run on every
   rendezvous wake and on a slave WebSocket drop
-  (`PeerManager.reconcile_stale_peers`, `p2p_peers.py::PeerManager.reconcile_stale_peers`), which demotes any peer
-  whose heartbeat is older than `HSYNC_PEER_TIMEOUT`. The peer timeout must be
-  ≥ 2× `HSYNC_HEARTBEAT_INTERVAL` (enforced in `config.EnvSettings`) so a
-  single missed announce never flaps a live peer; the survivor only demotes a
-  master whose record is already stale, so a local-link blip never splits the
-  group. The deterministic election alone decides the role.
+  (`PeerManager.reconcile_stale_peers`, `p2p_peers.py::PeerManager.reconcile_stale_peers`), which demotes a
+  peer no source holds any more. Liveness is the union of independent sources,
+  each in its own unit (`p2p_peers.py::LivenessSource`): a heartbeat announce
+  within `HSYNC_PEER_TIMEOUT` (≥ 2× `HSYNC_HEARTBEAT_INTERVAL`, enforced in
+  `config.EnvSettings`, so a single missed announce never flaps a live peer), a
+  discovery server's **answered samples** within `RENDEZVOUS_MISSED_SAMPLES`, or a
+  live data-plane channel (WebSocket, relay tunnel). A source with no information
+  about a peer never counts against it, so a refused or unanswered query cannot
+  expire one; the survivor only demotes a master whose record is already stale,
+  so a local-link blip never splits the group. The deterministic election alone
+  decides the role.
 - **Packaging lock-step**: any `HSYNC_*` flag/default change requires the
   synchronized update of the WD OS5 package, which lives in the
   `hsync-wd-os5` repository (`packaging/Apkg`; see `AGENTS.md`).
