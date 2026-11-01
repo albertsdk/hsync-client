@@ -28,6 +28,9 @@ network without a round trip through the node.
   holds the **raw derived key** in its `bucket=<key>` line: for a passphrase
   group, obtain it once with `hsync derive-group-key` and paste the 64-hex
   output. An open node with no protected buckets needs no key to discover peers.
+  Using the desktop GUI? Set the same shared password on every device in
+  *Settings → p2p Mode → Shared password* — the app sends the group key for you
+  (see the [desktop guide](https://github.com/albertsdk/hsync-desktop/blob/main/docs/secrets.md#the-discovery-server-uses-the-same-password)).
   Node side: the operator stores one `bucket=<key>` line per bucket in the
   rendezvous's group-keys file and repeats `--protected-bucket` once per bucket —
   see the [rendezvous usage → Group keys](https://github.com/albertsdk/hsync-rendezvous/blob/main/docs/usage.md#group-keys---keys-fd----keys-file).
