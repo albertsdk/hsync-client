@@ -28,6 +28,7 @@ row keeps its last progress sample forever.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from time import monotonic
 from typing import Any
@@ -40,17 +41,59 @@ from hsync_client.events import UiEventName, emit_event, emit_progress
 # coarser tick would smooth away the real curve of short transfers.
 PROGRESS_MIN_INTERVAL = 0.25
 
+# Paths whose *delivery* progress the receiver is publishing. A sender counts
+# the bytes it handed to its transport, the receiver counts the bytes it stored:
+# two different totals, so once the receiver reports on a path the sender's own
+# counter must stop feeding that row (they would fight over its scale) until the
+# transfer ends and the path is forgotten.
+_delivery_paths: set[str] = set()
+_delivery_lock = threading.Lock()
+
+
+def note_delivery_progress(path: str) -> None:
+    """Mark *path* as reported by the receiver (``file_progress`` frame)."""
+    with _delivery_lock:
+        _delivery_paths.add(path)
+
+
+def delivery_progress_active(path: str) -> bool:
+    """True when the receiver is publishing the progress of *path*.
+
+    Both the native and the wire form are checked: the receiver addresses a file
+    by its bucket-relative ``/``-separated path, the sender knows it as a local
+    absolute path.
+    """
+    with _delivery_lock:
+        return path in _delivery_paths or path.replace("\\", "/") in _delivery_paths
+
+
+def forget_delivery_progress(path: str) -> None:
+    """Forget the delivery mark of *path* (the transfer ended)."""
+    with _delivery_lock:
+        _delivery_paths.discard(path)
+
 
 class ProgressReporter:
     """Emit throttled ``progress`` events for a single in-flight transfer."""
 
-    __slots__ = ("_path", "_total", "_op", "_last_ts")
+    __slots__ = ("_path", "_total", "_op", "_last_ts", "_echo")
 
-    def __init__(self, path: str, total: int, op: str) -> None:
+    def __init__(
+        self,
+        path: str,
+        total: int,
+        op: str,
+        *,
+        echo: Callable[[int], None] | None = None,
+    ) -> None:
         self._path = path
         self._total = total
         self._op = op
         self._last_ts = 0.0
+        # Receiver-side report of the same sample: the master publishing the
+        # bytes it stored for a peer's upload, so the sender's row shows the
+        # delivery instead of its own transport counter.
+        self._echo = echo
 
     def update(self, transferred: int) -> None:
         now = monotonic()
@@ -60,6 +103,12 @@ class ProgressReporter:
         if not finished and now - self._last_ts < PROGRESS_MIN_INTERVAL:
             return
         self._last_ts = now
+        if self._echo is not None:
+            self._echo(transferred)
+        if self._op == "upload" and delivery_progress_active(self._path):
+            # The receiver is the authority on this path: its samples carry the
+            # file total, this counter the wire one.
+            return
         # Best-effort path: a slow consumer drops samples instead of blocking
         # the thread that moves the bytes.
         emit_progress(
@@ -100,14 +149,17 @@ class ProgressWriter:
         """No-op: the underlying file is owned and closed by the caller."""
 
 
-def progress_reporter(path: str, total: int, op: str) -> ProgressReporter | None:
+def progress_reporter(
+    path: str, total: int, op: str, *, echo: Callable[[int], None] | None = None
+) -> ProgressReporter | None:
     """Return a reporter for *path*, or ``None`` when it is an engine sentinel.
 
     ``.hsynckeep`` files are engine artifacts, never user transfers: the
     Desktop's progress handler has no sentinel filter, so the emitters skip them
-    at the source instead of creating a row for them.
+    at the source instead of creating a row for them. ``echo`` is the
+    receiver-side report of the same sample (see :class:`ProgressReporter`).
     """
-    return None if is_sentinel_file(path) else ProgressReporter(path, total, op)
+    return None if is_sentinel_file(path) else ProgressReporter(path, total, op, echo=echo)
 
 
 def emit_completed_transfer(op: str, path: str, size: int) -> None:
@@ -123,6 +175,7 @@ def emit_completed_transfer(op: str, path: str, size: int) -> None:
     """
     if not path or is_sentinel_file(path):
         return
+    forget_delivery_progress(path)
     emit_event(UiEventName.transfer, op=op, file=path, size=size)
 
 
@@ -137,4 +190,5 @@ def emit_failed_transfer(op: str, path: str, message: str) -> None:
     """
     if not path or is_sentinel_file(path):
         return
+    forget_delivery_progress(path)
     emit_event(UiEventName.transfer_failed, op=op, file=path, message=message)

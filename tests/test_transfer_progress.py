@@ -64,6 +64,91 @@ class TestProgressReporter:
         assert [kw["transferred"] for _name, kw in calls] == [10, 30]
 
 
+class TestDeliveryProgress:
+    """The receiver owns the truth: its samples supersede the sender's counter.
+
+    A sender counts the bytes it handed to its transport, the receiver the bytes
+    it stored — two different totals, so once the master reports on a path
+    (``file_progress``) the local counter must stop feeding that row.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clean_registry(self):
+        progress._delivery_paths.clear()
+        yield
+        progress._delivery_paths.clear()
+
+    @pytest.fixture
+    def captured(self, monkeypatch):
+        calls: list[tuple[str, dict]] = []
+        clock = [0.0]
+        monkeypatch.setattr(progress, "emit_progress", lambda name, **kw: calls.append((name, kw)))
+        monkeypatch.setattr(progress, "monotonic", lambda: clock[0])
+        return calls, clock
+
+    def test_the_reporter_echoes_the_sample_to_the_receiver(self, captured):
+        calls, clock = captured
+        echoed: list[int] = []
+        rep = progress.ProgressReporter("/bucket/f.bin", 100, "download", echo=echoed.append)
+
+        clock[0] = 10.0
+        rep.update(40)
+
+        assert echoed == [40]
+        # The master's own view (it is storing the file) keeps reporting.
+        assert [kw["transferred"] for _n, kw in calls] == [40]
+
+    def test_a_reported_upload_stops_the_local_counter(self, captured):
+        calls, clock = captured
+        rep = progress.ProgressReporter("/bucket/f.bin", 100, "upload")
+
+        clock[0] = 10.0
+        rep.update(40)
+        progress.note_delivery_progress("/bucket/f.bin")
+        clock[0] = 10.5
+        rep.update(100)  # the receiver reports this path now
+
+        assert [kw["transferred"] for _n, kw in calls] == [40]
+
+    def test_a_reported_download_keeps_reporting(self, captured):
+        calls, clock = captured
+        rep = progress.ProgressReporter("/bucket/f.bin", 100, "download")
+
+        clock[0] = 10.0
+        rep.update(40)
+        progress.note_delivery_progress("/bucket/f.bin")
+        clock[0] = 10.5
+        rep.update(100)
+
+        assert [kw["transferred"] for _n, kw in calls] == [40, 100]
+
+    def test_a_wire_separated_mark_matches_a_native_path(self, captured):
+        """The receiver addresses a file with "/" separators, Windows does not."""
+        calls, clock = captured
+        rep = progress.ProgressReporter("C:\\share\\sub\\f.bin", 100, "upload")
+        progress.note_delivery_progress("C:/share/sub/f.bin")
+
+        clock[0] = 10.0
+        rep.update(40)
+
+        assert calls == []
+
+    def test_the_terminal_event_forgets_the_delivery_mark(self, captured):
+        calls, clock = captured
+        progress.note_delivery_progress("/bucket/f.bin")
+
+        progress.emit_completed_transfer("upload", "/bucket/f.bin", 100)
+
+        assert progress.delivery_progress_active("/bucket/f.bin") is False
+
+    def test_a_failed_transfer_forgets_the_delivery_mark(self, captured):
+        progress.note_delivery_progress("/bucket/f.bin")
+
+        progress.emit_failed_transfer("upload", "/bucket/f.bin", "boom")
+
+        assert progress.delivery_progress_active("/bucket/f.bin") is False
+
+
 class TestStreamingBodyProgress:
     """The multipart upload body reports cumulative sent bytes."""
 

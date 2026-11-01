@@ -82,6 +82,7 @@ from hsync_common.protocol.rest import (
     REST_SYMLINKS_SUFFIX,
     REST_TOMBSTONES_SUFFIX,
 )
+from hsync_common.protocol.transfer_progress import build_p2p_file_progress
 from hsync_common.ratelimit import TokenBucketLimiter
 from hsync_common.text import compact_json_bytes
 from hsync_common.time_utils import utc_now_epoch
@@ -412,6 +413,7 @@ class _ServingContext:
         "cid_guard",
         "source_service",
         "inventory_store",
+        "progress_echo",
     )
 
     def __init__(
@@ -423,6 +425,7 @@ class _ServingContext:
         cid_guard: SlaveCidRegistry | None,
         source_service: P2PSourceService | None,
         inventory_store: P2PInventoryStore | None,
+        progress_echo: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> None:
         self.mode = mode
         self.bucket = bucket
@@ -430,6 +433,7 @@ class _ServingContext:
         self.cid_guard = cid_guard
         self.source_service = source_service
         self.inventory_store = inventory_store
+        self.progress_echo = progress_echo
 
 
 # API Configuration
@@ -2192,6 +2196,40 @@ class P2PEndpointMixin(_HTTPTransportBase):
             return False
         return True
 
+    def _upload_progress_echo(
+        self, form_fields: dict[str, str], rel_dest: str, declared_size: int
+    ) -> Callable[[int], None] | None:
+        """The echo of one upload's stored bytes, or ``None`` when there is none.
+
+        Addressed to the uploading CID; the frame's ``total`` is the file size
+        the peer declared, which is the scale the sender's row switches to (its
+        own counter measures the wire payload, a different number).
+        """
+        echo = self.server.progress_echo
+        cid = form_fields.get("cid", "")
+        if echo is None or not cid:
+            return None
+        # The wire path is always "/"-separated (the frame's own contract); the
+        # destination path is native.
+        rel = rel_dest.replace("\\", "/")
+        total = declared_size if declared_size > 0 else 0
+        try:
+            build_p2p_file_progress(file=rel, transferred=0, total=total)
+        except ValueError as exc:
+            # The echo is an optimisation of what the sender displays: an
+            # unaddressable path must never break the upload that carries it.
+            log.debug(f"Not echoing progress for {rel!r}: {exc}")
+            return None
+
+        def report(transferred: int) -> None:
+            try:
+                frame = build_p2p_file_progress(file=rel, transferred=transferred, total=total)
+            except ValueError:
+                return
+            echo(cid, dict(frame))
+
+        return report
+
     def _open_upload_destination(
         self,
         ctx: _UploadContext,
@@ -2291,6 +2329,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
                 dest_path_local,
                 declared_size if declared_size > 0 else 0,
                 "download",
+                echo=self._upload_progress_echo(form_fields, rel_dest, declared_size),
             )
         )
         counted = ProgressWriter(
@@ -3063,6 +3102,12 @@ class P2PServer:
         self._cert_file = cert_file
         self._key_file = key_file
         self._cid_guard = cid_guard
+        # Receiver-side progress echo: the master publishes the bytes it stored
+        # for a peer's upload on that peer's WebSocket session, so the sender's
+        # row shows the delivery instead of its own transport counter. Wired by
+        # the serving role (``p2p_handler``); ``None`` leaves the sender with
+        # its own counter.
+        self._progress_echo: Callable[[str, dict[str, Any]], None] | None = None
         # Stable reference kept across role changes: the seeder installs
         # ``cid_guard=None`` in its context, but the shared registry must survive
         # so a later master role still enforces duplicate-identity checks.
@@ -3086,6 +3131,7 @@ class P2PServer:
             cid_guard=self._cid_guard,
             source_service=self._source_service,
             inventory_store=self._inventory_store,
+            progress_echo=self._progress_echo,
         )
         self._loop: asyncio.AbstractEventLoop | None = None
         self._runner: web.AppRunner | None = None
@@ -3110,6 +3156,19 @@ class P2PServer:
         # Validate HTTPS configuration
         if use_https and (not cert_file or not key_file):
             raise ValueError("cert_file and key_file are required when use_https=True")
+
+    def set_progress_echo(self, echo: Callable[[str, dict[str, Any]], None] | None) -> None:
+        """Install the receiver-side progress echo (``echo(cid, frame)``).
+
+        The serving role wires it to the WebSocket control plane so the peer
+        uploading a file learns the bytes this master stored, instead of relying
+        on its own transport counter. The hook reaches the request handlers
+        through the serving context (``_ServingContext.progress_echo``), which
+        is what the endpoint mixin reads; ``None`` disables the echo.
+        """
+        self._progress_echo = echo
+        if self._serving_context is not None:
+            self._serving_context.progress_echo = echo
 
     @property
     def port(self) -> int:
@@ -3191,6 +3250,7 @@ class P2PServer:
             cid_guard=cid_guard,
             source_service=source_service,
             inventory_store=inventory_store,
+            progress_echo=self._progress_echo,
         )
         # A role that serves events re-opens the control plane's push gate
         # (symmetric with stop_serving): the hub may have been left gated by an

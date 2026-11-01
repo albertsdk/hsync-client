@@ -847,6 +847,10 @@ def _run_as_master(
             else peer_manager.mark_peer_disconnected(cid)
         )
     )
+    # The receiver owns the truth about an upload: publish the bytes this master
+    # stored on the uploader's own session, so the sender's row shows the
+    # delivery instead of its own transport counter.
+    p2p_server.set_progress_echo(p2p_ws_server.send_to_sync)
     p2p_ws_server.set_inventory_store(inventory_store)
 
     # Install the master role on the process-wide listener.

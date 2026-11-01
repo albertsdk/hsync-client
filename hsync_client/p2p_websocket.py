@@ -69,6 +69,10 @@ from hsync_common.protocol.rest import (
     REST_FILES_SUFFIX,
     rest_bucket_path,
 )
+from hsync_common.protocol.transfer_progress import (
+    P2P_FILE_PROGRESS_TYPE,
+    validate_p2p_file_progress,
+)
 from hsync_common.text import compact_json_str, escape_loguru_markup
 from loguru import logger as log
 from watchdog.events import (
@@ -94,7 +98,7 @@ from hsync_client.event_dispatch import (
     apply_inbound_event,
     drain_file_downloads,
 )
-from hsync_client.events import UiEventName, emit_event
+from hsync_client.events import UiEventName, emit_event, emit_progress
 from hsync_client.file_event_handler import (
     MODIFIED_DEBOUNCE_INTERVAL,
     SUPPORTS_ON_CLOSED,
@@ -113,6 +117,7 @@ from hsync_client.p2p_inventory import (
 )
 from hsync_client.p2p_sources import P2PSourceResolver
 from hsync_client.pools import log_future_error
+from hsync_client.progress import note_delivery_progress
 from hsync_client.upload_scheduler import PerPathUploadScheduler
 from hsync_client.utils import (
     cid_suffix,
@@ -331,6 +336,12 @@ class SlaveCidRegistry:
             stale = bound[1] if bound is not None else None
             self._entries[cid] = (normalized, websocket)
             return True, stale
+
+    def websocket_for(self, cid: str) -> Any | None:
+        """The live WebSocket bound to *cid*, or ``None`` when it is not connected."""
+        with self._lock:
+            entry = self._entries.get(cid)
+        return entry[1] if entry is not None else None
 
     def release(self, cid: str, websocket: Any) -> bool:
         """Drop the *cid* binding, but only if it still belongs to *websocket*.
@@ -966,6 +977,29 @@ class P2PWebSocketServer:
         if self._loop and self._running and self._publishing:
             asyncio.run_coroutine_threadsafe(self.broadcast(event_dict), self._loop)
 
+    async def send_to(self, cid: str, event_dict: dict) -> None:
+        """Send one frame to a single connected peer.
+
+        Addressed by CID, so the bytes a master stored for one peer's upload
+        reach that peer alone — a broadcast would tell every slave about a
+        transfer it is not part of.
+        """
+        if not self._publishing:
+            return
+        websocket = self._cid_registry.websocket_for(cid)
+        if websocket is None:
+            return
+        try:
+            await websocket.send_str(compact_json_str(event_dict))
+        except Exception:
+            with self._clients_lock:
+                self._clients.discard(websocket)
+
+    def send_to_sync(self, cid: str, event_dict: dict) -> None:
+        """Send one frame to a single peer from a non-loop thread."""
+        if self._loop and self._running and self._publishing:
+            asyncio.run_coroutine_threadsafe(self.send_to(cid, event_dict), self._loop)
+
     def set_publishing(self, enabled: bool) -> None:
         """Gate event pushes on the current role.
 
@@ -1326,6 +1360,36 @@ class P2PMasterFileEventHandler(BaseFileEventHandler):
 # =============================================================================
 
 
+def _apply_master_progress(event_data: dict) -> bool:
+    """Render the master's delivery progress for this node's own upload.
+
+    The master reports the bytes it stored (``file_progress``) — the only honest
+    measure of an upload, since this node's own counter measures what it handed
+    to its transport. The path is also marked so the local counter stops feeding
+    the same row. Returns ``True`` when the frame was a progress report.
+    """
+    if event_data.get("type") != P2P_FILE_PROGRESS_TYPE:
+        return False
+    frame = validate_p2p_file_progress(event_data)
+    if frame is None:
+        log.warning("Invalid file_progress frame from master")
+        return True
+    rel = frame["file"]
+    bucket = CONFIG.get("LOCAL_BUCKET", "")
+    if bucket:
+        # The local counter knows the file by its absolute path.
+        note_delivery_progress(os.path.normpath(os.path.join(bucket, rel)))
+    note_delivery_progress(rel)
+    emit_progress(
+        UiEventName.progress,
+        file=rel,
+        transferred=frame["transferred"],
+        total=frame["total"],
+        op="upload",
+    )
+    return True
+
+
 async def p2p_websocket_client(
     host: str,
     port: int,
@@ -1586,6 +1650,8 @@ async def p2p_websocket_client(
                         continue
                     if not isinstance(event_data, dict):
                         log.warning("Invalid non-object event from master")
+                        continue
+                    if _apply_master_progress(event_data):
                         continue
                     await _handle_p2p_event(event_data, _slave_event_handler, ctx)
                 except json.JSONDecodeError as e:

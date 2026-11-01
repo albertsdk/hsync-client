@@ -232,3 +232,31 @@ class TestReceivedUploadProgress:
         assert transfers[0]["op"] == "download"
         assert transfers[0]["size"] == len(_PAYLOAD)
         assert transfers[0]["file"].endswith("received.bin")
+
+    def test_the_master_echoes_its_received_bytes_to_the_uploader(self, server, tmp_path, events):
+        """The uploader learns what the master stored, not what its socket took."""
+        import time
+
+        srv, port = server
+        echoed: list[tuple[str, dict]] = []
+        srv.set_progress_echo(lambda cid, frame: echoed.append((cid, frame)))
+
+        with patch(
+            "hsync_client.p2p_server.CONFIG",
+            unauth_write_config(tmp_path, MIN_FREE_DISK_SPACE=0, MAX_INBOUND_SIZE=0),
+        ):
+            response = _post_file(port, _PAYLOAD)
+
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not (
+            echoed and echoed[-1][1]["transferred"] == len(_PAYLOAD)
+        ):
+            time.sleep(0.01)
+
+        assert response.status_code == 201
+        assert echoed, "the master must report the bytes it stored"
+        assert {cid for cid, _frame in echoed} == {"PeerCid000000000000"}
+        assert {frame["type"] for _cid, frame in echoed} == {"file_progress"}
+        assert echoed[-1][1]["file"] == "received.bin"
+        assert echoed[-1][1]["transferred"] == len(_PAYLOAD)
+        assert echoed[-1][1]["total"] == len(_PAYLOAD)

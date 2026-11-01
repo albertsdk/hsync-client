@@ -20,6 +20,62 @@ from watchdog.events import (
 from hsync_client.p2p_websocket import P2PSlaveFileEventHandler
 
 
+class TestMasterProgressEcho:
+    """The master's ``file_progress`` frame drives the uploader's own row.
+
+    The sender counts the bytes it handed to its transport, the master counts
+    the bytes it stored: the frame carries the second, and it also stands the
+    local counter down so the row never mixes the two scales.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clean_registry(self):
+        from hsync_client import progress as progress_mod
+
+        progress_mod._delivery_paths.clear()
+        yield
+        progress_mod._delivery_paths.clear()
+
+    @pytest.fixture
+    def captured(self, monkeypatch):
+        from hsync_client import p2p_websocket as ws
+
+        calls: list[tuple[str, dict]] = []
+        monkeypatch.setattr(ws, "emit_progress", lambda name, **kw: calls.append((name, kw)))
+        monkeypatch.setattr(ws, "CONFIG", {"LOCAL_BUCKET": "/share"})
+        return calls
+
+    def test_the_frame_becomes_a_local_upload_sample(self, captured):
+        from hsync_client import p2p_websocket as ws
+        from hsync_client import progress as progress_mod
+
+        handled = ws._apply_master_progress(
+            {"type": "file_progress", "file": "sub/f.bin", "transferred": 40, "total": 100}
+        )
+
+        assert handled is True
+        assert captured == [
+            (
+                ws.UiEventName.progress,
+                {"file": "sub/f.bin", "transferred": 40, "total": 100, "op": "upload"},
+            )
+        ]
+        # Marked in both forms: the local counter knows the absolute path.
+        assert progress_mod.delivery_progress_active("/share/sub/f.bin") is True
+
+    def test_another_frame_is_not_handled(self, captured):
+        from hsync_client import p2p_websocket as ws
+
+        assert ws._apply_master_progress({"type": "file_event", "name": "added"}) is False
+        assert captured == []
+
+    def test_a_malformed_frame_is_dropped(self, captured):
+        from hsync_client import p2p_websocket as ws
+
+        assert ws._apply_master_progress({"type": "file_progress", "file": "a.bin"}) is True
+        assert captured == []
+
+
 class TestSlaveFileEventHandler:
     """Tests for P2PSlaveFileEventHandler class."""
 

@@ -191,6 +191,18 @@ socket error). A **committed upload publishes it on both success responses** —
 event: the Desktop asks for a status refresh when an in-flight row stops
 reporting, so a lost event cannot leave a bar frozen.
 
+An upload's progress belongs to the receiver: the master publishes the bytes it
+stored for a peer's upload as a unicast ``file_progress`` frame on that peer's
+session (``p2p_server.py::P2PServer._upload_progress_echo``, wired to
+``p2p_websocket.py::P2PWebSocketServer.send_to_sync`` by the serving role); the
+uploading slave turns it into a local ``progress`` sample
+(``p2p_websocket.py::_apply_master_progress``) and marks the path, so its own
+transport counter — a different total — stops feeding the same row
+(``progress.py::note_delivery_progress`` /
+``progress.py::delivery_progress_active``, cleared by the terminal event). The
+frame's ``total`` is the file size the sender declared, which is the scale the
+row switches to.
+
 The upload request itself is bounded by an **inactivity window** derived from
 the body size (`utils/http.py::upload_timeout` →
 `utils/http.py::upload_stall_timeout`), not a total budget and not a fixed

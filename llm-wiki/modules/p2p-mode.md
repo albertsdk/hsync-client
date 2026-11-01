@@ -447,6 +447,17 @@ the lossless path. Covered by `tests/test_p2p_server_progress.py`,
 `tests/test_p2p_delta.py` and the black-box
 `tests/test_bb_p2p_master_progress.py`.
 
+**The receiver owns the progress of an upload it receives**: a sender knows only
+what it handed to its transport, the master knows what it stored, so the
+receiving side publishes `file_progress` frames on the uploader's own session
+(`p2p_server.py::P2PServer._upload_progress_echo` →
+`p2p_websocket.py::P2PWebSocketServer.send_to_sync`) and the uploading slave
+renders them as its own `progress` samples
+(`p2p_websocket.py::_apply_master_progress`), standing its local counter down
+for that path (`progress.py::note_delivery_progress`). The frame is defined once
+in `hsync-common` (`hsync_common/protocol/transfer_progress.py`, schema
+`protocol/p2p/wss-schema.json`, fixture `p2p-wss-file-progress`).
+
 The reconcile action `transfer.delete_file_remote` speaks **both transports'
 DELETE contracts**: form fields (`filename`, `cid`) against the central server
 and query params (`path`, `is_dir`, `cid`) against the p2p master

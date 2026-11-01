@@ -12,7 +12,7 @@ import hashlib
 import hmac
 import re
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sized
 from contextlib import suppress
 from dataclasses import dataclass
 from os import close, fsync, remove, replace, stat_result, utime
@@ -2319,16 +2319,17 @@ def _handle_upload_response(file: File, response, t0: float) -> None:
 def _post_streaming_body(uri: str, headers: dict[str, str], body: Any) -> Any:
     """POST a streamed multipart body with the transfer SSL/timeout policy.
 
-    The inactivity window is derived from the body length (``__len__`` is the
-    exact ``Content-Length`` ``requests`` frames the request with), so a large
-    upload is not failed for being slow while a peer that stops accepting is.
+    The inactivity window is derived from the body length (``_SizedStreamingBody``
+    exposes the exact ``Content-Length`` ``requests`` frames the request with), so
+    a large upload is not failed for being slow while a peer that stops accepting
+    is. A body without a length falls back to the window's floor.
     """
     return post(
         uri,
         headers=headers,
         data=body,
         verify=get_ssl_verify(),
-        timeout=_upload_timeout(len(body)),
+        timeout=_upload_timeout(len(body) if isinstance(body, Sized) else 0),
     )
 
 
