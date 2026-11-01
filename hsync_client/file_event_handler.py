@@ -174,6 +174,19 @@ def fold_metadata_touch(last_ts: dict[str, float], path: str) -> bool:
     return False
 
 
+def content_unchanged(current_hash: str | None, propagated_hash: str | None) -> bool:
+    """True when a file's content still matches the version already propagated.
+
+    The single rule behind a metadata-only ``[TOUCH]``: a chmod/utime — or a
+    writer's mid-write mtime burst — must propagate metadata only while the bytes
+    are still those the peers hold. Shared by ``BaseFileEventHandler`` (Server
+    Mode and p2p master, against the in-memory ``_last_broadcast_hash``) and
+    ``P2PSlaveFileEventHandler`` (p2p slave, against the recorded merge base
+    ``sync_state.get_base_hash``), so every mode decides the same way.
+    """
+    return bool(current_hash) and current_hash == propagated_hash
+
+
 def touch_log_line(src_path: str, size: int, cid_suffix: str = "") -> str:
     """Build the ``[TOUCH]`` line: the path plus the bytes currently on disk.
 
@@ -472,7 +485,9 @@ class BaseFileEventHandler(FileSystemEventHandler):
             # differently and is handled by on_closed), so a partial read is
             # never broadcast as a metadata-only change.
             file_obj = File.get(src_path)
-            if file_obj and file_obj.sha256sum == self._last_broadcast_hash.get(src_path):
+            if file_obj and content_unchanged(
+                file_obj.sha256sum, self._last_broadcast_hash.get(src_path)
+            ):
                 if fold_metadata_touch(self._last_touch_ts, src_path):
                     log.debug(f'Fold repeated touch: "{src_path}"')
                     return
@@ -803,7 +818,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
             invalidate_sha256_cache(src_path)
             file_obj = File.get(src_path)
             if file_obj:
-                if file_obj.sha256sum == self._last_broadcast_hash.get(src_path):
+                if content_unchanged(file_obj.sha256sum, self._last_broadcast_hash.get(src_path)):
                     prev = self._last_broadcast_stat.get(src_path)
                     if prev is not None and current_stat[2] != prev[2]:
                         # Identical content, different mode: a chmod-only

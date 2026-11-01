@@ -99,6 +99,7 @@ from hsync_client.file_event_handler import (
     SUPPORTS_ON_CLOSED,
     BaseFileEventHandler,
     classify_stat_change,
+    content_unchanged,
     fold_metadata_touch,
     touch_log_line,
 )
@@ -2371,6 +2372,15 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
             if change == "mtime":
                 file_obj = File.get(src_path)
                 if file_obj is None:
+                    return
+                # Metadata-only propagation is for a content-identical touch:
+                # while a writer is still appending, the bytes differ from the
+                # version the peers hold, so the content path (on_closed →
+                # upload) owns the change — pushing the metadata here would
+                # advertise a version that never corresponded to real content.
+                from hsync_client.sync_state import get_base_hash
+
+                if not content_unchanged(file_obj.sha256sum, get_base_hash(src_path)):
                     return
                 if fold_metadata_touch(self._last_touch_ts, src_path):
                     log.debug(f'Fold repeated touch: "{src_path}"')

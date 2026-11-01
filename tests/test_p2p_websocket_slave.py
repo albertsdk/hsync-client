@@ -598,17 +598,43 @@ class TestSlaveFileEventHandler:
         assert len(handler._pending_ops) == 0
 
     def test_on_modified_touch_propagates_metadata(self, handler, tmp_path, monkeypatch):
-        """A slave-local touch (mode unchanged, mtime changed) is pushed."""
+        """A slave-local content-identical touch is pushed."""
+        from hsync_common.models.file import File
+
+        from hsync_client import sync_state
+
         p = tmp_path / "f.txt"
         p.write_bytes(b"content")
         handler._last_mode[str(p)] = p.stat().st_mode & 0o7777
         handler._last_mtime[str(p)] = 1  # a stale mtime so the touch is detected
+        base = File.get(str(p)).sha256sum
+        monkeypatch.setattr(sync_state, "get_base_hash", lambda _p: base)
         seen: list[str] = []
         monkeypatch.setattr(handler, "_propagate_metadata_change", seen.append)
 
         handler.on_modified(FileModifiedEvent(str(p)))
 
         assert seen == [str(p)]
+
+    def test_on_modified_mid_write_touch_does_not_propagate(self, handler, tmp_path, monkeypatch):
+        """A touch on content the peers do not hold yet is not a metadata change."""
+        from hsync_common.models.file import File
+
+        from hsync_client import sync_state
+
+        p = tmp_path / "f.txt"
+        p.write_bytes(b"content")
+        handler._last_mode[str(p)] = p.stat().st_mode & 0o7777
+        handler._last_mtime[str(p)] = 1
+        # The peers still hold a different (older/partial) version of the file.
+        assert File.get(str(p)).sha256sum != "a" * 64
+        monkeypatch.setattr(sync_state, "get_base_hash", lambda _p: "a" * 64)
+        seen: list[str] = []
+        monkeypatch.setattr(handler, "_propagate_metadata_change", seen.append)
+
+        handler.on_modified(FileModifiedEvent(str(p)))
+
+        assert seen == []
 
     def test_on_modified_unchanged_does_not_propagate(self, handler, tmp_path, monkeypatch):
         """No metadata push when neither mode nor mtime changed."""
@@ -626,8 +652,14 @@ class TestSlaveFileEventHandler:
 
     def test_on_modified_touch_folded_within_the_window(self, handler, tmp_path, monkeypatch):
         """A burst of slave-local touches logs and pushes once per fold window."""
+        from hsync_common.models.file import File
+
+        from hsync_client import sync_state
+
         p = tmp_path / "f.txt"
         p.write_bytes(b"content")
+        base = File.get(str(p)).sha256sum
+        monkeypatch.setattr(sync_state, "get_base_hash", lambda _p: base)
         seen: list[str] = []
         monkeypatch.setattr(handler, "_propagate_metadata_change", seen.append)
 
@@ -641,10 +673,15 @@ class TestSlaveFileEventHandler:
     def test_on_modified_touch_propagates_again_after_the_window(
         self, handler, tmp_path, monkeypatch
     ):
+        from hsync_common.models.file import File
+
         from hsync_client import file_event_handler as feh
+        from hsync_client import sync_state
 
         p = tmp_path / "f.txt"
         p.write_bytes(b"content")
+        base = File.get(str(p)).sha256sum
+        monkeypatch.setattr(sync_state, "get_base_hash", lambda _p: base)
         seen: list[str] = []
         monkeypatch.setattr(handler, "_propagate_metadata_change", seen.append)
         monkeypatch.setattr(feh, "TOUCH_FOLD_WINDOW", 0)

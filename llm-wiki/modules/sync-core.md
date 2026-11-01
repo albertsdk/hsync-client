@@ -630,25 +630,24 @@ preceding no-op close):
   file as "unchanged", silently losing the upload); both are kept in step with
   the last *propagated* content in `_record_broadcast` and invalidated on
   rename/delete/eviction.
-- **``[TOUCH]`` line and fold window**: the line carries the file's *current*
-  on-disk size (`file_event_handler.py::touch_log_line`, `format_bytes`), never
-  a final one — a writer may still be appending, and the growing figure is what
-  tells an operator the event is a write in progress rather than a settled
-  metadata-only touch. A writer emits a burst of mtime-only events within
-  milliseconds, each with a **distinct** mtime (so the stat dedup cannot
-  collapse them): `file_event_handler.py::fold_metadata_touch` folds the repeats
-  for the same path inside `file_event_handler.py::TOUCH_FOLD_WINDOW` (0.5s),
-  one line and one propagation per window, mirroring the directory
-  `DIR_MODIFY_WINDOW`. The final mtime still propagates on the close event
-  (`on_closed` → `_process_file_ready`) or on the first change after the window.
-  The helper is shared with `p2p_websocket.py::P2PSlaveFileEventHandler.on_modified`,
-  so the label reads the same in Server Mode, p2p master (which inherits the base
-  handler) and p2p slave.
-  **Known divergence (follow-up)**: the slave's TOUCH path has no
-  content-identity guard (the base requires
-  `sha256sum == _last_broadcast_hash`), so it can push a metadata-only PATCH for
-  a file still being written; unifying it needs its own design, because the
-  slave has no last-propagated-hash map.
+- **``[TOUCH]`` line, content guard and fold window**: a metadata-only touch
+  propagates only while the bytes still match the version the peers hold —
+  `file_event_handler.py::content_unchanged`, evaluated against the in-memory
+  `_last_broadcast_hash` in Server Mode and on the p2p master (both through
+  `BaseFileEventHandler`) and against the recorded merge base
+  (`sync_state.get_base_hash`) on the p2p slave. A writer's mid-write burst
+  therefore never advertises a version that never corresponded to real content;
+  the content path (`on_closed` → upload) owns those events. The line carries
+  the file's *current* on-disk size (`file_event_handler.py::touch_log_line`,
+  `format_bytes`), never a final one — a writer may still be appending, and the
+  growing figure tells an operator the event is a write in progress rather than
+  a settled touch. Repeated mtime changes for the same path (each with a
+  **distinct** mtime, so the stat dedup cannot collapse them) fold inside
+  `file_event_handler.py::TOUCH_FOLD_WINDOW` (0.5s) through
+  `file_event_handler.py::fold_metadata_touch`: one line and one propagation per
+  window, mirroring the directory `DIR_MODIFY_WINDOW`. The final mtime still
+  propagates on the close event (`on_closed` → `_process_file_ready`) or on the
+  first change after the window.
 - **Non-inotify platforms**: the same mode comparison lives in stage 2 of
   `_process_file_ready` — a hash match with a different mode triggers the hook
   instead of the skip.

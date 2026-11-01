@@ -2207,6 +2207,14 @@ class TestMetadataTouchLog:
 
         assert line == f'[TOUCH] mtime change: "/bucket/song.mp3" {format_bytes(size)}'
 
+    def test_content_unchanged_is_the_touch_rule(self):
+        from hsync_client.file_event_handler import content_unchanged
+
+        assert content_unchanged("abc", "abc") is True
+        assert content_unchanged("abc", "def") is False  # the bytes moved on
+        assert content_unchanged("abc", None) is False  # never propagated
+        assert content_unchanged("", "abc") is False  # no real identity
+
     def test_the_fold_folds_a_repeat_and_allows_a_later_change(self, monkeypatch):
         from hsync_client import file_event_handler as feh
 
