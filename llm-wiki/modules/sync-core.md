@@ -191,12 +191,17 @@ socket error). A **committed upload publishes it on both success responses** —
 event: the Desktop asks for a status refresh when an in-flight row stops
 reporting, so a lost event cannot leave a bar frozen.
 
-The upload request itself is bounded by a **stall** timeout
-(`utils/http.py::upload_timeout` → `constants.py::UPLOAD_STALL_TIMEOUT_S`), not a
-total budget: the socket timer resets on every byte, so a slow link uploads to
-completion while a peer that stops accepting — or a relay that stops forwarding
-the body — fails the request and hands it to the retry policy, instead of leaving
-the transfer, and its Desktop row, in flight forever.
+The upload request itself is bounded by an **inactivity window** derived from
+the body size (`utils/http.py::upload_timeout` →
+`utils/http.py::upload_stall_timeout`), not a total budget and not a fixed
+number: the socket timer resets on every byte, so a slow link uploads to
+completion, while the window is what the body takes at
+`constants.py::MIN_BANDWIDTH_BPS` plus `constants.py::UPLOAD_STALL_TIMEOUT_S`,
+capped by `constants.py::UPLOAD_STALL_TIMEOUT_MAX_S` — the same policy family as
+the WebSocket drain budget (`p2p_websocket.py::wait_pending`). A peer that stops
+accepting — or a relay that stops forwarding the body — fails the request after
+that silence and hands it to the retry policy, instead of leaving the transfer,
+and its Desktop row, in flight forever.
 
 `progress` samples travel on a non-blocking, lock-free path
 (`events.py::EventEmitter.emit_progress`: one `os.write` on a duplicated

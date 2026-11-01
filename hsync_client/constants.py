@@ -219,9 +219,18 @@ HTTP_TIMEOUT_DEFAULT = _defaults.HTTP_TIMEOUT_DEFAULT
 # socket timer resets on every byte, so a slow link uploads to completion while
 # a silent peer — or a dropped relay that never forwards the body — fails the
 # request instead of leaving the transfer (and its Desktop row) in flight
-# forever. Downloads have their own bounded read timeout; the upload is the
-# request that streams a body.
+# forever. The window is derived from the body size at the conservative minimum
+# bandwidth below, exactly like the WebSocket drain budget
+# (``p2p_websocket.py::wait_pending``): ``UPLOAD_STALL_TIMEOUT_S`` is the floor
+# for a small body, ``UPLOAD_STALL_TIMEOUT_MAX_S`` the hard cap.
 UPLOAD_STALL_TIMEOUT_S = 60.0
+UPLOAD_STALL_TIMEOUT_MAX_S = 30 * 60
+
+# Conservative minimum effective bandwidth (bytes/second) assumed when a timeout
+# is derived from a byte count instead of a fixed budget: the WebSocket drain
+# budget uses it for the bytes still in flight, the upload stall window for the
+# request body.
+MIN_BANDWIDTH_BPS = 10 * 1024 * 1024
 
 # P2P heartbeat / peer timeout defaults (seconds)
 HEARTBEAT_INTERVAL = 5

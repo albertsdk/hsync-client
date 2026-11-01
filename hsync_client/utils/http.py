@@ -8,7 +8,12 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
 from hsync_client.config import CONFIG
-from hsync_client.constants import HTTP_TIMEOUT_DEFAULT, UPLOAD_STALL_TIMEOUT_S
+from hsync_client.constants import (
+    HTTP_TIMEOUT_DEFAULT,
+    MIN_BANDWIDTH_BPS,
+    UPLOAD_STALL_TIMEOUT_MAX_S,
+    UPLOAD_STALL_TIMEOUT_S,
+)
 
 if TYPE_CHECKING:
     from requests import Response, Session
@@ -57,15 +62,30 @@ def http_connect_timeout() -> float:
     return float(CONFIG.get("HTTP_TIMEOUT", HTTP_TIMEOUT_DEFAULT))
 
 
-def upload_timeout() -> tuple[float, float]:
-    """Upload-style timeout: connect-bounded, stalled I/O bounded.
+def upload_stall_timeout(content_length: int) -> float:
+    """Inactivity window for an upload body of *content_length* bytes.
 
-    Not a total budget: the socket timer resets on every byte, so a slow link
-    uploads to completion while a peer that stops accepting (or a relay that
-    stops forwarding) fails the request instead of leaving the transfer — and
-    its Desktop row — in flight forever.
+    The body is assumed to move at ``MIN_BANDWIDTH_BPS``, so the window is what
+    that takes plus the floor, capped by ``UPLOAD_STALL_TIMEOUT_MAX_S``: the
+    bigger the request, the longer a silent pause may last before it is called a
+    stall. The socket timer resets on every byte, so this is an inactivity
+    window, never a total budget — a slow link uploads to completion.
     """
-    return (http_connect_timeout(), UPLOAD_STALL_TIMEOUT_S)
+    bandwidth_seconds = max(0, content_length) / MIN_BANDWIDTH_BPS
+    return min(
+        max(UPLOAD_STALL_TIMEOUT_S, bandwidth_seconds + UPLOAD_STALL_TIMEOUT_S),
+        UPLOAD_STALL_TIMEOUT_MAX_S,
+    )
+
+
+def upload_timeout(content_length: int = 0) -> tuple[float, float]:
+    """Upload-style timeout: connect-bounded, inactivity-bounded.
+
+    A peer that stops accepting — or a relay that stops forwarding the body —
+    fails the request after the inactivity window instead of leaving the
+    transfer, and its Desktop row, in flight forever.
+    """
+    return (http_connect_timeout(), upload_stall_timeout(content_length))
 
 
 def redact_headers[T: Mapping[str, object]](headers: T) -> T:

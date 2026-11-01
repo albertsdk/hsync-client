@@ -2317,13 +2317,18 @@ def _handle_upload_response(file: File, response, t0: float) -> None:
 
 
 def _post_streaming_body(uri: str, headers: dict[str, str], body: Any) -> Any:
-    """POST a streamed multipart body with the transfer SSL/timeout policy."""
+    """POST a streamed multipart body with the transfer SSL/timeout policy.
+
+    The inactivity window is derived from the body length (``__len__`` is the
+    exact ``Content-Length`` ``requests`` frames the request with), so a large
+    upload is not failed for being slow while a peer that stops accepting is.
+    """
     return post(
         uri,
         headers=headers,
         data=body,
         verify=get_ssl_verify(),
-        timeout=_upload_timeout(),
+        timeout=_upload_timeout(len(body)),
     )
 
 

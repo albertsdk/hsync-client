@@ -190,7 +190,7 @@ class TestSlaveFileEventHandler:
         base timeout) must not be aborted at the 1s base timeout; we cap
         runtime to ~1s by joining a quick stub op but inspect the log to
         confirm the effective timeout was scaled."""
-        from hsync_client.p2p_websocket import MIN_BANDWIDTH_BPS
+        from hsync_client.constants import MIN_BANDWIDTH_BPS
 
         def quick():
             time.sleep(0.05)

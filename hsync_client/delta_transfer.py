@@ -327,7 +327,7 @@ def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:
             headers=headers,
             data=body,
             verify=get_ssl_verify(),
-            timeout=_upload_timeout(),
+            timeout=_upload_timeout(len(body)),
         )
 
         if response.status_code == 409:

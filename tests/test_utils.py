@@ -32,21 +32,49 @@ from hsync_client.utils import (
 
 
 class TestUploadTimeout:
-    """An upload request is bounded by a stall timeout, never by nothing.
+    """The upload inactivity window is derived from the body, like the drain.
 
     An unbounded read left a transfer whose peer stopped answering — a dropped
     relay, a wedged master — in flight forever: no progress sample, no terminal
-    event, and a Desktop row stuck at its last percentage.
+    event, and a Desktop row stuck at its last percentage. A fixed window is the
+    other extreme (a big body on a slow link would be failed for being slow), so
+    the window is what the body takes at a conservative minimum bandwidth plus
+    the floor, capped.
     """
 
-    def test_the_io_side_is_bounded(self):
+    def test_a_small_body_gets_the_floor(self):
         from hsync_client.constants import UPLOAD_STALL_TIMEOUT_S
         from hsync_client.utils.http import upload_timeout
 
-        connect, io_timeout = upload_timeout()
+        connect, io_timeout = upload_timeout(1_000)
 
         assert connect > 0
-        assert io_timeout == UPLOAD_STALL_TIMEOUT_S
+        # Its own transfer time at the assumed bandwidth is negligible, so the
+        # window is the floor.
+        assert UPLOAD_STALL_TIMEOUT_S <= io_timeout < UPLOAD_STALL_TIMEOUT_S + 1
+
+    def test_a_large_body_gets_a_window_proportional_to_its_size(self):
+        from hsync_client.constants import (
+            MIN_BANDWIDTH_BPS,
+            UPLOAD_STALL_TIMEOUT_S,
+        )
+        from hsync_client.utils.http import upload_stall_timeout
+
+        size = 1024 * 1024 * 1024  # 1 GiB
+
+        assert upload_stall_timeout(size) == size / MIN_BANDWIDTH_BPS + UPLOAD_STALL_TIMEOUT_S
+
+    def test_the_window_is_capped(self):
+        from hsync_client.constants import UPLOAD_STALL_TIMEOUT_MAX_S
+        from hsync_client.utils.http import upload_stall_timeout
+
+        assert upload_stall_timeout(10**15) == UPLOAD_STALL_TIMEOUT_MAX_S
+
+    def test_an_unknown_length_still_has_a_window(self):
+        from hsync_client.constants import UPLOAD_STALL_TIMEOUT_S
+        from hsync_client.utils.http import upload_stall_timeout
+
+        assert upload_stall_timeout(0) == UPLOAD_STALL_TIMEOUT_S
 
 
 class TestIsValidLogfile:

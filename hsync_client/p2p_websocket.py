@@ -83,6 +83,7 @@ from hsync_client.capabilities import adopt_remote_capabilities, local_capabilit
 from hsync_client.config import CONFIG, deletions_are_kept
 from hsync_client.constants import (
     HSYNCKEEP_FILENAME,
+    MIN_BANDWIDTH_BPS,
     P2P_PEER_READ_CAP_DEFAULT,
     STABILITY_DELAY_ON_CLOSED,
     WS_MAX_MESSAGE_BYTES,
@@ -120,11 +121,10 @@ from hsync_client.utils import (
 )
 from hsync_client.watcher import WatcherManager
 
-# Conservative minimum effective P2P bandwidth used to derive the dynamic
-# ``wait_pending`` timeout from the total bytes still in flight (10 MB/s).
-MIN_BANDWIDTH_BPS = 10 * 1024 * 1024
 # Hard cap on the dynamic ``wait_pending`` timeout to avoid waiting forever
-# if a transfer stalls (30 minutes).
+# if a transfer stalls (30 minutes). ``MIN_BANDWIDTH_BPS`` — the conservative
+# bandwidth the drain budget is derived from — lives with the other transfer
+# policy in ``hsync_client/constants.py``.
 MAX_WAIT_PENDING_SECONDS = 30 * 60
 
 # Short window an ``on_created`` upload is deferred so that ``on_closed``
