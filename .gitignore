@@ -72,5 +72,8 @@ packaging/windows/icon.ico
 .mypy_cache
 .ruff_cache
 
+# AI Agents
+AGENTS.md
+
 # HSYNC
 .hsynckeep
