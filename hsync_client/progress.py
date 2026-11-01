@@ -76,7 +76,7 @@ def forget_delivery_progress(path: str) -> None:
 class ProgressReporter:
     """Emit throttled ``progress`` events for a single in-flight transfer."""
 
-    __slots__ = ("_path", "_total", "_op", "_last_ts", "_echo")
+    __slots__ = ("_path", "_total", "_op", "_last_ts", "_echo", "_delivery_only")
 
     def __init__(
         self,
@@ -85,6 +85,7 @@ class ProgressReporter:
         op: str,
         *,
         echo: Callable[[int], None] | None = None,
+        delivery_only: bool = False,
     ) -> None:
         self._path = path
         self._total = total
@@ -94,6 +95,11 @@ class ProgressReporter:
         # bytes it stored for a peer's upload, so the sender's row shows the
         # delivery instead of its own transport counter.
         self._echo = echo
+        # The receiver reports this transfer and measures a different quantity
+        # (the master stores decompressed bytes, the sender counts the compressed
+        # payload), so the local counter stays silent: the row keeps one scale
+        # instead of switching mid-transfer.
+        self._delivery_only = delivery_only
 
     def update(self, transferred: int) -> None:
         now = monotonic()
@@ -105,6 +111,8 @@ class ProgressReporter:
         self._last_ts = now
         if self._echo is not None:
             self._echo(transferred)
+        if self._delivery_only:
+            return
         if self._op == "upload" and delivery_progress_active(self._path):
             # The receiver is the authority on this path: its samples carry the
             # file total, this counter the wire one.

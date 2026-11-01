@@ -201,7 +201,11 @@ transport counter — a different total — stops feeding the same row
 (``progress.py::note_delivery_progress`` /
 ``progress.py::delivery_progress_active``, cleared by the terminal event). The
 frame's ``total`` is the file size the sender declared, which is the scale the
-row switches to.
+row switches to. A **compressed** upload never shows the local counter at all in
+p2p mode (its reporter is built with ``delivery_only``): the payload it counts is
+not the file the master stores, so the row keeps one scale from the first sample
+instead of dropping when the echo takes over. A central server publishes no such
+samples, so there the local counter remains the signal.
 
 The upload request itself is bounded by an **inactivity window** derived from
 the body size (`utils/http.py::upload_timeout` →

@@ -133,6 +133,20 @@ class TestDeliveryProgress:
 
         assert calls == []
 
+    def test_a_delivery_only_reporter_stays_silent(self, captured):
+        """The receiver reports this transfer, so the local scale is not shown."""
+        calls, clock = captured
+        echoed: list[int] = []
+        rep = progress.ProgressReporter(
+            "/bucket/f.bin", 100, "upload", echo=echoed.append, delivery_only=True
+        )
+
+        clock[0] = 10.0
+        rep.update(40)
+
+        assert calls == []
+        assert echoed == [40]
+
     def test_the_terminal_event_forgets_the_delivery_mark(self, captured):
         calls, clock = captured
         progress.note_delivery_progress("/bucket/f.bin")

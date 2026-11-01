@@ -2516,7 +2516,19 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
                 data["compressed_size"] = compressed_size
 
                 ul_bw_limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
-                reporter = ProgressReporter(file.filepath, compressed_size, "upload")
+                # A compressed payload is not the file the peer stores: the
+                # master reports the bytes it decompressed, so in p2p mode its
+                # delivery samples are the only honest scale and the local
+                # counter stays silent (a peer master always publishes them). A
+                # central server publishes none, so there the counter remains the
+                # signal — as it does for the uncompressed branch, whose two
+                # counts measure the same bytes.
+                reporter = ProgressReporter(
+                    file.filepath,
+                    compressed_size,
+                    "upload",
+                    delivery_only=bool(CONFIG.get("P2P_MODE")),
+                )
                 boundary = uuid4().hex
                 body, content_type = _build_multipart_streaming(
                     compressed_tmp,
