@@ -32,7 +32,7 @@ from collections.abc import Callable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from functools import partial
 from pathlib import Path
-from time import time
+from time import monotonic, time
 from typing import Any, cast
 
 from aiohttp import web
@@ -1418,6 +1418,9 @@ async def p2p_websocket_client(
     # Tracks whether the slave→master link was established, so the teardown can
     # report the drop back to the UI (continuous mode reconnects afterwards).
     connected = False
+    # Handshake forensics: every step below is bounded by a fixed timeout, so the
+    # elapsed time is what tells a slow (relayed) path from a refused one.
+    connect_started = monotonic()
 
     try:
         async with websockets.connect(
@@ -1453,6 +1456,7 @@ async def p2p_websocket_client(
             # on the authenticated path, adopt the master's advertised
             # capability set as the session's capability source of truth.
             greeting = await asyncio.wait_for(websocket.recv(), timeout=10.0)
+            log.info(f"WebSocket greeting received in {monotonic() - connect_started:.1f}s")
             greeting_data = json.loads(greeting)
             master_caps = decode_capabilities(greeting_data.get("capabilities"))
 
@@ -1544,6 +1548,7 @@ async def p2p_websocket_client(
             ):
                 inventory_publisher.start(websocket)
 
+            log.info(f"WebSocket handshake completed in {monotonic() - connect_started:.1f}s")
             log.info("Listening for events from master...")
 
             # Readiness threshold: the local watcher is running and the master
@@ -1592,7 +1597,7 @@ async def p2p_websocket_client(
         log.info("WebSocket connection cancelled")
         raise
     except Exception as e:
-        log.error(f"WebSocket connection error: {e}")
+        log.error(f"WebSocket connection error after {monotonic() - connect_started:.1f}s: {e}")
     finally:
         # Stop the periodic resync task before tearing down the watcher.
         # CancelledError is a BaseException, so it must be suppressed

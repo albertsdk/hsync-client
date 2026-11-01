@@ -732,6 +732,7 @@ class RdvRendezvous(RendezvousPlanState):
     def _query_peers(self) -> None:
         if self._peer_manager is None:
             return
+        authority = format_authority(self._rendezvous_host, self._rendezvous_port)
         now = time.monotonic()
         if now < self._next_query_at:
             # Still inside the query budget window (or a node-imposed backoff):
@@ -753,16 +754,29 @@ class RdvRendezvous(RendezvousPlanState):
                 self._next_query_at = now + float(retry_after)
             else:
                 self._next_query_at = now + self._refresh_interval
-            log.debug(
-                f"Rendezvous {format_authority(self._rendezvous_host, self._rendezvous_port)} query refused: "
-                f"{response['error']}"
+            # A refusal costs liveness: the sample is empty, so the next one
+            # decides whether a live peer expires. INFO (not DEBUG) is what makes
+            # that gap visible in a field log.
+            log.info(
+                f"Rendezvous {authority} query refused: {response['error']}; "
+                f"next sample in {self._next_query_at - now:.0f}s"
             )
             return
         self._next_query_at = now + self._refresh_interval
+        sampled = {wire["cid"] for wire in response["peers"]}
         for wire_peer in response["peers"]:
             peer = self._peer_from_wire(wire_peer)
             if peer is not None and peer.cid != self._cid:
                 self._peer_manager.add_peer(peer)
+        master = self._peer_manager.get_master_cid()
+        if master is not None and master != self._cid and master not in sampled:
+            # The elected master was not drawn: the liveness window spans exactly
+            # two query cycles, so two consecutive misses expire a live peer and
+            # the deterministic election churns the group.
+            log.info(
+                f"Rendezvous {authority} sample without the elected master "
+                f"{master} ({len(sampled)} peer(s) drawn)"
+            )
 
     def _peer_from_wire(self, wire: RdvPeer) -> Peer | None:
         """Map a relayed peer to the shared :class:`Peer`; skip unreachable ones.

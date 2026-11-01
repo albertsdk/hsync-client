@@ -351,6 +351,22 @@ master that *loses* the election yields immediately and revokes its incumbency
 so it is not kept as a "zombie incumbent" (`server_ready=true` while no longer
 serving).
 
+### Liveness forensics
+
+The two-node churn is diagnosed from four log surfaces, none of which changes
+behaviour:
+
+| Line | Source | Answers |
+| --- | --- | --- |
+| `Peer timed out: <cid>` + `Peer liveness lost: <cid> unseen for Ns (window Ns)` | `p2p_peers.py::PeerManager.reconcile_stale_peers` | how far past the window the record was; WARNING instead when the expired record was the elected master (the churn trigger) |
+| `Rendezvous <node> query refused: <error>; next sample in Ns` | `p2p_rendezvous_rdv.py::RdvRendezvous._query_peers` | a refused sample (rate limit / token) and the backoff it armed |
+| `Rendezvous <node> sample without the elected master <cid> (N peer(s) drawn)` | `p2p_rendezvous_rdv.py::RdvRendezvous._query_peers` | the drawn sample omitted the master, i.e. one of the two misses the window tolerates |
+| `WebSocket greeting received in Ns` / `WebSocket handshake completed in Ns` / `WebSocket connection error after Ns` | `p2p_websocket.py::p2p_websocket_client` | how much of the fixed per-frame handshake budget the (possibly relayed) path consumed |
+
+The query loop runs in the lease-loop thread and keeps sampling while a slave
+session is active, so a stale record always means *samples stopped arriving*, not
+that the session blocked discovery.
+
 ## Master server (`p2p_server.py`, `p2p_websocket.py`)
 
 The p2p master mirrors the central server's causal upload arbitration via

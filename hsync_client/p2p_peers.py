@@ -528,12 +528,25 @@ class PeerManager:
             re-run), ``False`` otherwise.
         """
         with self._lock:
+            now = time.time()
             stale = [cid for cid, p in self._peers.items() if not self._is_peer_alive(p)]
             if not stale:
                 return False
             for cid in stale:
+                peer = self._peers[cid]
                 del self._peers[cid]
                 log.info(f"Peer timed out: {cid}")
+                # Liveness forensics: the window already spans two discovery
+                # samples, so an expiry means this node stopped seeing the peer —
+                # not that the peer died. Losing the elected master is what turns
+                # it into an election churn, so that case is called out.
+                detail = (
+                    f"unseen for {now - peer.last_seen:.0f}s (window {self._peer_timeout:.0f}s)"
+                )
+                if cid == self._master_cid:
+                    log.warning(f"Peer liveness lost for the elected master: {cid} {detail}")
+                else:
+                    log.info(f"Peer liveness lost: {cid} {detail}")
             self._elect_master()
             self._signal_change()
             return True
