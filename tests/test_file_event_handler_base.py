@@ -2191,3 +2191,58 @@ class TestRemoteModeOriginLabels:
             self.handler._flush_pending_deletes()
             msgs = [str(c.args[0]) if c.args else str(c) for c in mock_log.info.call_args_list]
             assert any("[LOCAL DELETE]" in m for m in msgs), msgs
+
+
+class TestMetadataTouchLog:
+    """The ``[TOUCH]`` line carries the current size and folds repeated bursts."""
+
+    def test_the_line_includes_the_current_size(self):
+        from hsync_common.format import format_bytes
+
+        from hsync_client.file_event_handler import touch_log_line
+
+        size = 12 * 1024 * 1024
+
+        line = touch_log_line("/bucket/song.mp3", size)
+
+        assert line == f'[TOUCH] mtime change: "/bucket/song.mp3" {format_bytes(size)}'
+
+    def test_the_fold_folds_a_repeat_and_allows_a_later_change(self, monkeypatch):
+        from hsync_client import file_event_handler as feh
+
+        stamps = iter([100.0, 100.2, 101.0])
+        monkeypatch.setattr(feh, "monotonic", lambda: next(stamps))
+        seen: dict[str, float] = {}
+
+        assert feh.fold_metadata_touch(seen, "/b/x") is False  # first of a burst
+        assert feh.fold_metadata_touch(seen, "/b/x") is True  # inside the window
+        assert feh.fold_metadata_touch(seen, "/b/x") is False  # after the window
+
+    def test_permission_only_folds_repeated_mtime_changes(self, tmp_path, monkeypatch):
+        """A burst of mtime-only events propagates once per fold window."""
+        from hsync_common.models.file import File, invalidate_sha256_cache
+
+        loop = new_event_loop()
+        handler = RemoteFileEventHandler(MagicMock(), loop, MagicMock())
+        try:
+            path = tmp_path / "song.mp3"
+            path.write_bytes(b"content")
+            invalidate_sha256_cache(str(path))
+            file_obj = File.get(str(path))
+            assert file_obj is not None
+            # The file must already be known: a touch only propagates when the
+            # content still equals the last broadcast one.
+            handler._last_broadcast_hash[str(path)] = file_obj.sha256sum
+            monkeypatch.setattr(handler, "_on_metadata_changed", MagicMock())
+
+            with patch(
+                "hsync_client.file_event_handler.CONFIG", {"SYNC_DIRECTION": "bidirectional"}
+            ):
+                for _ in range(3):
+                    handler._last_mode[str(path)] = path.stat().st_mode & 0o7777
+                    handler._last_mtime[str(path)] = 1  # stale: classifies as mtime
+                    handler._process_permission_only(str(path))
+
+            handler._on_metadata_changed.assert_called_once()
+        finally:
+            loop.close()

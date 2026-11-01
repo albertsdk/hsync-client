@@ -29,6 +29,7 @@ from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING, ClassVar
 
+from hsync_common.format import format_bytes
 from hsync_common.labels import ActionLabel, resolve_label
 from hsync_common.models.dir import Dir, is_hidden_dir
 from hsync_common.models.event import Event, EventName
@@ -146,6 +147,44 @@ DIR_MODIFY_WINDOW = 0.1
 # (~2 MB at ~200 bytes/entry) even in long-running watch sessions.
 DEDUP_MAX_ENTRIES: int = 10_000
 
+# Window that folds repeated metadata-only (mtime) changes for the same path.
+# A writer emits a burst of IN_MODIFY/IN_ATTRIB events within milliseconds,
+# each with a DISTINCT mtime (so the stat dedup cannot collapse them); when the
+# content already matches what was propagated, every one would log a [TOUCH]
+# line and push a metadata-only update. Mirrors DIR_MODIFY_WINDOW for the same
+# reason: one line (and one propagation) per window. The final mtime still
+# propagates on the close event or on the first change after the window.
+TOUCH_FOLD_WINDOW = 0.5
+
+
+def fold_metadata_touch(last_ts: dict[str, float], path: str) -> bool:
+    """Return True when a metadata-only change is a repeat inside the fold window.
+
+    Records ``path``'s timestamp on the first call of a burst, so a writer's
+    burst of mtime changes logs and propagates once per window instead of once
+    per event. Shared by ``BaseFileEventHandler`` (Server Mode and p2p master)
+    and ``P2PSlaveFileEventHandler`` (p2p slave), so the label reads the same in
+    every mode.
+    """
+    now = monotonic()
+    previous = last_ts.get(path)
+    if previous is not None and now - previous < TOUCH_FOLD_WINDOW:
+        return True
+    last_ts[path] = now
+    return False
+
+
+def touch_log_line(src_path: str, size: int, cid_suffix: str = "") -> str:
+    """Build the ``[TOUCH]`` line: the path plus the bytes currently on disk.
+
+    The figure is the file's *current* on-disk size, never a final one — a
+    writer may still be appending, and the growing value is what tells an
+    operator that the event is a write in progress rather than a settled
+    metadata-only touch. Shared by the Server Mode / p2p master handler and the
+    p2p slave handler so the label reads identically in every mode.
+    """
+    return f'[TOUCH] mtime change: "{src_path}" {format_bytes(size)}{cid_suffix}'
+
 
 class BaseFileEventHandler(FileSystemEventHandler):
     """Common watchdog handler shared by Remote sync and P2P master."""
@@ -213,6 +252,7 @@ class BaseFileEventHandler(FileSystemEventHandler):
         self._last_broadcast_ts.pop(path, None)
         self._last_mode.pop(path, None)
         self._last_mtime.pop(path, None)
+        self._last_touch_ts.pop(path, None)
 
     def _uses_polling_backend(self) -> bool:
         """Return whether the active watcher backend is the polling fallback.
@@ -253,6 +293,11 @@ class BaseFileEventHandler(FileSystemEventHandler):
         # Last-broadcast monotonic timestamp per path, for the directory MODIFY
         # window. Set and evicted in lockstep with _last_broadcast_stat/hash.
         self._last_broadcast_ts: dict[str, float] = {}
+        # Per-path timestamp of the last propagated metadata-only touch, for the
+        # file TOUCH fold window (a writer's burst of distinct mtimes would
+        # otherwise log and push once per event). Kept beside the mode/mtime
+        # baselines (same lifecycle: invalidated on rename/delete).
+        self._last_touch_ts: dict[str, float] = {}
         # Mode-only dedup for the IN_ATTRIB (chmod) path. Deliberately SEPARATE
         # from _last_broadcast_stat: the latter is the content-upload dedup key
         # and must only be written by _record_broadcast (after a real
@@ -428,7 +473,10 @@ class BaseFileEventHandler(FileSystemEventHandler):
             # never broadcast as a metadata-only change.
             file_obj = File.get(src_path)
             if file_obj and file_obj.sha256sum == self._last_broadcast_hash.get(src_path):
-                log.info(f'[TOUCH] mtime change: "{src_path}"{self._cid_suffix(src_path)}')
+                if fold_metadata_touch(self._last_touch_ts, src_path):
+                    log.debug(f'Fold repeated touch: "{src_path}"')
+                    return
+                log.info(touch_log_line(src_path, file_obj.size, self._cid_suffix(src_path)))
                 self._on_metadata_changed(file_obj, src_path)
 
     def _record_broadcast(self, src_path: str, stat: tuple[int, int, int], sha256: str) -> None:
@@ -772,7 +820,10 @@ class BaseFileEventHandler(FileSystemEventHandler):
                         # ``touch``. Propagate the metadata so replicas converge
                         # on the mtime without re-transferring bytes.
                         self._last_broadcast_stat[src_path] = current_stat
-                        log.info(f'[TOUCH] mtime change: "{src_path}"')
+                        if fold_metadata_touch(self._last_touch_ts, src_path):
+                            log.debug(f'Fold repeated touch: "{src_path}"')
+                            return
+                        log.info(touch_log_line(src_path, current_stat[1]))
                         self._on_metadata_changed(file_obj, src_path)
                         return
                     log.debug(f'Skip unchanged (hash): "{src_path}"')

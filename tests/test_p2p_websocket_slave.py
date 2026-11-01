@@ -624,6 +624,38 @@ class TestSlaveFileEventHandler:
 
         assert seen == []
 
+    def test_on_modified_touch_folded_within_the_window(self, handler, tmp_path, monkeypatch):
+        """A burst of slave-local touches logs and pushes once per fold window."""
+        p = tmp_path / "f.txt"
+        p.write_bytes(b"content")
+        seen: list[str] = []
+        monkeypatch.setattr(handler, "_propagate_metadata_change", seen.append)
+
+        for _ in range(3):
+            handler._last_mode[str(p)] = p.stat().st_mode & 0o7777
+            handler._last_mtime[str(p)] = 1  # stale: every event classifies as mtime
+            handler.on_modified(FileModifiedEvent(str(p)))
+
+        assert seen == [str(p)]
+
+    def test_on_modified_touch_propagates_again_after_the_window(
+        self, handler, tmp_path, monkeypatch
+    ):
+        from hsync_client import file_event_handler as feh
+
+        p = tmp_path / "f.txt"
+        p.write_bytes(b"content")
+        seen: list[str] = []
+        monkeypatch.setattr(handler, "_propagate_metadata_change", seen.append)
+        monkeypatch.setattr(feh, "TOUCH_FOLD_WINDOW", 0)
+
+        for _ in range(2):
+            handler._last_mode[str(p)] = p.stat().st_mode & 0o7777
+            handler._last_mtime[str(p)] = 1
+            handler.on_modified(FileModifiedEvent(str(p)))
+
+        assert seen == [str(p), str(p)]
+
     def test_on_modified_directory_inbound_delete_echo_suppressed(self, handler, tmp_path):
         """Dir MODIFY covered by an inbound recursive delete is suppressed.
 

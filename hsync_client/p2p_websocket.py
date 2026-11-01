@@ -99,6 +99,8 @@ from hsync_client.file_event_handler import (
     SUPPORTS_ON_CLOSED,
     BaseFileEventHandler,
     classify_stat_change,
+    fold_metadata_touch,
+    touch_log_line,
 )
 from hsync_client.p2p_inventory import (
     NOOP_INVENTORY_OBSERVER,
@@ -1793,6 +1795,11 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
         # touch is pushed to the master as a metadata-only PATCH instead of
         # being silently discarded. Popped on delete/rename like ``_last_mode``.
         self._last_mtime: dict[str, int] = {}
+        # Per-path timestamp of the last propagated metadata-only touch, for the
+        # shared TOUCH fold window (a writer's burst of distinct mtimes would
+        # otherwise log and PATCH once per event). Same lifecycle as the
+        # mode/mtime baselines above.
+        self._last_touch_ts: dict[str, float] = {}
         # Same dedup, for directories: a directory chmod fires only IN_ATTRIB
         # (no close, no content hash), so the mode is tracked separately and a
         # change triggers a /dirs call to the master (directory-permission
@@ -2362,7 +2369,13 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
                 self._handle_file_upload(src_path)
                 return
             if change == "mtime":
-                log.info(f'[TOUCH] mtime change: "{src_path}"')
+                file_obj = File.get(src_path)
+                if file_obj is None:
+                    return
+                if fold_metadata_touch(self._last_touch_ts, src_path):
+                    log.debug(f'Fold repeated touch: "{src_path}"')
+                    return
+                log.info(touch_log_line(src_path, file_obj.size))
                 self._propagate_metadata_change(src_path)
             return
 
@@ -2586,6 +2599,7 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
         self._cancel_create_upload(path)
         self._last_mode.pop(path, None)
         self._last_mtime.pop(path, None)
+        self._last_touch_ts.pop(path, None)
         self._last_dir_mode.pop(path, None)
 
     def on_deleted(self, event) -> None:
