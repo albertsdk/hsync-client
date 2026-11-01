@@ -245,11 +245,9 @@ def _compress_to_temp_file(filepath: str) -> str:
     """Stream-compress *filepath* into a temporary file; return its path.
 
     Used by the compressed-upload branch so neither the original content nor
-    the zstd frame is ever fully buffered in RAM: the previous implementation
-    read the whole file and compressed it in memory, which delayed the first
-    network byte by the full read+compress time and spiked memory on large
-    files. The caller owns the returned path and must delete it; on
-    compression failure the temp file is removed before raising.
+    the zstd frame is ever fully buffered in RAM. The caller owns the returned
+    path and must delete it; on compression failure the temp file is removed
+    before raising.
     """
     fd, tmp_path = mkstemp(prefix="hsync-upload-", suffix=".zst")
     close(fd)
@@ -2549,6 +2547,13 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
 
             boundary = uuid4().hex
             reporter = ProgressReporter(file.filepath, file.size or 0, "upload")
+            if offset > 0:
+                # Anchor the resumed position BEFORE the first chunk: the
+                # Desktop's short rate window reads a first sample that jumps
+                # to the offset as an instantaneous burst, so the resumed
+                # position is reported first. Only the bytes actually sent
+                # pace the rate.
+                reporter.update(offset)
             body, content_type = _build_multipart_streaming(
                 file.filepath,
                 dict(data),
@@ -2564,13 +2569,21 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
             headers["Content-Type"] = content_type
             response = _post_streaming_body(uri, headers, body)
             if response.status_code == 202:
-                # Partial upload received - file still incomplete
-                result = response.json()
-                new_offset = result.get("offset", 0)
-                remaining = result.get("remaining", 0)
-                log.debug(
-                    f"Partial upload: {new_offset} bytes uploaded, {remaining} bytes remaining"
+                # The peer stored only part of the file (a preflight race gave
+                # it a stale offset, or a dropped connection ended the body
+                # early). This is neither a success nor a permanent failure:
+                # raise a retryable error so the wrapper re-probes and resumes
+                # from the peer's reported offset, and publish the terminal
+                # transfer_failed once the retries are exhausted.
+                try:
+                    new_offset = int(response.json().get("offset", 0) or 0)
+                except (ValueError, TypeError):
+                    new_offset = 0
+                log.info(
+                    f'Partial upload for "{file.filepath}": '
+                    f"{format_bytes(new_offset)} uploaded; re-probing and retrying"
                 )
+                raise ServerError(f"Upload accepted partially; resuming from offset {new_offset}")
             else:
                 _handle_upload_response(file, response, t0)
     except FileNotFoundError:

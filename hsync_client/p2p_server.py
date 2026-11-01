@@ -536,6 +536,35 @@ class _UploadContext:
     response_sent: bool = False
     dest_existed_at_start: bool = False
     dest_marker_snapshot: tuple[str, tuple[tuple[str, int], ...]] | None = None
+    # Per-path serialization lock, held for the whole request (see
+    # ``_path_lock_for``); released by ``_handle_upload``'s finally block.
+    lock: threading.Lock | None = None
+    # When the .part no longer matches the offset the peer probed, the body is
+    # consumed and discarded and the peer is answered 202 with this true
+    # offset so it re-probes and resumes (``None`` = no divergence).
+    resync: int | None = None
+
+
+_upload_path_locks_guard = threading.Lock()
+_upload_path_locks: dict[str, threading.Lock] = {}
+
+
+def _path_lock_for(dest_path: str) -> threading.Lock:
+    """Return the per-destination lock for *dest_path* (created on demand).
+
+    Two uploads of the same path (a duplicate watcher + full-sync trigger, or a
+    retry racing the initial sync) must never append to the same ``.part`` at
+    once: the second writer's preflight offset would go stale mid-request and
+    the file would be corrupted or rejected. Entries are kept for the process
+    lifetime — a bucket is bounded and eviction has a release race — so a
+    long-lived master never re-enters a path it has touched.
+    """
+    with _upload_path_locks_guard:
+        lock = _upload_path_locks.get(dest_path)
+        if lock is None:
+            lock = threading.Lock()
+            _upload_path_locks[dest_path] = lock
+        return lock
 
 
 class P2PEndpointMixin(_HTTPTransportBase):
@@ -2188,6 +2217,13 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
         ctx.dest_path = dest_path_local
         ctx.tmp_path = dest_path_local + PARTIAL_DOWNLOAD_SUFFIX
+        # Serialize per destination path: two concurrent uploads of the same
+        # path (a duplicate watcher + full-sync trigger) must not append to the
+        # same .part at once — the second writer's preflight offset would go
+        # stale mid-request and the file would be corrupted or rejected. Held
+        # until the whole request (write + finalize + response) finishes.
+        ctx.lock = _path_lock_for(dest_path_local)
+        ctx.lock.acquire()
         # Snapshot the destination when the body starts writing: a delete or
         # rename that happens while it streams must not be undone by the
         # commit below (same contract as the central server gate).
@@ -2208,12 +2244,19 @@ class P2PEndpointMixin(_HTTPTransportBase):
         if is_resumable and is_compressed_local:
             raise ValueError("Compressed uploads are not resumable")
         if is_resumable:
-            if not Path(ctx.tmp_path).exists():
-                raise ValueError("Cannot resume: partial file not found")
-            current_size = Path(ctx.tmp_path).stat().st_size
+            tmp_exists = Path(ctx.tmp_path).exists()
+            current_size = Path(ctx.tmp_path).stat().st_size if tmp_exists else 0
             if current_size != offset_val:
-                raise ValueError(f"Offset mismatch: expected {current_size}, got {offset_val}")
-            raw = open_partial_no_follow(ctx.tmp_path, "ab")
+                # The .part holds a different size than the offset the peer
+                # probed: a duplicate writer appended bytes, or the .part is
+                # gone (the peer that completed the upload already renamed
+                # it). The master consumes and discards the body, keeps the
+                # .part, and answers 202 with the true offset so the peer
+                # re-probes and resumes (or restarts).
+                ctx.resync = current_size
+                raw: IO[bytes] = open(os.devnull, "wb")
+            else:
+                raw = open_partial_no_follow(ctx.tmp_path, "ab")
         else:
             # O_NOFOLLOW where supported: a pre-existing/raced .part symlink
             # must not redirect the streamed write outside the bucket.
@@ -2237,13 +2280,24 @@ class P2PEndpointMixin(_HTTPTransportBase):
         # Report the bytes landing on disk (decompressed when the peer sent
         # zstd, which is what the file ends up with). A resumed upload starts
         # from the offset already on disk, so the percentage covers the whole
-        # file; an undeclared size throttles by time only.
-        reporter = progress_reporter(
-            dest_path_local,
-            declared_size if declared_size > 0 else 0,
-            "download",
+        # file; an undeclared size throttles by time only. A diverged .part is
+        # being discarded, so it reports nothing (the 202 resync answer tells
+        # the peer where the file stands).
+        resync = ctx.resync is not None
+        reporter = (
+            None
+            if resync
+            else progress_reporter(
+                dest_path_local,
+                declared_size if declared_size > 0 else 0,
+                "download",
+            )
         )
-        counted = ProgressWriter(raw.write, reporter, start=offset_val if is_resumable else 0)
+        counted = ProgressWriter(
+            raw.write,
+            reporter,
+            start=0 if resync else (offset_val if is_resumable else 0),
+        )
         # Either sink exposes write()/close(); the union type is not IO[bytes],
         # so annotate Any for the zstd stream_writer below.
         capped: Any = _CappedBytesWriter(counted.write, cap) if cap is not None else counted
@@ -2311,6 +2365,32 @@ class P2PEndpointMixin(_HTTPTransportBase):
                 ctx.tmp_path = None
                 return True
         return False
+
+    def _send_resync_response(self, ctx: _UploadContext, form_fields: dict[str, str]) -> None:
+        """Answer 202 with the .part's true offset after a preflight divergence.
+
+        The .part this master holds has a different size than the offset the
+        peer probed (a duplicate writer appended bytes, or the .part is gone).
+        The body was consumed and discarded; the peer re-probes
+        ``upload-status`` and resumes from (or restarts at) the reported
+        offset.
+        """
+        try:
+            declared_size = int(form_fields.get("size", "0") or "0")
+        except (TypeError, ValueError):
+            declared_size = 0
+        offset = max(0, ctx.resync or 0)
+        self._send_json_response(
+            HTTP_ACCEPTED,
+            {
+                "info": "Partial upload offset resync",
+                "offset": offset,
+                "remaining": max(0, declared_size - offset),
+            },
+        )
+        ctx.response_sent = True
+        # Keep the .part (or the absence of one) for the peer's next attempt.
+        ctx.tmp_path = None
 
     def _finalize_upload(self, ctx: _UploadContext, form_fields: dict[str, str]) -> None:
         """Arbitrate, commit and answer a completed (non-partial) upload."""
@@ -2553,6 +2633,10 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
             self._close_upload_stream(ctx)
 
+            if ctx.resync is not None:
+                self._send_resync_response(ctx, form_fields)
+                return
+
             if self._maybe_partial_upload_response(ctx, form_fields):
                 return
 
@@ -2577,6 +2661,11 @@ class P2PEndpointMixin(_HTTPTransportBase):
             # Idempotent safety net for paths that did not go through an
             # error branch (on success ctx tmp_path/raw_file/out_file are None).
             self._discard_temp_artifact(ctx.tmp_path, ctx.out_file, ctx.raw_file)
+            # Release the per-path serialization lock; the next upload of the
+            # same destination may proceed (and re-probe the fresh state).
+            if ctx.lock is not None:
+                ctx.lock.release()
+                ctx.lock = None
 
     @staticmethod
     def _discard_temp_artifact(path: str | None, *files) -> None:

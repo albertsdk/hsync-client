@@ -335,15 +335,21 @@ class TestUploadCompressed:
 class TestUploadResumable:
     """Tests for resumable upload."""
 
-    def test_upload_partial_response_202(self, tmp_path):
-        """Test upload handles 202 partial response."""
+    def test_upload_partial_response_202_is_retried_then_terminated(self, tmp_path):
+        """A 202 partial is a transient, resumable outcome, not a success.
+
+        The peer accepted only part of the file (a stale offset or a dropped
+        connection). The client raises a retryable error so the wrapper
+        re-probes and resumes; once the retries are exhausted, the transfer
+        ends with a terminal ``transfer_failed`` that closes the Desktop row.
+        """
         test_file = tmp_path / "file.txt"
-        test_file.write_text("test content")
+        test_file.write_bytes(b"x" * UPLOAD_STATUS_PREFLIGHT_MIN_SIZE)
 
         file = File(
             filepath=str(test_file),
             sha256sum="abc123",
-            size=12,
+            size=UPLOAD_STATUS_PREFLIGHT_MIN_SIZE,
             mtime=1000,
             ctime=1000,
             permissions="644",
@@ -364,12 +370,72 @@ class TestUploadResumable:
                     "CID": "test-client",
                 },
             ),
+            patch("hsync_client.transfer._get_upload_status", return_value=("resumable", 10)),
+            patch("hsync_client.transfer._transfer_retry_params", return_value=(2, 0, 0)),
             patch("hsync_client.transfer.post", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.is_file_stable", return_value=True),
+            patch("hsync_client.transfer.compute_sha256", return_value="abc123"),
+            patch("hsync_client.transfer._emit_transfer_failed") as emit_failed,
+        ):
+            upload_file(file, check_size=False)
+
+        emit_failed.assert_called_once()
+        op, path, message = emit_failed.call_args.args
+        assert op == "upload"
+        assert path == str(test_file)
+        assert "resuming" in message
+
+    def test_upload_resume_anchors_the_resumed_position(self, tmp_path):
+        """The resumed offset is reported BEFORE the first chunk is sent.
+
+        The Desktop's short rate window reads a first sample that jumps to
+        the resumption offset as an instantaneous burst, so the resumed
+        position is anchored first and only the bytes actually sent pace the
+        rate.
+        """
+        test_file = tmp_path / "file.txt"
+        test_file.write_bytes(b"x" * UPLOAD_STATUS_PREFLIGHT_MIN_SIZE)
+
+        file = File(
+            filepath=str(test_file),
+            sha256sum="abc123",
+            size=UPLOAD_STATUS_PREFLIGHT_MIN_SIZE,
+            mtime=1000,
+            ctime=1000,
+            permissions="644",
+        )
+
+        positions: list[int] = []
+
+        class _Reporter:
+            def update(self, transferred: int) -> None:
+                positions.append(transferred)
+
+        final = MagicMock()
+        final.status_code = 201
+
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                },
+            ),
+            patch("hsync_client.transfer._get_upload_status", return_value=("resumable", 10)),
+            patch("hsync_client.transfer.ProgressReporter", return_value=_Reporter()),
+            patch("hsync_client.transfer.post", return_value=final),
             patch("hsync_client.transfer.get_ssl_verify", return_value=False),
             patch("hsync_client.transfer.is_file_stable", return_value=True),
             patch("hsync_client.transfer.compute_sha256", return_value="abc123"),
         ):
             upload_file(file, check_size=False)
+
+        assert positions and positions[0] == 10
 
     def test_upload_resume_from_offset(self, tmp_path):
         """Test upload resumes from correct offset.

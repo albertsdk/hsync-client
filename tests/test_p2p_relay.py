@@ -225,6 +225,89 @@ class _FakeQuic:
         return self._stream
 
 
+class _QueuedReader:
+    """Async reader backed by a queue; ``b""`` signals EOF."""
+
+    def __init__(self, queue: asyncio.Queue) -> None:
+        self._queue = queue
+
+    async def read(self, size: int = -1) -> bytes:
+        return await self._queue.get()
+
+
+class _SinkWriter:
+    """Async writer that records close and never blocks on drain."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def write(self, data: bytes) -> int:
+        return len(data)
+
+    async def drain(self) -> None:
+        return None
+
+    def close(self) -> None:
+        self.closed = True
+
+    def is_closing(self) -> bool:
+        return self.closed
+
+
+def test_a_unidirectional_session_survives_its_idle_clock() -> None:
+    """The bridge idle watchdog counts *session* silence, not one direction.
+
+    An upload streams bytes client→master while the reply leg stays quiet
+    until the request ends. Activity in either direction keeps the whole
+    session (and the silent leg) alive; only a session with no bytes in
+    either direction idles out.
+    """
+
+    async def scenario() -> None:
+        left_q: asyncio.Queue = asyncio.Queue()
+        right_q: asyncio.Queue = asyncio.Queue()
+        left_writer = _SinkWriter()
+        right_writer = _SinkWriter()
+        task = asyncio.create_task(
+            bridge(
+                _QueuedReader(left_q),
+                left_writer,
+                _QueuedReader(right_q),
+                right_writer,
+                idle_timeout=0.05,
+            )
+        )
+        # Feed only the left→right leg for longer than the idle timeout.
+        for _ in range(8):
+            await left_q.put(b"x" * 1024)
+            await asyncio.sleep(0.025)
+        assert not task.done(), "the tunnel died while one leg was active"
+        assert not left_writer.closed and not right_writer.closed
+        # Closing one side still tears the session down.
+        await left_q.put(b"")
+        await asyncio.wait_for(task, 1.0)
+
+    asyncio.run(scenario())
+
+
+def test_a_fully_idle_session_is_torn_down() -> None:
+    """A session with no bytes in either direction still idles out."""
+
+    async def scenario() -> None:
+        task = asyncio.create_task(
+            bridge(
+                _QueuedReader(asyncio.Queue()),
+                _SinkWriter(),
+                _QueuedReader(asyncio.Queue()),
+                _SinkWriter(),
+                idle_timeout=0.05,
+            )
+        )
+        await asyncio.wait_for(task, 1.0)
+
+    asyncio.run(scenario())
+
+
 async def test_the_relay_acceptor_stops_when_its_control_stream_dies(monkeypatch) -> None:
     """A dropped control stream must end the acceptor, not leave a zombie.
 

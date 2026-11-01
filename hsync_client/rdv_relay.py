@@ -110,19 +110,66 @@ async def _probe_relay_connect(quic: Any, frame: dict[str, object], timeout: flo
     return stream_reader, stream_writer, None
 
 
-async def _pump(reader: Any, writer: Any, idle_timeout: float, done: asyncio.Event) -> None:
-    """Copy one direction until EOF, an idle gap or a transport error."""
+class _SessionActivity:
+    """Timestamp of the last byte moved by a bridged session, shared by both pumps."""
+
+    __slots__ = ("last",)
+
+    def __init__(self) -> None:
+        self.last = time.monotonic()
+
+    def touch(self) -> None:
+        self.last = time.monotonic()
+
+
+def _close_writer(writer: Any) -> None:
+    """Close a stream writer, tolerating an already-closed stream."""
+    try:
+        if not writer.is_closing():
+            writer.close()
+    except Exception:  # noqa: BLE001 - teardown must never raise
+        pass
+
+
+async def _pump(reader: Any, writer: Any, activity: _SessionActivity, done: asyncio.Event) -> None:
+    """Copy one direction until EOF or a transport error, refreshing *activity*."""
     try:
         while True:
-            chunk = await asyncio.wait_for(reader.read(RELAY_BUFFER_BYTES), idle_timeout)
+            chunk = await reader.read(RELAY_BUFFER_BYTES)
             if not chunk:
                 return
+            activity.touch()
             writer.write(chunk)
             await writer.drain()
-    except (TimeoutError, ConnectionError, OSError, asyncio.CancelledError):
+    except (ConnectionError, OSError, asyncio.CancelledError):
         return
     finally:
         done.set()
+
+
+async def _idle_watchdog(
+    activity: _SessionActivity,
+    idle_timeout: float,
+    done: asyncio.Event,
+    writers: tuple[Any, ...],
+) -> None:
+    """Close the session once it stays silent past *idle_timeout* on BOTH sides.
+
+    Mirrors the node's session semantics for ``rdv/1`` (an idle session is one
+    with no bytes either way). A unidirectional transfer — an upload whose HTTP
+    reply only arrives once the request ends — must not be killed by the silent
+    reply leg, only by a genuinely idle session.
+    """
+    try:
+        while True:
+            await asyncio.sleep(max(0.0, activity.last + idle_timeout - time.monotonic()))
+            if time.monotonic() - activity.last >= idle_timeout:
+                for writer in writers:
+                    _close_writer(writer)
+                done.set()
+                return
+    except asyncio.CancelledError:
+        return
 
 
 @contextlib.asynccontextmanager
@@ -163,11 +210,20 @@ async def bridge(
     right_writer: Any,
     idle_timeout: float = RELAY_IDLE_TIMEOUT_S,
 ) -> None:
-    """Pump bytes both ways until one side ends, then close both."""
+    """Pump bytes both ways until one side ends or the session idles out.
+
+    The idle clock is shared by both directions: a long unidirectional upload
+    must not trip the idle deadline on its silent reply leg (see
+    :func:`_idle_watchdog`).
+    """
     done = asyncio.Event()
+    activity = _SessionActivity()
     tasks = [
-        asyncio.create_task(_pump(left_reader, right_writer, idle_timeout, done)),
-        asyncio.create_task(_pump(right_reader, left_writer, idle_timeout, done)),
+        asyncio.create_task(_pump(left_reader, right_writer, activity, done)),
+        asyncio.create_task(_pump(right_reader, left_writer, activity, done)),
+        asyncio.create_task(
+            _idle_watchdog(activity, idle_timeout, done, (left_writer, right_writer))
+        ),
     ]
     try:
         await done.wait()
@@ -176,11 +232,7 @@ async def bridge(
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         for writer in (left_writer, right_writer):
-            try:
-                if not writer.is_closing():
-                    writer.close()
-            except Exception:  # noqa: BLE001 - teardown must never raise
-                continue
+            _close_writer(writer)
 
 
 class RelayDialer:
@@ -189,10 +241,7 @@ class RelayDialer:
     A tunnel is long-lived (until :meth:`close`): every TCP connection accepted
     on loopback opens its **own** ``relay_connect`` session with the node, so the
     data plane (REST + WSS, several connections per sync cycle) rides the same
-    tunnel. The old one-session-per-tunnel design closed the loopback listener
-    as soon as the first bridged connection ended, so any later connection (the
-    WebSocket channel, a file download) hit ``Connection refused`` and a
-    cross-network sync never completed.
+    tunnel.
     """
 
     def __init__(
@@ -336,10 +385,9 @@ class RelayDialer:
         """Loopback accept callback: one relay session per HTTPS connection.
 
         A sync cycle opens several TCP connections to the loopback endpoint
-        (REST requests plus the WSS channel); the tunnel must survive each of
+        (REST requests plus the WSS channel); the tunnel survives each of
         them, so every accepted connection pairs its **own** ``relay_connect``
-        session and is bridged over it. The previous single-session design died
-        with the first connection and the next one hit ``Connection refused``.
+        session and is bridged over it.
         """
 
         async def _handle(tcp_reader: Any, tcp_writer: Any) -> None:
@@ -459,11 +507,9 @@ class RelayAcceptor:
                 ]
                 # Exit as soon as the control stream dies — the keepalive or the
                 # incoming loop returning means the node dropped the listener or
-                # the QUIC connection is gone — and not only when ``stop`` is set.
-                # Blocking on ``_stop`` alone left a zombie: the thread stayed
-                # alive with ``_registered`` still True, so ``active`` reported a
-                # live listener that no longer existed and it could never be
-                # re-registered, stranding every relay-only peer for good.
+                # the QUIC connection is gone. Waiting on ``stop`` alone would
+                # leave the thread alive after the node dropped the listener,
+                # so ``active`` could never trigger a re-registration.
                 stop_task = asyncio.create_task(self._stop.wait())  # type: ignore[union-attr]
                 await asyncio.wait([stop_task, *tasks], return_when=asyncio.FIRST_COMPLETED)
         finally:

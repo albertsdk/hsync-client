@@ -241,9 +241,13 @@ RENDEZVOUS_REFRESH_INTERVAL_MIN = 1
 RENDEZVOUS_REFRESH_INTERVAL_MAX = 300
 
 # Data relay over rdv/1 (peers behind CGNAT). The forwarding chunk is fixed so
-# a session's memory is bounded; the idle timeout has to stay well above the
-# WebSocket heartbeat cadence (an idle-but-open control plane is normal traffic),
-# and the keepalive keeps the listener's QUIC connection alive between sessions.
+# a session's memory is bounded; the idle timeout counts *session* silence (no
+# bytes in either direction — an upload replies only once the request ends, so
+# a directional clock would drop it mid-transfer) and has to stay above the
+# WebSocket heartbeat cadence (an idle-but-open control plane is normal
+# traffic). The node enforces its own floor (--relay-idle-timeout, default
+# 120 s), so the client value must stay above it. The keepalive keeps both
+# peers' QUIC connections alive between sessions.
 RELAY_BUFFER_BYTES = 64 * 1024
 RELAY_IDLE_TIMEOUT_S = 180.0
 RELAY_KEEPALIVE_INTERVAL = 20.0

@@ -8,7 +8,9 @@ mirroring the central hsync-server's behavior:
 - Incomplete uploads return 202 with the new offset
 - Complete resumed uploads return 201 with correct SHA-256
 - Compressed + offset > 0 is rejected
-- Offset mismatch is rejected
+- Offset mismatch (the .part grew past the probed offset, or it is gone)
+  returns 202 with the true offset and keeps the .part, so the peer resumes
+- Concurrent uploads of the same path are serialized per destination
 """
 
 import time
@@ -215,13 +217,17 @@ class TestLANResumableUpload:
             resp = requests.post(self._upload_url(port), files=files, data=data, timeout=5)
             assert resp.status_code == 400
 
-    def test_offset_mismatch_rejected(self, server, tmp_path, config):
-        """Resume with wrong offset (size mismatch) is rejected."""
+    def test_offset_mismatch_returns_202_with_the_true_offset(self, server, tmp_path, config):
+        """A diverged .part is answered with its true offset (resync).
+
+        When the .part grew past the offset the peer probed (a duplicate
+        uploader appended bytes), the master consumes and discards the body
+        and answers 202 with the .part's true offset so the peer re-probes
+        and resumes; the partial file is never deleted.
+        """
         import requests
 
         _, port = server
-
-        # Create a .part file with 100 bytes
         part_file = tmp_path / "mismatch.txt.part"
         part_file.write_bytes(b"x" * 100)
 
@@ -233,7 +239,7 @@ class TestLANResumableUpload:
                 "size": "200",
                 "sha256sum": "a" * 64,
                 "permissions": "644",
-                "offset": "50",  # wrong — .part has 100 bytes
+                "offset": "50",  # stale — .part holds 100 bytes
                 "mtime": str(int(time.time())),
                 "ctime": str(int(time.time())),
                 "vclock": "",
@@ -241,14 +247,21 @@ class TestLANResumableUpload:
                 "corrected_mtime": "0",
             }
             resp = requests.post(self._upload_url(port), files=files, data=data, timeout=5)
-            assert resp.status_code == 400
+            assert resp.status_code == 202, f"Expected 202, got {resp.status_code}: {resp.text}"
+            body = resp.json()
+            assert body["offset"] == 100
+            assert body["remaining"] == 100
+            # The .part survives for the follow-up resume attempt.
+            assert part_file.exists()
+            assert part_file.stat().st_size == 100
 
-    def test_resume_without_part_rejected(self, server, tmp_path, config):
-        """Resume with offset > 0 but no .part file is rejected."""
+    def test_resume_without_part_resyncs_to_zero(self, server, tmp_path, config):
+        """offset>0 with no .part is a stale probe too: 202 offset 0, not a
+        permanent 400 (the peer re-probes and starts fresh or finds the file
+        already complete)."""
         import requests
 
         _, port = server
-
         with patch("hsync_client.p2p_server.CONFIG", config):
             files = {"file": ("noresume.txt", b"new data")}
             data = {
@@ -265,4 +278,57 @@ class TestLANResumableUpload:
                 "corrected_mtime": "0",
             }
             resp = requests.post(self._upload_url(port), files=files, data=data, timeout=5)
-            assert resp.status_code == 400
+            assert resp.status_code == 202, f"Expected 202, got {resp.status_code}: {resp.text}"
+            body = resp.json()
+            assert body["offset"] == 0
+            assert body["remaining"] == 200
+
+    def test_concurrent_uploads_of_the_same_path_are_serialized(self, server, tmp_path, config):
+        """Two uploads of one path cannot append to the same .part at once.
+
+        A duplicate trigger (watcher + full sync racing the master) would give
+        the second writer a stale offset; the per-path lock serializes them so
+        the loser re-probes instead of corrupting the partial file.
+        """
+        import hashlib
+        import threading
+
+        import requests
+
+        from hsync_client.p2p_server import _path_lock_for
+
+        _, port = server
+        lock = _path_lock_for(str(tmp_path / "locked.txt"))
+        lock.acquire()
+        finished = threading.Event()
+
+        def upload() -> None:
+            try:
+                with patch("hsync_client.p2p_server.CONFIG", config):
+                    requests.post(
+                        self._upload_url(port),
+                        files={"file": ("locked.txt", b"data")},
+                        data={
+                            "cid": "test_cid_12345678901",
+                            "path": "",
+                            "size": "4",
+                            "sha256sum": hashlib.sha256(b"data").hexdigest(),
+                            "permissions": "644",
+                            "offset": "0",
+                            "mtime": str(int(time.time())),
+                            "ctime": str(int(time.time())),
+                            "vclock": "",
+                            "version_id": "",
+                            "corrected_mtime": "0",
+                        },
+                        timeout=5,
+                    )
+            finally:
+                finished.set()
+
+        thread = threading.Thread(target=upload)
+        thread.start()
+        assert not finished.wait(0.5), "the upload bypassed the per-path lock"
+        lock.release()
+        assert finished.wait(5.0)
+        thread.join()

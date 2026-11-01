@@ -77,11 +77,17 @@ back. The bytes are the peers' own TLS, so certificate pinning still authenticat
 the master and the displayed master address stays the real one. Each TCP
 connection a sync cycle opens against the loopback endpoint (REST requests plus
 the WSS channel) is paired with its **own** `relay_connect` session on the node
-(`rdv_relay.py::RelayDialer`), so one tunnel outlives a single connection; the
-first connection no longer tears the whole tunnel down (the old bug made every
-later connection — the WebSocket channel, a file download — hit `Connection
-refused`, so a cross-network sync never completed). The full chain is
-exercised end-to-end by `tests/test_bb_p2p_rendezvous_relay.py` (gated
+(`rdv_relay.py::RelayDialer`), so one tunnel outlives a single connection and
+every later connection of the cycle (the WebSocket channel, a file download)
+rides it. The tunnel survives the gaps
+between its sessions through two mechanisms: the `RelayDialer` pings the node on
+a dedicated control stream every `constants.py::RELAY_KEEPALIVE_INTERVAL` (the
+node's QUIC idle would otherwise drop an idle connection), and each session's
+`rdv_relay.py::bridge` enforces the node's **session-wide** idle semantics — a
+session is idle only when no byte moved in *either* direction for
+`constants.py::RELAY_IDLE_TIMEOUT_S`, so a long unidirectional upload (whose HTTP
+reply only arrives once the request ends) is never killed by its silent reply
+leg. The full chain is exercised end-to-end by `tests/test_bb_p2p_rendezvous_relay.py` (gated
 `HSYNC_BB_P2P=1`, sibling rendezvous with `--relay`): the test-only seam
 `p2p_rendezvous_rdv.py::_TEST_ADVERTISED_ENDPOINTS_ENV` makes the real master
 publish only undialable candidates on a single host, so the slave's probes fail
@@ -98,18 +104,15 @@ line; it fires only after every direct candidate failed and is deduped per maste
 so the rendezvous loop's retries do not repeat it. The structured counterpart goes
 through `events.py::emit_warning`, which the desktop surfaces as a banner.
 
-Serving side, the master's relay listener must survive the node dropping it. A
+Serving side, the master's relay listener survives the node dropping it. A
 relayed slave is seen by the master as `127.0.0.1` (the acceptor bridges to the
 local data plane over loopback), so a dropped control stream surfaces as a normal
 `WebSocket client disconnected: 127.0.0.1` and the master's status falls to
-`waiting`. `rdv_relay.py::RelayAcceptor._run` now ends as soon as its control
-stream dies (`_read_incoming`/`_keepalive` returning, not only `stop()`), clearing
-`_registered` so `active` stops reporting a zombie listener;
-`p2p_handler.py::_run_as_master` calls `_start_master_relay` on **every** re-entry
-(not only the first activation), so a listener the node dropped is re-offered on
-the next one-second tick. Without both, a mobile-network blip dissolved the relay
-listener for good and every relay-only peer stayed stranded on `waiting` while a
-directly reachable peer kept working.
+`waiting`. `rdv_relay.py::RelayAcceptor._run` ends as soon as its control stream
+dies (`_read_incoming`/`_keepalive` returning, not only `stop()`), clearing
+`_registered` so `active` reports no listener once the node dropped it;
+`p2p_handler.py::_run_as_master` calls `_start_master_relay` on **every** re-entry,
+so the next one-second tick re-offers a listener the node dropped.
 
 The local node's candidacy can also be dropped at runtime
 (`p2p_peers.py::PeerManager.set_master_candidacy`): a client parked in
@@ -394,6 +397,20 @@ matrix on the wire data.
 Peer-supplied paths on download/delete/rename/upload are validated with
 `validate_remote_relpath` and confined with `resolve_within` (no `startswith`
 prefix checks — sibling directories cannot bypass confinement).
+
+Uploads to the same destination are **serialized per path**
+(`p2p_server.py::_path_lock_for`): a duplicate trigger (watcher + full sync)
+racing the master would give the second writer a stale offset and corrupt the
+`.part`. When a resumable upload's declared offset no longer matches the `.part`
+the master holds (the `.part` is gone because the completing writer renamed it,
+or a duplicate writer appended bytes), the incoming body is consumed and
+discarded and the master answers `202` with the true offset
+(`p2p_server.py::_send_resync_response`) — it never 400s and deletes, so the
+peer re-probes `upload-status` and resumes (or restarts) instead of losing the
+partial progress. The client mirrors the contract: a `202` on the standard
+upload branch is a retryable outcome that re-probes and resumes, and the
+terminal `transfer_failed` is published once the retries are exhausted
+(`transfer.py::_upload_file_attempt`).
 
 **The serving role reports its own transfers** on the structured UI-event
 channel, so a client that starts first (and is therefore the master) shows the
