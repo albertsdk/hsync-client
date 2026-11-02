@@ -549,7 +549,11 @@ class RelayDialer:
             if quic is None:
                 tcp_writer.close()
                 return
-            stream_reader, stream_writer, refusal = await _probe_relay_connect(
+            # The probe also returns the node's ``retry_after`` hint: this caller
+            # drops the refused connection and lets the client's own retry
+            # recover, while the pacing of the tunnel's re-pairing stays in
+            # ``_hold_session`` (the only place that can honour it).
+            stream_reader, stream_writer, refusal, _retry_after = await _probe_relay_connect(
                 quic, self._connect_frame(), self._client.timeout
             )
             if stream_reader is None:

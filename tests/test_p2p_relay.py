@@ -811,3 +811,54 @@ def test_a_failover_dialer_needs_at_least_one_server() -> None:
     """An empty set cannot pair anything: reject it instead of failing later."""
     with pytest.raises(ValueError):
         FailoverRelayDialer([])
+
+
+class _ScriptedStream:
+    """Fake relay stream: ``readline`` answers the handshake, ``read`` the tunnel."""
+
+    def __init__(self, handshake: list[bytes], data: asyncio.Queue) -> None:
+        self._handshake = list(handshake)
+        self._data = data
+
+    async def readline(self) -> bytes:
+        return self._handshake.pop(0) if self._handshake else b""
+
+    async def read(self, size: int = -1) -> bytes:
+        return await self._data.get()
+
+
+def test_a_relayed_connection_pairs_its_own_session() -> None:
+    """Every accepted loopback connection must bridge its own relay session.
+
+    ``_probe_relay_connect`` answers ``(reader, writer, refusal, retry_after)``:
+    the node's wait is what paces the tunnel's re-pairing in ``_hold_session``.
+    This per-connection caller unpacked three values, so every accepted loopback
+    connection died with ``ValueError: too many values to unpack`` before its
+    first byte — the HTTPS client read that as an SSL EOF and a relayed sync
+    could never start. The connection must pair its own session, forward the
+    client's bytes into it and the master's reply back to the socket.
+    """
+    relay_ok = (
+        json.dumps({"protocol_version": "rdv/1", "type": "relay_ok", "relay_id": "0" * 32}) + "\n"
+    ).encode()
+    replies: asyncio.Queue = asyncio.Queue()
+    replies.put_nowait(b"reply-from-master")
+    stream_writer = _FakeWriter()
+    client = type("_Client", (), {"timeout": 5.0})()
+    dialer = RelayDialer(client, cid=_Master.cid, bucket="b", target_cid="B1c2D3e4F5g6H7i8J9k0L")
+    dialer._session = _FakeQuic(_ScriptedStream([relay_ok], replies), stream_writer)
+    client_bytes: asyncio.Queue = asyncio.Queue()
+    client_bytes.put_nowait(b"client-hello")
+    tcp_writer = _FakeWriter()
+
+    async def scenario() -> None:
+        await dialer._handle()(_QueuedReader(client_bytes), tcp_writer)
+
+    # Both directions stay open (a real tunnel outlives one request), so the
+    # bridge is stopped by the deadline once each pump forwarded its chunk.
+    with pytest.raises(TimeoutError):
+        asyncio.run(asyncio.wait_for(scenario(), timeout=0.5))
+
+    assert json.loads(stream_writer.chunks[0].decode())["type"] == "relay_connect"
+    assert b"".join(stream_writer.chunks).endswith(b"client-hello")
+    assert b"".join(tcp_writer.chunks) == b"reply-from-master"
