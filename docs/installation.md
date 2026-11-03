@@ -32,7 +32,7 @@ procedure.
 | Checksums | all | all | `SHA256SUMS` | [Verify the download](#verify-the-download) |
 
 > **Note**: the assets in this table share the `hsync-client` prefix; the WD OS5
-> `.bin` installers live on the [hsync-wd-os5 releases](https://github.com/albertsdk/hsync-wd-os5/releases) instead.
+> `.bin` installers live on the [hsync-wd-os5 releases](https://github.com/albertsdk/hsync-wd-os5/releases/latest) instead.
 >
 > Binary archives use
 > hyphens (`hsync-client-<version>-<target>.tar.gz`) while Debian packages
@@ -40,9 +40,9 @@ procedure.
 > Both contain the same `hsync` executable.
 
 Every `hsync-client` tag (`vX.Y.Z`) publishes its assets on the
-[client Releases page](https://github.com/albertsdk/hsync-client/releases); the
+[client Releases page](https://github.com/albertsdk/hsync-client/releases/latest); the
 WD OS5 `.bin` installers are published by
-[hsync-wd-os5](https://github.com/albertsdk/hsync-wd-os5/releases). Building
+[hsync-wd-os5](https://github.com/albertsdk/hsync-wd-os5/releases/latest). Building
 from source is covered in
 [Getting Started — From source](getting-started-source.md).
 
