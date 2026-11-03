@@ -7,6 +7,7 @@ Contains TestRunPreview class.
 from unittest.mock import MagicMock, patch
 
 from hsync_client.main_logic import _run_preview
+from hsync_client.preview import _sentinel_dir
 
 
 class TestRunPreview:
@@ -504,3 +505,110 @@ class TestPreviewFailureLogging:
             assert [kind for kind, _ in log.calls] == ["error", "debug", "error", "error"]
         finally:
             _note_preview_success()
+
+
+class TestSentinelDirectory:
+    """Map a sentinel path to the empty directory it preserves."""
+
+    def test_relative_sentinel(self):
+        assert _sentinel_dir("a/b/.hsynckeep") == "a/b"
+
+    def test_absolute_sentinel(self):
+        assert _sentinel_dir("/share/empty/.hsynckeep") == "/share/empty"
+
+    def test_windows_separators(self):
+        sentinel = "a" + chr(92) + "b" + chr(92) + ".hsynckeep"
+        assert _sentinel_dir(sentinel) == "a/b"
+
+    def test_the_bucket_root_has_no_directory_row(self):
+        assert _sentinel_dir(".hsynckeep") == ""
+
+    def test_a_regular_file_is_not_a_sentinel(self):
+        assert _sentinel_dir("a/b.txt") == ""
+
+
+class TestEmptyDirectoryStatus:
+    """An empty directory is reported under its own path, never as its sentinel.
+
+    The sentinel is internal (never user content), so it stays out of the plan;
+    the directory it preserves is user content, so its verdict is emitted for the
+    folder row a front-end renders.
+    """
+
+    @staticmethod
+    def _run(tmp_path, action, events):
+        from hsync_common.models.file import File
+        from hsync_common.models.sync_action import SyncAction, SyncActionName
+
+        mock_logger = MagicMock()
+        config = {"P2P_MODE": False, "DELETION_POLICY": "propagate"}
+        file_obj = File(str(tmp_path / "empty" / ".hsynckeep"))
+        file_obj.size = 0
+        plan = SyncAction(file_obj, getattr(SyncActionName, action))
+
+        def _emit(event, **payload) -> None:
+            events.append((str(getattr(event, "value", event)), payload))
+
+        with (
+            patch("hsync_client.preview.CONFIG", config),
+            patch("hsync_client.preview.ensure_hsynckeep_files"),
+            patch("hsync_client.preview.get_files_local", return_value=[]),
+            patch("hsync_client.preview.get_files_remote", return_value=[]),
+            patch("hsync_client.preview.get_tombstones_remote", return_value={}),
+            patch("hsync_client.preview.get_sync_actions", return_value=[plan]),
+            patch("hsync_client.preview.emit_event", _emit),
+        ):
+            _run_preview(mock_logger)
+
+    def test_a_synced_empty_directory_is_reported_synced(self, tmp_path):
+        events: list[tuple[str, dict]] = []
+        self._run(tmp_path, "nothing", events)
+
+        dirs = [payload for name, payload in events if name == "dir_status"]
+        assert dirs == [{"path": str(tmp_path / "empty"), "state": "synced"}]
+        # The sentinel never becomes a file row, so it never enters the counts.
+        assert not any(name == "file_status" for name, _payload in events)
+
+    def test_an_uploaded_empty_directory_is_reported_to_upload(self, tmp_path):
+        events: list[tuple[str, dict]] = []
+        self._run(tmp_path, "upload", events)
+
+        dirs = [payload for name, payload in events if name == "dir_status"]
+        assert dirs == [{"path": str(tmp_path / "empty"), "state": "to_upload"}]
+
+    def test_a_downloaded_empty_directory_is_reported_to_download(self, tmp_path):
+        events: list[tuple[str, dict]] = []
+        self._run(tmp_path, "download", events)
+
+        dirs = [payload for name, payload in events if name == "dir_status"]
+        assert dirs == [{"path": str(tmp_path / "empty"), "state": "to_download"}]
+
+    def test_a_plain_file_emits_no_directory_status(self, tmp_path):
+        from hsync_common.models.file import File
+        from hsync_common.models.sync_action import SyncAction, SyncActionName
+
+        mock_logger = MagicMock()
+        config = {"P2P_MODE": False, "DELETION_POLICY": "propagate"}
+        file_obj = File(str(tmp_path / "plain.txt"))
+        file_obj.size = 3
+        events: list[tuple[str, dict]] = []
+
+        def _emit(event, **payload) -> None:
+            events.append((str(getattr(event, "value", event)), payload))
+
+        with (
+            patch("hsync_client.preview.CONFIG", config),
+            patch("hsync_client.preview.ensure_hsynckeep_files"),
+            patch("hsync_client.preview.get_files_local", return_value=[]),
+            patch("hsync_client.preview.get_files_remote", return_value=[]),
+            patch("hsync_client.preview.get_tombstones_remote", return_value={}),
+            patch(
+                "hsync_client.preview.get_sync_actions",
+                return_value=[SyncAction(file_obj, SyncActionName.upload)],
+            ),
+            patch("hsync_client.preview.emit_event", _emit),
+        ):
+            _run_preview(mock_logger)
+
+        assert not any(name == "dir_status" for name, _payload in events)
+        assert any(name == "file_status" for name, _payload in events)

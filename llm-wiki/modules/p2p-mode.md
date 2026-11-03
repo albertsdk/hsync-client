@@ -269,6 +269,11 @@ front-end renders the comparison and settles its summary without inferring the
 end of a burst and without touching the preview confirmation. Cost: see
 [benchmarks.md](benchmarks.md).
 
+The pass also classifies **empty directories** (`master_status.py::_dir_states`):
+they travel as their internal `.hsynckeep` sentinel, which carries no content to
+compare and is skipped from the per-file rows, so their own verdict is emitted
+as a `dir_status` row under the directory’s path.
+
 **Combined mDNS + rendezvous (`HybridRendezvous`).** With a rendezvous configured
 both sources run against one `PeerManager` (built once via
 `RendezvousPlanState.create_peer_manager` and injected into both plans at

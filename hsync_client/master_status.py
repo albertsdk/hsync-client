@@ -134,6 +134,45 @@ def _classify_entries(
     return states, remote_like
 
 
+def _dir_states(
+    held: Mapping[tuple[str, str], int],
+    local_files: Iterable[dict],
+    bucket_dir: str,
+) -> list[tuple[str, str]]:
+    """``(state, bucket-relative dir)`` for every empty directory of the share.
+
+    An empty directory is synchronised as its ``.hsynckeep`` sentinel, which
+    :func:`local_identities` deliberately skips (it carries no content to
+    compare). The directory itself is a user-facing entry, so its own verdict
+    is derived from the sentinel identity: ``synced`` when the devices hold
+    it, ``to_upload`` when nobody does, and ``to_download`` for a sentinel only
+    the devices hold. It is the verdict a peer renders for the folder row.
+    """
+    states: list[tuple[str, str]] = []
+    local_dirs: set[str] = set()
+    for entry in local_files:
+        path = str(entry.get("filepath") or "")
+        if not path or entry.get("type") == "symlink":
+            continue
+        key = _bucket_key(path, bucket_dir)
+        if not key or not _is_sentinel(key):
+            continue
+        directory = key.rsplit("/", 1)[0]
+        if not directory:
+            continue
+        local_dirs.add(directory)
+        identity = (key, str(entry.get("sha256sum") or ""))
+        states.append(("synced" if identity in held else "to_upload", directory))
+    for identity in held:
+        key = identity[0]
+        if not _is_sentinel(key):
+            continue
+        directory = key.rsplit("/", 1)[0]
+        if directory and directory not in local_dirs:
+            states.append(("to_download", directory))
+    return states
+
+
 class MasterSyncStatus:
     """Runs the master classification off the serving path.
 
@@ -302,6 +341,10 @@ class MasterSyncStatus:
                 holders=holders,
                 devices=len(published),
             )
+        # The empty directories: their sentinel never becomes a file row, so
+        # their own state is reported under the directory path.
+        for state, directory in _dir_states(comparison.held, local_files, bucket_dir):
+            emit_event(UiEventName.dir_status, path=directory, state=state)
 
     def _local_listing(self) -> list[dict]:
         now = self._clock()

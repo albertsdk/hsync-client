@@ -447,3 +447,57 @@ class TestMasterSyncStatus:
         assert not any(
             t.name == "hsync-master-status" and t.is_alive() for t in threading.enumerate()
         )
+
+
+class TestEmptyDirectoryStates:
+    """An empty directory is classified under its own path, not as its sentinel."""
+
+    @staticmethod
+    def _status(store, local_files: list[dict]) -> MasterSyncStatus:
+        return MasterSyncStatus(
+            lambda: store,
+            LOG,
+            local_provider=lambda: list(local_files),
+            min_interval_s=0.0,
+            local_cache_ttl_s=60.0,
+        )
+
+    def test_a_synced_empty_directory(self, tmp_path, recorder, monkeypatch):
+        monkeypatch.setitem(CONFIG, "LOCAL_BUCKET", str(tmp_path))
+        sentinel = str(tmp_path / "empty" / ".hsynckeep")
+        store = _store(tmp_path, [{"path": "empty/.hsynckeep", "sha256": DIGEST_A, "size": 0}])
+        status = self._status(store, [_local(sentinel, DIGEST_A, 0)])
+
+        status.run_now()
+
+        status.stop()
+        store.close()
+        dirs = [payload for name, payload in recorder.events if name == "dir_status"]
+        assert dirs == [{"path": "empty", "state": "synced"}]
+        # The sentinel never becomes a file row, so it never enters the counts.
+        assert recorder.states() == []
+
+    def test_a_peer_only_empty_directory(self, tmp_path, recorder, monkeypatch):
+        monkeypatch.setitem(CONFIG, "LOCAL_BUCKET", str(tmp_path))
+        store = _store(tmp_path, [{"path": "empty/.hsynckeep", "sha256": DIGEST_A, "size": 0}])
+        status = self._status(store, [])
+
+        status.run_now()
+
+        status.stop()
+        store.close()
+        dirs = [payload for name, payload in recorder.events if name == "dir_status"]
+        assert dirs == [{"path": "empty", "state": "to_download"}]
+
+    def test_a_local_only_empty_directory(self, tmp_path, recorder, monkeypatch):
+        monkeypatch.setitem(CONFIG, "LOCAL_BUCKET", str(tmp_path))
+        sentinel = str(tmp_path / "empty" / ".hsynckeep")
+        store = _store(tmp_path, [])
+        status = self._status(store, [_local(sentinel, DIGEST_A, 0)])
+
+        status.run_now()
+
+        status.stop()
+        store.close()
+        dirs = [payload for name, payload in recorder.events if name == "dir_status"]
+        assert dirs == [{"path": "empty", "state": "to_upload"}]

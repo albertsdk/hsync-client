@@ -111,6 +111,13 @@ pairing is the shared `sync.py::split_rename_pairs`; tombstone-backed
 `delete_remote` rows are listed as `to_delete` too, since the run performs them
 (the keep policy and the mass-deletion guard still never see them).
 
+An empty directory is synchronised as its internal `.hsynckeep` sentinel, which
+stays out of the plan (never user content). The directory itself is user
+content, so `preview.py::_emit_empty_dir_status` reports its own verdict through
+the `UiEventName.dir_status` event (`state` taken from the sentinel’s action,
+`path` the directory): it is what settles the folder row of a directory that is
+in sync on every device, which no transfer ever names.
+
 ### Warning channel (`events.py::emit_warning`)
 
 A warning is a condition the engine keeps running through — a watcher that

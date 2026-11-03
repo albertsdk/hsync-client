@@ -155,6 +155,49 @@ def _note_preview_success() -> None:
     _preview_failure_seen = None
 
 
+# The verdict a front-end renders for the (empty) directory that owns a sentinel,
+# keyed by the plan action the sentinel received.
+_DIR_STATUS_BY_ACTION = {
+    SyncActionName.nothing: "synced",
+    SyncActionName.upload: "to_upload",
+    SyncActionName.download: "to_download",
+    SyncActionName.delete: "to_delete",
+    SyncActionName.delete_remote: "to_delete",
+}
+
+
+def _sentinel_dir(filepath: str) -> str:
+    """Path of the directory owning *filepath*, or ``""`` when it is not one.
+
+    A ``.hsynckeep`` sentinel is the wire form of an empty directory, so its
+    parent is the directory the plan is really about. Any other file yields
+    ``""`` (there is no directory to report). The parent keeps the form the
+    listing gave it (absolute for the local side, bucket-relative for the
+    remote one), exactly like the ``file`` field of ``file_status``.
+    """
+    rel = filepath.replace("\\", "/").rstrip("/")
+    head, sep, tail = rel.rpartition("/")
+    if not sep or tail != HSYNCKEEP_FILENAME:
+        return ""
+    return head
+
+
+def _emit_empty_dir_status(actions) -> None:
+    """Emit one ``dir_status`` per empty directory a plan action concerns.
+
+    A sentinel is internal (never user content), so the plan above drops it
+    from every count; the directory it preserves is user content, so its own
+    verdict is reported under the directory path (no sentinel, no trailing
+    slash). It is the only signal that settles a directory already in sync,
+    which no transfer ever names.
+    """
+    for action in actions:
+        directory = _sentinel_dir(action.file.filepath or "")
+        state = _DIR_STATUS_BY_ACTION.get(action.name)
+        if directory and state:
+            emit_event(UiEventName.dir_status, path=directory, state=state)
+
+
 def _run_preview(log) -> None:
     """
     Run a preview (dry-run) showing pending sync actions.
@@ -212,6 +255,12 @@ def _run_preview(log) -> None:
         synced = [
             a for a in sync_actions if a.name == SyncActionName.nothing and not _is_sentinel(a)
         ]
+
+        # An empty directory is synchronised as its ``.hsynckeep`` sentinel,
+        # which the plan above drops (it is not user content). The directory
+        # itself is user content, so report its own verdict: it is what settles
+        # the folder row of a directory already in sync on every device.
+        _emit_empty_dir_status(sync_actions)
 
         # Detect renames in both directions through the helper the run itself
         # uses, so the plan a confirmation shows and the plan that executes
