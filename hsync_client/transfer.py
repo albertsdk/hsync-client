@@ -89,7 +89,7 @@ from hsync_client.p2p_sources import (
     P2PSourceResolver,
     PeerFailureKind,
 )
-from hsync_client.progress import ProgressReporter
+from hsync_client.progress import ProgressReporter, emit_completed_transfer
 from hsync_client.retry import retry_on_transient_transfer_error
 from hsync_client.sync_state import (
     abs_in_bucket,
@@ -2179,7 +2179,7 @@ def _patch_permissions_only(file: File, filename: str) -> bool:
         return False
     log.info(f'{ActionLabel.PERMISSION} "{file.filepath}" (metadata updated)')
     _record_synced_base(file, vclock=_resolve_local_vclock(file))
-    emit_event(UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0)
+    emit_completed_transfer("upload", file.filepath, file.size or 0)
     return True
 
 
@@ -2262,9 +2262,13 @@ def _handle_upload_conflict_response(file: File, response) -> bool:
         )
         return True
     # Legacy / duplicate "already present": the server already holds this
-    # exact content, so local and remote agree — record the base.
+    # exact content, so local and remote agree — record the base and close the
+    # row. Without the terminal event a retried upload that lands here (common
+    # over a relay, where the commit can precede a dropped connection) would
+    # leave the Desktop row in flight at its last sample.
     log.debug(f'"{file.filepath}" (already present)')
     _record_synced_base(file)
+    emit_completed_transfer("upload", file.filepath, file.size or 0)
     return False
 
 
@@ -2282,7 +2286,7 @@ def _handle_upload_response(file: File, response, t0: float) -> None:
                 f'{ActionLabel.UPLOAD} "{file.filepath}" {format_bytes(file.size)} '
                 f"{format_duration(monotonic() - t0, subsecond=True)}"
             )
-            emit_event(UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0)
+            emit_completed_transfer("upload", file.filepath, file.size or 0)
             _record_201_upload(file, response)
         case 200:
             # Permissions updated on the same-SHA branch (permission-only
@@ -2292,7 +2296,7 @@ def _handle_upload_response(file: File, response, t0: float) -> None:
             # would leave the Desktop row in flight forever.
             log.info(f'{ActionLabel.PERMISSION} "{file.filepath}" (permissions updated)')
             _record_synced_base(file, vclock=_resolve_local_vclock(file))
-            emit_event(UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0)
+            emit_completed_transfer("upload", file.filepath, file.size or 0)
         case 401:
             _emit_auth_error("Authentication failed", "uploading", file.filepath)
         case 403:
@@ -2391,9 +2395,7 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
                     f'{ActionLabel.UPLOAD} "{file.filepath}" {format_bytes(file.size)} '
                     f"{format_duration(monotonic() - t0, subsecond=True)}"
                 )
-                emit_event(
-                    UiEventName.transfer, op="upload", file=file.filepath, size=file.size or 0
-                )
+                emit_completed_transfer("upload", file.filepath, file.size or 0)
                 vclock, corrected_mtime = _resolve_local_version_pair(file)
                 _record_synced_base(file, vclock=vclock, corrected_mtime=corrected_mtime)
                 return
@@ -2416,9 +2418,12 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
         if status == "complete":
             if not permissions_only:
                 # Identical content is already on the peer and no permission
-                # change was requested: it is a genuine no-op upload.
+                # change was requested: it is a genuine no-op upload, but the
+                # Desktop row (created by the peer's progress echo) still needs
+                # its terminal event to close.
                 log.debug(f'"{file.filepath}" (already present on server)')
                 _record_synced_base(file, vclock=_resolve_local_vclock(file))
+                emit_completed_transfer("upload", file.filepath, file.size or 0)
                 return
             # A permission-only chmod: try the metadata-only endpoint first
             # (no bytes cross the wire). When the peer does not expose it,

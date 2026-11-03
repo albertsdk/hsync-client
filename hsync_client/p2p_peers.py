@@ -28,6 +28,7 @@ from hsync_common.endpoint import build_url
 from hsync_common.protocol.p2p import (
     SYNC_DIRECTION_BIDIRECTIONAL,
     ElectionCandidate,
+    election_sort_key,
     rank_election_candidates,
 )
 from loguru import logger as log
@@ -200,6 +201,18 @@ class PeerSnapshot:
     cert_fingerprint: str | None
     compression_enabled: bool
     peer_download_enabled: bool
+
+
+# Human-readable names for the election sort-key components, in the order of
+# ``election_sort_key``. Used to report which component actually decided an
+# election instead of restating the winner's highest flag.
+_ELECTION_REASON_LABELS = (
+    "server_ready",
+    "prefer_master",
+    "bidirectional preference",
+    "earliest startup",
+    "lowest cid",
+)
 
 
 class PeerManager:
@@ -820,6 +833,29 @@ class PeerManager:
                 self._change_cond.wait(remaining)
             self._seen_generation = self._change_generation
 
+    def _election_reason(self, ranked: list[ElectionCandidate]) -> str:
+        """Name the sort-key component that decided the election.
+
+        Reporting the winner's highest set flag is misleading when several
+        candidates share it — two peers both advertising ``server_ready`` are
+        separated by ``startup_time``/``cid``, not by ``server_ready``. The
+        reason must be the first component on which the winner beat the
+        runner-up; a lone candidate has no runner-up, so its own strongest
+        preferred flag is named.
+        """
+        winner = ranked[0]
+        winner_key = election_sort_key(winner)
+        if len(ranked) < 2:
+            for value, label in zip(winner_key[:3], _ELECTION_REASON_LABELS[:3], strict=True):
+                if value is False:
+                    return label
+            return _ELECTION_REASON_LABELS[3]
+        runner_key = election_sort_key(ranked[1])
+        for index, label in enumerate(_ELECTION_REASON_LABELS):
+            if winner_key[index] != runner_key[index]:
+                return label
+        return _ELECTION_REASON_LABELS[-1]
+
     def _elect_master(self) -> None:
         """
         Elect the master peer.
@@ -936,14 +972,7 @@ class PeerManager:
             self._master_cid = new_master_cid
 
             if new_master_cid == self._local_cid:
-                if self._local_server_ready:
-                    reason = "server_ready"
-                elif self._prefer_master:
-                    reason = "prefer_master"
-                elif self._sync_direction == SYNC_DIRECTION_BIDIRECTIONAL:
-                    reason = "bidirectional preference"
-                else:
-                    reason = "earliest startup"
+                reason = self._election_reason(ranked)
                 log.info(
                     f"This client elected as MASTER (CID: {self._local_cid}, reason: {reason})"
                 )
@@ -957,14 +986,7 @@ class PeerManager:
             else:
                 master_peer = self._peers.get(new_master_cid) if new_master_cid else None
                 if master_peer:
-                    if master_peer.server_ready:
-                        reason = "server_ready"
-                    elif master_peer.prefer_master:
-                        reason = "prefer_master"
-                    elif master_peer.sync_direction == SYNC_DIRECTION_BIDIRECTIONAL:
-                        reason = "bidirectional preference"
-                    else:
-                        reason = "earliest startup"
+                    reason = self._election_reason(ranked)
                     if master_peer.sync_direction != SYNC_DIRECTION_BIDIRECTIONAL:
                         log.warning(
                             f"Master {new_master_cid} has "

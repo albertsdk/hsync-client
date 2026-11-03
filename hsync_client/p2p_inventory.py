@@ -56,6 +56,12 @@ P2P_INVENTORY_GLOBAL_QUOTA = 20_000_000
 P2P_INVENTORY_MAX_SESSIONS = 64
 P2P_INVENTORY_STAGING_TTL_S = 5 * 60.0
 P2P_INVENTORY_ACK_TIMEOUT_S = 15.0
+# After an ACK timeout the receiver is backlogged, not gone: retry a fresh
+# snapshot on the same connection after this backoff, doubling up to the max,
+# so a master left waiting on this peer's inventory eventually gets it without
+# the publisher ever tearing down the WSS channel it shares with the event flow.
+P2P_INVENTORY_ACK_RETRY_MIN_S = 5.0
+P2P_INVENTORY_ACK_RETRY_MAX_S = 60.0
 P2P_INVENTORY_SCHEMA_VERSION = 1
 
 
@@ -1291,9 +1297,8 @@ class P2PInventoryPublisher:
         # backlogged (typical under a burst): the channel is congested, not
         # necessarily dead. Do NOT close the websocket here — closing it would
         # tear down the event channel this same connection carries and force a
-        # full resync on both peers. The publish loop treats the timeout as
-        # "stop publishing on this connection" instead; the event flow keeps
-        # working and the next connection re-publishes a fresh snapshot.
+        # full resync on both peers. The publish loop catches the timeout and
+        # retries a fresh snapshot after a backoff instead.
         raise TimeoutError("P2P inventory acknowledgement timed out")
 
     async def _publish_snapshot(self) -> tuple[str, int, int]:
@@ -1350,17 +1355,29 @@ class P2PInventoryPublisher:
         return "ok", next_seq
 
     async def _publish_loop(self) -> None:
-        try:
-            await self._publish_loop_inner()
-        except (TimeoutError, ConnectionError):
-            # The master stopped acknowledging (receiver backlogged under a
-            # burst) or the transport died. Publishing is disabled for this
-            # connection; the websocket stays open so the event channel it
-            # carries keeps flowing, and the next connection's ``start()``
-            # resets the publisher and re-snapshots. The master's session
-            # expires via its staging TTL in the meantime.
-            self._disabled = True
-            log.warning("P2P inventory publisher stopped: master not acknowledging")
+        backoff = P2P_INVENTORY_ACK_RETRY_MIN_S
+        while True:
+            try:
+                await self._publish_loop_inner()
+                return
+            except TimeoutError:
+                # The master stopped acknowledging (receiver backlogged under a
+                # burst) but the transport is alive. Keep the channel — it also
+                # carries the event flow — and retry a fresh snapshot after a
+                # bounded backoff, so the master is not left without this peer's
+                # inventory until a reconnect. A transport that truly died
+                # raises ConnectionError on the next send and ends the loop.
+                self._resnapshot_requested = True
+                log.warning(
+                    "P2P inventory ACK timed out; retrying a fresh snapshot in {:.0f}s",
+                    backoff,
+                )
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, P2P_INVENTORY_ACK_RETRY_MAX_S)
+            except ConnectionError:
+                self._disabled = True
+                log.warning("P2P inventory publisher stopped: transport lost")
+                return
 
     async def _publish_loop_inner(self) -> None:
         while True:

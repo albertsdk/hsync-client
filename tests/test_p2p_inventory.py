@@ -252,27 +252,35 @@ def test_old_owner_disconnect_cannot_purge_reconnected_session(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-async def test_ack_timeout_stops_publisher_without_closing_channel(tmp_path: Path) -> None:
-    """Regression: an unacknowledged frame must not tear down the WSS channel.
+async def test_ack_timeout_retries_without_closing_channel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unacknowledged frame must not tear down the WSS channel.
 
     Under a burst the master's receiver can be backlogged for tens of seconds;
-    the old behaviour closed the websocket with 1011 after one ACK timeout,
-    which killed the event channel carried by the same connection and forced a
-    full resync on both peers. The publisher now degrades to "stopped" (its
-    master-side session expires via TTL) while the channel stays open.
+    the channel carries the event flow on the same connection, so it is kept open
+    and a fresh snapshot is retried after a backoff, leaving the master with this
+    peer's inventory rather than none.
     """
+    import hsync_client.p2p_inventory as inventory_module
+
+    monkeypatch.setattr(inventory_module, "P2P_INVENTORY_ACK_RETRY_MIN_S", 0.05)
+    monkeypatch.setattr(inventory_module, "P2P_INVENTORY_ACK_RETRY_MAX_S", 0.05)
     (tmp_path / "file.txt").write_text("content")
     publisher = P2PInventoryPublisher(tmp_path, ack_timeout_s=0.05)
     websocket = SilentWebSocket()
-    task = publisher.start(websocket)
+    publisher.start(websocket)
 
+    # Terminal snapshot, its resend, then a fresh snapshot after the first
+    # backoff: the publisher keeps trying instead of giving up.
     with contextlib.suppress(asyncio.TimeoutError):
-        async with asyncio.timeout(2):
-            await task
+        async with asyncio.timeout(1):
+            while len(websocket.frames) < 4:  # noqa: ASYNC110
+                await asyncio.sleep(0)
 
     assert websocket.closed is False, "an ACK timeout must not close the WSS channel"
-    assert publisher._disabled is True
-    assert len(websocket.frames) >= 2  # snapshot terminal sent, resent once
+    assert publisher._disabled is False
+    assert len(websocket.frames) >= 4
     await publisher.stop()
 
 

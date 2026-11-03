@@ -37,6 +37,25 @@ class TestPeerManager:
         pm_no_group = PeerManager(local_cid="local123", bucket="photos")
         assert pm_no_group.group is None
 
+    def test_election_reason_names_the_deciding_component(self):
+        """The reason reports the sort key that decided, not the top flag."""
+        from hsync_common.protocol.p2p import ElectionCandidate
+
+        pm = PeerManager(local_cid="local123", bucket="photos")
+        # Two serving incumbents tie on server_ready: startup_time decides.
+        winner = ElectionCandidate(cid="aaa", server_ready=True, startup_time=100.0)
+        runner = ElectionCandidate(cid="bbb", server_ready=True, startup_time=200.0)
+        assert pm._election_reason([winner, runner]) == "earliest startup"
+
+        # Same server_ready, preference and startup: the cid breaks the tie.
+        w2 = ElectionCandidate(cid="aaa", server_ready=True, startup_time=100.0)
+        r2 = ElectionCandidate(cid="aab", server_ready=True, startup_time=100.0)
+        assert pm._election_reason([w2, r2]) == "lowest cid"
+
+        # A lone bidirectional candidate names the direction preference.
+        lone = ElectionCandidate(cid="aaa", startup_time=100.0)
+        assert pm._election_reason([lone]) == "bidirectional preference"
+
     def test_master_election_local_wins(self):
         """Test that local client is elected master when it started earliest."""
         pm = PeerManager(local_cid="aaa111", bucket="photos", startup_time=100.0)

@@ -36,6 +36,7 @@ from hsync_client.config import CONFIG, set_config
 from hsync_client.constants import (
     HEARTBEAT_INTERVAL,
     MASTER_PROBE_FAST_TIMEOUT_S,
+    MAX_CONCURRENT_TRANSFERS_RELAY,
     RELAY_ACCEPT_TIMEOUT_S,
     RELAY_OPEN_TIMEOUT_S,
     RELAY_RETRY_BACKOFF_S,
@@ -458,6 +459,26 @@ def _refresh_p2p_network_tuning(
     log.info(
         f"autotune (P2P): rtt={rtt_ms:.1f}ms net={classify_network(rtt_ms).value} "
         f"-> {safe_json_for_log(updates)}"
+    )
+
+
+def _apply_relay_transfer_tuning(config: "HsyncConfig", log) -> None:
+    """Cap slave transfer concurrency while the data plane rides the relay.
+
+    Each loopback HTTP connection pairs its own relay session against the
+    node's per-IP budget, so a LAN-sized fan-out exhausts it and the surplus
+    sessions are refused mid-transfer. ``MAX_CONCURRENT_TRANSFERS`` is an
+    autotune-managed key, so it is re-derived from the master RTT again on a
+    direct path (``_refresh_p2p_network_tuning``); here it is forced down.
+    """
+    current = config.get("MAX_CONCURRENT_TRANSFERS")
+    if isinstance(current, int) and current <= MAX_CONCURRENT_TRANSFERS_RELAY:
+        return
+    cast(dict[str, Any], CONFIG)["MAX_CONCURRENT_TRANSFERS"] = MAX_CONCURRENT_TRANSFERS_RELAY
+    cast(dict[str, Any], config)["MAX_CONCURRENT_TRANSFERS"] = MAX_CONCURRENT_TRANSFERS_RELAY
+    log.info(
+        f"{ActionLabel.RELAY} path: capping concurrent transfers at "
+        f"{MAX_CONCURRENT_TRANSFERS_RELAY}"
     )
 
 
@@ -1474,6 +1495,9 @@ def _run_as_slave(
         config["SERVER_DELTA_ENABLED"] = master.delta_enabled
 
         set_config(config)
+
+        if relayed:
+            _apply_relay_transfer_tuning(config, log)
 
         source_resolver = P2PSourceResolver(
             master_url=master_url,

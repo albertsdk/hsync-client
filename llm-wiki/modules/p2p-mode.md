@@ -59,7 +59,13 @@ Election is delegated to the common SSOT: `PeerManager._elect_master` builds
 rendezvous plan calls `PeerManager.elect()` once at start, so a node with no peers
 yet still resolves its role (a lone `--prefer-master` node serves immediately,
 which is what lets a joining slave connect) — the election otherwise runs only on
-peer add/remove, a local readiness change and the stale sweep. TXT
+peer add/remove, a local readiness change and the stale sweep. The election log
+names the sort-key component that actually decided it
+(`p2p_peers.py::PeerManager._election_reason`: the first key on which the winner
+beat the runner-up, or its own strongest preferred flag when it ran alone) —
+two peers that both advertise `server_ready` are separated by
+`startup_time`/`cid`, so restating `server_ready` there would misdirect
+diagnosis. TXT
 records advertise `protocol`, `cert_fp`, `sync_direction`, and `peer_download`.
 `peer_download` means the node serves blocks; every node also advertises `index`
 and publishes a read-only inventory, so a peer that does not serve still lets the
@@ -81,8 +87,10 @@ the WSS channel) is paired with its **own** `relay_connect` session on the node
 every later connection of the cycle (the WebSocket channel, a file download)
 rides it. The tunnel survives the gaps
 between its sessions through two mechanisms: the `RelayDialer` pings the node on
-a dedicated control stream every `constants.py::RELAY_KEEPALIVE_INTERVAL` (the
-node's QUIC idle would otherwise drop an idle connection), and each session's
+a dedicated control stream every `constants.py::RELAY_KEEPALIVE_INTERVAL` (a
+third of the node's QUIC idle so a single lost ping — or its ACK, on lossy
+CGNAT/mobile UDP — cannot idle-terminate the tunnel and every bridged session
+with it), and each session's
 `rdv_relay.py::bridge` enforces the node's **session-wide** idle semantics — a
 session is idle only when no byte moved in *either* direction for
 `constants.py::RELAY_IDLE_TIMEOUT_S`, so a long unidirectional upload (whose HTTP
@@ -514,7 +522,13 @@ serve now; `FailoverRelayDialer` exposes the same members for its winning tunnel
 so the caller speaks to one contract whatever the number of discovery servers.
 A relay session is paired **per loopback connection** (the REST client and the
 WebSocket each open their own), which is what the node's `relay_connect` budget
-meters.
+meters. Because that budget is per-IP and small (a handful of new pairings per
+minute, a couple concurrent), a relayed slave caps its transfer pool at
+`constants.py::MAX_CONCURRENT_TRANSFERS_RELAY`
+(`p2p_handler.py::_apply_relay_transfer_tuning`): the LAN-sized default fan-out
+otherwise exhausts the budget and the surplus sessions are refused mid-upload,
+resetting transfers. A direct path never applies the cap — the value is
+re-derived from the master RTT on the next cycle.
 Independently, the shared HTTP session retries a **dropped connection** for
 idempotent methods only (`utils/http.py::_retry_policy`): one dead keep-alive
 socket no longer fails a whole comparison, while an upload (POST) is never
@@ -572,7 +586,7 @@ echo-suppression `cid` on upload/delete/rename is honoured only when it passes
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
 | `p2p_websocket_client` | `p2p_websocket.py::p2p_websocket_client` | connect to master WSS, verify cert fp, **`p2p/1` handshake**: hard-fail on greeting protocol mismatch, auth/hello frames carry `protocol_version` + `capabilities`; `local_capabilities()` is announced, `adopt_remote_capabilities()` applies the auth reply as the authoritative capability source (compression/delta gates). **Readiness threshold**: the local watcher starts before the WS connect, but `[READY]` (`p2p_websocket.py::p2p_websocket_client`) fires only after the handshake completed — a failed auth never reaches it. **Inbound file downloads are fanned out** (`event_dispatch._spawn_file_download`): the receive loop never awaits a download — events for the same path are chained (order preserved, plus `path_lock` inside `download_file`), distinct paths run concurrently under a semaphore sized by `MAX_CONCURRENT_TRANSFERS`; the bounded tasks are drained (`drain_file_downloads`) in the connection teardown before the rendezvous loop's full sync. The fan-out exists so a burst is not capped by a serial `await update_file` per event (~60 files/s) while the master serves 200+ req/s |
-| `P2PInventoryPublisher` | `p2p_inventory.py` | slave WSS publisher (started for every slave, including dry-run and one-shot): immutable snapshot + bounded pending journal, chunked snapshot/delta frames, one in-flight generation, ACK timeout/retry, and resnapshot fallback on overflow/reject/reconnect. **ACK timeouts never close the WSS**: publishing is disabled for the connection (the master-side session expires via its staging TTL) while the event channel on the same socket keeps flowing — closing it would tear the channel down and force a full resync on both peers under burst backpressure |
+| `P2PInventoryPublisher` | `p2p_inventory.py` | slave WSS publisher (started for every slave, including dry-run and one-shot): immutable snapshot + bounded pending journal, chunked snapshot/delta frames, one in-flight generation, ACK timeout/retry, and resnapshot fallback on overflow/reject/reconnect. **ACK timeouts never close the WSS**: after a timeout the publisher keeps the socket (its event channel stays flowing) and retries a fresh snapshot after a bounded backoff (`P2P_INVENTORY_ACK_RETRY_MIN_S`..`P2P_INVENTORY_ACK_RETRY_MAX_S`), so a backlogged master still receives this peer's inventory instead of being left `awaiting_inventory` until a reconnect — closing the socket would tear the channel down and force a full resync on both peers |
 | slave inventory lifecycle | `p2p_handler.py` | the read-only inventory publisher starts for **every** slave (`_start_slave_inventory`), independent of the dry-run preview phase and of block serving; the read-only HTTPS seeder role binds and advertises endpoint readiness (`https`/`cert_fp`) and its `serve_slots` capacity on the master WSS handshake only when `P2P_PEER_DOWNLOAD` is enabled. Stops accepting, withdraws that readiness when it served, and drops role-owned publisher/resolver state before becoming master or exiting. Bind/readiness failure degrades to requester-only |
 | `P2PSourceResolver` / `P2PSourceTelemetry` | `p2p_sources.py` | count- and byte-bounded master wantlists plus one fresh single-file lookup for realtime events (measured on the LAN burst: the whole peer-offload block costs ~4.3 ms CPU/file and ~47 % throughput when disabled — see `hsync-client/docs/internal/testing.md`. The per-file lookup is one POST, ~1.0-1.1 ms, because `candidates_for(refresh=True)` calls `resolve([file])` even though `resolve` batches up to `P2P_SOURCES_MAX_FILES` identities; micro-batching those lookups (3 ms collection window) produces no resolvable gain at the default 5-way concurrency); immutable candidate maps are passed explicitly. Invalid/auth/pin-rotated CIDs stay disabled for the role session, while transient failures use deterministic cooldown. **Admission control (ADR-0030)**: `acquire_slot`/`release_slot` bound in-flight reads per CID to the candidate's advertised `serve_slots`, waiting up to `P2P_PEER_SLOT_WAIT_S` (2 s) before selecting the master — an expired wait is never a refused attempt. **Ranking (ADR-0030)**: `rank(sources, size=…)` orders by failures, then by `_SourceMetrics.predicted_cost_s` = `rtt_ema + size/throughput_ema` — a predicted transfer time, not a raw rate, so a peer that served a large file cannot outrank a lower-latency one for a small file (with no size the setup term decides). A `busy` (503 + `Retry-After`) is a scheduling signal: it defers the source for exactly that interval (`BUSY_DEFAULT_BACKOFF_S` fallback) without incrementing its failure count or dropping it from ranking; candidate URLs are bucket-bound before TOFU and pinned HTTPS uses fingerprint-only verification |
 | `_handle_p2p_event` | `p2p_websocket.py::_handle_p2p_event` | apply inbound master events locally; the `p2p_websocket_client` loop builds **one `EventDispatchContext` per connection** (`_build_p2p_dispatch_ctx`, `p2p_websocket.py::_handle_p2p_event`) and passes it to every call so the inbound directory dedup cache survives across events (a per-event context would reset the cache and re-log every duplicate `added`/`modified` directory burst as a fresh `[REMOTE CREATE]`/`[REMOTE MODIFY]`) |

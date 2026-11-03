@@ -485,19 +485,67 @@ class TestUploadTerminalEvents:
         )
 
     def test_the_same_content_response_still_ends_the_row(self, tmp_path, monkeypatch):
+        from hsync_client import progress as progress_mod
         from hsync_client import transfer as transfer_mod
 
         file = self._file(tmp_path)
         response = MagicMock()
         response.status_code = 200
         emitted: list[tuple[str, dict]] = []
+        # The terminal ``transfer`` event is emitted by the progress module's
+        # ``emit_completed_transfer`` (the single terminal seam), so observe it
+        # there rather than on the transfer module's own ``emit_event`` binding.
         monkeypatch.setattr(
-            transfer_mod, "emit_event", lambda event, **payload: emitted.append((event, payload))
+            progress_mod, "emit_event", lambda event, **payload: emitted.append((event, payload))
         )
         monkeypatch.setattr(transfer_mod, "_record_synced_base", lambda *a, **k: None)
 
         transfer_mod._handle_upload_response(file, response, 0.0)
 
+        assert emitted == [
+            (transfer_mod.UiEventName.transfer, {"op": "upload", "file": file.filepath, "size": 8})
+        ]
+
+    def test_an_already_present_upload_still_ends_the_row(self, tmp_path, monkeypatch):
+        from hsync_client import progress as progress_mod
+        from hsync_client import transfer as transfer_mod
+
+        file = self._file(tmp_path)
+        file.size = 10 * 1024 * 1024  # above the preflight floor: the status probe runs
+        emitted: list[tuple[str, dict]] = []
+        monkeypatch.setattr(
+            progress_mod, "emit_event", lambda event, **payload: emitted.append((event, payload))
+        )
+        monkeypatch.setattr(transfer_mod, "CONFIG", {**_BASE_CONFIG, "LOCAL_BUCKET": str(tmp_path)})
+        monkeypatch.setattr(transfer_mod, "prepare_delta_upload", lambda *a, **k: None)
+        monkeypatch.setattr(transfer_mod, "_get_upload_status", lambda *a, **k: ("complete", 0))
+        monkeypatch.setattr(transfer_mod, "_record_synced_base", lambda *a, **k: None)
+
+        transfer_mod._upload_file_attempt(file)
+
+        assert emitted == [
+            (
+                transfer_mod.UiEventName.transfer,
+                {"op": "upload", "file": file.filepath, "size": file.size},
+            )
+        ]
+
+    def test_a_duplicate_conflict_still_ends_the_row(self, tmp_path, monkeypatch):
+        from hsync_client import progress as progress_mod
+        from hsync_client import transfer as transfer_mod
+
+        file = self._file(tmp_path)
+        response = MagicMock()
+        response.text = "file already present"
+        emitted: list[tuple[str, dict]] = []
+        monkeypatch.setattr(
+            progress_mod, "emit_event", lambda event, **payload: emitted.append((event, payload))
+        )
+        monkeypatch.setattr(transfer_mod, "_record_synced_base", lambda *a, **k: None)
+
+        superseded = transfer_mod._handle_upload_conflict_response(file, response)
+
+        assert superseded is False
         assert emitted == [
             (transfer_mod.UiEventName.transfer, {"op": "upload", "file": file.filepath, "size": 8})
         ]

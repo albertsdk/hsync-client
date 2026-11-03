@@ -185,11 +185,17 @@ Every path that started moving bytes and then gave up must publish a terminal
 event: the retry-exhausted upload/download, a local file that disappears or
 becomes unreadable mid-upload (`transfer.py::_upload_file_attempt`), and the
 serving-side aborts in `p2p_server.py` (peer gone, file changed mid-serve,
-socket error). A **committed upload publishes it on both success responses** —
-201 (created) and 200 (same content, permissions updated,
-`transfer.py::_handle_upload_response`) — because a row ends only on a terminal
-event: the Desktop asks for a status refresh when an in-flight row stops
-reporting, so a lost event cannot leave a bar frozen.
+socket error). A **committed upload publishes it on every path that ends it** —
+201 (created), 200 (same content, permissions updated), the delta upload
+(`transfer.py::_upload_file_attempt`), the preflight "already present on server"
+(`status == "complete"`), and the legacy 409 `File already present`
+(`transfer.py::_handle_upload_conflict_response`) — because a row ends only on a
+terminal event. The no-op paths matter under a relay: a connection that drops
+after the master committed makes the retry land on one of them, so without the
+event the Desktop row would sit in flight forever. Every terminal upload event
+goes through `progress.py::emit_completed_transfer`, not a bare `emit_event`, so
+it also clears the path's delivery mark (`progress.py::forget_delivery_progress`)
+and its next upload reports progress again.
 
 An upload's progress belongs to the receiver: the master publishes the bytes it
 stored for a peer's upload as a unicast ``file_progress`` frame on that peer's

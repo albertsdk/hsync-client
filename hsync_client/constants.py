@@ -146,6 +146,15 @@ MAX_CONCURRENT_TRANSFERS_DEFAULT = _defaults.MAX_CONCURRENT_TRANSFERS_DEFAULT
 MAX_CONCURRENT_TRANSFERS_MIN = _defaults.MAX_CONCURRENT_TRANSFERS_MIN
 MAX_CONCURRENT_TRANSFERS_MAX = _defaults.MAX_CONCURRENT_TRANSFERS_MAX
 
+# Concurrency bound while the data plane rides the rendezvous relay. Every
+# loopback HTTP connection the slave opens pairs its own relay session against
+# the node's per-IP budget (5/min, burst 10, >=2 concurrent), and the transfer
+# pool plus the realtime/listing connections easily exceed it, so the surplus
+# sessions are refused and in-flight uploads are reset. Two concurrent transfers
+# keep the pool inside the budget without serialising a normal LAN sync (a
+# direct path never applies this cap).
+MAX_CONCURRENT_TRANSFERS_RELAY = 2
+
 # =============================================================================
 # Per-File Transfer Retry/Backoff
 # =============================================================================
@@ -299,7 +308,13 @@ RENDEZVOUS_QUERY_ACTIVE_INTERVAL = 12.0
 # peers' QUIC connections alive between sessions.
 RELAY_BUFFER_BYTES = 64 * 1024
 RELAY_IDLE_TIMEOUT_S = 180.0
-RELAY_KEEPALIVE_INTERVAL = 20.0
+# Keepalive cadence on the relay's QUIC connection. The effective QUIC idle
+# timeout is the minimum of the two peers' advertised values, and the node's is
+# RDV_IDLE_TIMEOUT (30 s): a cadence of a third of it leaves room for one lost
+# ping datagram (or its ACK, on lossy CGNAT/mobile UDP) without the connection
+# idling out between two pings and tearing the tunnel — and every bridged
+# transfer with it — down within one idle window.
+RELAY_KEEPALIVE_INTERVAL = 10.0
 # How long a slave waits for the node to pair a relay session before giving up
 # and returning to the rendezvous loop.
 RELAY_OPEN_TIMEOUT_S = 15.0
