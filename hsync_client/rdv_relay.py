@@ -451,6 +451,7 @@ class RelayDialer:
                 log.debug("Relay tunnel re-established with the master")
             dispatch = asyncio.create_task(self._dispatch_frames(stream_reader))
             data_keepalive = asyncio.create_task(self._data_keepalive())
+            control_writer: Any | None = None
             try:
                 if self._server is None:
                     await self._bind_endpoint()
@@ -478,6 +479,12 @@ class RelayDialer:
                 for task in (dispatch, data_keepalive):
                     task.cancel()
                 await asyncio.gather(dispatch, data_keepalive, return_exceptions=True)
+                # Close the QUIC streams while their connection is still open:
+                # aioquic's stream writer otherwise tries to end a stream on the
+                # finished connection in its deallocator (the "Cannot send data
+                # on a finished stream" noise).
+                _close_writer(self._data_writer)
+                _close_writer(control_writer)
                 for tcp_writer in list(self._streams.values()):
                     _close_writer(tcp_writer)
                 self._streams.clear()
@@ -667,9 +674,15 @@ class RelayAcceptor:
         tasks: list[asyncio.Task[Any]] = []
         sessions: set[asyncio.Task[Any]] = set()
         stop_task: asyncio.Task[Any] | None = None
-        try:
-            async with _quic_session(self._client) as quic:
+        # Everything is torn down *inside* the QUIC context: the streams are
+        # closed while their connection is still open, so aioquic's stream
+        # writer never ends a stream on the finished connection from its
+        # deallocator.
+        async with _quic_session(self._client) as quic:
+            control_writer: Any | None = None
+            try:
                 reader, writer = await quic.create_stream()
+                control_writer = writer
                 writer.write(
                     frame_line(
                         build_relay_listen_frame(
@@ -703,15 +716,16 @@ class RelayAcceptor:
                 # so ``active`` could never trigger a re-registration.
                 stop_task = asyncio.create_task(self._stop.wait())  # type: ignore[union-attr]
                 await asyncio.wait([stop_task, *tasks], return_when=asyncio.FIRST_COMPLETED)
-        finally:
-            self._registered = False
-            waiters = [*tasks, *sessions]
-            if stop_task is not None:
-                waiters.append(stop_task)
-            for task in waiters:
-                task.cancel()
-            if waiters:
-                await asyncio.gather(*waiters, return_exceptions=True)
+            finally:
+                self._registered = False
+                waiters = [*tasks, *sessions]
+                if stop_task is not None:
+                    waiters.append(stop_task)
+                for task in waiters:
+                    task.cancel()
+                if waiters:
+                    await asyncio.gather(*waiters, return_exceptions=True)
+                _close_writer(control_writer)
 
     async def _read_incoming(
         self, quic: Any, reader: Any, sessions: set[asyncio.Task[Any]]
