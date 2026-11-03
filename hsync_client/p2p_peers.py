@@ -184,10 +184,11 @@ class Peer:
     startup_time: float = 0.0  # Unix timestamp when peer started
     sync_direction: str = "bidirectional"  # bidirectional | upload-only | download-only
     # Every dialable (host, port) candidate the peer advertised for its data
-    # plane, in advertised order (rdv rendezvous relays the full list; an mDNS
-    # peer promotes its same-subnet address to ``address`` and leaves this
-    # empty). ``address``/``port`` remain the primary endpoint for callers that
-    # need one URL.
+    # plane, in advertised order. The two sources are merged (stable union): the
+    # rendezvous relays the advertised list and mDNS supplies one per advertised
+    # interface. A peer that announced a single address leaves this empty and
+    # keeps the no-probe fast path. ``address``/``port`` remain the primary
+    # endpoint for callers that need one URL.
     endpoints: tuple[tuple[str, int], ...] = ()
 
     def note_evidence(self, source: str, stamp: float) -> None:
@@ -249,6 +250,7 @@ class PeerManager:
         sync_direction: str = "bidirectional",
         local_cert_fingerprint: str | None = None,
         local_address: str | None = None,
+        local_addresses: Iterable[str] | None = None,
         peer_timeout: float = PEER_TIMEOUT,
     ) -> None:
         """
@@ -285,7 +287,15 @@ class PeerManager:
         self._startup_time = startup_time if startup_time > 0 else now_corrected()
         self._sync_direction = sync_direction
         self._local_cert_fingerprint = local_cert_fingerprint
-        self._local_address = local_address
+        # Every address this node announces (one per interface on a multi-homed
+        # host). ``_is_foreign_duplicate`` treats a peer presenting our CID from
+        # any of them as our own record looped back; a single announced address
+        # would misfire when the record lists the interfaces in another order.
+        announced = list(dict.fromkeys(local_addresses or ()))
+        if local_address and local_address not in announced:
+            announced.insert(0, local_address)
+        self._local_addresses = set(announced)
+        self._local_address = announced[0] if announced else None
         self._peer_timeout = peer_timeout
         self._peers: dict[str, Peer] = {}
         # Peers with a live WebSocket connection to (or from) this node. mDNS
@@ -356,16 +366,20 @@ class PeerManager:
             self._elect_master()
             self._signal_change()
 
-    def set_local_address(self, address: str) -> None:
-        """Record the address this node currently advertises (network change).
+    def set_local_addresses(self, addresses: Iterable[str]) -> None:
+        """Record the addresses this node currently announces (network change).
 
-        ``_is_foreign_duplicate`` compares a peer presenting our own CID against
-        the address we announce. After a DHCP reassignment the record we send
-        (and see looped back) carries the new address, so leaving the old one in
-        place would report our own record as a cloned device identity.
+        ``_is_foreign_duplicate`` treats a peer presenting our own CID as our own
+        record looped back when it comes from any of these addresses (a
+        multi-homed node announces one per interface). After a DHCP reassignment
+        the record we send — and see looped back — carries the new addresses, so
+        leaving the old ones in place would report our own record as a cloned
+        device identity.
         """
+        ordered = list(dict.fromkeys(addresses))
         with self._lock:
-            self._local_address = address
+            self._local_addresses = set(ordered)
+            self._local_address = ordered[0] if ordered else None
 
     def set_master_candidacy(self, eligible: bool) -> None:
         """Include or exclude the local node from the master election.
@@ -489,10 +503,20 @@ class PeerManager:
                 # plans, only an update that knows the capabilities (or the
                 # first one) may set them.
                 take_capabilities = peer.capabilities_known or not existing.capabilities_known
-                # Keep the richer candidate list: mDNS supplies one address, the
-                # rendezvous relays the full list. An empty list must not clear a
-                # known one.
-                take_endpoints = bool(peer.endpoints)
+                # Merge the candidate lists instead of replacing: mDNS supplies
+                # the interface addresses, the rendezvous relays the advertised
+                # (often public) ones, and a peer seen by both sources has more
+                # dial fallbacks than either list alone. The merge is a stable
+                # union, so a repeated heartbeat does not look like a change.
+                if peer.endpoints:
+                    endpoints = existing.endpoints + tuple(
+                        candidate
+                        for candidate in peer.endpoints
+                        if candidate not in existing.endpoints
+                    )
+                else:
+                    endpoints = existing.endpoints
+                endpoints_changed = endpoints != existing.endpoints
                 rendezvous_changed = election_changed or (
                     existing.address != peer.address
                     or existing.port != peer.port
@@ -507,7 +531,7 @@ class PeerManager:
                             or existing.peer_download_enabled != peer.peer_download_enabled
                         )
                     )
-                    or (take_endpoints and existing.endpoints != peer.endpoints)
+                    or endpoints_changed
                 )
                 # Update all properties from the new peer object
                 existing.address = peer.address
@@ -521,8 +545,8 @@ class PeerManager:
                     existing.delta_enabled = peer.delta_enabled
                     existing.peer_download_enabled = peer.peer_download_enabled
                     existing.capabilities_known = peer.capabilities_known
-                if take_endpoints:
-                    existing.endpoints = peer.endpoints
+                if endpoints_changed:
+                    existing.endpoints = endpoints
                 if not existing.server_ready and peer.server_ready:
                     log.info(f"Peer {peer.cid} server is now ready")
                 existing.server_ready = peer.server_ready
@@ -562,9 +586,9 @@ class PeerManager:
         still conclusive: our own record always carries our own fingerprint.
         """
         different_address = (
-            self._local_address is not None
+            bool(self._local_addresses)
             and bool(peer.address)
-            and peer.address != self._local_address
+            and peer.address not in self._local_addresses
         )
         different_fingerprint = (
             self._local_cert_fingerprint is not None

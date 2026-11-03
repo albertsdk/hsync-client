@@ -783,6 +783,71 @@ class TestAddPeerUpdate:
         pm.add_peer(Peer(cid="peer1", bucket="photos", address="192.168.1.100", port=9753))
         assert len(pm.get_alive_peers()) == 1
 
+    def test_endpoint_lists_merge_instead_of_replacing(self):
+        """mDNS and rendezvous candidates union: each source adds fallbacks."""
+        pm = PeerManager(local_cid="local123", bucket="photos")
+        pm.add_peer(
+            Peer(
+                cid="peer1",
+                bucket="photos",
+                address="192.168.1.100",
+                port=9753,
+                endpoints=(("192.168.1.100", 9753),),
+            )
+        )
+        pm.add_peer(
+            Peer(
+                cid="peer1",
+                bucket="photos",
+                address="192.168.1.100",
+                port=9753,
+                endpoints=(("203.0.113.10", 9753), ("192.168.1.100", 9753)),
+            )
+        )
+        assert pm._peers["peer1"].endpoints == (
+            ("192.168.1.100", 9753),
+            ("203.0.113.10", 9753),
+        )
+
+    def test_an_empty_endpoint_list_does_not_clear_a_known_one(self):
+        pm = PeerManager(local_cid="local123", bucket="photos")
+        pm.add_peer(
+            Peer(
+                cid="peer1",
+                bucket="photos",
+                address="192.168.1.100",
+                port=9753,
+                endpoints=(("203.0.113.10", 9753),),
+            )
+        )
+        pm.add_peer(Peer(cid="peer1", bucket="photos", address="192.168.1.100", port=9753))
+        assert pm._peers["peer1"].endpoints == (("203.0.113.10", 9753),)
+
+    def test_an_endpoint_update_is_not_reported_as_a_change_when_unchanged(self):
+        """A repeated heartbeat with the same candidates must not churn."""
+        pm = PeerManager(local_cid="local123", bucket="photos")
+        endpoints = (("203.0.113.10", 9753), ("192.168.1.100", 9753))
+        pm.add_peer(
+            Peer(
+                cid="peer1",
+                bucket="photos",
+                address="192.168.1.100",
+                port=9753,
+                endpoints=endpoints,
+            )
+        )
+        with patch.object(pm, "_signal_change") as signal:
+            pm.add_peer(
+                Peer(
+                    cid="peer1",
+                    bucket="photos",
+                    address="192.168.1.100",
+                    port=9753,
+                    endpoints=endpoints,
+                )
+            )
+        signal.assert_not_called()
+
     def test_server_ready_transition_is_logged(self):
         """The 'server is now ready' info line fires on the False→True edge."""
         pm = PeerManager(local_cid="local123", bucket="photos")
@@ -1149,7 +1214,7 @@ class TestDuplicateIdentityDetection:
             local_address="192.168.1.1",
             local_cert_fingerprint="fp-local",
         )
-        pm.set_local_address("192.168.1.99")
+        pm.set_local_addresses(["192.168.1.99"])
         with patch("hsync_client.p2p_peers.log") as mock_log:
             pm.add_peer(
                 Peer(
@@ -1162,6 +1227,51 @@ class TestDuplicateIdentityDetection:
             )
         assert pm._peers == {}
         assert [c for c in mock_log.error.call_args_list if "Duplicate" in str(c)] == []
+
+    def test_our_own_record_on_any_announced_interface_is_self(self):
+        """A multi-homed record lists every interface: any of them is 'self'.
+
+        The receiver gets the A records in an arbitrary order, so comparing only
+        the primary address reported our own record as a cloned identity.
+        """
+        pm = PeerManager(
+            local_cid="local123",
+            bucket="photos",
+            local_addresses=["192.168.1.1", "10.0.0.9"],
+            local_cert_fingerprint="fp-local",
+        )
+        with patch("hsync_client.p2p_peers.log") as mock_log:
+            pm.add_peer(
+                Peer(
+                    cid="local123",
+                    bucket="photos",
+                    address="10.0.0.9",  # a secondary interface, listed first
+                    port=9753,
+                    cert_fingerprint="fp-local",
+                )
+            )
+        assert pm._peers == {}
+        assert [c for c in mock_log.error.call_args_list if "Duplicate" in str(c)] == []
+
+    def test_a_foreign_address_with_our_cid_is_flagged(self):
+        """Only an address we do not announce is a cloned identity."""
+        pm = PeerManager(
+            local_cid="local123",
+            bucket="photos",
+            local_addresses=["192.168.1.1"],
+            local_cert_fingerprint="fp-local",
+        )
+        with patch("hsync_client.p2p_peers.log") as mock_log:
+            pm.add_peer(
+                Peer(
+                    cid="local123",
+                    bucket="photos",
+                    address="203.0.113.5",
+                    port=9753,
+                    cert_fingerprint="fp-local",
+                )
+            )
+        assert [c for c in mock_log.error.call_args_list if "Duplicate" in str(c)] != []
 
 
 class TestReconcileStalePeers:

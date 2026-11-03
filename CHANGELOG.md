@@ -35,15 +35,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bound, so a peer on any of its real networks connects directly instead of
   falling back to the relay.
 - An mDNS node advertises one A record per active interface, and a discovered
-  peer's same-subnet address is promoted to its primary one, so a multi-homed
-  peer sharing a LAN is dialed directly instead of over an unreachable
-  interface.
+  peer's same-subnet address is promoted to its primary one (with the other
+  interfaces kept as dial candidates so the probe falls back to the reachable
+  one), so a multi-homed peer sharing a LAN is dialed directly instead of over
+  an unreachable interface.
 - The relay's transfer-concurrency cap is lifted when a direct path is used
   again, so a CLI/env override or `--no-autotune` no longer keeps the fast path
   throttled to the relay value.
 
 ### Fixed
 
+- A multi-homed node no longer reports its own mDNS record as a cloned device
+  identity when the record lists a secondary interface first: the self-record
+  check accepts any address the node announces, not only the primary one.
 - The relay acceptor drops a frame for a stream it already closed instead of
   re-opening the master's loopback connection mid-stream, which spliced a fresh
   TLS handshake into the old stream (a plausible cause of the master's

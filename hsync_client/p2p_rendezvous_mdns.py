@@ -251,17 +251,16 @@ class HsyncServiceListener(ServiceListener):
             # Every advertised address is a dial candidate; a same-subnet one is
             # promoted to the primary address (the ordering policy lives once, in
             # dial_candidates) so a multi-homed peer is dialed on the interface
-            # it shares with this node. ``endpoints`` is left empty on purpose:
-            # the mDNS peer keeps the single-address fast path in
-            # ``_select_master_endpoint`` (no probe — a LAN-only plan has no
-            # relay to fall back to), and the promoted address is already the
-            # reachable one.
+            # it shares with this node. With more than one address the full list
+            # is kept so ``_select_master_endpoint`` can probe the reachable one
+            # (``same_subnet`` is only a /24 heuristic, so on a wider LAN the
+            # promoted address may not be the right one); a single-address peer
+            # keeps the empty list and the no-probe fast path, unchanged.
+            candidates = tuple((address_ip, port) for address_ip in addresses)
             address, primary_port = dial_candidates(
-                tuple((address_ip, port) for address_ip in addresses),
-                addresses[0],
-                port,
-                self._local_ips(),
+                candidates, addresses[0], port, self._local_ips()
             )[0]
+            endpoints = candidates if len(candidates) > 1 else ()
 
             peer = Peer(
                 cid=cid,
@@ -283,6 +282,7 @@ class HsyncServiceListener(ServiceListener):
                 inbound=inbound,
                 startup_time=startup_time,
                 sync_direction=sync_direction,
+                endpoints=endpoints,
             )
             self._cancel_pending_goodbye(cid)
             self._peer_manager.add_peer(peer, source=HEARTBEAT_SOURCE)
@@ -811,7 +811,7 @@ class MdnsRendezvous(RendezvousPlanState):
                 HSYNC_SERVICE_TYPE,
                 HsyncServiceListener(peer_manager, local_ips=lambda: self._local_ips),
             )
-            peer_manager.set_local_address(local_ip)
+            peer_manager.set_local_addresses(self._local_ips)
         log.info(f"mDNS discovery rebuilt after a network change: {previous_ip} -> {local_ip}")
 
     def stop(self) -> None:

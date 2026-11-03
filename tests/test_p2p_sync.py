@@ -718,6 +718,9 @@ class TestNetworkChangeRecovery:
                 assert lan._local_ip == "10.9.8.7"
                 assert lan.peer_manager is not None
                 assert lan.peer_manager._local_address == "10.9.8.7"
+                # Every announced interface is registered as self, not only the
+                # primary: our own record is accepted whichever it lists first.
+                assert "10.9.8.7" in lan.peer_manager._local_addresses
             finally:
                 lan.stop()
 

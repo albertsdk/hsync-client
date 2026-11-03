@@ -257,6 +257,8 @@ class TestMultiHomedDiscovery:
         peer = pm._peers.get("peer-cid-1")
         assert peer is not None
         assert (peer.address, peer.port) == ("192.168.1.42", 9753)
+        # The full list is kept so the dial probe can fall back on a wider LAN.
+        assert peer.endpoints == (("10.145.201.139", 9753), ("192.168.1.42", 9753))
 
     def test_a_single_address_peer_is_unchanged(self):
         pm = PeerManager(local_cid="local-cid", bucket="photos", group="team-a")
@@ -265,3 +267,5 @@ class TestMultiHomedDiscovery:
         peer = pm._peers.get("peer-cid-1")
         assert peer is not None
         assert (peer.address, peer.port) == ("192.168.1.50", 9753)
+        # A single address keeps the empty list and the no-probe fast path.
+        assert peer.endpoints == ()

@@ -438,6 +438,26 @@ def _master_with_endpoints(endpoints, *, address=None, port=None):
 class TestSelectMasterEndpoint:
     """The slave picks the first reachable candidate, host/LAN first (ICE-lite)."""
 
+    def test_a_multi_homed_mdns_peer_is_probed_for_the_reachable_address(self):
+        """Several advertised interfaces: probe, do not guess.
+
+        ``same_subnet`` is only a /24 heuristic, so on a wider LAN the promoted
+        address can be the wrong interface; the probe (pinned fingerprint) picks
+        the reachable one instead of dialing an unreachable address.
+        """
+        from hsync_client.p2p_handler import _select_master_endpoint
+
+        master = _master_with_endpoints([("10.145.201.139", 9000), ("192.168.1.42", 9000)])
+        with (
+            # No /24 match with either candidate: the advertised order is kept.
+            patch("hsync_client.p2p_handler.get_local_ips", return_value=["10.99.0.1"]),
+            patch(
+                "hsync_client.p2p_handler._probe_master_endpoint",
+                side_effect=lambda host, port, fingerprint, timeout: host == "192.168.1.42",
+            ),
+        ):
+            assert _select_master_endpoint(master, MagicMock()) == ("192.168.1.42", 9000)
+
     def test_an_mdns_peer_with_one_address_skips_the_probe(self):
         """A LAN-only peer (mDNS, no advertised candidate list) keeps its single
         address without a probe: the data-plane connection re-checks it."""

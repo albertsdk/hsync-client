@@ -49,7 +49,7 @@ configured `HybridRendezvous` runs **both** over one shared `PeerManager`:
 | `get_free_port` / `HSYNC_P2P_LISTEN_PORT` | `p2p_peers.py::get_free_port` / `p2p_peers.py::HSYNC_P2P_LISTEN_PORT` | bind an ephemeral serving port |
 | `MdnsRendezvous` | `p2p_rendezvous_mdns.py::MdnsRendezvous` | mDNS/Zeroconf plan (browse + advertise); always active. Advertises one A record per active interface so a multi-homed node is discoverable on any of its networks |
 | `HybridRendezvous` | `p2p_rendezvous_hybrid.py::HybridRendezvous` | runs mDNS + rendezvous over one shared `PeerManager` when a rendezvous is configured |
-| `HsyncServiceListener` | `p2p_rendezvous_mdns.py::HsyncServiceListener` | Zeroconf callbacks (add/update/remove; parses the ``connected`` TXT value). Promotes a discovered peer's same-subnet address to its primary one (`dial_candidates` over the advertised addresses and this node's `local_ips`) |
+| `HsyncServiceListener` | `p2p_rendezvous_mdns.py::HsyncServiceListener` | Zeroconf callbacks (add/update/remove; parses the ``connected`` TXT value). Promotes a discovered peer's same-subnet address to its primary one (`dial_candidates`) and, when the peer advertises several interfaces, keeps them all in `Peer.endpoints` so the dial probe picks the reachable one |
 | `NetworkChangeMonitor` | `net_watch.py::NetworkChangeMonitor` | host address/link changes shared by both plans: the mDNS rebuild and the rendezvous endpoint republish (see [net-watch.md](net-watch.md)) |
 | `HSYNC_SERVICE_TYPE` | `p2p_rendezvous_mdns.py::HSYNC_SERVICE_TYPE` | `_hsync._tcp.local.` mDNS type |
 
@@ -189,9 +189,10 @@ Rendezvous recovers on its own when the host loses and regains connectivity
   endpoint register) and, on a difference, clears `_published_endpoints`, drops
   the UPnP mapping/`_external_port` from the previous network and forces a full
   register with the fresh candidates.
-- **Self-record.** `p2p_peers.py::PeerManager.set_local_address` follows the new
-  address, so the node's own record seen looped back is not reported as a
-  duplicated device identity by `PeerManager._is_foreign_duplicate`.
+- **Self-record.** `p2p_peers.py::PeerManager.set_local_addresses` follows the new
+  addresses (all announced interfaces), so the node's own record seen looped back
+  is not reported as a duplicated device identity by
+  `PeerManager._is_foreign_duplicate` whichever interface the record lists first.
 
 Protocol-mismatched peers are ignored.
 
@@ -279,8 +280,10 @@ both sources run against one `PeerManager` (built once via
   separate step), bounded by `READINESS_ENDPOINT_TIMEOUT_S`, and skips a disabled
   source, which can never publish.
 - **One peer entry per CID**: `add_peer` merges a peer seen by both sources —
-  the non-empty candidate list wins (`endpoints`, richer than mDNS's promoted
-  single address) and `Peer.capabilities_known` stops the rendezvous relay, which carries
+  their candidate lists are unioned into `Peer.endpoints` (a stable union, so a
+  repeated heartbeat is not a change; mDNS supplies the interface addresses, the
+  rendezvous the advertised ones) and `Peer.capabilities_known` stops the
+  rendezvous relay, which carries
   no capability flags, from clearing the TXT capabilities (`compression`,
   `delta`, `peer_download`) that mDNS advertised. Both sources relay the same
   election advertisement, so the election sees one candidate set.

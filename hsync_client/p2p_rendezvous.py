@@ -40,7 +40,7 @@ from hsync_client.constants import (
     RENDEZVOUS_DEFAULT_PORT,
     RENDEZVOUS_REFRESH_INTERVAL,
 )
-from hsync_client.net_utils import get_local_ip
+from hsync_client.net_utils import get_local_ips
 from hsync_client.p2p_peers import PeerManager
 from hsync_client.trust_prompt import build_trust_prompt
 
@@ -309,6 +309,21 @@ class RendezvousPlanState:
         """No data relay: a LAN-only plan serves its listen port directly."""
         return None
 
+    def _advertised_local_addresses(self) -> list[str]:
+        """The addresses this node announces, primary first.
+
+        The mDNS plan carries the full per-interface list (``_local_ips``); a
+        plan without it uses its configured address, or the live probe when none
+        was configured. Feeds ``PeerManager`` so its self-record check accepts our
+        own record whatever interface it lists first.
+        """
+        ips = getattr(self, "_local_ips", None)
+        if ips:
+            return list(ips)
+        if self._local_ip:
+            return [self._local_ip]
+        return get_local_ips()
+
     def create_peer_manager(self) -> PeerManager:
         """Build the :class:`PeerManager` from this plan's shared configuration.
 
@@ -325,7 +340,7 @@ class RendezvousPlanState:
             startup_time=self._startup_time,
             sync_direction=self._sync_direction,
             local_cert_fingerprint=self._cert_fingerprint,
-            local_address=self._local_ip or get_local_ip(),
+            local_addresses=self._advertised_local_addresses(),
             peer_timeout=self._peer_timeout,
         )
 
