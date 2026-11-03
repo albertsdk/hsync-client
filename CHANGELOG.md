@@ -26,3 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A resumed upload anchors its first progress sample at the resuming offset, so
   the desktop no longer reports an impossible burst speed for the bytes already
   on the peer.
+- A relayed HTTPS connection no longer dies before its first byte: the
+  per-connection relay handler unpacked three values from the node probe
+  instead of the four it answers, so the loopback endpoint answered an SSL EOF
+  and a relayed sync could never start.
