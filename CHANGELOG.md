@@ -7,12 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The p2p master election prefers a node that confirms an externally dialable
+  endpoint (`inbound`), and a node defers advertising itself as the serving
+  master until the rendezvous answered once, so a relay-only peer no longer
+  wins the role and forces the group onto the relay.
+
+### Changed
+
+- The p2p data-relay tunnel multiplexes every loopback connection over one relay
+  session (one `relay_connect` per tunnel, private stream framing), so the sync
+  cycle no longer spends a pairing token per REST/WebSocket connection.
+- A relayed slave caps its concurrent transfers so the multiplexed session's
+  flow-control window is not swamped.
+- The relay keepalive runs at a third of the node's QUIC idle, so one lost ping
+  no longer tears down the tunnel and every transfer with it.
+
 ### Fixed
 
-- The p2p data-relay bridge no longer drops a long unidirectional transfer:
-  the idle watchdog is counted per session (any direction), not per direction,
-  so a slow upload whose reply arrives only at the end is no longer killed
-  mid-flight.
+- An upload that finds the content already on the peer (preflight `complete` or
+  a legacy `409`) now emits its terminal transfer event, so the desktop row
+  closes instead of staying at the last progress sample.
+- The relay acceptor opens the master's local connection only on the first data
+  frame, so a connection that carries no bytes no longer reaches its TLS
+  listener (no empty-handshake `SSLEOFError`).
+- The relay closes its QUIC streams before the connection ends, so the aioquic
+  "Cannot send data on a finished stream" teardown noise no longer appears.
+- The inventory publisher retries a fresh snapshot after an ACK timeout instead
+  of disabling itself, so the master is no longer left awaiting the inventory.
+- The election log names the sort-key component that decided it, not the
+  winner's highest flag.
 - A resumable upload whose preflight offset no longer matches the peer's
   `.part` (a duplicate writer appended bytes, or the partial was already
   renamed) answers `202` with the true offset and keeps the partial — the peer
@@ -26,7 +51,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A resumed upload anchors its first progress sample at the resuming offset, so
   the desktop no longer reports an impossible burst speed for the bytes already
   on the peer.
-- A relayed HTTPS connection no longer dies before its first byte: the
-  per-connection relay handler unpacked three values from the node probe
-  instead of the four it answers, so the loopback endpoint answered an SSL EOF
-  and a relayed sync could never start.
