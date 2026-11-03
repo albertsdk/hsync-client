@@ -15,7 +15,7 @@ side in the desktop's "waiting" state until the client was restarted.
 | `get_network_monitor` | `net_watch.py::get_network_monitor` | process-wide singleton, thread started on first use |
 | `MdnsRendezvous._on_network_change` / `_rebuild_mdns` / `_recover_mdns` | `p2p_rendezvous_mdns.py::MdnsRendezvous._on_network_change` | rebuild the Zeroconf stack on the fresh address / repair after a failed announcement |
 | `RdvRendezvous._on_network_change` / `_republish_stale_endpoint` | `p2p_rendezvous_rdv.py::RdvRendezvous._republish_stale_endpoint` | wake the lease loop / force a full endpoint re-register |
-| `PeerManager.set_local_address` | `p2p_peers.py::PeerManager.set_local_address` | keep the self-rendezvous check on the address we currently announce |
+| `PeerManager.set_local_addresses` | `p2p_peers.py::PeerManager.set_local_addresses` | keep the self-rendezvous check on the addresses we currently announce |
 | `_ReconnectWaker` | `remote_websocket.py::_ReconnectWaker` | bridges a change into the remote mode's backoff sleep |
 
 ## Semantics
@@ -39,7 +39,7 @@ and `_network_offline` latches. On the way back — an address different from th
 advertised one, or a previous offline state — `_rebuild_mdns` retires the old
 `Zeroconf` (unregister + close), creates a fresh instance, re-registers the
 record on the new address, recreates the `ServiceBrowser` and updates
-`PeerManager.set_local_address`. A rebuild, not an in-place
+`PeerManager.set_local_addresses`. A rebuild, not an in-place
 `update_service`, is what restores the per-interface sockets and multicast
 memberships an interface bounce destroys, and it replaces the advertised A
 record. If a heartbeat re-announce raises, `_recover_mdns` first reconciles the
