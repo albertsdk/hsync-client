@@ -52,7 +52,7 @@ from hsync_client.constants import (
 )
 from hsync_client.events import emit_warning
 from hsync_client.nat_traversal import CandidateEndpoint, candidate_endpoints
-from hsync_client.net_utils import get_local_ip
+from hsync_client.net_utils import get_local_ip, get_local_ips
 from hsync_client.net_watch import (
     NetworkChangeMonitor,
     NetworkSignature,
@@ -741,11 +741,13 @@ class RdvRendezvous(RendezvousPlanState):
             log.warning("Rendezvous register skipped: no local certificate fingerprint yet")
             return
         generation = self._advert_generation
-        # Sample the address once: it both builds the endpoint candidates and
-        # records what this publication carries, so the comparison against a
-        # later network change is exact.
-        local_ip = self._local_ip or get_local_ip()
-        endpoints = self._endpoint_wire(local_ip) if publish_endpoint else []
+        # Sample the addresses once: they build the endpoint candidates and the
+        # default-route address records what this publication carries, so the
+        # comparison against a later network change is exact. A configured
+        # override (``--local-ip``) pins a single address.
+        local_ips = [self._local_ip] if self._local_ip else get_local_ips()
+        local_ip = local_ips[0] if local_ips else get_local_ip()
+        endpoints = self._endpoint_wire(local_ips) if publish_endpoint else []
         ack = self._client.register(
             build_register_frame(
                 cid=self._cid,
@@ -904,7 +906,7 @@ class RdvRendezvous(RendezvousPlanState):
         # ordering policy lives once, in dial_candidates), so a same-NAT peer
         # dials the local path; the full list is kept for connect-time fallback.
         primary_host, primary_port = dial_candidates(
-            candidates, candidates[0][0], candidates[0][1], get_local_ip()
+            candidates, candidates[0][0], candidates[0][1], get_local_ips()
         )[0]
         return Peer(
             cid=wire["cid"],
@@ -926,14 +928,14 @@ class RdvRendezvous(RendezvousPlanState):
             endpoints=candidates,
         )
 
-    def _endpoint_wire(self, local_ip: str) -> list[dict[str, object]]:
+    def _endpoint_wire(self, local_ips: Sequence[str]) -> list[dict[str, object]]:
         override = _test_advertised_endpoints()
         if override is not None:
             return [candidate.as_wire() for candidate in override]
         return [
             candidate.as_wire()
             for candidate in candidate_endpoints(
-                local_ip=local_ip,
+                local_ips=local_ips,
                 listen_port=self._port,
                 observed=self._observed,
                 external_port=self._external_port,

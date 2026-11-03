@@ -517,6 +517,9 @@ class RelayDialer:
             except (ConnectionError, OSError):
                 self._streams.pop(stream_id, None)
                 _close_writer(tcp_writer)
+                # Tell the peer this stream is done so it tears its loopback
+                # connection down now, instead of one keepalive interval later.
+                await self._send_frame(_RELAY_SUBSTREAM_CLOSE, stream_id)
 
     async def _send_frame(self, kind: int, stream_id: int, payload: bytes = b"") -> None:
         """Write one multiplexed frame, serialized against the other streams."""
@@ -774,7 +777,24 @@ class RelayAcceptor:
         log.info("Relay session bridged to the local master")
         frame_lock = asyncio.Lock()
         local_writers: dict[int, Any] = {}
+        # Stream ids never repeat within a session, so an id that is done is
+        # recorded here: a late DATA frame for it must be dropped, never used to
+        # open a fresh loopback connection. Re-opening mid-stream splices a new
+        # TLS connection into the middle of the old one, which looks to the
+        # master's TLS listener like garbage (``WRONG_VERSION_NUMBER``).
+        closed_streams: set[int] = set()
         pumps: set[asyncio.Task[Any]] = set()
+
+        async def _close_stream(stream_id: int) -> None:
+            """Drop one loopback stream and tell the peer it is finished."""
+            _close_writer(local_writers.pop(stream_id, None))
+            if stream_id in closed_streams:
+                return
+            closed_streams.add(stream_id)
+            async with frame_lock:
+                with contextlib.suppress(ConnectionError, OSError):
+                    writer.write(_encode_substream(_RELAY_SUBSTREAM_CLOSE, stream_id))
+                    await writer.drain()
 
         async def _local_to_session(stream_id: int, local_reader: Any) -> None:
             try:
@@ -788,10 +808,8 @@ class RelayAcceptor:
             except (ConnectionError, OSError, asyncio.CancelledError):
                 pass
             finally:
-                async with frame_lock:
-                    with contextlib.suppress(ConnectionError, OSError):
-                        writer.write(_encode_substream(_RELAY_SUBSTREAM_CLOSE, stream_id))
-                        await writer.drain()
+                with contextlib.suppress(ConnectionError, OSError, asyncio.CancelledError):
+                    await _close_stream(stream_id)
 
         try:
             while True:
@@ -801,32 +819,37 @@ class RelayAcceptor:
                 kind, stream_id, payload = frame
                 if kind == _RELAY_SUBSTREAM_PING:
                     continue
+                if stream_id in closed_streams:
+                    continue
+                if kind == _RELAY_SUBSTREAM_CLOSE:
+                    await _close_stream(stream_id)
+                    continue
+                # kind == _RELAY_SUBSTREAM_DATA: open the loopback connection
+                # lazily, on the first byte, and only for a stream that is still
+                # live.
                 local_writer = local_writers.get(stream_id)
-                if kind == _RELAY_SUBSTREAM_DATA:
-                    if local_writer is None:
-                        try:
-                            local_reader, local_writer = await asyncio.open_connection(
-                                "127.0.0.1", self._local_port
-                            )
-                        except (ConnectionError, OSError):
-                            continue
-                        local_writers[stream_id] = local_writer
-                        task = asyncio.create_task(_local_to_session(stream_id, local_reader))
-                        pumps.add(task)
-                        task.add_done_callback(pumps.discard)
+                if local_writer is None:
                     try:
-                        local_writer.write(payload)
-                        await local_writer.drain()
+                        local_reader, local_writer = await asyncio.open_connection(
+                            "127.0.0.1", self._local_port
+                        )
                     except (ConnectionError, OSError):
-                        local_writers.pop(stream_id, None)
-                        _close_writer(local_writer)
-                elif kind == _RELAY_SUBSTREAM_CLOSE and local_writer is not None:
-                    local_writers.pop(stream_id, None)
-                    _close_writer(local_writer)
+                        # The master is not accepting: fail this stream now with a
+                        # CLOSE instead of stranding the peer's connection.
+                        await _close_stream(stream_id)
+                        continue
+                    local_writers[stream_id] = local_writer
+                    task = asyncio.create_task(_local_to_session(stream_id, local_reader))
+                    pumps.add(task)
+                    task.add_done_callback(pumps.discard)
+                try:
+                    local_writer.write(payload)
+                    await local_writer.drain()
+                except (ConnectionError, OSError):
+                    await _close_stream(stream_id)
         finally:
-            for local_writer in list(local_writers.values()):
-                _close_writer(local_writer)
-            local_writers.clear()
+            for stream_id in list(local_writers):
+                _close_writer(local_writers.pop(stream_id))
             for task in list(pumps):
                 task.cancel()
             if pumps:

@@ -782,3 +782,96 @@ def test_a_loopback_connection_is_multiplexed_on_the_tunnel_session() -> None:
         await asyncio.gather(dispatch, return_exceptions=True)
 
     asyncio.run(scenario())
+
+
+def test_a_closed_relay_stream_is_not_reopened_by_a_late_data_frame() -> None:
+    """A late DATA for a finished stream must be dropped, not re-dial the master.
+
+    Stream ids are never reused, so a DATA frame arriving after a stream's CLOSE
+    is a stale in-flight fragment. Re-opening the loopback connection for it
+    splices a fresh TLS connection into the middle of the old stream, and the
+    master's TLS listener sees the handshake bytes as garbage
+    (``WRONG_VERSION_NUMBER``); the acceptor must drop the frame instead.
+    """
+    from hsync_client.rdv_relay import (
+        _RELAY_SUBSTREAM_CLOSE,
+        _RELAY_SUBSTREAM_DATA,
+        RelayAcceptor,
+        _encode_substream,
+    )
+
+    accepted = 0
+
+    async def scenario() -> None:
+        nonlocal accepted
+        master_conns: list = []
+
+        async def _master(reader, writer) -> None:
+            nonlocal accepted
+            accepted += 1
+            master_conns.append(writer)
+            try:
+                await reader.read(-1)  # hold the connection open until teardown
+            except Exception:  # noqa: BLE001 - teardown races are irrelevant here
+                pass
+
+        master = await asyncio.start_server(_master, "127.0.0.1", 0)
+        port = master.sockets[0].getsockname()[1]
+        queue: asyncio.Queue = asyncio.Queue()
+        quic = _FakeQuic(_FrameReader(queue), _FakeWriter())
+        acceptor = RelayAcceptor(object(), cid="A1b2C3d4E5f6G7h8I9j0K", bucket="b", local_port=port)
+        for frame in (
+            _encode_substream(_RELAY_SUBSTREAM_DATA, 0, b"hello"),
+            _encode_substream(_RELAY_SUBSTREAM_CLOSE, 0),
+            _encode_substream(_RELAY_SUBSTREAM_DATA, 0, b"again"),
+        ):
+            queue.put_nowait(frame)
+        queue.put_nowait(b"")  # EOF ends the bridge
+        try:
+            await asyncio.wait_for(acceptor._serve_session(quic, "0" * 32), timeout=5.0)
+            await asyncio.sleep(0.05)  # let the accept handler run
+        finally:
+            for writer in master_conns:
+                writer.close()
+            master.close()
+            await master.wait_closed()
+        assert accepted == 1
+
+    asyncio.run(scenario())
+
+
+def test_a_stream_whose_local_open_fails_is_closed_back() -> None:
+    """If the master refuses the loopback connection, the peer is told at once.
+
+    Dropping the DATA frame silently left the peer's loopback connection parked
+    until its HTTP timeout; the stream must be closed back so the peer recovers
+    immediately.
+    """
+    import socket
+
+    from hsync_client.rdv_relay import (
+        _RELAY_SUBSTREAM_CLOSE,
+        _RELAY_SUBSTREAM_DATA,
+        _RELAY_SUBSTREAM_HEADER,
+        RelayAcceptor,
+        _encode_substream,
+    )
+
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    dead_port = probe.getsockname()[1]
+    probe.close()
+
+    queue: asyncio.Queue = asyncio.Queue()
+    session_writer = _FakeWriter()
+    quic = _FakeQuic(_FrameReader(queue), session_writer)
+    acceptor = RelayAcceptor(
+        object(), cid="A1b2C3d4E5f6G7h8I9j0K", bucket="b", local_port=dead_port
+    )
+    queue.put_nowait(_encode_substream(_RELAY_SUBSTREAM_DATA, 3, b"x"))
+    queue.put_nowait(b"")
+
+    asyncio.run(asyncio.wait_for(acceptor._serve_session(quic, "0" * 32), timeout=5.0))
+
+    frames = [_RELAY_SUBSTREAM_HEADER.unpack(chunk[:9]) for chunk in session_writer.chunks]
+    assert (_RELAY_SUBSTREAM_CLOSE, 3, 0) in frames

@@ -15,6 +15,7 @@ Consumers: ``hsync-client`` (p2p_rendezvous_rdv), tests.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from hsync_client.stun import ObservedAddress
@@ -39,27 +40,32 @@ class CandidateEndpoint:
 
 def candidate_endpoints(
     *,
-    local_ip: str,
+    local_ips: Sequence[str],
     listen_port: int,
     observed: ObservedAddress | None = None,
     external_port: int | None = None,
 ) -> list[CandidateEndpoint]:
     """Ordered, de-duplicated dialable endpoints for the register frame.
 
-    Order: the UPnP-mapped public endpoint first (when known), then the
-    server-reflexive ``observed`` address, then the local address as a
-    same-network fallback. Duplicates are collapsed so the frame stays minimal.
+    Order: the server-reflexive ``observed`` address first (reached through the
+    public NAT), then the UPnP-mapped endpoint, then one local-address candidate
+    per active interface (the default-route address first) as a same-network
+    fallback. A multi-homed node advertises every interface so a peer on any of
+    its networks can dial it directly instead of falling back to the relay.
+
+    The UPnP external port maps the *default-route* interface's router, so it is
+    combined only with that interface; other interfaces always advertise the
+    listen port. The dialable port is never ``observed.port`` (the ephemeral
+    QUIC/UDP source port). Duplicates are collapsed so the frame stays minimal.
     """
     candidates: list[CandidateEndpoint] = []
     if observed is not None:
-        # The rendezvous observed the QUIC *source* (UDP) port: only the IP is
-        # reusable for the TCP data-plane. The dialable port is always the
-        # master's listen port (or the UPnP external port when mapped) — never
-        # ``observed.port``, which is the ephemeral QUIC/UDP source port.
         candidates.append(CandidateEndpoint(_TCP, observed.host, external_port or listen_port))
-    if external_port:
-        candidates.append(CandidateEndpoint(_TCP, local_ip, external_port))
-    candidates.append(CandidateEndpoint(_TCP, local_ip, listen_port))
+    primary = local_ips[0] if local_ips else None
+    if external_port and primary is not None:
+        candidates.append(CandidateEndpoint(_TCP, primary, external_port))
+    for host in local_ips:
+        candidates.append(CandidateEndpoint(_TCP, host, listen_port))
 
     seen: set[tuple[str, int]] = set()
     unique: list[CandidateEndpoint] = []

@@ -55,7 +55,7 @@ from hsync_client.exceptions import (
 )
 from hsync_client.exitcodes import ExitCode, exit_code_for_result
 from hsync_client.master_status import NO_DEVICE_MESSAGE, MasterSyncStatus
-from hsync_client.net_utils import get_local_ip
+from hsync_client.net_utils import get_local_ips
 from hsync_client.p2p_inventory import (
     P2PInventoryPublisher,
     P2PInventoryStore,
@@ -475,24 +475,59 @@ def _master_claim_settled(plan: Any) -> bool:
     return True if not callable(settled) else bool(settled())
 
 
+# The transfer-concurrency value in force before a relay episode forced it down,
+# remembered so it can be restored when a direct path is used again. ``None``
+# means no relay cap is currently applied.
+_relay_saved_max_concurrent_transfers: int | None = None
+
+
+def _set_transfer_concurrency(value: int, config: "HsyncConfig") -> None:
+    """Write ``MAX_CONCURRENT_TRANSFERS`` to both the global and the local dict."""
+    cast(dict[str, Any], CONFIG)["MAX_CONCURRENT_TRANSFERS"] = value
+    cast(dict[str, Any], config)["MAX_CONCURRENT_TRANSFERS"] = value
+
+
 def _apply_relay_transfer_tuning(config: "HsyncConfig", log) -> None:
     """Cap slave transfer concurrency while the data plane rides the relay.
 
-    Each loopback HTTP connection pairs its own relay session against the
-    node's per-IP budget, so a LAN-sized fan-out exhausts it and the surplus
-    sessions are refused mid-transfer. ``MAX_CONCURRENT_TRANSFERS`` is an
-    autotune-managed key, so it is re-derived from the master RTT again on a
-    direct path (``_refresh_p2p_network_tuning``); here it is forced down.
+    The whole tunnel multiplexes every loopback connection onto one relay
+    session, but each connection still pairs its own stream against the node's
+    per-peer budget, so a LAN-sized fan-out can exhaust it and the surplus
+    streams are refused mid-transfer. The concurrency is forced down here and
+    remembered, and :func:`_restore_relay_transfer_tuning` puts it back once a
+    direct path is chosen again — a cap that outlived the relay would throttle
+    the fast path (autotune only re-derives the key when it manages it).
     """
+    global _relay_saved_max_concurrent_transfers
+
     current = config.get("MAX_CONCURRENT_TRANSFERS")
     if isinstance(current, int) and current <= MAX_CONCURRENT_TRANSFERS_RELAY:
         return
-    cast(dict[str, Any], CONFIG)["MAX_CONCURRENT_TRANSFERS"] = MAX_CONCURRENT_TRANSFERS_RELAY
-    cast(dict[str, Any], config)["MAX_CONCURRENT_TRANSFERS"] = MAX_CONCURRENT_TRANSFERS_RELAY
+    if _relay_saved_max_concurrent_transfers is None and isinstance(current, int):
+        _relay_saved_max_concurrent_transfers = current
+    _set_transfer_concurrency(MAX_CONCURRENT_TRANSFERS_RELAY, config)
     log.info(
         f"{ActionLabel.RELAY} path: capping concurrent transfers at "
         f"{MAX_CONCURRENT_TRANSFERS_RELAY}"
     )
+
+
+def _restore_relay_transfer_tuning(config: "HsyncConfig", log) -> None:
+    """Undo :func:`_apply_relay_transfer_tuning` when the relay is left.
+
+    Restores the concurrency that was in force before the relay forced it down.
+    Necessary even though ``MAX_CONCURRENT_TRANSFERS`` is autotune-managed: the
+    key is not re-derived when ``AUTOTUNE_ENABLED`` is off or the value was
+    overridden via CLI/env, and without this the cap would outlive the relay.
+    """
+    global _relay_saved_max_concurrent_transfers
+
+    saved = _relay_saved_max_concurrent_transfers
+    if saved is None:
+        return
+    _relay_saved_max_concurrent_transfers = None
+    _set_transfer_concurrency(saved, config)
+    log.info(f"Direct path restored: concurrent transfers back to {saved}")
 
 
 def run_p2p_mode(config: "HsyncConfig", log) -> int:
@@ -1265,7 +1300,7 @@ def _select_master_endpoint(master, log) -> tuple[str, int] | None:
         advertised,
         master.address,
         master.port,
-        get_local_ip(),
+        get_local_ips(),
     )
     if not advertised and len(candidates) == 1:
         # mDNS: the peer announced one address directly; connect-time is the
@@ -1544,6 +1579,10 @@ def _run_as_slave(
         # nothing about the real two-leg path: keep the current tuning instead of
         # tightening timeouts around a localhost round trip.
         if not relayed:
+            # A previously relayed peer reached directly again: lift the relay's
+            # concurrency cap before the RTT refresh (which re-derives it only
+            # when it manages the key).
+            _restore_relay_transfer_tuning(config, log)
             _refresh_p2p_network_tuning(master, config, log, host=master_host, port=master_port)
 
         exit_code = int(ExitCode.OK)

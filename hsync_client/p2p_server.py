@@ -53,6 +53,7 @@ from hsync_common.constants import (
     CONTENT_TYPE_JSON,
     CONTENT_TYPE_OCTET_STREAM,
     HEADER_CHECKSUM_SHA256,
+    HEADER_CLIENT_ID,
     MTIME_PROPAGATION_TOLERANCE_SECONDS,
     PARTIAL_DOWNLOAD_SUFFIX,
 )
@@ -3027,14 +3028,15 @@ def _admission_key(remote: str, request: web.Request) -> str:
     A relayed peer reaches the master through its acceptor's loopback bridge, so
     every relayed slave shows up as ``127.0.0.1`` and would otherwise share one
     rate and in-flight bucket — one busy relayed peer could starve the others.
-    Loopback requests are therefore keyed by the peer's claimed CID (the same
-    value the endpoint handlers read), giving each relayed peer its own fair
-    share. Only the local relay acceptor can open a loopback connection, so this
-    does not widen the flood guard beyond a legitimate relayed peer's own claims;
-    a request without a valid CID falls back to the loopback address.
+    Loopback requests are therefore keyed by the peer's claimed CID, taken from
+    the ``cid`` query parameter or the ``X-Client-Id`` header (every P2P request
+    carries the latter, so requests whose URL has no ``cid`` are covered too).
+    Only the local relay acceptor can open a loopback connection, so this does
+    not widen the flood guard beyond a legitimate relayed peer's own claims; a
+    request without a valid CID falls back to the loopback address.
     """
     if remote in _LOOPBACK_ADMISSION_HOSTS:
-        cid = request.query.get("cid")
+        cid = request.query.get("cid") or request.headers.get(HEADER_CLIENT_ID)
         if isinstance(cid, str) and is_valid_cid(cid):
             return f"relay:{cid}"
     return remote

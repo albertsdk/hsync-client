@@ -16,7 +16,7 @@ def _wire(candidates):
 def test_observed_ip_with_listen_port_never_the_quic_source_port():
     """Regression: the observed QUIC/UDP source port must not leak as a TCP port."""
     observed = ObservedAddress(host="203.0.113.9", port=51000)
-    candidates = candidate_endpoints(local_ip="192.168.1.5", listen_port=8443, observed=observed)
+    candidates = candidate_endpoints(local_ips=["192.168.1.5"], listen_port=8443, observed=observed)
     assert candidates[0] == CandidateEndpoint("tcp", "203.0.113.9", 8443)
     assert 51000 not in [c.port for c in candidates]
     assert _wire(candidates)[0] == {"proto": "tcp", "host": "203.0.113.9", "port": 8443}
@@ -25,20 +25,47 @@ def test_observed_ip_with_listen_port_never_the_quic_source_port():
 def test_upnp_external_port_used_for_both_public_and_local_hosts():
     observed = ObservedAddress(host="203.0.113.9", port=51000)
     candidates = candidate_endpoints(
-        local_ip="192.168.1.5", listen_port=8443, observed=observed, external_port=9443
+        local_ips=["192.168.1.5"], listen_port=8443, observed=observed, external_port=9443
     )
     assert CandidateEndpoint("tcp", "203.0.113.9", 9443) in candidates
     assert CandidateEndpoint("tcp", "192.168.1.5", 9443) in candidates
 
 
 def test_local_only_without_observed():
-    candidates = candidate_endpoints(local_ip="192.168.1.5", listen_port=8443)
+    candidates = candidate_endpoints(local_ips=["192.168.1.5"], listen_port=8443)
     assert candidates == [CandidateEndpoint("tcp", "192.168.1.5", 8443)]
 
 
 def test_duplicates_are_collapsed():
     observed = ObservedAddress(host="192.168.1.5", port=51000)
     candidates = candidate_endpoints(
-        local_ip="192.168.1.5", listen_port=8443, observed=observed, external_port=8443
+        local_ips=["192.168.1.5"], listen_port=8443, observed=observed, external_port=8443
     )
     assert candidates == [CandidateEndpoint("tcp", "192.168.1.5", 8443)]
+
+
+def test_every_interface_is_advertised():
+    """A multi-homed node publishes a candidate per interface, primary first.
+
+    Advertising only the default-route address left a peer on one of the node's
+    other networks unable to dial it directly (it fell back to the relay).
+    """
+    candidates = candidate_endpoints(local_ips=["10.145.201.139", "192.168.1.5"], listen_port=8443)
+    assert candidates == [
+        CandidateEndpoint("tcp", "10.145.201.139", 8443),
+        CandidateEndpoint("tcp", "192.168.1.5", 8443),
+    ]
+
+
+def test_the_upnp_port_pairs_only_with_the_default_route_interface():
+    """The UPnP mapping belongs to the primary interface's router, not the others."""
+    observed = ObservedAddress(host="203.0.113.9", port=51000)
+    candidates = candidate_endpoints(
+        local_ips=["10.145.201.139", "192.168.1.5"],
+        listen_port=8443,
+        observed=observed,
+        external_port=9443,
+    )
+    assert CandidateEndpoint("tcp", "10.145.201.139", 9443) in candidates
+    assert CandidateEndpoint("tcp", "192.168.1.5", 8443) in candidates
+    assert CandidateEndpoint("tcp", "192.168.1.5", 9443) not in candidates

@@ -29,6 +29,7 @@ from hsync_common.constants import (  # noqa: F401
     PARTIAL_DOWNLOAD_SUFFIX,
     WS_MAX_MESSAGE_BYTES,
 )
+from hsync_common.constants import HEADER_CLIENT_ID as _HEADER_CLIENT_ID
 from hsync_common.constants import HEADER_CLIENT_NAME as _HEADER_CLIENT_NAME
 from hsync_common.constants import HEADER_CLIENT_VERSION as _HEADER_CLIENT_VERSION
 from hsync_common.constants import (
@@ -53,6 +54,7 @@ CLIENT_NAME = "hsync-client"
 # from the SSOT import.
 HEADER_CLIENT_NAME: Final[Literal["X-Client-Name"]] = _HEADER_CLIENT_NAME
 HEADER_CLIENT_VERSION: Final[Literal["X-Client-Version"]] = _HEADER_CLIENT_VERSION
+HEADER_CLIENT_ID: Final[Literal["X-Client-Id"]] = _HEADER_CLIENT_ID
 HEADER_PROTOCOL_VERSION: Final[Literal["X-Protocol-Version"]] = _HEADER_PROTOCOL_VERSION
 
 

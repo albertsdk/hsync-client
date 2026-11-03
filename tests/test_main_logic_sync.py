@@ -814,6 +814,8 @@ class TestRunSync:
             # module (regression: it used to leak Path(__file__).name).
             assert config_arg["REQUEST_HEADERS"][HEADER_CLIENT_NAME] == CLIENT_NAME
             assert config_arg["REQUEST_HEADERS"][HEADER_CLIENT_VERSION] == HSYNC_VERSION
+            # Central mode sends no CID header (the server does not key on it).
+            assert "X-Client-Id" not in config_arg["REQUEST_HEADERS"]
 
     def test_api_key_over_http_aborts(self, tmp_path):
         """run_sync refuses to send an API key over an unencrypted http:// URL."""

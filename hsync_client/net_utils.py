@@ -17,13 +17,19 @@ p2p_handler, p2p_sources, p2p_peers).
 from __future__ import annotations
 
 import socket
+import sys
 from ipaddress import ip_address, ip_network
 
-__all__ = ["get_local_ip", "same_subnet"]
+__all__ = ["get_local_ip", "get_local_ips", "same_subnet"]
 
 # A non-routable TEST-NET address: connecting a UDP socket to it makes the
 # kernel pick the outgoing interface without sending a single packet.
 _PROBE_TARGET = ("10.254.254.254", 1)
+
+# Linux ioctl request that returns a socket's IPv4 address (``SIOCGIFADDR``).
+# The value is stable across Linux and Android; other POSIX systems lack this
+# exact request and fall back to a hostname lookup.
+_SIOCGIFADDR = 0x8915
 
 
 def get_local_ip() -> str:
@@ -35,6 +41,71 @@ def get_local_ip() -> str:
             return str(probe.getsockname()[0])
     except OSError:
         return "127.0.0.1"
+
+
+def get_local_ips() -> list[str]:
+    """Every active non-loopback IPv4 address, the default-route one first.
+
+    A multi-homed node (laptop on Wi-Fi and Ethernet, a VPN/point-to-point link
+    beside the LAN) has one address per interface, but only the default-route
+    address is known by :func:`get_local_ip`. Advertising all of them lets a peer
+    on any of those networks dial it directly instead of falling back to the
+    relay. The list never omits the default-route address, and degrades to just
+    that address when the interfaces cannot be enumerated.
+    """
+    primary = get_local_ip()
+    found: list[str] = []
+    if _is_usable_ipv4(primary):
+        found.append(primary)
+    for address in _enumerate_local_ipv4():
+        if address not in found and _is_usable_ipv4(address):
+            found.append(address)
+    return found or [primary]
+
+
+def _is_usable_ipv4(address: str) -> bool:
+    """Whether *address* is a routable IPv4 (not loopback or link-local)."""
+    try:
+        parsed = ip_address(address)
+    except ValueError:
+        return False
+    if parsed.version != 4:
+        return False
+    return not (parsed.is_loopback or parsed.is_link_local)
+
+
+def _enumerate_local_ipv4() -> list[str]:
+    """Best-effort list of the machine's interface IPv4 addresses."""
+    if sys.platform.startswith("linux"):
+        # Linux and Android: one ioctl per interface, no dependency.
+        return _linux_interface_ipv4()
+    try:
+        return list(socket.gethostbyname_ex(socket.gethostname())[2])
+    except OSError:
+        return []
+
+
+def _linux_interface_ipv4() -> list[str]:
+    """Interface IPv4 addresses via ``SIOCGIFADDR`` (empty when unavailable)."""
+    try:
+        import fcntl
+        import struct
+    except ImportError:
+        return []
+    try:
+        interfaces = socket.if_nameindex()
+    except OSError:
+        return []
+    addresses: list[str] = []
+    for _index, name in interfaces:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                request = struct.pack("256s", name.encode("utf-8")[:15])
+                result = fcntl.ioctl(probe.fileno(), _SIOCGIFADDR, request)
+                addresses.append(socket.inet_ntoa(result[20:24]))
+        except OSError:
+            continue
+    return addresses
 
 
 def same_subnet(reference_address: str, peer_address: str) -> bool:

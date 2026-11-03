@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   endpoint (`inbound`), and a node defers advertising itself as the serving
   master until the rendezvous answered once, so a relay-only peer no longer
   wins the role and forces the group onto the relay.
+- Every P2P data-plane request carries the requester CID in an `X-Client-Id`
+  header, so the master keeps per-peer admission buckets separate for relayed
+  peers (which all arrive from the loopback address) even on requests whose URL
+  has no `cid` query parameter.
 
 ### Changed
 
@@ -25,9 +29,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shared loopback address, so one relayed peer cannot starve the others.
 - The relay keepalive runs at a third of the node's QUIC idle, so one lost ping
   no longer tears down the tunnel and every transfer with it.
+- A multi-homed node advertises one dial candidate per active interface (the
+  default-route address first), so a peer on any of its networks connects
+  directly instead of falling back to the relay.
+- The relay's transfer-concurrency cap is lifted when a direct path is used
+  again, so a CLI/env override or `--no-autotune` no longer keeps the fast path
+  throttled to the relay value.
 
 ### Fixed
 
+- The relay acceptor drops a frame for a stream it already closed instead of
+  re-opening the master's loopback connection mid-stream, which spliced a fresh
+  TLS handshake into the old stream (surfacing on the master as
+  `WRONG_VERSION_NUMBER`); a stream whose local connection cannot be opened is
+  now closed back to the peer at once.
 - An upload that finds the content already on the peer (preflight `complete` or
   a legacy `409`) now emits its terminal transfer event, so the desktop row
   closes instead of staying at the last progress sample.

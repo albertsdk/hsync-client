@@ -335,6 +335,19 @@ class TestRunSyncLanPlaceholder:
         config_arg = mock_p2p.call_args.args[0]
         assert set(config_arg["AUTOTUNE_MANAGED_KEYS"]) == set(_ALL_TUNING_KEYS)
 
+    def test_config_carries_the_client_id_header_in_p2p_mode(self, tmp_path):
+        """The P2P data plane sends the requester CID so the master can bucket it.
+
+        Relayed peers all arrive from loopback; the header lets the master's
+        admission control separate them even for requests without a ``cid``
+        query parameter.
+        """
+        with patch("hsync_client.main_logic.get_server_url", return_value=None):
+            mock_p2p, _, _ = self._run_p2p(tmp_path, server_url=None, p2p_mode=True)
+
+        config_arg = mock_p2p.call_args.args[0]
+        assert config_arg["REQUEST_HEADERS"]["X-Client-Id"] == config_arg["CID"]
+
     def test_config_carries_peer_download_environment_policy(self, tmp_path):
         """Read cap and dangerous opt-in come from HSYNC_ settings; the peer path
         itself has no size threshold, so eligibility is a runtime, capacity-driven
@@ -432,7 +445,7 @@ class TestSelectMasterEndpoint:
 
         master = _master_with_endpoints([])  # mDNS: no advertised candidates
         with (
-            patch("hsync_client.p2p_handler.get_local_ip", return_value="10.0.0.5"),
+            patch("hsync_client.p2p_handler.get_local_ips", return_value=["10.0.0.5"]),
             patch("hsync_client.p2p_handler._probe_master_endpoint") as probe,
         ):
             assert _select_master_endpoint(master, MagicMock()) == ("192.168.1.1", 9000)
@@ -446,7 +459,7 @@ class TestSelectMasterEndpoint:
 
         master = _master_with_endpoints([("192.168.1.1", 9000)])
         with (
-            patch("hsync_client.p2p_handler.get_local_ip", return_value="10.0.0.5"),
+            patch("hsync_client.p2p_handler.get_local_ips", return_value=["10.0.0.5"]),
             patch("hsync_client.p2p_handler._probe_master_endpoint", return_value=False),
         ):
             assert _select_master_endpoint(master, MagicMock()) is None
@@ -463,7 +476,7 @@ class TestSelectMasterEndpoint:
             return True
 
         with (
-            patch("hsync_client.p2p_handler.get_local_ip", return_value="192.168.1.50"),
+            patch("hsync_client.p2p_handler.get_local_ips", return_value=["192.168.1.50"]),
             patch("hsync_client.p2p_handler._probe_master_endpoint", side_effect=reachable),
         ):
             assert _select_master_endpoint(master, MagicMock()) == ("192.168.1.42", 9000)
@@ -505,7 +518,7 @@ class TestSelectMasterEndpoint:
             return timeout > MASTER_PROBE_FAST_TIMEOUT_S
 
         with (
-            patch("hsync_client.p2p_handler.get_local_ip", return_value="192.168.1.50"),
+            patch("hsync_client.p2p_handler.get_local_ips", return_value=["192.168.1.50"]),
             patch("hsync_client.p2p_handler._probe_master_endpoint", side_effect=slow),
         ):
             assert _select_master_endpoint(master, MagicMock()) == ("192.168.1.42", 9000)
@@ -517,7 +530,74 @@ class TestSelectMasterEndpoint:
 
         master = _master_with_endpoints([("203.0.113.10", 9000), ("192.168.1.42", 9000)])
         with (
-            patch("hsync_client.p2p_handler.get_local_ip", return_value="192.168.1.50"),
+            patch("hsync_client.p2p_handler.get_local_ips", return_value=["192.168.1.50"]),
             patch("hsync_client.p2p_handler._probe_master_endpoint", return_value=False),
         ):
             assert _select_master_endpoint(master, MagicMock()) is None
+
+
+class TestRelayTransferConcurrencyRestore:
+    """The relay's concurrency cap must not outlive the relay.
+
+    ``_apply_relay_transfer_tuning`` forces ``MAX_CONCURRENT_TRANSFERS`` down for
+    the relayed data plane. Autotune re-derives that key only when it manages it,
+    so without an explicit restore a CLI/env override (or ``--no-autotune``) left
+    a direct LAN path throttled to the relay value for the rest of the process.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _reset_saved(self):
+        import hsync_client.p2p_handler as handler
+
+        handler._relay_saved_max_concurrent_transfers = None
+        yield
+        handler._relay_saved_max_concurrent_transfers = None
+
+    def test_the_cap_is_lifted_when_a_direct_path_is_used_again(self, tmp_path):
+        from hsync_client.constants import MAX_CONCURRENT_TRANSFERS_RELAY
+        from hsync_client.p2p_handler import (
+            _apply_relay_transfer_tuning,
+            _restore_relay_transfer_tuning,
+        )
+
+        config = _make_config(tmp_path, AUTOTUNE_ENABLED=False)
+        config["MAX_CONCURRENT_TRANSFERS"] = 12
+        CONFIG.clear()
+        CONFIG.update(config)
+
+        _apply_relay_transfer_tuning(config, MagicMock())
+        assert config["MAX_CONCURRENT_TRANSFERS"] == MAX_CONCURRENT_TRANSFERS_RELAY
+        assert CONFIG["MAX_CONCURRENT_TRANSFERS"] == MAX_CONCURRENT_TRANSFERS_RELAY
+
+        _restore_relay_transfer_tuning(config, MagicMock())
+        assert config["MAX_CONCURRENT_TRANSFERS"] == 12
+        assert CONFIG["MAX_CONCURRENT_TRANSFERS"] == 12
+
+    def test_restore_without_a_prior_cap_is_a_noop(self, tmp_path):
+        from hsync_client.p2p_handler import _restore_relay_transfer_tuning
+
+        config = _make_config(tmp_path)
+        config["MAX_CONCURRENT_TRANSFERS"] = 7
+        CONFIG.clear()
+        CONFIG.update(config)
+
+        _restore_relay_transfer_tuning(config, MagicMock())
+        assert config["MAX_CONCURRENT_TRANSFERS"] == 7
+
+    def test_a_second_cap_keeps_the_original_to_restore(self, tmp_path):
+        """Re-entering the relay must not overwrite the value saved the first time."""
+        from hsync_client.p2p_handler import (
+            _apply_relay_transfer_tuning,
+            _restore_relay_transfer_tuning,
+        )
+
+        config = _make_config(tmp_path)
+        config["MAX_CONCURRENT_TRANSFERS"] = 12
+        CONFIG.clear()
+        CONFIG.update(config)
+
+        _apply_relay_transfer_tuning(config, MagicMock())
+        _apply_relay_transfer_tuning(config, MagicMock())  # already capped: no re-save
+        _restore_relay_transfer_tuning(config, MagicMock())
+
+        assert config["MAX_CONCURRENT_TRANSFERS"] == 12

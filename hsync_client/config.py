@@ -10,7 +10,7 @@ and provides typed configuration structures for the application.
 
 from collections.abc import Mapping
 from functools import lru_cache
-from typing import Any, Literal, TypedDict, cast
+from typing import Any, Literal, NotRequired, TypedDict, cast
 
 from hsync_common import defaults as hsync_defaults
 from hsync_common.constants import DELTA_MIN_FILE_SIZE, DELTA_MIN_FILE_SIZE_P2P, RDV_DEFAULT_PORT
@@ -858,6 +858,7 @@ RequestHeaders = TypedDict(
         "X-Client-Name": str,
         "X-Client-Version": str,
         "X-Protocol-Version": str,
+        "X-Client-Id": NotRequired[str],
     },
 )
 

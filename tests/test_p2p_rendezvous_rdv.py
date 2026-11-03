@@ -281,6 +281,10 @@ class TestPeerFeed:
             "hsync_client.p2p_rendezvous_rdv.get_local_ip",
             lambda: "192.168.1.50",
         )
+        monkeypatch.setattr(
+            "hsync_client.p2p_rendezvous_rdv.get_local_ips",
+            lambda: ["192.168.1.50"],
+        )
         plan, _ = make_plan()
         public_first = relayed_peer(
             OTHER,
@@ -304,6 +308,10 @@ class TestPeerFeed:
         monkeypatch.setattr(
             "hsync_client.p2p_rendezvous_rdv.get_local_ip",
             lambda: "10.0.0.5",
+        )
+        monkeypatch.setattr(
+            "hsync_client.p2p_rendezvous_rdv.get_local_ips",
+            lambda: ["10.0.0.5"],
         )
         plan, _ = make_plan()
         remote = relayed_peer(
@@ -808,6 +816,9 @@ class TestNetworkChange:
     def test_a_changed_address_republishes_with_the_new_candidates(self, monkeypatch):
         plan, fake_upnp = make_plan(upnp_enabled=True)
         monkeypatch.setattr("hsync_client.p2p_rendezvous_rdv.get_local_ip", lambda: "203.0.113.10")
+        monkeypatch.setattr(
+            "hsync_client.p2p_rendezvous_rdv.get_local_ips", lambda: ["203.0.113.10"]
+        )
         plan.update_server_ready()
         plan._publish_endpoint()
 
@@ -816,6 +827,9 @@ class TestNetworkChange:
         assert plan._published_local_ip == "203.0.113.10"
 
         monkeypatch.setattr("hsync_client.p2p_rendezvous_rdv.get_local_ip", lambda: "198.51.100.7")
+        monkeypatch.setattr(
+            "hsync_client.p2p_rendezvous_rdv.get_local_ips", lambda: ["198.51.100.7"]
+        )
         assert plan._republish_stale_endpoint() is True
         assert plan._published_endpoints is False
         # The mapping belonged to the previous network: it is dropped and the
@@ -833,6 +847,9 @@ class TestNetworkChange:
     def test_an_unchanged_address_keeps_the_publication(self, monkeypatch):
         plan, _ = make_plan()
         monkeypatch.setattr("hsync_client.p2p_rendezvous_rdv.get_local_ip", lambda: "203.0.113.10")
+        monkeypatch.setattr(
+            "hsync_client.p2p_rendezvous_rdv.get_local_ips", lambda: ["203.0.113.10"]
+        )
         plan.update_server_ready()
         plan._publish_endpoint()
         assert plan._republish_stale_endpoint() is False
@@ -871,7 +888,7 @@ class TestAdvertisedEndpointsOverride:
         monkeypatch.delenv(_TEST_ADVERTISED_ENDPOINTS_ENV, raising=False)
         plan, _ = make_plan()
         plan._observed = ObservedAddress(host="203.0.113.9", port=51000)
-        assert plan._endpoint_wire("192.0.2.10") == [
+        assert plan._endpoint_wire(["192.0.2.10"]) == [
             {"proto": "tcp", "host": "203.0.113.9", "port": 8443},
             {"proto": "tcp", "host": "192.0.2.10", "port": 8443},
         ]
@@ -880,7 +897,7 @@ class TestAdvertisedEndpointsOverride:
         monkeypatch.setenv(_TEST_ADVERTISED_ENDPOINTS_ENV, "198.51.100.7:8443,198.51.100.8:8443")
         plan, _ = make_plan()
         plan._observed = ObservedAddress(host="203.0.113.9", port=51000)
-        assert plan._endpoint_wire("192.0.2.10") == [
+        assert plan._endpoint_wire(["192.0.2.10"]) == [
             {"proto": "tcp", "host": "198.51.100.7", "port": 8443},
             {"proto": "tcp", "host": "198.51.100.8", "port": 8443},
         ]
@@ -901,7 +918,7 @@ class TestAdvertisedEndpointsOverride:
         monkeypatch.setenv(_TEST_ADVERTISED_ENDPOINTS_ENV, "not-an-endpoint")
         plan, _ = make_plan()
         with pytest.raises(ValueError):
-            plan._endpoint_wire("192.0.2.10")
+            plan._endpoint_wire(["192.0.2.10"])
 
 
 class TestMasterClaimGate:

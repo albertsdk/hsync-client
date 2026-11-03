@@ -39,6 +39,7 @@ from hsync_common.runtime import detect_container, is_tty_interactive, runtime_s
 from hsync_client.config import (
     CONFIG,
     HsyncConfig,
+    RequestHeaders,
     deletions_are_kept,
     get_allow_deletions,
     get_api_key,
@@ -90,6 +91,7 @@ from hsync_client.constants import (
     CONNECTIVITY_RETRY_MAX_WAIT_DEFAULT,
     CONNECTIVITY_RETRY_MIN_WAIT_DEFAULT,
     FILE_STABILITY_INTERVAL_DEFAULT,
+    HEADER_CLIENT_ID,
     HEADER_CLIENT_NAME,
     HEADER_CLIENT_VERSION,
     HEADER_PROTOCOL_VERSION,
@@ -1203,6 +1205,20 @@ def _build_config(
         else get_rendezvous_server_pins()
     )
 
+    # The P2P master keys its per-peer admission buckets on the requester CID:
+    # relayed peers all reach it from the loopback address, so a request without
+    # the CID would share one bucket with every other relayed peer. Central mode
+    # sends nothing extra (the server does not key on it).
+    request_headers: RequestHeaders = {
+        "accept": "application/json",
+        "Authorization": f"Bearer {resolved_p2p_key or '' if p2p_mode else resolved_api_key}",
+        HEADER_CLIENT_NAME: CLIENT_NAME,
+        HEADER_CLIENT_VERSION: HSYNC_VERSION,
+        HEADER_PROTOCOL_VERSION: PROTOCOL_VERSION_REST,
+    }
+    if p2p_mode and cid:
+        request_headers[HEADER_CLIENT_ID] = cid
+
     config: HsyncConfig = {
         "API": {
             "buckets": f"{effective_server_url}/api/v1/buckets",
@@ -1217,13 +1233,7 @@ def _build_config(
         "CA_CERT": ca_cert,
         "QUIET": quiet,
         "REMOTE_BUCKET": bucket,
-        "REQUEST_HEADERS": {
-            "accept": "application/json",
-            "Authorization": f"Bearer {resolved_p2p_key or '' if p2p_mode else resolved_api_key}",
-            HEADER_CLIENT_NAME: CLIENT_NAME,
-            HEADER_CLIENT_VERSION: HSYNC_VERSION,
-            HEADER_PROTOCOL_VERSION: PROTOCOL_VERSION_REST,
-        },
+        "REQUEST_HEADERS": request_headers,
         "RECONNECT_DELAY": _resolved_reconnect_delay,
         "RESYNC": _get_resync_value(resync),
         "FILTER_PATH": filter_path,

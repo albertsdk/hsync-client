@@ -20,7 +20,7 @@ from __future__ import annotations
 import socket
 import threading
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -81,7 +81,7 @@ def dial_candidates(
     endpoints: Iterable[tuple[str, int]] | None,
     address: str,
     port: int,
-    local_ip: str | None = None,
+    local_ips: Sequence[str] | None = None,
 ) -> tuple[tuple[str, int], ...]:
     """Order a peer's dial candidates, host/LAN candidates first.
 
@@ -92,6 +92,8 @@ def dial_candidates(
     the primary ``(address, port)`` when no candidate list is available (the
     mDNS plan, or a caller that only knows one endpoint).
 
+    ``local_ips`` is every local interface address (a multi-homed node checks
+    each, so an interface on the peer's subnet makes that candidate local).
     ``endpoints`` is typed loosely because callers may pass any iterable of
     ``(host, port)`` pairs (including an untyped test double); a missing or
     non-iterable value degrades to the primary pair.
@@ -101,12 +103,13 @@ def dial_candidates(
         candidates = tuple(endpoints)
     if not candidates:
         candidates = ((address, port),)
-    if not local_ip:
+    if not local_ips:
         return candidates
     local = [
         (host, candidate_port)
         for host, candidate_port in candidates
-        if host in ("127.0.0.1", "::1") or same_subnet(local_ip, host)
+        if host in ("127.0.0.1", "::1")
+        or any(same_subnet(local_ip, host) for local_ip in local_ips)
     ]
     remote = [candidate for candidate in candidates if candidate not in local]
     return tuple(local) + tuple(remote)

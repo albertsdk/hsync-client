@@ -104,10 +104,11 @@ def test_tls_handshake_timeout_is_bounded() -> None:
 
 
 class _AdmissionRequest:
-    """Just the ``query`` mapping ``_admission_key`` reads."""
+    """Just the ``query``/``headers`` mappings ``_admission_key`` reads."""
 
-    def __init__(self, query: dict[str, str]) -> None:
+    def __init__(self, query: dict[str, str], headers: dict[str, str] | None = None) -> None:
         self.query = query
+        self.headers = headers or {}
 
 
 _CID = "Afgx6i95EChYuFuUMe4ay"
@@ -123,6 +124,22 @@ def test_a_relayed_peer_is_bucketed_by_its_cid() -> None:
 
     assert _admission_key("127.0.0.1", _AdmissionRequest({"cid": _CID})) == f"relay:{_CID}"
     assert _admission_key("::1", _AdmissionRequest({"cid": _CID})) == f"relay:{_CID}"
+
+
+def test_the_client_id_header_keys_a_loopback_request_without_a_cid_param() -> None:
+    """Requests whose URL carries no ``cid`` still separate by the header."""
+    from hsync_client.p2p_server import _admission_key
+
+    request = _AdmissionRequest({}, {"X-Client-Id": _CID})
+    assert _admission_key("127.0.0.1", request) == f"relay:{_CID}"
+
+
+def test_the_query_cid_wins_over_the_header() -> None:
+    from hsync_client.p2p_server import _admission_key
+
+    other = "Bfgx6i95EChYuFuUMe4ay"
+    request = _AdmissionRequest({"cid": _CID}, {"X-Client-Id": other})
+    assert _admission_key("127.0.0.1", request) == f"relay:{_CID}"
 
 
 def test_a_direct_peer_keeps_its_address_as_the_bucket() -> None:

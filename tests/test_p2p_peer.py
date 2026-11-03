@@ -134,7 +134,7 @@ class TestDialCandidates:
             (("203.0.113.10", 8443), ("192.168.1.42", 8443)),
             address="203.0.113.10",
             port=8443,
-            local_ip="192.168.1.50",
+            local_ips=["192.168.1.50"],
         )
         assert candidates == (("192.168.1.42", 8443), ("203.0.113.10", 8443))
 
@@ -144,22 +144,32 @@ class TestDialCandidates:
             (("203.0.113.10", 8443), ("192.168.1.42", 8443)),
             address="203.0.113.10",
             port=8443,
-            local_ip="10.0.0.5",
+            local_ips=["10.0.0.5"],
         )
         assert candidates == (("203.0.113.10", 8443), ("192.168.1.42", 8443))
+
+    def test_any_local_interface_makes_a_candidate_local(self):
+        """A multi-homed dialer must recognize the peer's subnet on any interface."""
+        candidates = dial_candidates(
+            (("203.0.113.10", 8443), ("192.168.1.42", 8443)),
+            address="203.0.113.10",
+            port=8443,
+            local_ips=["10.145.201.139", "192.168.1.50"],
+        )
+        assert candidates == (("192.168.1.42", 8443), ("203.0.113.10", 8443))
 
     def test_loopback_candidate_is_treated_as_local(self):
         candidates = dial_candidates(
             (("203.0.113.10", 8443), ("127.0.0.1", 8443)),
             address="203.0.113.10",
             port=8443,
-            local_ip="10.0.0.5",
+            local_ips=["10.0.0.5"],
         )
         assert candidates == (("127.0.0.1", 8443), ("203.0.113.10", 8443))
 
     def test_missing_candidate_list_degrades_to_the_primary(self):
         """The mDNS plan has no candidate list: the primary endpoint is used."""
-        assert dial_candidates((), address="192.168.1.100", port=9753, local_ip="10.0.0.5") == (
+        assert dial_candidates((), address="192.168.1.100", port=9753, local_ips=["10.0.0.5"]) == (
             ("192.168.1.100", 9753),
         )
         # A non-iterable value (a test double) must not raise.
