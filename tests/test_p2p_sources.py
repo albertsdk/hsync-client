@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import http.client
 import json
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -118,6 +118,14 @@ def _snapshot(cid: str, address: str) -> PeerSnapshot:
     )
 
 
+def _multi_homed_snapshot(cid: str, primary: str, *other: str) -> PeerSnapshot:
+    """A snapshot for a peer that announced several interfaces."""
+    return replace(
+        _snapshot(cid, primary),
+        endpoints=((primary, 8443), *((address, 8443) for address in other)),
+    )
+
+
 def test_peer_manager_returns_immutable_detached_snapshots() -> None:
     manager = PeerManager(MASTER_CID, "bucket")
     manager.add_peer(
@@ -205,6 +213,69 @@ def test_source_ranking_prefers_same_subnet_and_requires_exact_live_holder(
         files=[{"path": "docs/file.txt", "sha256": "f" * 64}],
     )
     assert missing["files"][0]["sources"] == []
+    store.close()
+
+
+def test_multi_homed_peer_matches_any_address_it_announced(tmp_path: Path) -> None:
+    """A peer discovered on one interface and connected from another is a source.
+
+    A multi-homed node publishes its discovery record on one address and opens
+    its master WebSocket from the interface that routes to the master. The
+    source lookup matches the session against every address the peer
+    announced, so such a host still serves its holders instead of falling back
+    to the master.
+    """
+    store = P2PInventoryStore(tmp_path / "inventory.sqlite3", "bucket")
+    store.activate()
+    # The session arrives from the peer's second interface, not the announced one.
+    _commit_holder(store, PEER_B, "10.108.38.1")
+    service = P2PSourceService(
+        bucket="bucket",
+        master_cid=MASTER_CID,
+        inventory_store=store,
+        peer_snapshot_provider=lambda: (
+            _multi_homed_snapshot(PEER_B, "192.168.1.20", "10.108.38.1"),
+        ),
+        rng=NoShuffle(),
+    )
+
+    response = service.resolve(
+        requester_cid=REQUESTER_CID,
+        requester_address="192.168.1.50",
+        files=[{"path": "docs/file.txt", "sha256": DIGEST}],
+    )
+
+    sources = response["files"][0]["sources"]
+    assert [source["cid"] for source in sources] == [PEER_B]
+    # The endpoint stays the announced one: the session address is only evidence.
+    assert sources[0]["download_url"] == (
+        "https://192.168.1.20:8443/api/v1/buckets/bucket/files/download"
+    )
+    store.close()
+
+
+def test_session_from_an_unannounced_address_is_dropped(tmp_path: Path) -> None:
+    """Announced interfaces widen the match; an unrelated one is still a spoof."""
+    store = P2PInventoryStore(tmp_path / "inventory.sqlite3", "bucket")
+    store.activate()
+    _commit_holder(store, PEER_B, "203.0.113.9")
+    service = P2PSourceService(
+        bucket="bucket",
+        master_cid=MASTER_CID,
+        inventory_store=store,
+        peer_snapshot_provider=lambda: (
+            _multi_homed_snapshot(PEER_B, "192.168.1.20", "10.108.38.1"),
+        ),
+        rng=NoShuffle(),
+    )
+
+    response = service.resolve(
+        requester_cid=REQUESTER_CID,
+        requester_address="192.168.1.50",
+        files=[{"path": "docs/file.txt", "sha256": DIGEST}],
+    )
+
+    assert response["files"][0]["sources"] == []
     store.close()
 
 

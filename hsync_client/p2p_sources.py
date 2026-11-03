@@ -87,6 +87,9 @@ class PeerSourceSnapshot(Protocol):
     @property
     def peer_download_enabled(self) -> bool: ...
 
+    @property
+    def endpoints(self) -> tuple[tuple[str, int], ...]: ...
+
 
 class ShuffleRng(Protocol):
     def shuffle(self, values: list[PeerSourceSnapshot]) -> None: ...
@@ -185,6 +188,30 @@ class P2PSourceService:
         return [*same, *other]
 
     @staticmethod
+    def _session_is_announced(owner_address: str, peer: PeerSourceSnapshot) -> bool:
+        """True when the peer's session came from an address it announced.
+
+        A multi-homed peer is discovered on one interface and opens its master
+        session from the interface that routes to the master, so the session
+        address is matched against every endpoint the peer advertised
+        (``endpoints``), not only the primary one. A session from an address the
+        peer never announced is dropped: the peer would be handed a URL it does
+        not own.
+        """
+        try:
+            owner = ip_address(owner_address)
+        except ValueError:
+            return False
+        announced = [peer.address, *(address for address, _port in peer.endpoints)]
+        for candidate in announced:
+            try:
+                if ip_address(candidate) == owner:
+                    return True
+            except ValueError:
+                continue
+        return False
+
+    @staticmethod
     def _compact_size(value: object) -> int:
         return len(compact_json_bytes(value))
 
@@ -215,12 +242,7 @@ class P2PSourceService:
                 if peer.cid not in holder_cids:
                     continue
                 owner_address = self._store.session_address(peer.cid)
-                if owner_address is None:
-                    continue
-                try:
-                    if ip_address(owner_address) != ip_address(peer.address):
-                        continue
-                except ValueError:
+                if owner_address is None or not self._session_is_announced(owner_address, peer):
                     continue
                 # A candidate exists only with a live capacity advertisement:
                 # without it the requester could not respect the seeder's cap.

@@ -236,6 +236,13 @@ class PeerSnapshot:
     cert_fingerprint: str | None
     compression_enabled: bool
     peer_download_enabled: bool
+    # Every data-plane endpoint the peer announced, in advertised order (the
+    # union of the discovery sources). A multi-homed peer is discovered on one
+    # interface and may open its master session from another, so a consumer
+    # that has to recognise the peer by address reads the whole list. Empty
+    # for a single-address peer, which keeps ``address``/``port`` as its only
+    # endpoint.
+    endpoints: tuple[tuple[str, int], ...] = ()
 
 
 # Human-readable names for the election sort-key components, in the order of
@@ -883,6 +890,7 @@ class PeerManager:
                     cert_fingerprint=peer.cert_fingerprint,
                     compression_enabled=peer.compression_enabled,
                     peer_download_enabled=peer.peer_download_enabled,
+                    endpoints=peer.endpoints,
                 )
                 for peer in self._peers.values()
                 if self._is_peer_alive(peer)

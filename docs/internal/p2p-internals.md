@@ -144,7 +144,9 @@ master's read-only `/files/sources` endpoint — eligibility is a live seeder
 holding that exact content, never a file-size gate (ADR-0030). The master joins
 its per-session inventory with live mDNS peers that advertise the peer-download
 capability and hold a live capacity advertisement, excluding the requester and
-itself.
+itself. A candidate must also own its session: the address the session arrived
+from is one of the endpoints the peer announced, so a multi-homed peer
+discovered on one interface and connected from another still qualifies.
 
 Each returned source carries its HTTPS URL, CID, certificate fingerprint,
 compression flag and the seeder's advertised capacity. The requester TOFU-pins
