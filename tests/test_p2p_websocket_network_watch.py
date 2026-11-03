@@ -103,3 +103,24 @@ class TestNetworkCloseWaker:
             assert socket.closed is True
 
         asyncio.run(main())
+
+
+class TestEndpointChangeClose:
+    def test_endpoint_change_closes_the_socket(self):
+        class _Guard:
+            async def wait_async(self) -> None:
+                return
+
+        class _Socket:
+            def __init__(self) -> None:
+                self.closed = False
+
+            async def close(self) -> None:
+                self.closed = True
+
+        async def main() -> None:
+            socket = _Socket()
+            await ws._close_ws_on_endpoint_change(socket, _Guard())
+            assert socket.closed is True
+
+        asyncio.run(main())

@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of blackholing until the keepalive ping times out (tens of seconds).
 - The p2p slave WebSocket liveness timeouts (open, ping) follow the autotune
   network class, so a high-RTT mobile path gets a longer, more tolerant set.
+- The p2p slave re-selects the master endpoint when the master's advertised
+  endpoint changes mid-session (address, port, or candidate list): the WSS is
+  closed at once so the loop reconnects to the new endpoint (or the relay)
+  instead of dialing the stale address until the keepalive fires.
 - The p2p data-relay tunnel multiplexes every loopback connection over one relay
   session (one `relay_connect` per tunnel, private stream framing), so the sync
   cycle no longer spends a pairing token per REST/WebSocket connection.

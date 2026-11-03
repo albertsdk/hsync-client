@@ -28,7 +28,7 @@ import json
 import os
 import sys
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from functools import partial
 from pathlib import Path
@@ -1453,18 +1453,49 @@ class _NetworkCloseWaker:
         self._monitor.unsubscribe(self._on_change)
 
 
+async def _close_ws_when(
+    websocket: Any, wait_for: Callable[[], Awaitable[None]], reason: str
+) -> None:
+    """Close *websocket* once *wait_for* resolves, logging *reason*.
+
+    Runs as a background task for the connection's lifetime: the awaited
+    condition resolves on an external notification (the network monitor, a
+    master-endpoint change), then the socket is closed so the ``async for``
+    loop ends and the caller re-enters the rendezvous loop.
+    """
+    await wait_for()
+    log.info(reason)
+    with contextlib.suppress(Exception):
+        await websocket.close()
+
+
 async def _close_ws_on_network_change(websocket: Any, waker: _NetworkCloseWaker) -> None:
     """Close *websocket* once the local network changes.
 
-    Runs as a background task for the connection's lifetime: the awaited
-    :meth:`_NetworkCloseWaker.wait` resolves on the monitor thread's
-    notification, then the socket is closed so the ``async for`` loop ends and
-    the caller re-enters the rendezvous loop on the new interface.
+    The awaited :meth:`_NetworkCloseWaker.wait` resolves on the monitor thread's
+    notification, so the caller re-enters the rendezvous loop and reconnects on
+    the new interface.
     """
-    await waker.wait()
-    log.info("Network changed; closing the master WebSocket to reconnect on the new interface")
-    with contextlib.suppress(Exception):
-        await websocket.close()
+    await _close_ws_when(
+        websocket,
+        waker.wait,
+        "Network changed; closing the master WebSocket to reconnect on the new interface",
+    )
+
+
+async def _close_ws_on_endpoint_change(websocket: Any, guard: Any) -> None:
+    """Close *websocket* once the master's advertised endpoint changes.
+
+    The slave pins the master's data-plane URL for the whole session, so a
+    master that moved networks would keep being dialed at its stale address;
+    closing here lets the caller re-select the endpoint (directly or through the
+    relay) as soon as the fresh endpoint is known.
+    """
+    await _close_ws_when(
+        websocket,
+        guard.wait_async,
+        "Master endpoint changed; closing the master WebSocket to re-select it",
+    )
 
 
 async def p2p_websocket_client(
@@ -1473,6 +1504,7 @@ async def p2p_websocket_client(
     use_https: bool = False,
     inventory_publisher: P2PInventoryPublisher | None = None,
     source_resolver: P2PSourceResolver | None = None,
+    endpoint_guard: Any = None,
 ) -> None:
     """
     Connect to the P2P master's WebSocket server and handle events.
@@ -1547,6 +1579,9 @@ async def p2p_websocket_client(
     # instead of blackholing on the old interface (see ``_NetworkCloseWaker``).
     network_waker: _NetworkCloseWaker | None = None
     network_task: asyncio.Task[None] | None = None
+    # Closes the link when the master's advertised endpoint changes, so the
+    # caller re-selects it (see ``_close_ws_on_endpoint_change``).
+    endpoint_task: asyncio.Task[None] | None = None
 
     # Set up SSL context for WSS. The self-signed master cert is trusted by
     # pinned fingerprint (TOFU), not by chain validation, so we accept any cert
@@ -1720,6 +1755,13 @@ async def p2p_websocket_client(
             network_task = asyncio.create_task(
                 _close_ws_on_network_change(websocket, network_waker)
             )
+            # Re-select the master the moment its advertised endpoint changes: a
+            # master that moved networks would otherwise be dialed at its stale
+            # address for the whole session (see ``_close_ws_on_endpoint_change``).
+            if endpoint_guard is not None:
+                endpoint_task = asyncio.create_task(
+                    _close_ws_on_endpoint_change(websocket, endpoint_guard)
+                )
 
             # One dispatch context per connection: the inbound directory
             # dedup cache must persist across events (a per-event context
@@ -1766,6 +1808,10 @@ async def p2p_websocket_client(
             network_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await network_task
+        if endpoint_task is not None:
+            endpoint_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await endpoint_task
         # Stop the periodic resync task before tearing down the watcher.
         # CancelledError is a BaseException, so it must be suppressed
         # explicitly: awaiting the task we just cancelled re-raises it.

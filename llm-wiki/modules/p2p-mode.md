@@ -53,6 +53,7 @@ configured `HybridRendezvous` runs **both** over one shared `PeerManager`:
 | `NetworkChangeMonitor` | `net_watch.py::NetworkChangeMonitor` | host address/link changes shared by both plans: the mDNS rebuild and the rendezvous endpoint republish (see [net-watch.md](net-watch.md)) |
 | `_NetworkCloseWaker` | `p2p_websocket.py::_NetworkCloseWaker` | closes the slave WSS the moment `NetworkChangeMonitor` reports a change, so `_run_as_slave` re-enters the rendezvous loop and reconnects on the fresh interface instead of blackholing on the old one until the keepalive ping times out |
 | `_ws_liveness_timeouts` | `p2p_websocket.py::_ws_liveness_timeouts` | `open_timeout`/`ping_interval`/`ping_timeout` for the slave WSS, derived from the autotune network class (`CONFIG["P2P_NET_CLASS"]`, set by `p2p_handler._refresh_p2p_network_tuning`): a high-RTT mobile path gets a longer, more tolerant set |
+| `_MasterEndpointGuard` | `p2p_handler.py::_MasterEndpointGuard` | reports that the master's advertised endpoint changed mid-session (address, port, or candidate list; also when it disappears). `_run_as_slave` passes it to `p2p_websocket_client` (`endpoint_guard`), which closes the WSS (`p2p_websocket.py::_close_ws_on_endpoint_change`) so the loop re-selects the master endpoint — directly, or through the relay — instead of dialing the stale address for the whole session |
 | `HSYNC_SERVICE_TYPE` | `p2p_rendezvous_mdns.py::HSYNC_SERVICE_TYPE` | `_hsync._tcp.local.` mDNS type |
 
 Election is delegated to the common SSOT: `PeerManager._elect_master` builds

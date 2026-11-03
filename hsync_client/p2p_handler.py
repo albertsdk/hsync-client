@@ -8,6 +8,7 @@ This module handles P2P synchronization including peer rendezvous,
 master election, and WebSocket communication.
 """
 
+import asyncio
 import contextlib
 import os
 import socket
@@ -1473,6 +1474,81 @@ def _warn_relay_unavailable(master: Any, dialer: Any, log) -> None:
     emit_warning(message, source="relay", reason="relay_unavailable")
 
 
+class _MasterEndpointGuard:
+    """Detect that the master's advertised endpoint changed mid-session.
+
+    The slave pins the master's data-plane URL for the whole session
+    (``config["API"]``), so a master that moves networks would keep being dialed
+    at its stale address until the session is abandoned. The guard watches the
+    shared :class:`PeerManager` and reports the change, so the session re-enters
+    the rendezvous loop and re-selects the master endpoint (directly, or through
+    the relay). The watched signature is the master's dial-relevant fields, so a
+    heartbeat that only refreshes ``last_seen`` never fires it.
+    """
+
+    def __init__(
+        self,
+        peer_manager: Any,
+        master_cid: str,
+        *,
+        address: str,
+        port: int,
+        endpoints: Any,
+    ) -> None:
+        self._peer_manager = peer_manager
+        self._master_cid = master_cid
+        self._signature = self._signature_of(address, port, endpoints)
+        self._event = threading.Event()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    @staticmethod
+    def _signature_of(address: str, port: int, endpoints: Any) -> tuple[Any, ...]:
+        return (address, port, tuple(endpoints or ()))
+
+    def _current_signature(self) -> tuple[Any, ...] | None:
+        master = self._peer_manager.get_master()
+        if master is None or master.cid != self._master_cid:
+            return None
+        return self._signature_of(master.address, master.port, master.endpoints)
+
+    def start(self) -> None:
+        """Start the watcher thread (idempotent)."""
+        if self._thread is not None:
+            return
+        self._thread = threading.Thread(
+            target=self._watch, name="hsync-master-endpoint", daemon=True
+        )
+        self._thread.start()
+
+    def _watch(self) -> None:
+        # A one-second poll keeps the reaction prompt without sharing the
+        # rendezvous loop's change-generation (a second ``wait_for_change``
+        # waiter would consume its wakeups).
+        while not self._stop.wait(1.0):
+            if self._current_signature() != self._signature:
+                self._event.set()
+                return
+
+    async def wait_async(self) -> None:
+        """Await the endpoint change without blocking the event loop.
+
+        Polling (not a worker thread) keeps it cancellable: the connection
+        teardown cancels this task, and a thread blocked on the event would keep
+        the loop's executor shutdown waiting.
+        """
+        while not self._event.is_set():
+            await asyncio.sleep(0.2)
+
+    def close(self) -> None:
+        """Stop the watcher and release any waiter (idempotent)."""
+        self._stop.set()
+        self._event.set()
+        thread, self._thread = self._thread, None
+        if thread is not None:
+            thread.join(timeout=2.0)
+
+
 def _run_as_slave(
     config: "HsyncConfig",
     log,
@@ -1722,6 +1798,20 @@ def _run_as_slave(
         # owns the ``peers`` event is blocked for the whole WebSocket run, so
         # without this a connected slave keeps the pre-connect ``1/N`` pair.
         _emit_slave_presence(peer_manager)
+        # Watch the master's advertised endpoint for the whole session: a master
+        # that moves networks must not keep being dialed at its stale address. A
+        # relayed session is reached through a stable loopback tunnel, so its
+        # advertised endpoint changing is not a reason to reconnect.
+        endpoint_guard: _MasterEndpointGuard | None = None
+        if not relayed:
+            endpoint_guard = _MasterEndpointGuard(
+                peer_manager,
+                master.cid,
+                address=master.address,
+                port=master.port,
+                endpoints=master.endpoints,
+            )
+            endpoint_guard.start()
         try:
             run(
                 _with_stdin_commands(
@@ -1732,6 +1822,7 @@ def _run_as_slave(
                         use_https=True,
                         inventory_publisher=inventory_publisher,
                         source_resolver=source_resolver,
+                        endpoint_guard=endpoint_guard,
                     ),
                     inventory_observer=inventory_publisher,
                     source_resolver=source_resolver,
@@ -1754,6 +1845,9 @@ def _run_as_slave(
             return True, int(ExitCode.OK)
         except Exception as e:
             log.warning(f"WebSocket connection ended: {type(e).__name__}: {e}")
+        finally:
+            if endpoint_guard is not None:
+                endpoint_guard.close()
         # The WebSocket is down: clear the liveness mark so a master that died
         # mid-session is demoted by the sweep below, then re-enter rendezvous.
         peer_manager.mark_peer_disconnected(master.cid)
