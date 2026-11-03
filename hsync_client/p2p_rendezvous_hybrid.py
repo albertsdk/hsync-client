@@ -109,6 +109,15 @@ class HybridRendezvous(RendezvousPlanState):
         self._mdns.update_server_ready()
         self._rendezvous.update_server_ready()
 
+    def discovery_settled(self) -> bool:
+        """True once the rendezvous source has answered a first query round.
+
+        The mDNS source observes only the local network and cannot reveal an
+        already-serving cross-network peer, so the master-claim gate keys off the
+        rendezvous source here (bounded by its own grace).
+        """
+        return self._rendezvous.discovery_settled()
+
     def update_server_not_ready(self) -> None:
         """Publish that the local master server is no longer ready on every source."""
         self._mdns.update_server_not_ready()

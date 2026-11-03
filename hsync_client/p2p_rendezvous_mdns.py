@@ -173,6 +173,9 @@ class HsyncServiceListener(ServiceListener):
             prefer_master = _tx_bool(properties, b"prefer_master")
             # Never-master flag (peer refuses to ever be master)
             never_master = _tx_bool(properties, b"never_master")
+            # Inbound flag: the peer confirms an externally dialable endpoint
+            # (it can serve without the relay). Part of the election.
+            inbound = _tx_bool(properties, b"inbound")
             # Startup time for master election (earlier startup wins)
             startup_time_bytes = properties.get(b"startup_time", b"")
             startup_time = float(startup_time_bytes.decode("utf-8")) if startup_time_bytes else 0.0
@@ -244,6 +247,7 @@ class HsyncServiceListener(ServiceListener):
                 connected=connected,
                 prefer_master=prefer_master,
                 never_master=never_master,
+                inbound=inbound,
                 startup_time=startup_time,
                 sync_direction=sync_direction,
             )

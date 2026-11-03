@@ -165,6 +165,10 @@ class Peer:
     # must not clear the ones another source advertised.
     capabilities_known: bool = False
     server_ready: bool = False  # True when HTTP server is listening
+    # True when the peer advertised a confirmed externally dialable endpoint
+    # (rendezvous) — it can serve every peer without the relay, so it out-ranks
+    # a relay-only peer in the election. mDNS sources never know it (False).
+    inbound: bool = False
     connected: int = 0  # slaves currently connected to the master's WebSocket
     # Liveness evidence, per source and **in that source's own unit** (a clock
     # stamp for a heartbeat source, a sample counter for a discovery server).
@@ -209,6 +213,7 @@ class PeerSnapshot:
 _ELECTION_REASON_LABELS = (
     "server_ready",
     "prefer_master",
+    "inbound reachability",
     "bidirectional preference",
     "earliest startup",
     "lowest cid",
@@ -303,6 +308,7 @@ class PeerManager:
         self._duplicate_identity_seen: set[str] = set()
         self._master_cid: str | None = None
         self._local_server_ready = False
+        self._local_inbound = False
         self._master_candidacy = True
         self._on_master_change: Callable[[Peer | None], None] | None = None
         # Generation + Condition: waiters observe a monotonic counter so a
@@ -324,6 +330,22 @@ class PeerManager:
             if self._local_server_ready == ready:
                 return
             self._local_server_ready = ready
+            self._elect_master()
+            self._signal_change()
+
+    def set_local_inbound(self, inbound: bool) -> None:
+        """Mark the local node as having a confirmed dialable inbound endpoint.
+
+        A node that can be reached directly serves every peer without the relay,
+        so it out-ranks a relay-only peer in the master election (after
+        ``server_ready``/``prefer_master``). Set from the rendezvous plan once
+        the UPnP mapping confirms an external port; a direct-path node keeps it
+        for the run.
+        """
+        with self._lock:
+            if self._local_inbound == inbound:
+                return
+            self._local_inbound = inbound
             self._elect_master()
             self._signal_change()
 
@@ -450,6 +472,9 @@ class PeerManager:
                     or existing.never_master != peer.never_master
                     or existing.startup_time != peer.startup_time
                     or existing.sync_direction != peer.sync_direction
+                    # Inbound is OR-merged across sources (mDNS never knows it),
+                    # so it only changes the election when it turns true.
+                    or (peer.inbound and not existing.inbound)
                 )
                 # The rendezvous relay carries no capability flags, so a
                 # rendezvous-sourced update must not clear capabilities learned
@@ -497,6 +522,7 @@ class PeerManager:
                 existing.connected = peer.connected
                 existing.prefer_master = peer.prefer_master
                 existing.never_master = peer.never_master
+                existing.inbound = existing.inbound or peer.inbound
                 existing.startup_time = peer.startup_time
                 existing.sync_direction = peer.sync_direction
                 existing.note_evidence(source, self._stamp(source))
@@ -849,7 +875,10 @@ class PeerManager:
             for value, label in zip(winner_key[:3], _ELECTION_REASON_LABELS[:3], strict=True):
                 if value is False:
                     return label
-            return _ELECTION_REASON_LABELS[3]
+            # No preferred flag set: the direction preference, else startup order.
+            if winner_key[3] is False:
+                return _ELECTION_REASON_LABELS[3]
+            return _ELECTION_REASON_LABELS[4]
         runner_key = election_sort_key(ranked[1])
         for index, label in enumerate(_ELECTION_REASON_LABELS):
             if winner_key[index] != runner_key[index]:
@@ -887,6 +916,7 @@ class PeerManager:
                 sync_direction=self._sync_direction,
                 server_ready=self._local_server_ready,
                 never_master=self._never_master or not self._master_candidacy,
+                inbound=self._local_inbound,
             )
         ]
         candidates.extend(
@@ -897,6 +927,7 @@ class PeerManager:
                 sync_direction=peer.sync_direction,
                 server_ready=peer.server_ready,
                 never_master=peer.never_master,
+                inbound=peer.inbound,
             )
             for peer in self._peers.values()
             if self._is_peer_alive(peer)

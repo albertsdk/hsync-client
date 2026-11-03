@@ -39,6 +39,7 @@ from loguru import logger as log
 
 from hsync_client.constants import (
     HSYNC_VERSION,
+    MASTER_CLAIM_SETTLE_S,
     PEER_TIMEOUT,
     RENDEZVOUS_DEFAULT_PORT,
     RENDEZVOUS_MISSED_SAMPLES,
@@ -261,6 +262,11 @@ class RdvRendezvous(RendezvousPlanState):
         # the candidates relayed by the node went stale after a network change.
         self._published_local_ip: str | None = None
         self._external_port: int | None = None
+        self._inbound = False
+        # Master-claim gate state: whether a query round has been answered, and
+        # when the plan started (see ``discovery_settled``).
+        self._observed_sample = False
+        self._started_at = 0.0
         self._network_monitor: NetworkChangeMonitor | None = None
 
         self._server_ready = False
@@ -319,6 +325,7 @@ class RdvRendezvous(RendezvousPlanState):
         # connect (the election otherwise runs only on peer events).
         manager.elect()
         self._running = True
+        self._started_at = time.monotonic()
         # The first samples run in a burst: a node that is joining (or restarting)
         # must find the group in seconds, not in a lease cycle.
         self._burst_left = RENDEZVOUS_QUERY_BURST_COUNT
@@ -383,6 +390,18 @@ class RdvRendezvous(RendezvousPlanState):
             self._peer_manager.wait_for_change(1.0 if timeout <= 0 else min(remaining, 1.0))
 
         self.log_peer_count()
+
+    def discovery_settled(self) -> bool:
+        """True once the first query round has been answered, or the grace elapsed.
+
+        The master-claim gate reads it so a node never advertises itself as the
+        serving master before it has had one chance to see an already-serving
+        peer. Bounded by :data:`MASTER_CLAIM_SETTLE_S` so an unreachable
+        rendezvous never blocks a lone node from serving.
+        """
+        return self._observed_sample or (
+            time.monotonic() - self._started_at >= MASTER_CLAIM_SETTLE_S
+        )
 
     def source_disabled(self) -> bool:
         """True when this source delivers no more peers for the rest of the run.
@@ -741,6 +760,7 @@ class RdvRendezvous(RendezvousPlanState):
                 server_ready=self._server_ready,
                 prefer_master=self._prefer_master,
                 never_master=self._never_master,
+                inbound=self._inbound,
                 startup_time=self._startup_time,
                 sync_direction=self._sync_direction,
             )
@@ -760,7 +780,22 @@ class RdvRendezvous(RendezvousPlanState):
     def _publish_endpoint(self) -> None:
         if self._shared_upnp is not None:
             self._external_port = self._shared_upnp.external_port(self._port)
+        self._set_inbound(self._external_port is not None)
         self._register(publish_endpoint=True)
+
+    def _set_inbound(self, inbound: bool) -> None:
+        """Record whether this node has a confirmed externally dialable endpoint.
+
+        The rendezvous relays it to peers as the election ``inbound`` flag: a
+        node that can be dialled directly serves every peer without the relay,
+        so it out-ranks a relay-only peer in the shared master election.
+        """
+        if self._inbound == inbound:
+            return
+        self._inbound = inbound
+        manager = self._peer_manager
+        if manager is not None:
+            manager.set_local_inbound(inbound)
 
     def _refresh(self) -> None:
         ack = self._client.refresh(
@@ -818,6 +853,9 @@ class RdvRendezvous(RendezvousPlanState):
         self._next_query_at = now + self._query_interval()
         if self._burst_left > 0:
             self._burst_left -= 1
+        # One answered round: the gate that holds off the incumbency claim until
+        # the rendezvous has been seen once is satisfied.
+        self._observed_sample = True
         sampled = {wire["cid"] for wire in response["peers"]}
         # One answered sample: the source moves forward and the peers it drew are
         # stamped with the new generation. A peer missing from `window` answered
@@ -882,6 +920,7 @@ class RdvRendezvous(RendezvousPlanState):
             connected=int(wire.get("connected") or 0),
             prefer_master=wire["prefer_master"],
             never_master=wire["never_master"],
+            inbound=wire["inbound"],
             startup_time=wire["startup_time"],
             sync_direction=wire["sync_direction"],
             endpoints=candidates,
@@ -1039,6 +1078,10 @@ class MultiRdvRendezvous(RendezvousPlanState):
     def source_disabled(self) -> bool:
         """True only when every source stopped for good."""
         return all(source.source_disabled() for source in self._sources)
+
+    def discovery_settled(self) -> bool:
+        """True once any source's first query round has been answered or timed out."""
+        return any(source.discovery_settled() for source in self._sources)
 
     def relay_dialer(self, target_cid: str) -> Any:
         """Pair the relay session through the first server that accepts it."""

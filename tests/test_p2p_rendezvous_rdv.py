@@ -68,6 +68,7 @@ def relayed_peer(
         "server_ready": False,
         "prefer_master": False,
         "never_master": False,
+        "inbound": False,
         "startup_time": 0.0,
         "sync_direction": "bidirectional",
     }
@@ -87,6 +88,7 @@ RESPONSE = {
             capacity=4,
             server_ready=True,
             prefer_master=True,
+            inbound=True,
             startup_time=1760000000.5,
             sync_direction="download-only",
         ),
@@ -185,7 +187,17 @@ class TestLease:
         assert kind == "register"
         assert frame["capacity"] == 7
         assert frame["endpoints"], "the second register must publish endpoints"
+        assert frame["inbound"] is True
+        assert plan._inbound is True
         assert validate_rdv_frame(frame) is not None
+
+    def test_publish_endpoint_without_mapping_leaves_inbound_false(self):
+        """No confirmed external port means relay-only: do not claim inbound."""
+        plan, _ = make_plan()  # no UPnP mapping
+        plan._publish_endpoint()
+        _kind, frame = plan._client.calls[-1]
+        assert frame["inbound"] is False
+        assert plan._inbound is False
 
     def test_capacity_is_zero_without_peer_download(self):
         plan, _ = make_plan(peer_download_enabled=False)
@@ -246,6 +258,7 @@ class TestPeerFeed:
         assert peers[0].server_ready is True
         assert peers[0].prefer_master is True
         assert peers[0].never_master is False
+        assert peers[0].inbound is True
         assert peers[0].startup_time == 1760000000.5
         assert peers[0].sync_direction == "download-only"
 
@@ -881,3 +894,22 @@ class TestAdvertisedEndpointsOverride:
         plan, _ = make_plan()
         with pytest.raises(ValueError):
             plan._endpoint_wire("192.0.2.10")
+
+
+class TestMasterClaimGate:
+    """E2: no incumbency claim before the rendezvous has been seen once."""
+
+    def test_not_settled_before_the_first_answered_query(self):
+        plan, _ = make_plan()
+        plan._started_at = time.monotonic()
+        assert plan.discovery_settled() is False
+
+        plan._observed_sample = True
+        assert plan.discovery_settled() is True
+
+    def test_unreachable_rendezvous_settles_after_the_grace(self):
+        from hsync_client.constants import MASTER_CLAIM_SETTLE_S
+
+        plan, _ = make_plan()
+        plan._started_at = time.monotonic() - (MASTER_CLAIM_SETTLE_S + 1.0)
+        assert plan.discovery_settled() is True

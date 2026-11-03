@@ -55,23 +55,40 @@ configured `HybridRendezvous` runs **both** over one shared `PeerManager`:
 
 Election is delegated to the common SSOT: `PeerManager._elect_master` builds
 `ElectionCandidate`s and calls `hsync_common.protocol.p2p.elect_master`
-(bidirectional peers preferred; `--prefer-master`/`--never-master` honored). Each
-rendezvous plan calls `PeerManager.elect()` once at start, so a node with no peers
-yet still resolves its role (a lone `--prefer-master` node serves immediately,
-which is what lets a joining slave connect) — the election otherwise runs only on
-peer add/remove, a local readiness change and the stale sweep. The election log
-names the sort-key component that actually decided it
-(`p2p_peers.py::PeerManager._election_reason`: the first key on which the winner
-beat the runner-up, or its own strongest preferred flag when it ran alone) —
-two peers that both advertise `server_ready` are separated by
-`startup_time`/`cid`, so restating `server_ready` there would misdirect
-diagnosis. TXT
-records advertise `protocol`, `cert_fp`, `sync_direction`, and `peer_download`.
-`peer_download` means the node serves blocks; every node also advertises `index`
-and publishes a read-only inventory, so a peer that does not serve still lets the
-master classify its share. Whether a node's HTTPS seeder is reachable *now* is not
-a rendezvous fact: it is carried by the authenticated WSS session and its capacity
+(`election_sort_key`: `server_ready`, then `prefer_master`, then `inbound`, then
+bidirectional `sync_direction`, then earliest `startup_time`, then lowest `cid`;
+`--prefer-master`/`--never-master` honored). Each rendezvous plan calls
+`PeerManager.elect()` once at start, so a node with no peers yet still resolves
+its role (a lone `--prefer-master` node serves immediately, which is what lets a
+joining slave connect) — the election otherwise runs only on peer add/remove, a
+local readiness change and the stale sweep. The election log names the sort-key
+component that actually decided it (`p2p_peers.py::PeerManager._election_reason`:
+the first key on which the winner beat the runner-up, or its own strongest
+preferred flag when it ran alone) — two peers that both advertise `server_ready`
+are separated by `startup_time`/`cid`, so restating `server_ready` there would
+misdirect diagnosis. TXT records advertise `protocol`, `cert_fp`,
+`sync_direction`, `peer_download` and the election flags.
+
+**`inbound`** is the election input that keeps a relay-only node from winning.
+The rendezvous plan sets it once UPnP confirms an external port
+(`p2p_rendezvous_rdv.py::RdvRendezvous._set_inbound`), mirrors it into the shared
+`PeerManager` (`set_local_inbound`) and advertises it on `register`; mDNS peers
+parse it from TXT and `PeerManager.add_peer` OR-merges it across sources, since
+an mDNS record never knows it. A node that can be dialled directly serves every
+peer without the relay, so it out-ranks a relay-only one. `peer_download` still
+means the node serves blocks; every node also advertises `index` and publishes a
+read-only inventory, so a peer that does not serve still lets the master classify
+its share. Whether a node's HTTPS seeder is reachable *now* is not a rendezvous
+fact: it is carried by the authenticated WSS session and its capacity
 advertisement (ADR-0030).
+
+**No early incumbency claim (E2).** A node must not advertise `server_ready`
+before it has had one chance to see an already-serving peer, or it out-ranks that
+peer and splits the bucket until the next election. `p2p_handler.py::run_p2p_mode`
+therefore holds the claim while `_master_claim_settled(plan)` is false: a
+rendezvous-aware plan reports `discovery_settled()` only after its first answered
+`query` (or a bounded grace, `MASTER_CLAIM_SETTLE_S`, so an unreachable node
+never blocks a lone master from serving); mDNS-only plans are always settled.
 
 The rendezvous plan also supplies the **data plane** when no candidate is dialable
 (`rdv_relay.py::RelayDialer` / `RelayAcceptor`, ADR-0047): the master registers a

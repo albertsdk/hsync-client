@@ -35,6 +35,7 @@ from hsync_client.autotune import classify_network, derive_managed_rtt_updates, 
 from hsync_client.config import CONFIG, set_config
 from hsync_client.constants import (
     HEARTBEAT_INTERVAL,
+    MASTER_CLAIM_SETTLE_S,
     MASTER_PROBE_FAST_TIMEOUT_S,
     MAX_CONCURRENT_TRANSFERS_RELAY,
     RELAY_ACCEPT_TIMEOUT_S,
@@ -462,6 +463,18 @@ def _refresh_p2p_network_tuning(
     )
 
 
+def _master_claim_settled(plan: Any) -> bool:
+    """True when the plan permits claiming local incumbency.
+
+    A rendezvous-aware plan holds the claim off until it has answered one query
+    round (or its bounded grace elapsed), so a node never advertises itself as
+    the serving master before it has had a chance to see an already-serving one.
+    Plans without cross-network discovery (mDNS-only) are always settled.
+    """
+    settled = getattr(plan, "discovery_settled", None)
+    return True if not callable(settled) else bool(settled())
+
+
 def _apply_relay_transfer_tuning(config: "HsyncConfig", log) -> None:
     """Cap slave transfer concurrency while the data plane rides the relay.
 
@@ -622,6 +635,20 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
             # is what bounds failover detection to ``peer_timeout`` even when no
             # further event arrives (e.g. a two-node group whose master died).
             peer_manager.reconcile_stale_peers()
+
+            # Never advertise incumbency before the rendezvous has answered once:
+            # a node that has not yet seen an already-serving peer would otherwise
+            # claim ``server_ready`` first and out-rank it, splitting the bucket
+            # until the next election. The plan bounds its own wait, so a lone
+            # node still serves after a short grace (mDNS-only plans are always
+            # settled and never reach here).
+            if (
+                rendezvous_deadline is None
+                and peer_manager.is_master()
+                and not _master_claim_settled(p2p_sync)
+            ):
+                time.sleep(MASTER_CLAIM_SETTLE_S / 10)
+                continue
 
             # A one-shot run must terminate: its rendezvous window is its whole
             # lifetime budget. Once that window expired without a single live

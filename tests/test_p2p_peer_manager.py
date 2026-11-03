@@ -56,6 +56,61 @@ class TestPeerManager:
         lone = ElectionCandidate(cid="aaa", startup_time=100.0)
         assert pm._election_reason([lone]) == "bidirectional preference"
 
+        # A lone non-preferred, non-bidirectional candidate leaves startup order.
+        lone_upload = ElectionCandidate(cid="aaa", startup_time=100.0, sync_direction="upload-only")
+        assert pm._election_reason([lone_upload]) == "earliest startup"
+
+    def test_inbound_peer_outranks_a_relay_only_peer(self):
+        """A confirmed dialable node wins over a relay-only one on equal rank.
+
+        Without it the relay-only node (which forces every peer onto the relay)
+        could win on startup_time and split the bucket.
+        """
+        pm = PeerManager(local_cid="local123", bucket="photos", startup_time=1.0)
+        pm.set_master_candidacy(False)  # isolate the remote candidates
+        pm.add_peer(
+            Peer(cid="relay", bucket="photos", address="1.1.1.1", port=1, startup_time=100.0)
+        )
+        assert pm.get_master_cid() == "relay"
+
+        pm.add_peer(
+            Peer(
+                cid="reachable",
+                bucket="photos",
+                address="1.1.1.2",
+                port=1,
+                startup_time=200.0,
+                inbound=True,
+            )
+        )
+        assert pm.get_master_cid() == "reachable"
+
+    def test_set_local_inbound_re_elects(self):
+        pm = PeerManager(local_cid="mmm333", bucket="photos", startup_time=200.0)
+        pm.add_peer(
+            Peer(cid="aaa999", bucket="photos", address="1.1.1.1", port=1, startup_time=100.0)
+        )
+        assert pm.get_master_cid() == "aaa999"
+
+        pm.set_local_inbound(True)
+
+        assert pm.get_master_cid() == "mmm333"
+
+    def test_inbound_is_or_merged_across_sources(self):
+        """mDNS never knows inbound, so it must not clear the rendezvous claim."""
+        pm = PeerManager(local_cid="local123", bucket="photos", startup_time=1.0)
+        pm.set_master_candidacy(False)
+        pm.add_peer(
+            Peer(cid="peer", bucket="photos", address="1.1.1.1", port=1, inbound=True),
+            source="rdv:test",
+        )
+        pm.add_peer(
+            Peer(cid="peer", bucket="photos", address="1.1.1.1", port=1, inbound=False),
+            source=HEARTBEAT_SOURCE,
+        )
+
+        assert pm._peers["peer"].inbound is True
+
     def test_master_election_local_wins(self):
         """Test that local client is elected master when it started earliest."""
         pm = PeerManager(local_cid="aaa111", bucket="photos", startup_time=100.0)

@@ -155,6 +155,13 @@ MAX_CONCURRENT_TRANSFERS_MAX = _defaults.MAX_CONCURRENT_TRANSFERS_MAX
 # direct path never applies this cap).
 MAX_CONCURRENT_TRANSFERS_RELAY = 2
 
+# Bound on how long a node waits for the rendezvous's first answered query before
+# claiming incumbency. Without it a node that has not yet seen an already-serving
+# peer advertises ``server_ready`` first and out-ranks it, splitting the bucket
+# until the next election; the bound keeps an unreachable rendezvous from
+# blocking a lone node from serving.
+MASTER_CLAIM_SETTLE_S = 3.0
+
 # =============================================================================
 # Per-File Transfer Retry/Backoff
 # =============================================================================
