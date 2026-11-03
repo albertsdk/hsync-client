@@ -8,15 +8,19 @@ accepts an inbound TCP connection. The rendezvous is the one element of the grou
 that is publicly reachable, so it can pair them and forward their TLS bytes
 opaque (``rdv/1`` relay frames). This module is the client half:
 
-* :class:`RelayDialer` — the requester side. It opens a relay session and then
-  exposes it as a **loopback TCP listener**: the regular HTTPS/WSS client dials
-  ``127.0.0.1`` and never learns that the bytes travel through the node. The
-  master's certificate pin still authenticates the peer, so the relay is a
-  transport detail, never an identity shortcut.
+* :class:`RelayDialer` — the requester side. It opens **one** relay session and
+  then exposes it as a **loopback TCP listener**: the regular HTTPS/WSS client
+  dials ``127.0.0.1`` and never learns that the bytes travel through the node.
+  Every loopback connection is multiplexed onto that single session with a
+  private framing layer the node never inspects. The master's certificate pin
+  still authenticates the peer, so the relay is a transport detail, never an
+  identity shortcut.
 * :class:`RelayAcceptor` — the serving side. It holds the listener control
-  stream and, for each announced session, bridges the relayed stream to the
-  local ``listen_port``, where the master's own HTTPS/WSS server terminates TLS
-  exactly as it does for a direct connection.
+  stream and, for each announced session, demultiplexes the relayed stream onto
+  its local ``listen_port``, where the master's own HTTPS/WSS server terminates
+  TLS exactly as it does for a direct connection. A local connection is opened
+  only when its stream carries data, so a connection that never sends bytes does
+  not reach the master.
 
 Both run their own asyncio loop in a background thread (the sync engine is
 threaded) and reuse the rendezvous client's trust machinery
@@ -31,6 +35,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import struct
 import threading
 import time
 from collections.abc import AsyncIterator, Sequence
@@ -47,7 +52,6 @@ from loguru import logger as log
 
 from hsync_client.constants import (
     RELAY_BUFFER_BYTES,
-    RELAY_IDLE_TIMEOUT_S,
     RELAY_KEEPALIVE_INTERVAL,
     RELAY_RETRY_BACKOFF_S,
 )
@@ -72,6 +76,43 @@ __all__ = [
 
 class RelayOpenError(RuntimeError):
     """The node refused, or failed, to pair a relay session."""
+
+
+# One relay tunnel carries many loopback connections over its single paired
+# session, framed by a small header the two peers' relay endpoints understand and
+# the node never inspects (it stays an opaque byte pump):
+#   kind (1) | stream_id (4, BE) | payload length (4, BE) | payload
+# A relay_connect per loopback connection exhausted the node's per-IP budget,
+# which is why the tunnel multiplexes instead.
+_RELAY_SUBSTREAM_HEADER = struct.Struct("!BII")
+_RELAY_SUBSTREAM_DATA = 1
+_RELAY_SUBSTREAM_CLOSE = 2
+# An idle data session would be reaped by the node's per-session pump idle
+# timeout; this keepalive keeps it active even when the sync is idle.
+_RELAY_SUBSTREAM_PING = 3
+
+
+def _encode_substream(kind: int, stream_id: int, payload: bytes = b"") -> bytes:
+    """Encode one multiplexed frame (see the header layout above)."""
+    return _RELAY_SUBSTREAM_HEADER.pack(kind, stream_id, len(payload)) + payload
+
+
+async def _read_substream(reader: Any) -> tuple[int, int, bytes] | None:
+    """Read one multiplexed frame, or ``None`` on EOF/error/oversize."""
+    try:
+        header = await reader.readexactly(_RELAY_SUBSTREAM_HEADER.size)
+    except (asyncio.IncompleteReadError, ConnectionError, OSError):
+        return None
+    kind, stream_id, length = _RELAY_SUBSTREAM_HEADER.unpack(header)
+    if length > RELAY_BUFFER_BYTES:
+        return None
+    payload = b""
+    if length:
+        try:
+            payload = await reader.readexactly(length)
+        except (asyncio.IncompleteReadError, ConnectionError, OSError):
+            return None
+    return kind, stream_id, payload
 
 
 def refusal_code(raw: bytes) -> str | None:
@@ -103,11 +144,12 @@ def refusal_retry_after(raw: bytes) -> int | None:
 
 
 async def _probe_relay_connect(quic: Any, frame: dict[str, object], timeout: float) -> tuple:
-    """Open one relay session and return ``(reader, writer, refusal, retry_after)``.
+    """Pair the tunnel's relay session and return ``(reader, writer, refusal, retry_after)``.
 
-    Success keeps the fresh stream open and returns it with ``refusal=None``;
-    the caller owns both ends and must close them. On refusal, protocol error or
-    transport error the stream is closed and ``(None, None, code, retry_after)``
+    Success keeps the stream open and returns it with ``refusal=None``: it is the
+    tunnel's data plane for its whole life, not a throwaway check, so no
+    ``relay_connect`` is spent beyond one per tunnel. On refusal, protocol error
+    or transport error the stream is closed and ``(None, None, code, retry_after)``
     is returned, so the caller can tell a node without the relay from a torn
     connection and can honour the wait a rate limit asked for.
     """
@@ -130,18 +172,6 @@ async def _probe_relay_connect(quic: Any, frame: dict[str, object], timeout: flo
     return stream_reader, stream_writer, None, None
 
 
-class _SessionActivity:
-    """Timestamp of the last byte moved by a bridged session, shared by both pumps."""
-
-    __slots__ = ("last",)
-
-    def __init__(self) -> None:
-        self.last = time.monotonic()
-
-    def touch(self) -> None:
-        self.last = time.monotonic()
-
-
 def _close_writer(writer: Any) -> None:
     """Close a stream writer, tolerating an already-closed stream."""
     try:
@@ -149,47 +179,6 @@ def _close_writer(writer: Any) -> None:
             writer.close()
     except Exception:  # noqa: BLE001 - teardown must never raise
         pass
-
-
-async def _pump(reader: Any, writer: Any, activity: _SessionActivity, done: asyncio.Event) -> None:
-    """Copy one direction until EOF or a transport error, refreshing *activity*."""
-    try:
-        while True:
-            chunk = await reader.read(RELAY_BUFFER_BYTES)
-            if not chunk:
-                return
-            activity.touch()
-            writer.write(chunk)
-            await writer.drain()
-    except (ConnectionError, OSError, asyncio.CancelledError):
-        return
-    finally:
-        done.set()
-
-
-async def _idle_watchdog(
-    activity: _SessionActivity,
-    idle_timeout: float,
-    done: asyncio.Event,
-    writers: tuple[Any, ...],
-) -> None:
-    """Close the session once it stays silent past *idle_timeout* on BOTH sides.
-
-    Mirrors the node's session semantics for ``rdv/1`` (an idle session is one
-    with no bytes either way). A unidirectional transfer — an upload whose HTTP
-    reply only arrives once the request ends — must not be killed by the silent
-    reply leg, only by a genuinely idle session.
-    """
-    try:
-        while True:
-            await asyncio.sleep(max(0.0, activity.last + idle_timeout - time.monotonic()))
-            if time.monotonic() - activity.last >= idle_timeout:
-                for writer in writers:
-                    _close_writer(writer)
-                done.set()
-                return
-    except asyncio.CancelledError:
-        return
 
 
 @contextlib.asynccontextmanager
@@ -223,45 +212,14 @@ async def _quic_session(client: RendezvousClient) -> AsyncIterator[Any]:
     log.debug(f"Relay cannot reach the discovery servers: {last_exc}")
 
 
-async def bridge(
-    left_reader: Any,
-    left_writer: Any,
-    right_reader: Any,
-    right_writer: Any,
-    idle_timeout: float = RELAY_IDLE_TIMEOUT_S,
-) -> None:
-    """Pump bytes both ways until one side ends or the session idles out.
-
-    The idle clock is shared by both directions: a long unidirectional upload
-    must not trip the idle deadline on its silent reply leg (see
-    :func:`_idle_watchdog`).
-    """
-    done = asyncio.Event()
-    activity = _SessionActivity()
-    tasks = [
-        asyncio.create_task(_pump(left_reader, right_writer, activity, done)),
-        asyncio.create_task(_pump(right_reader, left_writer, activity, done)),
-        asyncio.create_task(
-            _idle_watchdog(activity, idle_timeout, done, (left_writer, right_writer))
-        ),
-    ]
-    try:
-        await done.wait()
-    finally:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        for writer in (left_writer, right_writer):
-            _close_writer(writer)
-
-
 class RelayDialer:
     """Requester side: one relay tunnel exposed as a loopback TCP endpoint.
 
-    A tunnel is long-lived (until :meth:`close`): every TCP connection accepted
-    on loopback opens its **own** ``relay_connect`` session with the node, so the
-    data plane (REST + WSS, several connections per sync cycle) rides the same
-    tunnel.
+    A tunnel is long-lived (until :meth:`close`) and pairs **one** relay session
+    with the node. Every TCP connection accepted on loopback is multiplexed onto
+    that session with a private framing layer (:func:`_encode_substream`), so the
+    data plane (REST + WSS, several connections per sync cycle) rides the tunnel
+    without spending a ``relay_connect`` token per connection.
     """
 
     def __init__(
@@ -291,6 +249,13 @@ class RelayDialer:
         # caller asks for a *live* session rather than for the tunnel's existence.
         self._session: Any | None = None
         self._session_up = threading.Event()
+        # The single paired session's data stream and the loopback connections
+        # multiplexed onto it, keyed by a per-session stream id.
+        self._data_reader: Any | None = None
+        self._data_writer: Any | None = None
+        self._streams: dict[int, Any] = {}
+        self._next_stream_id = 0
+        self._frame_lock: asyncio.Lock | None = None
         # The wait the node asked for when it refused the last pairing attempt
         # (``retry_after``), and how many sessions dropped since the last one was
         # held: the first drop is news, the repeats are not.
@@ -300,6 +265,9 @@ class RelayDialer:
         # the caller can tell "the node did not pair the relay" from a tunnel
         # that opened; ``None`` before a refusal is seen.
         self._refusal: str | None = None
+        # ``Relay tunnel established`` is news once per tunnel; re-pairing a
+        # dropped session is routine and logged at debug.
+        self._announced = False
 
     def open(self, timeout: float = 15.0) -> tuple[str, int] | None:
         """Pair the session and return the loopback ``(host, port)`` to dial.
@@ -448,33 +416,41 @@ class RelayDialer:
                 await server.wait_closed()
 
     async def _hold_session(self) -> bool:
-        """Pair one relay session and hold it until it dies or the tunnel stops.
+        """Pair the tunnel's relay session and multiplex loopback connections on it.
 
         ``True`` means a session was paired (and has now ended), ``False`` that
         the node refused it. The loopback endpoint is bound on the first
-        successful pairing and kept for the tunnel's life.
+        successful pairing and kept for the tunnel's life. The paired stream is
+        the tunnel's data plane for its whole life — no ``relay_connect`` is
+        spent per loopback connection.
         """
         async with _quic_session(self._client) as quic:
-            # Pre-flight: prove the node pairs a session for this target before
-            # exposing a loopback endpoint, so ``open()`` keeps returning ``None``
-            # for a node without the relay (the caller backs off instead of
-            # re-dialling on every rendezvous tick). The probe stream is closed
-            # right after the reply; real sessions are paired per connection.
-            probe_reader, probe_writer, refusal, retry_after = await _probe_relay_connect(
+            stream_reader, stream_writer, refusal, retry_after = await _probe_relay_connect(
                 quic, self._connect_frame(), self._client.timeout
             )
-            if probe_reader is None:
+            if stream_reader is None:
                 self._refusal = refusal
                 self._retry_after = float(retry_after or 0)
                 if refusal is not None:
                     log.debug(f"Relay session refused by the node: {refusal}")
                 return False
-            probe_writer.close()
             self._refusal = None
             self._retry_after = 0.0
             self._drops = 0
             self._session = quic
+            self._data_reader = stream_reader
+            self._data_writer = stream_writer
+            self._streams = {}
+            self._next_stream_id = 0
+            self._frame_lock = asyncio.Lock()
             self._session_up.set()
+            if not self._announced:
+                log.info("Relay tunnel established with the master (via the discovery servers)")
+                self._announced = True
+            else:
+                log.debug("Relay tunnel re-established with the master")
+            dispatch = asyncio.create_task(self._dispatch_frames(stream_reader))
+            data_keepalive = asyncio.create_task(self._data_keepalive())
             try:
                 if self._server is None:
                     await self._bind_endpoint()
@@ -488,7 +464,10 @@ class RelayDialer:
                 keepalive = asyncio.create_task(self._keepalive(control_writer))
                 stop_task = asyncio.create_task(self._stop.wait())  # type: ignore[union-attr]
                 try:
-                    await asyncio.wait({stop_task, keepalive}, return_when=asyncio.FIRST_COMPLETED)
+                    await asyncio.wait(
+                        {stop_task, keepalive, dispatch},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
                 finally:
                     for task in (stop_task, keepalive):
                         task.cancel()
@@ -496,9 +475,60 @@ class RelayDialer:
                     if not self._stop.is_set():  # type: ignore[union-attr]
                         self._note_session_lost()
             finally:
+                for task in (dispatch, data_keepalive):
+                    task.cancel()
+                await asyncio.gather(dispatch, data_keepalive, return_exceptions=True)
+                for tcp_writer in list(self._streams.values()):
+                    _close_writer(tcp_writer)
+                self._streams.clear()
+                self._data_reader = None
+                self._data_writer = None
+                self._frame_lock = None
                 self._session = None
                 self._session_up.clear()
         return True
+
+    async def _dispatch_frames(self, reader: Any) -> None:
+        """Deliver the peer's multiplexed frames to the matching loopback socket."""
+        while True:
+            frame = await _read_substream(reader)
+            if frame is None:
+                return
+            kind, stream_id, payload = frame
+            if kind == _RELAY_SUBSTREAM_PING:
+                continue
+            tcp_writer = self._streams.get(stream_id)
+            if tcp_writer is None:
+                continue
+            if kind == _RELAY_SUBSTREAM_CLOSE:
+                self._streams.pop(stream_id, None)
+                _close_writer(tcp_writer)
+                continue
+            try:
+                tcp_writer.write(payload)
+                await tcp_writer.drain()
+            except (ConnectionError, OSError):
+                self._streams.pop(stream_id, None)
+                _close_writer(tcp_writer)
+
+    async def _send_frame(self, kind: int, stream_id: int, payload: bytes = b"") -> None:
+        """Write one multiplexed frame, serialized against the other streams."""
+        writer = self._data_writer
+        lock = self._frame_lock
+        if writer is None or lock is None:
+            return
+        async with lock:
+            try:
+                writer.write(_encode_substream(kind, stream_id, payload))
+                await writer.drain()
+            except (ConnectionError, OSError):
+                pass
+
+    async def _data_keepalive(self) -> None:
+        """Keep the multiplexed data session active through the node's idle reaping."""
+        while True:
+            await asyncio.sleep(RELAY_KEEPALIVE_INTERVAL)
+            await self._send_frame(_RELAY_SUBSTREAM_PING, 0)
 
     async def _bind_endpoint(self) -> None:
         """Bind the loopback endpoint the caller dials, once per tunnel."""
@@ -533,36 +563,35 @@ class RelayDialer:
         )
 
     def _handle(self) -> Any:
-        """Loopback accept callback: one relay session per HTTPS connection.
+        """Loopback accept callback: multiplex the connection onto the session.
 
         A sync cycle opens several TCP connections to the loopback endpoint
-        (REST requests plus the WSS channel); the tunnel survives each of them, so
-        every accepted connection pairs its **own** ``relay_connect`` session and
-        is bridged over it. A connection that arrives while the tunnel repairs its
-        session is closed at once: the caller's own retry and the WebSocket
-        reconnect recover, while holding the socket would only park a request on a
-        tunnel that is not there.
+        (REST requests plus the WSS channel); they all share the tunnel's single
+        paired relay session, framed by stream id. A connection that arrives
+        while the tunnel repairs its session is closed at once: the caller's own
+        retry and the WebSocket reconnect recover, while holding the socket would
+        only park a request on a tunnel that is not there.
         """
 
         async def _handle(tcp_reader: Any, tcp_writer: Any) -> None:
-            quic = self._session
-            if quic is None:
-                tcp_writer.close()
+            if self._data_writer is None:
+                _close_writer(tcp_writer)
                 return
-            # The probe also returns the node's ``retry_after`` hint: this caller
-            # drops the refused connection and lets the client's own retry
-            # recover, while the pacing of the tunnel's re-pairing stays in
-            # ``_hold_session`` (the only place that can honour it).
-            stream_reader, stream_writer, refusal, _retry_after = await _probe_relay_connect(
-                quic, self._connect_frame(), self._client.timeout
-            )
-            if stream_reader is None:
-                if refusal is not None:
-                    log.debug(f"Relay session refused by the node: {refusal}")
-                tcp_writer.close()
-                return
-            log.info("Relay tunnel established with the master (via the discovery servers)")
-            await bridge(tcp_reader, tcp_writer, stream_reader, stream_writer)
+            stream_id = self._next_stream_id
+            self._next_stream_id += 1
+            self._streams[stream_id] = tcp_writer
+            try:
+                while True:
+                    chunk = await tcp_reader.read(RELAY_BUFFER_BYTES)
+                    if not chunk:
+                        break
+                    await self._send_frame(_RELAY_SUBSTREAM_DATA, stream_id, chunk)
+            except (ConnectionError, OSError, asyncio.CancelledError):
+                pass
+            finally:
+                self._streams.pop(stream_id, None)
+                await self._send_frame(_RELAY_SUBSTREAM_CLOSE, stream_id)
+                _close_writer(tcp_writer)
 
         return _handle
 
@@ -706,7 +735,13 @@ class RelayAcceptor:
             task.add_done_callback(sessions.discard)
 
     async def _serve_session(self, quic: Any, relay_id: str) -> None:
-        """Attach one relayed stream and bridge it to the local data plane."""
+        """Attach one relayed stream and demultiplex its loopback connections.
+
+        The local TCP connection to the master is opened lazily on the first
+        ``DATA`` frame for a stream id: one relayed stream serves many loopback
+        connections, and a stream that never carries bytes (a closed or probing
+        connection) must not reach the master's TLS listener at all.
+        """
         try:
             reader, writer = await quic.create_stream()
             writer.write(
@@ -720,13 +755,69 @@ class RelayAcceptor:
                 )
             )
             await writer.drain()
-            local_reader, local_writer = await asyncio.open_connection(
-                "127.0.0.1", self._local_port
-            )
         except (ConnectionError, OSError):
             return
         log.info("Relay session bridged to the local master")
-        await bridge(reader, writer, local_reader, local_writer)
+        frame_lock = asyncio.Lock()
+        local_writers: dict[int, Any] = {}
+        pumps: set[asyncio.Task[Any]] = set()
+
+        async def _local_to_session(stream_id: int, local_reader: Any) -> None:
+            try:
+                while True:
+                    chunk = await local_reader.read(RELAY_BUFFER_BYTES)
+                    if not chunk:
+                        break
+                    async with frame_lock:
+                        writer.write(_encode_substream(_RELAY_SUBSTREAM_DATA, stream_id, chunk))
+                        await writer.drain()
+            except (ConnectionError, OSError, asyncio.CancelledError):
+                pass
+            finally:
+                async with frame_lock:
+                    with contextlib.suppress(ConnectionError, OSError):
+                        writer.write(_encode_substream(_RELAY_SUBSTREAM_CLOSE, stream_id))
+                        await writer.drain()
+
+        try:
+            while True:
+                frame = await _read_substream(reader)
+                if frame is None:
+                    return
+                kind, stream_id, payload = frame
+                if kind == _RELAY_SUBSTREAM_PING:
+                    continue
+                local_writer = local_writers.get(stream_id)
+                if kind == _RELAY_SUBSTREAM_DATA:
+                    if local_writer is None:
+                        try:
+                            local_reader, local_writer = await asyncio.open_connection(
+                                "127.0.0.1", self._local_port
+                            )
+                        except (ConnectionError, OSError):
+                            continue
+                        local_writers[stream_id] = local_writer
+                        task = asyncio.create_task(_local_to_session(stream_id, local_reader))
+                        pumps.add(task)
+                        task.add_done_callback(pumps.discard)
+                    try:
+                        local_writer.write(payload)
+                        await local_writer.drain()
+                    except (ConnectionError, OSError):
+                        local_writers.pop(stream_id, None)
+                        _close_writer(local_writer)
+                elif kind == _RELAY_SUBSTREAM_CLOSE and local_writer is not None:
+                    local_writers.pop(stream_id, None)
+                    _close_writer(local_writer)
+        finally:
+            for local_writer in list(local_writers.values()):
+                _close_writer(local_writer)
+            local_writers.clear()
+            for task in list(pumps):
+                task.cancel()
+            if pumps:
+                await asyncio.gather(*pumps, return_exceptions=True)
+            _close_writer(writer)
 
     async def _keepalive(self, writer: Any) -> None:
         """Keep the control stream (and therefore the QUIC connection) alive."""

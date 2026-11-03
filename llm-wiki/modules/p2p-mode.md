@@ -99,20 +99,16 @@ slave that failed every direct candidate asks the node for a tunnel
 back. The bytes are the peers' own TLS, so certificate pinning still authenticates
 the master and the displayed master address stays the real one. Each TCP
 connection a sync cycle opens against the loopback endpoint (REST requests plus
-the WSS channel) is paired with its **own** `relay_connect` session on the node
-(`rdv_relay.py::RelayDialer`), so one tunnel outlives a single connection and
-every later connection of the cycle (the WebSocket channel, a file download)
-rides it. The tunnel survives the gaps
-between its sessions through two mechanisms: the `RelayDialer` pings the node on
-a dedicated control stream every `constants.py::RELAY_KEEPALIVE_INTERVAL` (a
-third of the node's QUIC idle so a single lost ping — or its ACK, on lossy
-CGNAT/mobile UDP — cannot idle-terminate the tunnel and every bridged session
-with it), and each session's
-`rdv_relay.py::bridge` enforces the node's **session-wide** idle semantics — a
-session is idle only when no byte moved in *either* direction for
-`constants.py::RELAY_IDLE_TIMEOUT_S`, so a long unidirectional upload (whose HTTP
-reply only arrives once the request ends) is never killed by its silent reply
-leg. The full chain is exercised end-to-end by `tests/test_bb_p2p_rendezvous_relay.py` (gated
+the WSS channel) is **multiplexed onto the tunnel's single relay session** with a
+small framing layer (`rdv_relay.py::_encode_substream`: kind, stream id, payload
+length, payload) that the node never inspects — it stays an opaque byte pump — so
+one tunnel costs one `relay_connect`, not one per connection. The session
+survives the gaps between data traffic through two pings on
+`constants.py::RELAY_KEEPALIVE_INTERVAL`: one on a dedicated control stream (a
+third of the node's QUIC idle, so a single lost ping — or its ACK, on lossy
+CGNAT/mobile UDP — cannot idle-terminate the tunnel) and one on the data stream,
+which also keeps the node's per-session idle pump from reaping it. The full chain
+is exercised end-to-end by `tests/test_bb_p2p_rendezvous_relay.py` (gated
 `HSYNC_BB_P2P=1`, sibling rendezvous with `--relay`): the test-only seam
 `p2p_rendezvous_rdv.py::_TEST_ADVERTISED_ENDPOINTS_ENV` makes the real master
 publish only undialable candidates on a single host, so the slave's probes fail
@@ -130,8 +126,10 @@ so the rendezvous loop's retries do not repeat it. The structured counterpart go
 through `events.py::emit_warning`, which the desktop surfaces as a banner.
 
 Serving side, the master's relay listener survives the node dropping it. A
-relayed slave is seen by the master as `127.0.0.1` (the acceptor bridges to the
-local data plane over loopback), so a dropped control stream surfaces as a normal
+relayed slave is seen by the master as `127.0.0.1` (the acceptor demultiplexes the
+relayed stream onto the local data plane over loopback, opening a local
+connection only on the first `DATA` frame for a stream id, so a connection that
+never sends bytes never reaches the master's TLS listener), so a dropped control stream surfaces as a normal
 `WebSocket client disconnected: 127.0.0.1` and the master's status falls to
 `waiting`. `rdv_relay.py::RelayAcceptor._run` ends as soon as its control stream
 dies (`_read_incoming`/`_keepalive` returning, not only `stop()`), clearing
@@ -521,31 +519,28 @@ in `hsync-common` (`hsync_common/protocol/transfer_progress.py`, schema
 
 **The relayed data plane is addressed by a loopback endpoint** the dialer binds
 once (`rdv_relay.py::RelayDialer._bind_endpoint`): every accepted TCP connection
-pairs its own `relay_connect` session, so the REST client and the WebSocket keep
-their pooled connections on that port. The endpoint never moves — a tunnel that
+is framed onto the tunnel's single relay session
+(`rdv_relay.py::RelayDialer._handle`), so the REST client and the WebSocket keep
+their pooled connections on that port and one tunnel spends one
+`relay_connect`. The endpoint never moves — a tunnel that
 loses its QUIC session **re-pairs underneath the same port**
 (`rdv_relay.py::RelayDialer._hold_session`, immediate on a drop and then at
 `RELAY_RETRY_BACKOFF_S`, or the `retry_after` the node asked for when it refused
-the attempt — a spent `relay_connect` budget is answered as `rate_limited`),
-because re-binding a new port would strand every pooled connection (and any
-request in flight) — the peer sees that as an SSL EOF. A tunnel that exists but is
-repairing its session is therefore **kept and waited for**, not replaced
-(`rdv_relay.py::RelayDialer.wait_session` from
+the attempt), because re-binding a new port would strand every pooled connection
+(and any request in flight) — the peer sees that as an SSL EOF. A tunnel that
+exists but is repairing its session is therefore **kept and waited for**, not
+replaced (`rdv_relay.py::RelayDialer.wait_session` from
 `p2p_handler.py::_relay_master_endpoint`, which waits only while
 `RelayDialer.repairing` is true and never on a tunnel whose last attempt the node
 refused), and the cycle simply reports no endpoint when the wait expires.
 `RelayDialer.alive` says the tunnel exists, `RelayDialer.session_up` that it can
 serve now; `FailoverRelayDialer` exposes the same members for its winning tunnel,
 so the caller speaks to one contract whatever the number of discovery servers.
-A relay session is paired **per loopback connection** (the REST client and the
-WebSocket each open their own), which is what the node's `relay_connect` budget
-meters. Because that budget is per-IP and small (a handful of new pairings per
-minute, a couple concurrent), a relayed slave caps its transfer pool at
+A relayed slave still caps its transfer pool at
 `constants.py::MAX_CONCURRENT_TRANSFERS_RELAY`
-(`p2p_handler.py::_apply_relay_transfer_tuning`): the LAN-sized default fan-out
-otherwise exhausts the budget and the surplus sessions are refused mid-upload,
-resetting transfers. A direct path never applies the cap — the value is
-re-derived from the master RTT on the next cycle.
+(`p2p_handler.py::_apply_relay_transfer_tuning`) so a burst does not swamp the
+single session's flow-control window. A direct path never applies the cap — the
+value is re-derived from the master RTT on the next cycle.
 Independently, the shared HTTP session retries a **dropped connection** for
 idempotent methods only (`utils/http.py::_retry_policy`): one dead keep-alive
 socket no longer fails a whole comparison, while an upload (POST) is never

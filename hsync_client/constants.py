@@ -146,13 +146,11 @@ MAX_CONCURRENT_TRANSFERS_DEFAULT = _defaults.MAX_CONCURRENT_TRANSFERS_DEFAULT
 MAX_CONCURRENT_TRANSFERS_MIN = _defaults.MAX_CONCURRENT_TRANSFERS_MIN
 MAX_CONCURRENT_TRANSFERS_MAX = _defaults.MAX_CONCURRENT_TRANSFERS_MAX
 
-# Concurrency bound while the data plane rides the rendezvous relay. Every
-# loopback HTTP connection the slave opens pairs its own relay session against
-# the node's per-IP budget (5/min, burst 10, >=2 concurrent), and the transfer
-# pool plus the realtime/listing connections easily exceed it, so the surplus
-# sessions are refused and in-flight uploads are reset. Two concurrent transfers
-# keep the pool inside the budget without serialising a normal LAN sync (a
-# direct path never applies this cap).
+# Concurrency bound while the data plane rides the rendezvous relay. The tunnel
+# multiplexes every loopback connection over one relay session, so the fan-out no
+# longer costs a relay_connect each; capping it still keeps the parallel streams
+# inside the session's flow-control window and avoids head-of-line stalls on the
+# relayed path. A direct path never applies the cap.
 MAX_CONCURRENT_TRANSFERS_RELAY = 2
 
 # Bound on how long a node waits for the rendezvous's first answered query before
@@ -305,14 +303,11 @@ RENDEZVOUS_QUERY_BURST_INTERVAL = 1.0
 RENDEZVOUS_QUERY_BURST_COUNT = 8
 RENDEZVOUS_QUERY_ACTIVE_INTERVAL = 12.0
 
-# Data relay over rdv/1 (peers behind CGNAT). The forwarding chunk is fixed so
-# a session's memory is bounded; the idle timeout counts *session* silence (no
-# bytes in either direction — an upload replies only once the request ends, so
-# a directional clock would drop it mid-transfer) and has to stay above the
-# WebSocket heartbeat cadence (an idle-but-open control plane is normal
-# traffic). The node enforces its own floor (--relay-idle-timeout, default
-# 120 s), so the client value must stay above it. The keepalive keeps both
-# peers' QUIC connections alive between sessions.
+# Data relay over rdv/1 (peers behind CGNAT). The forwarding chunk is fixed so a
+# session's memory is bounded; it is also the largest payload one multiplexed
+# substream frame carries. The node enforces the session idle timeout
+# (--relay-idle-timeout, default 120 s); the keepalive below keeps the session
+# alive.
 RELAY_BUFFER_BYTES = 64 * 1024
 RELAY_IDLE_TIMEOUT_S = 180.0
 # Keepalive cadence on the relay's QUIC connection. The effective QUIC idle

@@ -43,7 +43,6 @@ from hsync_client.rdv_relay import (
     FailoverRelayDialer,
     GroupRelayAcceptor,
     RelayDialer,
-    bridge,
     refusal_code,
 )
 
@@ -373,79 +372,6 @@ class _QueuedReader:
         return await self._queue.get()
 
 
-class _SinkWriter:
-    """Async writer that records close and never blocks on drain."""
-
-    def __init__(self) -> None:
-        self.closed = False
-
-    def write(self, data: bytes) -> int:
-        return len(data)
-
-    async def drain(self) -> None:
-        return None
-
-    def close(self) -> None:
-        self.closed = True
-
-    def is_closing(self) -> bool:
-        return self.closed
-
-
-def test_a_unidirectional_session_survives_its_idle_clock() -> None:
-    """The bridge idle watchdog counts *session* silence, not one direction.
-
-    An upload streams bytes client→master while the reply leg stays quiet
-    until the request ends. Activity in either direction keeps the whole
-    session (and the silent leg) alive; only a session with no bytes in
-    either direction idles out.
-    """
-
-    async def scenario() -> None:
-        left_q: asyncio.Queue = asyncio.Queue()
-        right_q: asyncio.Queue = asyncio.Queue()
-        left_writer = _SinkWriter()
-        right_writer = _SinkWriter()
-        task = asyncio.create_task(
-            bridge(
-                _QueuedReader(left_q),
-                left_writer,
-                _QueuedReader(right_q),
-                right_writer,
-                idle_timeout=0.05,
-            )
-        )
-        # Feed only the left→right leg for longer than the idle timeout.
-        for _ in range(8):
-            await left_q.put(b"x" * 1024)
-            await asyncio.sleep(0.025)
-        assert not task.done(), "the tunnel died while one leg was active"
-        assert not left_writer.closed and not right_writer.closed
-        # Closing one side still tears the session down.
-        await left_q.put(b"")
-        await asyncio.wait_for(task, 1.0)
-
-    asyncio.run(scenario())
-
-
-def test_a_fully_idle_session_is_torn_down() -> None:
-    """A session with no bytes in either direction still idles out."""
-
-    async def scenario() -> None:
-        task = asyncio.create_task(
-            bridge(
-                _QueuedReader(asyncio.Queue()),
-                _SinkWriter(),
-                _QueuedReader(asyncio.Queue()),
-                _SinkWriter(),
-                idle_timeout=0.05,
-            )
-        )
-        await asyncio.wait_for(task, 1.0)
-
-    asyncio.run(scenario())
-
-
 async def test_the_relay_acceptor_stops_when_its_control_stream_dies(monkeypatch) -> None:
     """A dropped control stream must end the acceptor, not leave a zombie.
 
@@ -658,48 +584,6 @@ def test_frame_line_validates_before_sending() -> None:
         frame_line({"protocol_version": "rdv/1", "type": "relay_ping", "cid": "short"})
 
 
-class _Reader:
-    def __init__(self, chunks: list[bytes]) -> None:
-        self._chunks = list(chunks)
-
-    async def read(self, _size: int) -> bytes:
-        await asyncio.sleep(0)
-        return self._chunks.pop(0) if self._chunks else b""
-
-
-class _Writer:
-    def __init__(self) -> None:
-        self.buffer = bytearray()
-        self.closed = False
-
-    def write(self, data: bytes) -> None:
-        self.buffer.extend(data)
-
-    async def drain(self) -> None:
-        return None
-
-    def close(self) -> None:
-        self.closed = True
-
-    def is_closing(self) -> bool:
-        return self.closed
-
-
-def test_the_bridge_copies_bytes_and_closes_both_sides() -> None:
-    """The loopback side and the relayed stream are pumped verbatim."""
-    left_reader = _Reader([b"from-local", b""])
-    right_reader = _Reader([b"from-peer", b""])
-    left_writer = _Writer()
-    right_writer = _Writer()
-
-    asyncio.run(bridge(left_reader, left_writer, right_reader, right_writer, idle_timeout=1.0))
-
-    assert bytes(right_writer.buffer) == b"from-local"
-    assert bytes(left_writer.buffer) == b"from-peer"
-    assert left_writer.closed is True
-    assert right_writer.closed is True
-
-
 class _BudgetDialer:
     """A relay dialer double that needs a minimum slice of the budget."""
 
@@ -813,52 +697,88 @@ def test_a_failover_dialer_needs_at_least_one_server() -> None:
         FailoverRelayDialer([])
 
 
-class _ScriptedStream:
-    """Fake relay stream: ``readline`` answers the handshake, ``read`` the tunnel."""
+class _FrameReader:
+    """Byte reader supporting ``readexactly``/``read``; ``b""`` signals EOF."""
 
-    def __init__(self, handshake: list[bytes], data: asyncio.Queue) -> None:
-        self._handshake = list(handshake)
-        self._data = data
+    def __init__(self, queue: asyncio.Queue) -> None:
+        self._queue = queue
+        self._buffer = b""
 
-    async def readline(self) -> bytes:
-        return self._handshake.pop(0) if self._handshake else b""
+    async def readexactly(self, size: int) -> bytes:
+        while len(self._buffer) < size:
+            chunk = await self._queue.get()
+            if chunk == b"":
+                raise asyncio.IncompleteReadError(self._buffer, size)
+            self._buffer += chunk
+        out, self._buffer = self._buffer[:size], self._buffer[size:]
+        return out
 
     async def read(self, size: int = -1) -> bytes:
-        return await self._data.get()
+        if self._buffer:
+            out, self._buffer = self._buffer, b""
+            return out
+        return await self._queue.get()
 
 
-def test_a_relayed_connection_pairs_its_own_session() -> None:
-    """Every accepted loopback connection must bridge its own relay session.
+def test_the_substream_framing_round_trips() -> None:
+    from hsync_client.rdv_relay import (
+        _RELAY_SUBSTREAM_DATA,
+        _encode_substream,
+        _read_substream,
+    )
 
-    ``_probe_relay_connect`` answers ``(reader, writer, refusal, retry_after)``:
-    the node's wait is what paces the tunnel's re-pairing in ``_hold_session``.
-    This per-connection caller unpacked three values, so every accepted loopback
-    connection died with ``ValueError: too many values to unpack`` before its
-    first byte — the HTTPS client read that as an SSL EOF and a relayed sync
-    could never start. The connection must pair its own session, forward the
-    client's bytes into it and the master's reply back to the socket.
+    queue: asyncio.Queue = asyncio.Queue()
+    queue.put_nowait(_encode_substream(_RELAY_SUBSTREAM_DATA, 7, b"payload"))
+
+    assert asyncio.run(_read_substream(_FrameReader(queue))) == (
+        _RELAY_SUBSTREAM_DATA,
+        7,
+        b"payload",
+    )
+
+
+def test_a_loopback_connection_is_multiplexed_on_the_tunnel_session() -> None:
+    """A loopback connection must share the tunnel's single relay session.
+
+    The tunnel pairs one ``relay_connect`` for its whole life; each accepted
+    loopback connection is framed with its own stream id, so the HTTP client's
+    several connections cost no extra ``relay_connect`` token.
     """
-    relay_ok = (
-        json.dumps({"protocol_version": "rdv/1", "type": "relay_ok", "relay_id": "0" * 32}) + "\n"
-    ).encode()
-    replies: asyncio.Queue = asyncio.Queue()
-    replies.put_nowait(b"reply-from-master")
-    stream_writer = _FakeWriter()
-    client = type("_Client", (), {"timeout": 5.0})()
-    dialer = RelayDialer(client, cid=_Master.cid, bucket="b", target_cid="B1c2D3e4F5g6H7i8J9k0L")
-    dialer._session = _FakeQuic(_ScriptedStream([relay_ok], replies), stream_writer)
+    from hsync_client.rdv_relay import (
+        _RELAY_SUBSTREAM_CLOSE,
+        _RELAY_SUBSTREAM_DATA,
+        _RELAY_SUBSTREAM_HEADER,
+        _encode_substream,
+    )
+
+    dialer = RelayDialer(object(), cid=_Master.cid, bucket="b", target_cid="peer")
+    session_writer = _FakeWriter()
+    inbound: asyncio.Queue = asyncio.Queue()
+    tcp_writer = _FakeWriter()
     client_bytes: asyncio.Queue = asyncio.Queue()
     client_bytes.put_nowait(b"client-hello")
-    tcp_writer = _FakeWriter()
 
     async def scenario() -> None:
-        await dialer._handle()(_QueuedReader(client_bytes), tcp_writer)
+        dialer._data_writer = session_writer
+        dialer._data_reader = _FrameReader(inbound)
+        dialer._frame_lock = asyncio.Lock()
+        dispatch = asyncio.create_task(dialer._dispatch_frames(dialer._data_reader))
+        handler = asyncio.create_task(dialer._handle()(_QueuedReader(client_bytes), tcp_writer))
+        await asyncio.sleep(0.05)
 
-    # Both directions stay open (a real tunnel outlives one request), so the
-    # bridge is stopped by the deadline once each pump forwarded its chunk.
-    with pytest.raises(TimeoutError):
-        asyncio.run(asyncio.wait_for(scenario(), timeout=0.5))
+        kind, stream_id, length = _RELAY_SUBSTREAM_HEADER.unpack(session_writer.chunks[0][:9])
+        assert (kind, stream_id, length) == (_RELAY_SUBSTREAM_DATA, 0, len(b"client-hello"))
+        assert session_writer.chunks[0][9:] == b"client-hello"
 
-    assert json.loads(stream_writer.chunks[0].decode())["type"] == "relay_connect"
-    assert b"".join(stream_writer.chunks).endswith(b"client-hello")
-    assert b"".join(tcp_writer.chunks) == b"reply-from-master"
+        inbound.put_nowait(_encode_substream(_RELAY_SUBSTREAM_DATA, stream_id, b"reply"))
+        await asyncio.sleep(0.05)
+        assert b"".join(tcp_writer.chunks) == b"reply"
+
+        client_bytes.put_nowait(b"")
+        await handler
+        last_kind = _RELAY_SUBSTREAM_HEADER.unpack(session_writer.chunks[-1][:9])[0]
+        assert last_kind == _RELAY_SUBSTREAM_CLOSE
+        dispatch.cancel()
+        await asyncio.gather(dispatch, return_exceptions=True)
+
+    asyncio.run(scenario())
