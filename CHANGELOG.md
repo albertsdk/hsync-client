@@ -17,9 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   header, so the master keeps per-peer admission buckets separate for relayed
   peers (which all arrive from the loopback address) even on requests whose URL
   has no `cid` query parameter.
+- `--no-mdns` (and `HSYNC_MDNS=false`) excludes the local network: peers are
+  discovered only through the configured discovery server(s). The desktop
+  exposes it as "Exclude the local network".
 
 ### Changed
 
+- The p2p slave reconnects at once on a local network change: the WebSocket is
+  closed the moment the interface changes and re-opened on the new one, instead
+  of blackholing until the keepalive ping times out (tens of seconds).
+- The p2p slave WebSocket liveness timeouts (open, ping) follow the autotune
+  network class, so a high-RTT mobile path gets a longer, more tolerant set.
 - The p2p data-relay tunnel multiplexes every loopback connection over one relay
   session (one `relay_connect` per tunnel, private stream framing), so the sync
   cycle no longer spends a pairing token per REST/WebSocket connection.

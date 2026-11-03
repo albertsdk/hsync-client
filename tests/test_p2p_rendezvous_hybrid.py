@@ -64,6 +64,32 @@ class TestBuildRendezvousPlan:
         assert rendezvous.call_args.kwargs["rendezvous_host"] == "node.example"
         assert rendezvous.call_args.kwargs["rendezvous_port"] == 443
 
+    def test_no_mdns_returns_the_rendezvous_only_plan(self):
+        """``MDNS_ENABLED`` off excludes the local network: no hybrid plan."""
+        with (
+            patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous") as mdns,
+            patch("hsync_client.p2p_rendezvous_rdv.RdvRendezvous") as rendezvous,
+        ):
+            plan = build_rendezvous_plan(
+                _config(
+                    RENDEZVOUS_SERVER_ENDPOINTS=(HostPort("node.example", 443),),
+                    MDNS_ENABLED=False,
+                ),
+                cert_fingerprint="aa",
+                port=9000,
+            )
+        assert not isinstance(plan, HybridRendezvous)
+        assert plan is rendezvous.return_value
+        mdns.assert_not_called()
+
+    def test_no_mdns_without_a_discovery_server_keeps_mdns(self):
+        """No discovery channel left: keep mDNS rather than find nobody."""
+        with patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous") as mdns:
+            plan = build_rendezvous_plan(
+                _config(MDNS_ENABLED=False), cert_fingerprint="aa", port=9000
+            )
+        assert plan is mdns.return_value
+
     def test_rendezvous_mode_keeps_the_heartbeat_window(self):
         """A discovery cadence never stretches the heartbeat window.
 

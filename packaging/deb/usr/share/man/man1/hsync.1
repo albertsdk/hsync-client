@@ -1,7 +1,7 @@
 .\" Man page for HSYNC - file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-10-27" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-11-03" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -352,6 +352,13 @@ Port to listen on when acting as p2p master (default: 0 = auto).
 Map the p2p data-plane TCP port with UPnP (opt\-in; off by default). Without a
 discovery server the flag has no effect (mDNS rendezvous stays on the local
 network).
+.TP
+.B \-\-no\-mdns
+Exclude the local network: discover peers only through the configured discovery
+server(s), not mDNS. Requires at least one
+.BR \-\-rendezvous\-server ;
+without one there would be no discovery channel at all. Useful on a shared
+network or when the local interface is a VPN.
 .TP
 .BI \-\-rendezvous\-server\-fingerprint\fP= ENDPOINT=FINGERPRINT
 Pin the certificate fingerprint of one discovery server (canonical
@@ -825,6 +832,11 @@ is unset).
 .B HSYNC_MAP_DATA_PORT
 Map the master TCP port with UPnP (true/false; default false = opt\-in only
 with a rendezvous).
+.TP
+.B HSYNC_MDNS
+Discover peers over mDNS on the local network (true/false; default true). Set to
+false to use only the configured discovery servers (requires
+.BR HSYNC_RENDEZVOUS_SERVER_ENDPOINTS ).
 .TP
 .B HSYNC_P2P_LISTEN_PORT
 Port to use when acting as p2p master (default: 0 = auto).

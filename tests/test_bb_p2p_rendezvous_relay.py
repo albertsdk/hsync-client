@@ -66,10 +66,15 @@ class TestRendezvousRelay:
             pytest.skip("hsync-rendezvous is not built (sibling repo venv missing)")
         try:
             assert _wait_for_rendezvous(rendezvous, ready_file), "rendezvous did not become ready"
+            # ``--no-mdns`` is what makes the scenario real: without it, two
+            # clients on the same host find each other over mDNS and the relay
+            # is never exercised. The local network is excluded so the only
+            # discovery channel is the rendezvous node.
             rendezvous_args = (
                 "--rendezvous-server",
                 f"127.0.0.1:{rendezvous_port}",
                 "--insecure",
+                "--no-mdns",
             )
 
             master = _p2p_start(
@@ -84,9 +89,9 @@ class TestRendezvousRelay:
             try:
                 assert _wait_for_text_in_stderr(
                     master,
-                    "Discovery: mDNS on the local network + discovery server(s)",
+                    "Discovery: discovery server(s)",
                     timeout=15,
-                ), "the master did not select the rendezvous plan"
+                ), "the master did not select the rendezvous-only plan"
                 # The serving role registers a relay listener with the node: this
                 # is the master side of the tunnel.
                 assert _wait_for_text_in_stderr(
@@ -99,7 +104,7 @@ class TestRendezvousRelay:
                 try:
                     assert _wait_for_text_in_stderr(
                         slave,
-                        "Discovery: mDNS on the local network + discovery server(s)",
+                        "Discovery: discovery server(s)",
                         timeout=15,
                     )
                     became_master = _wait_for_text_in_stderr(

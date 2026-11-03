@@ -618,6 +618,27 @@ class TestTyperCli:
         assert _run_options(mock_run_sync).p2p.p2p_peer_download_enabled is False
 
     @patch("hsync_client.main_logic.run_sync")
+    def test_no_mdns_sets_the_run_option(self, mock_run_sync):
+        """``--no-mdns`` excludes the local network (with a discovery server)."""
+        result = runner.invoke(
+            app, ["p2p", "-b", "test", "--rendezvous-server", "rdv.example.net", "--no-mdns"]
+        )
+        assert result.exit_code == 0
+        assert _run_options(mock_run_sync).p2p.mdns_enabled is False
+
+    @patch("hsync_client.main_logic.run_sync")
+    def test_mdns_is_on_by_default(self, mock_run_sync):
+        result = runner.invoke(app, ["p2p", "-b", "test"])
+        assert result.exit_code == 0
+        assert _run_options(mock_run_sync).p2p.mdns_enabled is True
+
+    def test_no_mdns_requires_a_discovery_server(self):
+        """Without a discovery server there would be no discovery channel at all."""
+        result = runner.invoke(app, ["p2p", "-b", "test", "--no-mdns"])
+        assert result.exit_code != 0
+        assert "--no-mdns requires at least one --rendezvous-server" in result.output
+
+    @patch("hsync_client.main_logic.run_sync")
     def test_allow_unauthenticated_writes_option(self, mock_run_sync):
         """The dangerous no-key mutation opt-in is explicit and defaults off."""
         result = runner.invoke(app, ["p2p", "-b", "test"])

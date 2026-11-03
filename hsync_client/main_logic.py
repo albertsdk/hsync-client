@@ -56,6 +56,7 @@ from hsync_client.config import (
     get_mass_delete_percent,
     get_mass_delete_threshold,
     get_max_concurrent_transfers,
+    get_mdns_enabled,
     get_never_master,
     get_p2p_allow_unauthenticated,
     get_p2p_allow_unauthenticated_writes,
@@ -1172,6 +1173,7 @@ def _build_config(
     delta_min_file_size = options.transfers.delta_min_file_size
     delta_min_file_size_p2p = options.transfers.delta_min_file_size_p2p
     p2p_peer_download_enabled = options.p2p.p2p_peer_download_enabled
+    mdns_enabled = options.p2p.mdns_enabled
     rendezvous_server_endpoints = options.endpoints.rendezvous_server_endpoints
     map_data_port = options.endpoints.map_data_port
     rendezvous_server_pins = options.p2p.rendezvous_server_pins
@@ -1255,6 +1257,9 @@ def _build_config(
             verify_ssl,
         ),
         "MAP_DATA_PORT": get_map_data_port() if map_data_port is None else bool(map_data_port),
+        # Discover peers over mDNS on the local network (False = discovery servers
+        # only). Both the CLI flag/env and the RunOptions field can disable it.
+        "MDNS_ENABLED": mdns_enabled and get_mdns_enabled(),
         "PEER_RENDEZVOUS_TIMEOUT": _get_peer_rendezvous_timeout_value(peer_rendezvous_timeout),
         "HEARTBEAT_INTERVAL": get_heartbeat_interval() or HEARTBEAT_INTERVAL,
         "RENDEZVOUS_SERVER_REFRESH_INTERVAL": get_rendezvous_server_refresh_interval()
@@ -1316,6 +1321,9 @@ def _build_config(
         # Auto-tuning runtime state (updated below after set_config)
         "AUTOTUNE_ENABLED": autotune_enabled,
         "AUTOTUNE_STORAGE_TYPE": tuning.storage_type.value if (autotune_enabled and tuning) else "",
+        # Network class from the autotune RTT probe to the master (set at runtime
+        # by ``_refresh_p2p_network_tuning``; "" until measured).
+        "P2P_NET_CLASS": "",
         # Keys the P2P post-rendezvous refresh AND the per-cycle concurrency
         # refresh may re-derive: only those resolved from autotune/default
         # (CLI/env overrides are preserved). Derived from `_tuning_keys` so it

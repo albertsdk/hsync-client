@@ -450,6 +450,13 @@ def _refresh_p2p_network_tuning(
         log.debug("autotune (P2P): RTT to master not measurable; keeping startup tuning")
         return
 
+    # The class tunes the slave WSS liveness timeouts even when no tuning key is
+    # re-derived below, so record it as soon as the RTT is known (the slave reads
+    # ``CONFIG["P2P_NET_CLASS"]`` before connecting its WebSocket).
+    net_class = classify_network(rtt_ms).value
+    cast(dict[str, Any], CONFIG)["P2P_NET_CLASS"] = net_class
+    cast(dict[str, Any], config)["P2P_NET_CLASS"] = net_class
+
     updates = derive_managed_rtt_updates(rtt_ms, managed)
     if not updates:
         return
@@ -611,19 +618,27 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
         config, cert_fingerprint=cert_info.fingerprint, port=p2p_server.port
     )
     endpoints = tuple(config.get("RENDEZVOUS_SERVER_ENDPOINTS") or ())
+    mdns_enabled = bool(config.get("MDNS_ENABLED", True))
     if endpoints:
         listed = ", ".join(
             format_authority(endpoint.host, endpoint.port or RENDEZVOUS_DEFAULT_PORT)
             for endpoint in endpoints
         )
-        log.info(
-            "Discovery: mDNS on the local network + discovery server(s) "
-            f"{listed} (cross-network; UPnP "
-            f"{'on' if config.get('MAP_DATA_PORT', True) else 'off'})"
-        )
-        # The UI event keeps its documented shape: ``plan`` names the combined
-        # plan and ``rendezvous`` carries the configured endpoints.
-        emit_event(UiEventName.rendezvous, plan="mdns+rendezvous", rendezvous=listed)
+        upnp = "on" if config.get("MAP_DATA_PORT", True) else "off"
+        if mdns_enabled:
+            log.info(
+                "Discovery: mDNS on the local network + discovery server(s) "
+                f"{listed} (cross-network; UPnP {upnp})"
+            )
+            # The UI event keeps its documented shape: ``plan`` names the combined
+            # plan and ``rendezvous`` carries the configured endpoints.
+            emit_event(UiEventName.rendezvous, plan="mdns+rendezvous", rendezvous=listed)
+        else:
+            log.info(
+                f"Discovery: discovery server(s) {listed} only "
+                f"(local network excluded; UPnP {upnp})"
+            )
+            emit_event(UiEventName.rendezvous, plan="rendezvous", rendezvous=listed)
     else:
         log.info("Discovery: mDNS on the local network (no discovery server configured)")
         emit_event(UiEventName.rendezvous, plan="mdns")

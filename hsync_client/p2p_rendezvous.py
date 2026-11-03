@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from hsync_common.clock import now_corrected
 from hsync_common.protocol.pairing import endpoint_pin_key
 from hsync_common.protocol.tls_trust import TrustPolicy
+from loguru import logger as log
 
 from hsync_client.constants import (
     HEARTBEAT_INTERVAL,
@@ -415,6 +416,15 @@ def build_rendezvous_plan(
         "heartbeat_interval": config.get("HEARTBEAT_INTERVAL") or HEARTBEAT_INTERVAL,
     }
     if not endpoints:
+        if not bool(config.get("MDNS_ENABLED", True)):
+            # No discovery channel left: the operator disabled mDNS and
+            # configured no discovery server. Warn loudly and keep mDNS as the
+            # only workable plan rather than start a daemon that never finds a
+            # peer (the CLI refuses this configuration up front).
+            log.warning(
+                "MDNS_ENABLED is off but no discovery server is configured; "
+                "falling back to mDNS (no other discovery channel)"
+            )
         return MdnsRendezvous(**shared)  # type: ignore[arg-type]
     # Every rendezvous source follows the rdv/1 lease cadence (spec: refresh
     # every 30 s), sized against the node's query/register rate limits; it must
@@ -449,6 +459,9 @@ def build_rendezvous_plan(
     rendezvous_plan = (
         sources[0] if len(sources) == 1 else MultiRdvRendezvous(sources, shared_upnp=shared_upnp)
     )
+    if not bool(config.get("MDNS_ENABLED", True)):
+        # Exclude the local network: only the discovery servers find peers.
+        return rendezvous_plan
     # mDNS stays active alongside the discovery servers: a node next to us on the
     # local network is found without a round trip through a server, and the
     # sources share one PeerManager so the election stays single.

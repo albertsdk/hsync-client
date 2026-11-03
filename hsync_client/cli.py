@@ -395,6 +395,7 @@ def _build_run_options(values: Mapping[str, Any], **overrides: Any) -> RunOption
                 "p2p_allow_unauthenticated_writes", False
             ),
             p2p_peer_download_enabled=overrides.get("p2p_peer_download_enabled", True),
+            mdns_enabled=overrides.get("mdns_enabled", True),
             rendezvous_server_pins=overrides.get("rendezvous_server_pins"),
             rendezvous_server_tofu=overrides.get("rendezvous_server_tofu", False),
             rendezvous_server_trust=overrides.get("rendezvous_server_trust"),
@@ -1040,6 +1041,18 @@ UpnpOpt = Annotated[
         rich_help_panel="P2P Mode",
     ),
 ]
+NoMdnsOpt = Annotated[
+    bool,
+    typer.Option(
+        "--no-mdns",
+        help=(
+            "Exclude the local network: discover peers only through the "
+            "configured discovery server(s), not mDNS. Requires at least one "
+            "--rendezvous-server endpoint."
+        ),
+        rich_help_panel="P2P Mode",
+    ),
+]
 RendezvousFingerprintOpt = Annotated[
     list[str] | None,
     typer.Option(
@@ -1288,6 +1301,7 @@ def p2p(
     p2p_key_fd: P2PKeyFdOpt = None,
     p2p_passphrase_fd: P2PPassphraseFdOpt = None,
     map_data_port: UpnpOpt = False,
+    no_mdns: NoMdnsOpt = False,
     insecure: InsecureOpt = False,
     ca_cert: CaCertOpt = None,
     rendezvous_server_fingerprint: RendezvousFingerprintOpt = None,
@@ -1397,6 +1411,18 @@ def p2p(
 
         effective_map_data_port = get_map_data_port()
 
+    # --no-mdns (or HSYNC_MDNS=false) removes local-network discovery, so at least
+    # one discovery server must remain to find peers: refuse the configuration
+    # rather than start a daemon that can never see anyone.
+    from hsync_client.config import get_mdns_enabled
+
+    effective_mdns = (not no_mdns) and get_mdns_enabled()
+    if not effective_mdns and not rendezvous_endpoints:
+        raise typer.BadParameter(
+            "--no-mdns requires at least one --rendezvous-server endpoint: without "
+            "a discovery server there would be no way to find peers."
+        )
+
     # Rendezvous-server TLS trust (ADR-0034): --ca-cert is a server-mode knob, not
     # a rendezvous-channel knob, so refuse it rather than silently ignore it.
     if ca_cert:
@@ -1451,6 +1477,7 @@ def p2p(
             never_master=never_master,
             p2p_trust=p2p_trust,
             p2p_peer_download_enabled=not no_peer_download,
+            mdns_enabled=effective_mdns,
             p2p_allow_unauthenticated_writes=allow_unauthenticated_writes,
             p2p_allow_unauthenticated=allow_unauthenticated_p2p,
         )

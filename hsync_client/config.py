@@ -228,6 +228,14 @@ class EnvSettings(BaseSettings):
             "Only meaningful with a discovery server."
         ),
     )
+    mdns: bool = Field(
+        default=True,
+        description=(
+            "Discover peers over mDNS on the local network (default: on). Set to "
+            "false to use only the configured discovery servers (requires at least "
+            "one HSYNC_RENDEZVOUS_SERVER_ENDPOINTS entry)."
+        ),
+    )
 
     # Server TLS Trust (ADR-0036): chain (default) or SSH-style pinning policies
     server_trust: Literal["chain", "ask", "accept-new", "strict", "none"] | None = Field(
@@ -624,6 +632,11 @@ def get_map_data_port() -> bool:
     return get_env_settings().map_data_port
 
 
+def get_mdns_enabled() -> bool:
+    """Get whether mDNS local-network discovery is enabled (default: on)."""
+    return get_env_settings().mdns
+
+
 def get_peer_rendezvous_timeout() -> int | None:
     """Get the peer-rendezvous wait from the environment (0 = wait indefinitely)."""
     return get_env_settings().peer_rendezvous_timeout
@@ -951,6 +964,8 @@ class HsyncConfig(TypedDict):
     # Map the p2p data-plane TCP port with UPnP (plan default: on only with a
     # discovery servers)
     MAP_DATA_PORT: bool
+    # Discover peers over mDNS on the local network (False = discovery servers only)
+    MDNS_ENABLED: bool
     # Master certificate fingerprint for HTTPS verification (set at runtime)
     MASTER_CERT_FINGERPRINT: str | None
     # Server TLS trust policy (ADR-0036; default chain) and explicit pins
@@ -1014,6 +1029,10 @@ class HsyncConfig(TypedDict):
     AUTOTUNE_ENABLED: bool
     # Cached storage type from autotune probes (set at runtime for per-cycle refresh)
     AUTOTUNE_STORAGE_TYPE: str
+    # Network class from the last autotune RTT probe to the master (set at
+    # runtime; absent/"unknown" until measured). Tunes the slave WSS liveness
+    # timeouts (see ``constants.WS_*``).
+    P2P_NET_CLASS: str
     # Tuning keys resolved from autotune/default at startup (not CLI/env) —
     # the P2P post-rendezvous refresh may re-derive only these
     AUTOTUNE_MANAGED_KEYS: list[str]

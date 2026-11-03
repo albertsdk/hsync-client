@@ -48,9 +48,11 @@ configured `HybridRendezvous` runs **both** over one shared `PeerManager`:
 | `PeerSnapshot` | `p2p_peers.py::PeerSnapshot` | immutable projection for the handler |
 | `get_free_port` / `HSYNC_P2P_LISTEN_PORT` | `p2p_peers.py::get_free_port` / `p2p_peers.py::HSYNC_P2P_LISTEN_PORT` | bind an ephemeral serving port |
 | `MdnsRendezvous` | `p2p_rendezvous_mdns.py::MdnsRendezvous` | mDNS/Zeroconf plan (browse + advertise); always active. Advertises one A record per active interface so a multi-homed node is discoverable on any of its networks |
-| `HybridRendezvous` | `p2p_rendezvous_hybrid.py::HybridRendezvous` | runs mDNS + rendezvous over one shared `PeerManager` when a rendezvous is configured |
+| `HybridRendezvous` | `p2p_rendezvous_hybrid.py::HybridRendezvous` | runs mDNS + rendezvous over one shared `PeerManager` when a rendezvous is configured; with `CONFIG["MDNS_ENABLED"]` off, `build_rendezvous_plan` returns the rendezvous-only plan instead (exclude the local network: `--no-mdns` / `HSYNC_MDNS`) |
 | `HsyncServiceListener` | `p2p_rendezvous_mdns.py::HsyncServiceListener` | Zeroconf callbacks (add/update/remove; parses the ``connected`` TXT value). Promotes a discovered peer's same-subnet address to its primary one (`dial_candidates`) and, when the peer advertises several interfaces, keeps them all in `Peer.endpoints` so the dial probe picks the reachable one |
 | `NetworkChangeMonitor` | `net_watch.py::NetworkChangeMonitor` | host address/link changes shared by both plans: the mDNS rebuild and the rendezvous endpoint republish (see [net-watch.md](net-watch.md)) |
+| `_NetworkCloseWaker` | `p2p_websocket.py::_NetworkCloseWaker` | closes the slave WSS the moment `NetworkChangeMonitor` reports a change, so `_run_as_slave` re-enters the rendezvous loop and reconnects on the fresh interface instead of blackholing on the old one until the keepalive ping times out |
+| `_ws_liveness_timeouts` | `p2p_websocket.py::_ws_liveness_timeouts` | `open_timeout`/`ping_interval`/`ping_timeout` for the slave WSS, derived from the autotune network class (`CONFIG["P2P_NET_CLASS"]`, set by `p2p_handler._refresh_p2p_network_tuning`): a high-RTT mobile path gets a longer, more tolerant set |
 | `HSYNC_SERVICE_TYPE` | `p2p_rendezvous_mdns.py::HSYNC_SERVICE_TYPE` | `_hsync._tcp.local.` mDNS type |
 
 Election is delegated to the common SSOT: `PeerManager._elect_master` builds

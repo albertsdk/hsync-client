@@ -17,6 +17,7 @@ side in the desktop's "waiting" state until the client was restarted.
 | `RdvRendezvous._on_network_change` / `_republish_stale_endpoint` | `p2p_rendezvous_rdv.py::RdvRendezvous._republish_stale_endpoint` | wake the lease loop / force a full endpoint re-register |
 | `PeerManager.set_local_addresses` | `p2p_peers.py::PeerManager.set_local_addresses` | keep the self-rendezvous check on the addresses we currently announce |
 | `_ReconnectWaker` | `remote_websocket.py::_ReconnectWaker` | bridges a change into the remote mode's backoff sleep |
+| `_NetworkCloseWaker` | `p2p_websocket.py::_NetworkCloseWaker` | closes the slave WSS on a change so the p2p rendezvous loop reconnects on the fresh interface instead of waiting for the keepalive ping to time out |
 
 ## Semantics
 

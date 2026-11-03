@@ -77,6 +77,7 @@ P2P_ONLY_OPTIONS = frozenset(
         "peer_rendezvous_timeout",
         "never_master",
         "no_peer_download",
+        "no_mdns",
         "p2p_group",
         "p2p_passphrase_fd",
         "p2p_key_fd",

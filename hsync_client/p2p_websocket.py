@@ -83,6 +83,7 @@ from watchdog.events import (
     FileSystemEventHandler,
 )
 
+from hsync_client.autotune import NetClass
 from hsync_client.capabilities import adopt_remote_capabilities, local_capabilities
 from hsync_client.config import CONFIG, deletions_are_kept
 from hsync_client.constants import (
@@ -91,6 +92,12 @@ from hsync_client.constants import (
     P2P_PEER_READ_CAP_DEFAULT,
     STABILITY_DELAY_ON_CLOSED,
     WS_MAX_MESSAGE_BYTES,
+    WS_MOBILE_OPEN_TIMEOUT_S,
+    WS_MOBILE_PING_INTERVAL_S,
+    WS_MOBILE_PING_TIMEOUT_S,
+    WS_OPEN_TIMEOUT_S,
+    WS_PING_INTERVAL_S,
+    WS_PING_TIMEOUT_S,
     ActionLabel,
 )
 from hsync_client.event_dispatch import (
@@ -108,6 +115,7 @@ from hsync_client.file_event_handler import (
     fold_metadata_touch,
     touch_log_line,
 )
+from hsync_client.net_watch import NetworkSignature, get_network_monitor
 from hsync_client.p2p_inventory import (
     NOOP_INVENTORY_OBSERVER,
     InventoryObserver,
@@ -140,6 +148,26 @@ MAX_WAIT_PENDING_SECONDS = 30 * 60
 # directory) never receive ``on_closed``, so after this window the deferred
 # upload fires as a fallback via the conservative stability poll.
 CREATE_UPLOAD_DEFER_S = STABILITY_DELAY_ON_CLOSED
+
+
+# Slave WSS liveness/timeout per network class (``P2P_NET_CLASS``, set by the
+# autotune RTT probe to the master). An unmeasured or LAN/broadband path keeps
+# the library-suitable defaults.
+_WS_TIMEOUTS_BY_CLASS: dict[str, tuple[float, float, float]] = {
+    NetClass.MOBILE.value: (
+        WS_MOBILE_OPEN_TIMEOUT_S,
+        WS_MOBILE_PING_INTERVAL_S,
+        WS_MOBILE_PING_TIMEOUT_S,
+    ),
+}
+
+
+def _ws_liveness_timeouts() -> tuple[float, float, float]:
+    """(open_timeout, ping_interval, ping_timeout) for the current network class."""
+    return _WS_TIMEOUTS_BY_CLASS.get(
+        str(CONFIG.get("P2P_NET_CLASS") or ""),
+        (WS_OPEN_TIMEOUT_S, WS_PING_INTERVAL_S, WS_PING_TIMEOUT_S),
+    )
 
 
 def _inventory_rejection(payload: Mapping[str, object], reason: str) -> P2PInventoryAckFrame:
@@ -1390,6 +1418,55 @@ def _apply_master_progress(event_data: dict) -> bool:
     return True
 
 
+class _NetworkCloseWaker:
+    """Close the slave WebSocket the moment the local network changes.
+
+    A WSS bound to an interface that no longer exists blackholes until the
+    keepalive ping times out (tens of seconds), leaving the peer stuck
+    "connected" with no events. The shared monitor's notification ends that
+    dead window at once, so the caller returns to the rendezvous loop and
+    re-establishes the link on the fresh interface. Subscribing in the
+    constructor and unsubscribing in :meth:`close` keeps the callback from
+    outliving the connection (the event loop is gone once it ends).
+    """
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+        self._event = asyncio.Event()
+        self._monitor = get_network_monitor()
+        self._monitor.subscribe(self._on_change)
+
+    def _on_change(self, signature: NetworkSignature) -> None:
+        """Wake the loop on any posture change (runs on the monitor thread)."""
+        try:
+            self._loop.call_soon_threadsafe(self._event.set)
+        except RuntimeError:
+            # The loop is already shutting down: nothing left to wake.
+            return
+
+    async def wait(self) -> None:
+        """Block until the network posture changes."""
+        await self._event.wait()
+
+    def close(self) -> None:
+        """Unsubscribe from the monitor (idempotent)."""
+        self._monitor.unsubscribe(self._on_change)
+
+
+async def _close_ws_on_network_change(websocket: Any, waker: _NetworkCloseWaker) -> None:
+    """Close *websocket* once the local network changes.
+
+    Runs as a background task for the connection's lifetime: the awaited
+    :meth:`_NetworkCloseWaker.wait` resolves on the monitor thread's
+    notification, then the socket is closed so the ``async for`` loop ends and
+    the caller re-enters the rendezvous loop on the new interface.
+    """
+    await waker.wait()
+    log.info("Network changed; closing the master WebSocket to reconnect on the new interface")
+    with contextlib.suppress(Exception):
+        await websocket.close()
+
+
 async def p2p_websocket_client(
     host: str,
     port: int,
@@ -1466,6 +1543,11 @@ async def p2p_websocket_client(
             _p2p_periodic_resync(inventory_publisher, source_resolver)
         )
 
+    # Watches for a local network change so the link is re-established at once
+    # instead of blackholing on the old interface (see ``_NetworkCloseWaker``).
+    network_waker: _NetworkCloseWaker | None = None
+    network_task: asyncio.Task[None] | None = None
+
     # Set up SSL context for WSS. The self-signed master cert is trusted by
     # pinned fingerprint (TOFU), not by chain validation, so we accept any cert
     # at the handshake and verify the fingerprint on the live connection below.
@@ -1487,11 +1569,13 @@ async def p2p_websocket_client(
     connect_started = monotonic()
 
     try:
+        ws_open_timeout, ws_ping_interval, ws_ping_timeout = _ws_liveness_timeouts()
         async with websockets.connect(
             uri,
             ssl=ssl_context,
-            ping_interval=60,
-            ping_timeout=30,
+            open_timeout=ws_open_timeout,
+            ping_interval=ws_ping_interval,
+            ping_timeout=ws_ping_timeout,
             close_timeout=5,
             max_size=WS_MAX_MESSAGE_BYTES,
         ) as websocket:
@@ -1628,6 +1712,15 @@ async def p2p_websocket_client(
             emit_event(UiEventName.status, status="connected")
             connected = True
 
+            # Re-establish the link the moment the local network changes: the
+            # task closes this socket on the monitor's notification, so the
+            # ``async for`` below ends and the caller reconnects on the fresh
+            # interface instead of waiting for the keepalive ping to time out.
+            network_waker = _NetworkCloseWaker(asyncio.get_running_loop())
+            network_task = asyncio.create_task(
+                _close_ws_on_network_change(websocket, network_waker)
+            )
+
             # One dispatch context per connection: the inbound directory
             # dedup cache must persist across events (a per-event context
             # would reset the cache each time and the duplicate added/
@@ -1665,6 +1758,14 @@ async def p2p_websocket_client(
     except Exception as e:
         log.error(f"WebSocket connection error after {monotonic() - connect_started:.1f}s: {e}")
     finally:
+        # Drop the network-change watcher first: its callback must not fire for
+        # a connection that is already tearing down.
+        if network_waker is not None:
+            network_waker.close()
+        if network_task is not None:
+            network_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await network_task
         # Stop the periodic resync task before tearing down the watcher.
         # CancelledError is a BaseException, so it must be suppressed
         # explicitly: awaiting the task we just cancelled re-raises it.

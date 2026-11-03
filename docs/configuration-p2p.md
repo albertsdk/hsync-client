@@ -12,6 +12,7 @@ p2p configuration for peer-to-peer synchronization without a central server.
 | `p2p` subcommand | Enable p2p mode (selected with `hsync p2p`) | — (CLI only) |
 | `--rendezvous-server` | Rendezvous-server endpoint for cross-network rendezvous: `HOST[:PORT]`, QUIC/UDP, no scheme (optional; omit for mDNS only). Repeatable, and each value may carry a comma-separated list; the client leases and queries every listed server and merges the peers | — |
 | `--map-data-port` | Map the p2p data-plane TCP port with UPnP when a discovery server is used (opt-in) | `false` (UPnP off; enable explicitly) |
+| `--no-mdns` | Exclude the local network: discover peers only through the configured discovery server(s), not mDNS (requires `--rendezvous-server`; without one there would be no discovery channel) | `false` |
 | `--rendezvous-server-fingerprint` | Pin a discovery server's certificate fingerprint (`sha256:<hex>` or bare hex); repeatable up to two per server for a rotation window; refused without `--rendezvous-server` | — (`ask`: confirm at the prompt on a terminal, fail closed without one) |
 | `--rendezvous-server-tofu` | Trust a discovery server's certificate on first use; a later mismatch is refused | `false` |
 | `--rendezvous-server-trust` | Rendezvous-server TLS trust policy: `ask` (prompt on a terminal and remember, fail closed without one), `accept-new`, `strict`, `none` | `ask` |
@@ -106,6 +107,7 @@ Both must be explicit: a TTY or `--allow-deletions` never grants them.
 | `HSYNC_RENDEZVOUS_SERVER_TOFU` | Trust a discovery server's certificate on first use (`1` = on) | `false` |
 | `HSYNC_RENDEZVOUS_SERVER_TRUST` | Rendezvous-server TLS trust policy: `ask` (prompt on a terminal and remember, fail closed without one), `accept-new`, `strict` (each configured server needs its pin), `none` | `ask` |
 | `HSYNC_MAP_DATA_PORT` | Map the master TCP port with UPnP (`true`/`false`); off by default | `false` |
+| `HSYNC_MDNS` | Discover peers over mDNS on the local network (`true`/`false`); set to `false` to use only the configured discovery servers (requires `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS`) | `true` |
 | `HSYNC_NEVER_MASTER` | Never become master | `false` |
 | `HSYNC_DEVICE_DIR` | Device identity dir (device ID + p2p keypair + per-folder sync-state DBs `syncstate/<uuid>.db`, `syncstate/index.db`) | `$XDG_STATE_HOME/hsync/device` or `~/.local/state/hsync/device` |
 | `HSYNC_LOCKS_DIR` | Instance-lock dir (`<sha256>.lock` per synced directory) | `$XDG_RUNTIME_DIR/hsync/locks`, else `<device-dir>/locks` |

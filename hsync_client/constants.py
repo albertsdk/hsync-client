@@ -347,6 +347,20 @@ RELAY_SESSION_WAIT_S = 5.0
 # the relay enabled would otherwise be re-dialled once per second.
 RELAY_RETRY_BACKOFF_S = 30.0
 
+# Slave WSS liveness/timeout, tuned per network class (``P2P_NET_CLASS``, set
+# from the autotune RTT probe to the master). The ``websockets`` library
+# defaults — open 10 s, ping every 60 s with a 30 s pong budget — suit a
+# LAN/broadband path; a high-RTT mobile path gets a longer open window and a
+# more tolerant keepalive so a single latency spike (or a lost ping) does not
+# tear down a healthy link (the network-change watcher still closes a link
+# whose interface actually changed).
+WS_OPEN_TIMEOUT_S = 10.0
+WS_PING_INTERVAL_S = 60.0
+WS_PING_TIMEOUT_S = 30.0
+WS_MOBILE_OPEN_TIMEOUT_S = 20.0
+WS_MOBILE_PING_INTERVAL_S = 45.0
+WS_MOBILE_PING_TIMEOUT_S = 60.0
+
 # P2P rendezvous timeout (seconds). Default is 0 = "wait indefinitely",
 # mirroring the client-server behaviour (the client keeps retrying the
 # connection forever by default). A finite positive value bounds how long
