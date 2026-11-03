@@ -324,6 +324,11 @@ RELAY_KEEPALIVE_INTERVAL = 10.0
 RELAY_OPEN_TIMEOUT_S = 15.0
 # Bounded per-candidate probe budget the relay replaces only as a last resort.
 RELAY_ACCEPT_TIMEOUT_S = 10.0
+# The rendezvous relays only the first `MAX_RELAY_ENDPOINTS` (4) endpoints a peer
+# declares (rdv-1.md), so advertising more is wasted. Publishing exactly that
+# many keeps the list ordered by usefulness: the observed public address, then
+# the default-route interface, then the other interfaces.
+MAX_ADVERTISED_ENDPOINTS = 4
 
 # Master-candidate probing. A candidate that is dialable at all answers in
 # milliseconds (LAN) or a few hundred (routable WAN), so the first round is short

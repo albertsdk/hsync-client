@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from hsync_client.constants import MAX_ADVERTISED_ENDPOINTS
 from hsync_client.stun import ObservedAddress
 
 __all__ = ["CandidateEndpoint", "candidate_endpoints"]
@@ -56,7 +57,11 @@ def candidate_endpoints(
     The UPnP external port maps the *default-route* interface's router, so it is
     combined only with that interface; other interfaces always advertise the
     listen port. The dialable port is never ``observed.port`` (the ephemeral
-    QUIC/UDP source port). Duplicates are collapsed so the frame stays minimal.
+    QUIC/UDP source port). Duplicates are collapsed and the result is capped at
+    ``MAX_ADVERTISED_ENDPOINTS``: the rendezvous relays only the first four
+    declared endpoints (rdv-1.md), so the list is ordered so the most useful
+    four — the public address, the default-route interface, then the other
+    interfaces — are the ones that survive.
     """
     candidates: list[CandidateEndpoint] = []
     if observed is not None:
@@ -75,4 +80,4 @@ def candidate_endpoints(
             continue
         seen.add(key)
         unique.append(candidate)
-    return unique
+    return unique[:MAX_ADVERTISED_ENDPOINTS]

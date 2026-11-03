@@ -50,16 +50,25 @@ def get_local_ips() -> list[str]:
     beside the LAN) has one address per interface, but only the default-route
     address is known by :func:`get_local_ip`. Advertising all of them lets a peer
     on any of those networks dial it directly instead of falling back to the
-    relay. The list never omits the default-route address, and degrades to just
-    that address when the interfaces cannot be enumerated.
+    relay. LAN/reserved addresses come before globally routable ones, and
+    container/bridge interfaces are skipped: their addresses (``172.17.0.1`` and
+    the like) are not reachable by peers and collide across hosts. The list never
+    omits the default-route address, and degrades to just that address when the
+    interfaces cannot be enumerated.
     """
     primary = get_local_ip()
     found: list[str] = []
     if _is_usable_ipv4(primary):
         found.append(primary)
-    for address in _enumerate_local_ipv4():
-        if address not in found and _is_usable_ipv4(address):
-            found.append(address)
+    rest = [
+        address
+        for address in _enumerate_local_ipv4()
+        if address not in found and _is_usable_ipv4(address)
+    ]
+    # Stable sort: LAN/reserved addresses first, so the most likely shareable
+    # address survives a caller's endpoint cap.
+    rest.sort(key=lambda address: ip_address(address).is_global)
+    found.extend(rest)
     return found or [primary]
 
 
@@ -72,6 +81,26 @@ def _is_usable_ipv4(address: str) -> bool:
     if parsed.version != 4:
         return False
     return not (parsed.is_loopback or parsed.is_link_local)
+
+
+# Interface names that are virtual bridges or container/virtualization links:
+# their addresses are host-local and often identical across hosts. ``lo`` is
+# here too (its address is loopback, which :func:`_is_usable_ipv4` drops anyway).
+_VIRTUAL_INTERFACE_PREFIXES = (
+    "docker",
+    "br-",
+    "veth",
+    "virbr",
+    "vboxnet",
+    "vmnet",
+    "dummy",
+    "lo",
+)
+
+
+def _is_advertisable_interface(name: str) -> bool:
+    """Whether an interface is a real network a peer could share."""
+    return not name.startswith(_VIRTUAL_INTERFACE_PREFIXES)
 
 
 def _enumerate_local_ipv4() -> list[str]:
@@ -98,6 +127,8 @@ def _linux_interface_ipv4() -> list[str]:
         return []
     addresses: list[str] = []
     for _index, name in interfaces:
+        if not _is_advertisable_interface(name):
+            continue
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
                 request = struct.pack("256s", name.encode("utf-8")[:15])

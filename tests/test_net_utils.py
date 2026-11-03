@@ -37,3 +37,21 @@ def test_offline_keeps_the_loopback_fallback(monkeypatch):
     monkeypatch.setattr(net_utils, "get_local_ip", lambda: "127.0.0.1")
     monkeypatch.setattr(net_utils, "_enumerate_local_ipv4", lambda: [])
     assert net_utils.get_local_ips() == ["127.0.0.1"]
+
+
+def test_global_addresses_come_after_lan_ones(monkeypatch):
+    monkeypatch.setattr(net_utils, "get_local_ip", lambda: "10.0.0.1")
+    monkeypatch.setattr(
+        net_utils,
+        "_enumerate_local_ipv4",
+        lambda: ["8.8.8.8", "192.168.1.5", "10.0.0.1"],
+    )
+    assert net_utils.get_local_ips() == ["10.0.0.1", "192.168.1.5", "8.8.8.8"]
+
+
+def test_virtual_interfaces_are_skipped():
+    """Container/bridge interfaces are not advertised (their IPs are host-local)."""
+    for name in ("docker0", "br-1a2b", "veth9f", "virbr0", "vboxnet0", "vmnet8", "lo"):
+        assert net_utils._is_advertisable_interface(name) is False
+    for name in ("eth0", "wlan0", "wlp3s0", "enp0s3", "wg0", "tun0"):
+        assert net_utils._is_advertisable_interface(name) is True

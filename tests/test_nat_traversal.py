@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from hsync_client.constants import MAX_ADVERTISED_ENDPOINTS
 from hsync_client.nat_traversal import CandidateEndpoint, candidate_endpoints
 from hsync_client.stun import ObservedAddress
 
@@ -69,3 +70,21 @@ def test_the_upnp_port_pairs_only_with_the_default_route_interface():
     assert CandidateEndpoint("tcp", "10.145.201.139", 9443) in candidates
     assert CandidateEndpoint("tcp", "192.168.1.5", 8443) in candidates
     assert CandidateEndpoint("tcp", "192.168.1.5", 9443) not in candidates
+
+
+def test_the_list_is_capped_at_the_rendezvous_relay_bound():
+    """The node relays only the first four endpoints, so do not send more.
+
+    The list is ordered by usefulness, so the public address and the default-route
+    interface survive and the overflow interfaces are the ones dropped.
+    """
+    observed = ObservedAddress(host="203.0.113.9", port=51000)
+    candidates = candidate_endpoints(
+        local_ips=["10.0.0.1", "192.168.1.5", "192.168.1.6", "192.168.1.7", "192.168.1.8"],
+        listen_port=8443,
+        observed=observed,
+    )
+    assert len(candidates) == MAX_ADVERTISED_ENDPOINTS
+    assert candidates[0] == CandidateEndpoint("tcp", "203.0.113.9", 8443)
+    assert CandidateEndpoint("tcp", "10.0.0.1", 8443) in candidates
+    assert CandidateEndpoint("tcp", "192.168.1.8", 8443) not in candidates
