@@ -712,7 +712,9 @@ class TestNetworkChangeRecovery:
                 instances[0].close.assert_called_once()
                 assert browser_cls.call_count == 2
                 info = instances[1].register_service.call_args.args[0]
-                assert info.addresses == [socket.inet_aton("10.9.8.7")]
+                # The recovered address heads the record (every other live
+                # interface is advertised alongside it).
+                assert info.addresses[0] == socket.inet_aton("10.9.8.7")
                 assert lan._local_ip == "10.9.8.7"
                 assert lan.peer_manager is not None
                 assert lan.peer_manager._local_address == "10.9.8.7"

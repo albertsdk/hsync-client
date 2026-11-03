@@ -184,9 +184,10 @@ class Peer:
     startup_time: float = 0.0  # Unix timestamp when peer started
     sync_direction: str = "bidirectional"  # bidirectional | upload-only | download-only
     # Every dialable (host, port) candidate the peer advertised for its data
-    # plane, in advertised order (rdv rendezvous relays the full list; mDNS
-    # supplies a single address and leaves this empty). ``address``/``port``
-    # remain the primary endpoint for callers that need one URL.
+    # plane, in advertised order (rdv rendezvous relays the full list; an mDNS
+    # peer promotes its same-subnet address to ``address`` and leaves this
+    # empty). ``address``/``port`` remain the primary endpoint for callers that
+    # need one URL.
     endpoints: tuple[tuple[str, int], ...] = ()
 
     def note_evidence(self, source: str, stamp: float) -> None:

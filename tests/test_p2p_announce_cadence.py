@@ -12,6 +12,7 @@ their steady interval.
 
 from __future__ import annotations
 
+import socket
 import threading
 import time
 
@@ -64,6 +65,48 @@ class TestMdnsAnnounceBurst:
 
         assert rebuilt == ["10.0.0.9"]
         assert plan._announce_burst == mdns_mod.MDNS_ANNOUNCE_BURST_COUNT
+
+
+class TestAdvertisedInterfaces:
+    """Every local interface is advertised so any of the node's networks can dial it."""
+
+    @staticmethod
+    def _plan() -> mdns_mod.MdnsRendezvous:
+        plan = object.__new__(mdns_mod.MdnsRendezvous)
+        plan._bucket = "photos"
+        plan._cid = "abc123"
+        plan._group = None
+        plan._use_https = False
+        plan._cert_fingerprint = None
+        plan._prefer_master = False
+        plan._never_master = False
+        plan._startup_time = 0.0
+        plan._sync_direction = "bidirectional"
+        plan._heartbeat_counter = 0
+        plan._connected_clients = 0
+        plan._port = 9753
+        return plan
+
+    def test_every_local_interface_is_advertised(self):
+        plan = self._plan()
+        plan._local_ips = ["192.168.1.5", "10.0.0.9"]
+        plan._local_ip = "192.168.1.5"
+
+        info = plan._build_service_info()
+
+        assert info.addresses == [
+            socket.inet_aton("192.168.1.5"),
+            socket.inet_aton("10.0.0.9"),
+        ]
+
+    def test_an_unset_list_falls_back_to_the_probe(self):
+        """A plan built without sampled interfaces still advertises one address."""
+        plan = self._plan()
+        plan._local_ips = []
+
+        info = plan._build_service_info()
+
+        assert len(info.addresses) == 1
 
 
 class TestRendezvousSampleCadence:

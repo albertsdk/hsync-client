@@ -47,9 +47,9 @@ configured `HybridRendezvous` runs **both** over one shared `PeerManager`:
 | `Peer` | `p2p_peers.py::Peer` | a discovered peer (cid, endpoint, cert_fp, sync_direction) |
 | `PeerSnapshot` | `p2p_peers.py::PeerSnapshot` | immutable projection for the handler |
 | `get_free_port` / `HSYNC_P2P_LISTEN_PORT` | `p2p_peers.py::get_free_port` / `p2p_peers.py::HSYNC_P2P_LISTEN_PORT` | bind an ephemeral serving port |
-| `MdnsRendezvous` | `p2p_rendezvous_mdns.py::MdnsRendezvous` | mDNS/Zeroconf plan (browse + advertise); always active |
+| `MdnsRendezvous` | `p2p_rendezvous_mdns.py::MdnsRendezvous` | mDNS/Zeroconf plan (browse + advertise); always active. Advertises one A record per active interface so a multi-homed node is discoverable on any of its networks |
 | `HybridRendezvous` | `p2p_rendezvous_hybrid.py::HybridRendezvous` | runs mDNS + rendezvous over one shared `PeerManager` when a rendezvous is configured |
-| `HsyncServiceListener` | `p2p_rendezvous_mdns.py::HsyncServiceListener` | Zeroconf callbacks (add/update/remove; parses the ``connected`` TXT value) |
+| `HsyncServiceListener` | `p2p_rendezvous_mdns.py::HsyncServiceListener` | Zeroconf callbacks (add/update/remove; parses the ``connected`` TXT value). Promotes a discovered peer's same-subnet address to its primary one (`dial_candidates` over the advertised addresses and this node's `local_ips`) |
 | `NetworkChangeMonitor` | `net_watch.py::NetworkChangeMonitor` | host address/link changes shared by both plans: the mDNS rebuild and the rendezvous endpoint republish (see [net-watch.md](net-watch.md)) |
 | `HSYNC_SERVICE_TYPE` | `p2p_rendezvous_mdns.py::HSYNC_SERVICE_TYPE` | `_hsync._tcp.local.` mDNS type |
 
@@ -167,14 +167,17 @@ Rendezvous recovers on its own when the host loses and regains connectivity
 [net-watch.md](net-watch.md)). Both plans subscribe in `start` and unsubscribe in
 `stop`; the callback runs on the monitor thread.
 
-- **mDNS.** The advertised address is re-sampled on a return transition:
+- **mDNS.** The advertised addresses are re-sampled on a return transition:
   `MdnsRendezvous._on_network_change` calls
   `p2p_rendezvous_mdns.py::MdnsRendezvous._rebuild_mdns`, which retires the
   previous `Zeroconf`, creates a fresh instance, re-registers the record on the
-  current address and recreates the `ServiceBrowser`. A rebuild (not an in-place
+  current addresses and recreates the `ServiceBrowser`. The record carries one A
+  record per active interface (`_local_ips`, sampled by `get_local_ips`; the
+  recovered source address heads the list) so a peer on any of the node's
+  networks discovers it. A rebuild (not an in-place
   `update_service`) is what restores the per-interface sockets and multicast
   memberships an interface bounce destroys **and** replaces the advertised A
-  record, so peers stop dialing the pre-outage address. A failed heartbeat
+  records, so peers stop dialing the pre-outage addresses. A failed heartbeat
   re-announce triggers `p2p_rendezvous_mdns.py::MdnsRendezvous._recover_mdns`,
   which first reconciles the sockets (`Zeroconf.update_interfaces`) and escalates
   to a rebuild when that fails.
@@ -276,8 +279,8 @@ both sources run against one `PeerManager` (built once via
   separate step), bounded by `READINESS_ENDPOINT_TIMEOUT_S`, and skips a disabled
   source, which can never publish.
 - **One peer entry per CID**: `add_peer` merges a peer seen by both sources —
-  the non-empty candidate list wins (`endpoints`, richer than mDNS's single
-  address) and `Peer.capabilities_known` stops the rendezvous relay, which carries
+  the non-empty candidate list wins (`endpoints`, richer than mDNS's promoted
+  single address) and `Peer.capabilities_known` stops the rendezvous relay, which carries
   no capability flags, from clearing the TXT capabilities (`compression`,
   `delta`, `peer_download`) that mDNS advertised. Both sources relay the same
   election advertisement, so the election sees one candidate set.

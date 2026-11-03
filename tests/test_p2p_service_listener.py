@@ -237,3 +237,31 @@ class TestServiceCallbacks:
         assert mock_log.debug.called
         # Verify remove_peer was attempted before the exception
         listener._peer_manager.remove_peer.assert_called_once()
+
+
+class TestMultiHomedDiscovery:
+    """A peer advertising several interfaces must be dialed on the shared one."""
+
+    def test_the_same_subnet_address_becomes_primary(self):
+        """Regression: the first advertised address was used blindly.
+
+        A multi-homed peer reachable on our LAN was dialed on its other
+        (unreachable) interface, so the two fell back to the relay.
+        """
+        pm = PeerManager(local_cid="local-cid", bucket="photos", group="team-a")
+        listener = HsyncServiceListener(pm, goodbye_grace_s=0.0, local_ips=lambda: ["192.168.1.50"])
+        info = _make_info(_full_props())
+        info.parsed_addresses.return_value = ["10.145.201.139", "192.168.1.42"]
+        listener._register_peer_from_info(info)
+
+        peer = pm._peers.get("peer-cid-1")
+        assert peer is not None
+        assert (peer.address, peer.port) == ("192.168.1.42", 9753)
+
+    def test_a_single_address_peer_is_unchanged(self):
+        pm = PeerManager(local_cid="local-cid", bucket="photos", group="team-a")
+        listener = HsyncServiceListener(pm, goodbye_grace_s=0.0, local_ips=lambda: ["192.168.1.50"])
+        listener._register_peer_from_info(_make_info(_full_props()))
+        peer = pm._peers.get("peer-cid-1")
+        assert peer is not None
+        assert (peer.address, peer.port) == ("192.168.1.50", 9753)

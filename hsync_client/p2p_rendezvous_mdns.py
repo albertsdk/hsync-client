@@ -39,7 +39,7 @@ from hsync_client.constants import (
     PEER_TIMEOUT,
     RENDEZVOUS_TIMEOUT_DEFAULT,
 )
-from hsync_client.net_utils import get_local_ip
+from hsync_client.net_utils import get_local_ip, get_local_ips
 from hsync_client.net_watch import (
     NetworkChangeMonitor,
     NetworkSignature,
@@ -51,6 +51,7 @@ from hsync_client.p2p_peers import (
     HSYNC_P2P_LISTEN_PORT,
     Peer,
     PeerManager,
+    dial_candidates,
     get_free_port,
 )
 from hsync_client.p2p_rendezvous import RendezvousPlanState
@@ -84,6 +85,19 @@ def _tx_bool(properties: Mapping[bytes, bytes | None], key: bytes) -> bool:
     return raw.decode("utf-8").lower() == "true" if raw else False
 
 
+def _merge_local_ips(primary: str) -> list[str]:
+    """The live interface addresses, with *primary* forced first.
+
+    Used after a network change: the monitor names the recovered source address,
+    which must head the list, and the rest of the current interfaces follow.
+    """
+    ips: list[str] = [primary] if primary else []
+    for address in get_local_ips():
+        if address not in ips:
+            ips.append(address)
+    return ips or [get_local_ip()]
+
+
 class HsyncServiceListener(ServiceListener):
     """
     Listens for hsync service announcements via mDNS.
@@ -96,6 +110,7 @@ class HsyncServiceListener(ServiceListener):
         self,
         peer_manager: PeerManager,
         goodbye_grace_s: float = GOODBYE_GRACE_S,
+        local_ips: Callable[[], list[str]] | None = None,
     ) -> None:
         """
         Initialize the service listener.
@@ -105,9 +120,13 @@ class HsyncServiceListener(ServiceListener):
             goodbye_grace_s: Delay before honouring a ``remove_service`` so an
                 Android heartbeat re-register can cancel the removal. ``0``
                 removes immediately (tests).
+            local_ips: Supplies this node's own addresses, used to promote a
+                discovered peer's same-subnet address to its primary endpoint.
+                Defaults to :func:`get_local_ips`.
         """
         self._peer_manager = peer_manager
         self._goodbye_grace_s = goodbye_grace_s
+        self._local_ips = local_ips or get_local_ips
         self._pending_goodbyes: dict[str, threading.Timer] = {}
         self._pending_lock = threading.Lock()
 
@@ -224,17 +243,31 @@ class HsyncServiceListener(ServiceListener):
                 log.debug(f"No addresses for service: {info.name}")
                 return
 
-            address = addresses[0]  # Use first available address
             port = info.port
             if port is None:
                 log.debug(f"No port for service: {info.name}")
                 return
 
+            # Every advertised address is a dial candidate; a same-subnet one is
+            # promoted to the primary address (the ordering policy lives once, in
+            # dial_candidates) so a multi-homed peer is dialed on the interface
+            # it shares with this node. ``endpoints`` is left empty on purpose:
+            # the mDNS peer keeps the single-address fast path in
+            # ``_select_master_endpoint`` (no probe — a LAN-only plan has no
+            # relay to fall back to), and the promoted address is already the
+            # reachable one.
+            address, primary_port = dial_candidates(
+                tuple((address_ip, port) for address_ip in addresses),
+                addresses[0],
+                port,
+                self._local_ips(),
+            )[0]
+
             peer = Peer(
                 cid=cid,
                 bucket=bucket,
                 address=address,
-                port=port,
+                port=primary_port,
                 version=version,
                 group=group,
                 use_https=use_https,
@@ -355,11 +388,14 @@ class MdnsRendezvous(RendezvousPlanState):
         self._announce_burst = 0
         # If port is 0, get a random free port
         self._port = port if port != 0 else get_free_port()
-        # The IP this node advertises over mDNS. Sampled once here and refreshed
-        # by the network-change recovery below: the record is re-announced on
-        # every heartbeat, so a stale address would keep peers dialing a dead
-        # endpoint until the process restarted.
-        self._local_ip = get_local_ip()
+        # The addresses this node advertises over mDNS: every active interface,
+        # so a peer on any of its networks discovers it directly. Sampled once
+        # here and refreshed by the network-change recovery below; the record is
+        # re-announced on every heartbeat, so a stale address would keep peers
+        # dialing a dead endpoint until the process restarted. ``_local_ip`` is
+        # the default-route address, used for logging and change detection.
+        self._local_ips = get_local_ips()
+        self._local_ip = self._local_ips[0]
         self._network_monitor: NetworkChangeMonitor | None = None
         self._network_offline = False
 
@@ -458,7 +494,7 @@ class MdnsRendezvous(RendezvousPlanState):
             self._register_service()
 
         # Start listening for other services
-        listener = HsyncServiceListener(self._peer_manager)
+        listener = HsyncServiceListener(self._peer_manager, local_ips=lambda: self._local_ips)
         self._browser = ServiceBrowser(self._zeroconf, HSYNC_SERVICE_TYPE, listener)
 
         self._running = True
@@ -718,14 +754,15 @@ class MdnsRendezvous(RendezvousPlanState):
         log.info("mDNS sockets reconciled after a failed announcement")
 
     def _rebuild_mdns(self, local_ip: str) -> None:
-        """Rebuild the Zeroconf stack on *local_ip* and re-announce the record.
+        """Rebuild the Zeroconf stack on the recovered address and re-announce.
 
         A rebuild, not an in-place update, is what restores a working
         announcement: the sockets opened before the outage can be bound to an
         address that no longer exists, and only a fresh instance guarantees new
         per-interface sockets and multicast memberships. It also replaces the
-        advertised A record, so a DHCP reassignment stops pointing peers at the
-        old address.
+        advertised A records, so a DHCP reassignment stops pointing peers at the
+        old address. *local_ip* is the recovered default-route address; every
+        other live interface is advertised alongside it.
         """
         with self._record_lock:
             if not self._running:
@@ -733,7 +770,8 @@ class MdnsRendezvous(RendezvousPlanState):
             previous_ip = self._local_ip
             previous_zc = self._zeroconf
             previous_info = self._service_info
-            self._local_ip = local_ip
+            self._local_ips = _merge_local_ips(local_ip)
+            self._local_ip = self._local_ips[0]
             self._service_info = None
             self._browser = None
             self._zeroconf = None
@@ -769,7 +807,9 @@ class MdnsRendezvous(RendezvousPlanState):
             peer_manager = self._peer_manager
         if peer_manager is not None:
             self._browser = ServiceBrowser(
-                zc, HSYNC_SERVICE_TYPE, HsyncServiceListener(peer_manager)
+                zc,
+                HSYNC_SERVICE_TYPE,
+                HsyncServiceListener(peer_manager, local_ips=lambda: self._local_ips),
             )
             peer_manager.set_local_address(local_ip)
         log.info(f"mDNS discovery rebuilt after a network change: {previous_ip} -> {local_ip}")
@@ -866,9 +906,11 @@ class MdnsRendezvous(RendezvousPlanState):
         :meth:`_refresh_service` (in-place update), so both paths advertise the
         exact same property set for a given ``server_ready`` value.
         """
-        # Get local IP address (kept current by the network-change recovery in
-        # __init__/start, so the record never advertises a dead endpoint)
-        local_ip = self._local_ip or get_local_ip()
+        # The addresses advertised for this node (kept current by the
+        # network-change recovery in __init__/start, so the record never
+        # advertises a dead endpoint). Every active interface is published so a
+        # peer on any of the node's networks can dial it directly.
+        local_ips = self._local_ips or [get_local_ip()]
 
         # Create service name: bucket-cid
         service_name = f"{self._bucket}-{self._cid}.{HSYNC_SERVICE_TYPE}"
@@ -928,7 +970,7 @@ class MdnsRendezvous(RendezvousPlanState):
             service_name,
             port=self._port,
             properties=properties,
-            addresses=[socket.inet_aton(local_ip)],
+            addresses=[socket.inet_aton(local_ip) for local_ip in local_ips],
         )
 
     def wait_for_rendezvous(self, timeout: float = RENDEZVOUS_TIMEOUT) -> None:

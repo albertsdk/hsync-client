@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   container/bridge interfaces skipped) capped at the node's four-endpoint relay
   bound, so a peer on any of its real networks connects directly instead of
   falling back to the relay.
+- An mDNS node advertises one A record per active interface, and a discovered
+  peer's same-subnet address is promoted to its primary one, so a multi-homed
+  peer sharing a LAN is dialed directly instead of over an unreachable
+  interface.
 - The relay's transfer-concurrency cap is lifted when a direct path is used
   again, so a CLI/env override or `--no-autotune` no longer keeps the fast path
   throttled to the relay value.
