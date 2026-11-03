@@ -101,3 +101,38 @@ def test_tls_handshake_timeout_is_bounded() -> None:
 
     assert 0 < P2P_TLS_HANDSHAKE_TIMEOUT_S < 60  # below the asyncio default
     assert issubclass(_P2PSite, web.SockSite)
+
+
+class _AdmissionRequest:
+    """Just the ``query`` mapping ``_admission_key`` reads."""
+
+    def __init__(self, query: dict[str, str]) -> None:
+        self.query = query
+
+
+_CID = "Afgx6i95EChYuFuUMe4ay"
+
+
+def test_a_relayed_peer_is_bucketed_by_its_cid() -> None:
+    """Relayed peers share the loopback address: key them by identity.
+
+    Otherwise every relayed slave lands in one rate/in-flight bucket and a busy
+    one starves the others.
+    """
+    from hsync_client.p2p_server import _admission_key
+
+    assert _admission_key("127.0.0.1", _AdmissionRequest({"cid": _CID})) == f"relay:{_CID}"
+    assert _admission_key("::1", _AdmissionRequest({"cid": _CID})) == f"relay:{_CID}"
+
+
+def test_a_direct_peer_keeps_its_address_as_the_bucket() -> None:
+    from hsync_client.p2p_server import _admission_key
+
+    assert _admission_key("192.168.1.50", _AdmissionRequest({"cid": _CID})) == "192.168.1.50"
+
+
+def test_a_loopback_request_without_a_valid_cid_falls_back_to_the_address() -> None:
+    from hsync_client.p2p_server import _admission_key
+
+    assert _admission_key("127.0.0.1", _AdmissionRequest({})) == "127.0.0.1"
+    assert _admission_key("127.0.0.1", _AdmissionRequest({"cid": "not-a-cid"})) == "127.0.0.1"

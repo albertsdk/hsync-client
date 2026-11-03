@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cycle no longer spends a pairing token per REST/WebSocket connection.
 - A relayed slave caps its concurrent transfers so the multiplexed session's
   flow-control window is not swamped.
+- Relayed peers are rate- and in-flight-bucketed by their CID instead of the
+  shared loopback address, so one relayed peer cannot starve the others.
 - The relay keepalive runs at a third of the node's QUIC idle, so one lost ping
   no longer tears down the tunnel and every transfer with it.
 

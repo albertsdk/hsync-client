@@ -3018,6 +3018,28 @@ class _AiohttpTransport(P2PEndpointMixin):
 # =============================================================================
 
 
+_LOOPBACK_ADMISSION_HOSTS = frozenset({"127.0.0.1", "::1"})
+
+
+def _admission_key(remote: str, request: web.Request) -> str:
+    """Key the rate/in-flight bucket by peer, not by the relay's loopback address.
+
+    A relayed peer reaches the master through its acceptor's loopback bridge, so
+    every relayed slave shows up as ``127.0.0.1`` and would otherwise share one
+    rate and in-flight bucket — one busy relayed peer could starve the others.
+    Loopback requests are therefore keyed by the peer's claimed CID (the same
+    value the endpoint handlers read), giving each relayed peer its own fair
+    share. Only the local relay acceptor can open a loopback connection, so this
+    does not widen the flood guard beyond a legitimate relayed peer's own claims;
+    a request without a valid CID falls back to the loopback address.
+    """
+    if remote in _LOOPBACK_ADMISSION_HOSTS:
+        cid = request.query.get("cid")
+        if isinstance(cid, str) and is_valid_cid(cid):
+            return f"relay:{cid}"
+    return remote
+
+
 def _per_ip_inflight_cap(active_ips: int) -> int:
     """Per-IP in-flight cap given ``active_ips`` distinct peers currently served.
 
@@ -3477,19 +3499,22 @@ class P2PServer:
         if context is None or executor is None or slots is None:
             raise web.HTTPServiceUnavailable(text="P2P server is not serving")
         remote = request.remote or ""
+        # Relayed peers share the loopback address; separate their buckets by CID
+        # so one busy relayed peer cannot starve the others.
+        bucket = _admission_key(remote, request)
         # Admission control before a slot is even considered: a request flood
         # from one host is refused cheaply, and one host can hold at most
         # P2P_MAX_INFLIGHT_PER_IP of the dispatch slots (fairness).
-        if not self._request_limiter.allow(remote):
+        if not self._request_limiter.allow(bucket):
             raise web.HTTPTooManyRequests(text="P2P request rate exceeded")
-        inflight = self._ip_inflight.get(remote, 0)
+        inflight = self._ip_inflight.get(bucket, 0)
         # Fair-share the dispatch pool across active peers: as more distinct IPs
         # are active the per-peer cap shrinks toward an equal split, never below
         # the floor. A lone peer may still take P2P_MAX_INFLIGHT_PER_IP.
         per_ip_cap = _per_ip_inflight_cap(len(self._ip_inflight))
         if inflight >= per_ip_cap:
             raise web.HTTPServiceUnavailable(text="P2P peer request limit reached")
-        self._ip_inflight[remote] = inflight + 1
+        self._ip_inflight[bucket] = inflight + 1
         try:
             loop = asyncio.get_running_loop()
             transport = _AiohttpTransport(request, loop, context)
@@ -3506,11 +3531,11 @@ class P2PServer:
                 log.exception("P2P request handler crashed")
             return await transport.finalize()
         finally:
-            remaining = self._ip_inflight.get(remote, 0) - 1
+            remaining = self._ip_inflight.get(bucket, 0) - 1
             if remaining > 0:
-                self._ip_inflight[remote] = remaining
+                self._ip_inflight[bucket] = remaining
             else:
-                self._ip_inflight.pop(remote, None)
+                self._ip_inflight.pop(bucket, None)
 
     async def _handle_websocket(self, request: web.Request) -> web.WebSocketResponse:
         """Serve the canonical realtime-events channel on the unified listener.
