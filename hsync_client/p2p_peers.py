@@ -20,7 +20,7 @@ from __future__ import annotations
 import socket
 import threading
 import time
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -69,6 +69,27 @@ def get_free_port() -> int:
         s.listen(1)
         port = s.getsockname()[1]
     return port
+
+
+def _endpoints_union(
+    by_source: Mapping[str, tuple[tuple[str, int], ...]],
+) -> tuple[tuple[str, int], ...]:
+    """Deduplicated union of the per-source candidate lists.
+
+    Each source owns its list, so an address a source stops advertising
+    disappears instead of accumulating forever (a DHCP change, a peer moving
+    networks, a mobile peer's changing public address). The union is computed in
+    stable source-insertion order, so a repeated heartbeat from either source
+    yields the same tuple and is not reported as a change.
+    """
+    ordered: list[tuple[str, int]] = []
+    seen: set[tuple[str, int]] = set()
+    for candidates in by_source.values():
+        for candidate in candidates:
+            if candidate not in seen:
+                seen.add(candidate)
+                ordered.append(candidate)
+    return tuple(ordered)
 
 
 def server_url(address: str, port: int, *, use_https: bool) -> str:
@@ -190,6 +211,10 @@ class Peer:
     # keeps the no-probe fast path. ``address``/``port`` remain the primary
     # endpoint for callers that need one URL.
     endpoints: tuple[tuple[str, int], ...] = ()
+    # The candidate list as last announced by each discovery source. Each source
+    # replaces its own entry, so the derived ``endpoints`` above never grows
+    # without bound; it is a deduplicated union in stable source order.
+    endpoints_by_source: dict[str, tuple[tuple[str, int], ...]] = field(default_factory=dict)
 
     def note_evidence(self, source: str, stamp: float) -> None:
         """Record that *source* has just observed this peer, at its own stamp."""
@@ -503,19 +528,13 @@ class PeerManager:
                 # plans, only an update that knows the capabilities (or the
                 # first one) may set them.
                 take_capabilities = peer.capabilities_known or not existing.capabilities_known
-                # Merge the candidate lists instead of replacing: mDNS supplies
-                # the interface addresses, the rendezvous relays the advertised
-                # (often public) ones, and a peer seen by both sources has more
-                # dial fallbacks than either list alone. The merge is a stable
-                # union, so a repeated heartbeat does not look like a change.
+                # Each source replaces its own candidate list; the peer's
+                # ``endpoints`` is their union. A source that changes its
+                # addresses therefore drops the old ones (no unbounded growth),
+                # and a repeated heartbeat keeps the union identical.
                 if peer.endpoints:
-                    endpoints = existing.endpoints + tuple(
-                        candidate
-                        for candidate in peer.endpoints
-                        if candidate not in existing.endpoints
-                    )
-                else:
-                    endpoints = existing.endpoints
+                    existing.endpoints_by_source[source] = peer.endpoints
+                endpoints = _endpoints_union(existing.endpoints_by_source)
                 endpoints_changed = endpoints != existing.endpoints
                 rendezvous_changed = election_changed or (
                     existing.address != peer.address
@@ -559,6 +578,9 @@ class PeerManager:
                 existing.note_evidence(source, self._stamp(source))
                 log.debug(f"Updated peer: {peer.cid}")
             else:
+                if peer.endpoints:
+                    peer.endpoints_by_source[source] = peer.endpoints
+                peer.endpoints = _endpoints_union(peer.endpoints_by_source)
                 peer.note_evidence(source, self._stamp(source))
                 self._peers[peer.cid] = peer
                 log.info(f"Discovered new peer: {peer.cid} at {peer.address}:{peer.port}")

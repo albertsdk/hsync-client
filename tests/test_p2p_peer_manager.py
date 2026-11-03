@@ -783,8 +783,8 @@ class TestAddPeerUpdate:
         pm.add_peer(Peer(cid="peer1", bucket="photos", address="192.168.1.100", port=9753))
         assert len(pm.get_alive_peers()) == 1
 
-    def test_endpoint_lists_merge_instead_of_replacing(self):
-        """mDNS and rendezvous candidates union: each source adds fallbacks."""
+    def test_endpoint_lists_union_across_sources(self):
+        """mDNS and rendezvous candidates are unioned: each source adds fallbacks."""
         pm = PeerManager(local_cid="local123", bucket="photos")
         pm.add_peer(
             Peer(
@@ -793,7 +793,8 @@ class TestAddPeerUpdate:
                 address="192.168.1.100",
                 port=9753,
                 endpoints=(("192.168.1.100", 9753),),
-            )
+            ),
+            source="mdns",
         )
         pm.add_peer(
             Peer(
@@ -802,12 +803,38 @@ class TestAddPeerUpdate:
                 address="192.168.1.100",
                 port=9753,
                 endpoints=(("203.0.113.10", 9753), ("192.168.1.100", 9753)),
-            )
+            ),
+            source="rdv",
         )
         assert pm._peers["peer1"].endpoints == (
             ("192.168.1.100", 9753),
             ("203.0.113.10", 9753),
         )
+
+    def test_a_source_replaces_its_own_list(self):
+        """A source that moves drops its old address instead of accumulating."""
+        pm = PeerManager(local_cid="local123", bucket="photos")
+        pm.add_peer(
+            Peer(
+                cid="peer1",
+                bucket="photos",
+                address="192.168.1.100",
+                port=9753,
+                endpoints=(("192.168.1.100", 9753), ("203.0.113.10", 9753)),
+            ),
+            source="rdv",
+        )
+        pm.add_peer(
+            Peer(
+                cid="peer1",
+                bucket="photos",
+                address="192.168.1.100",
+                port=9753,
+                endpoints=(("192.168.1.100", 9753),),
+            ),
+            source="rdv",
+        )
+        assert pm._peers["peer1"].endpoints == (("192.168.1.100", 9753),)
 
     def test_an_empty_endpoint_list_does_not_clear_a_known_one(self):
         pm = PeerManager(local_cid="local123", bucket="photos")
@@ -818,7 +845,8 @@ class TestAddPeerUpdate:
                 address="192.168.1.100",
                 port=9753,
                 endpoints=(("203.0.113.10", 9753),),
-            )
+            ),
+            source="rdv",
         )
         pm.add_peer(Peer(cid="peer1", bucket="photos", address="192.168.1.100", port=9753))
         assert pm._peers["peer1"].endpoints == (("203.0.113.10", 9753),)

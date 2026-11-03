@@ -280,9 +280,11 @@ both sources run against one `PeerManager` (built once via
   separate step), bounded by `READINESS_ENDPOINT_TIMEOUT_S`, and skips a disabled
   source, which can never publish.
 - **One peer entry per CID**: `add_peer` merges a peer seen by both sources —
-  their candidate lists are unioned into `Peer.endpoints` (a stable union, so a
-  repeated heartbeat is not a change; mDNS supplies the interface addresses, the
-  rendezvous the advertised ones) and `Peer.capabilities_known` stops the
+  each source owns its candidate list (`Peer.endpoints_by_source`, so a source
+  that changes its addresses drops the old ones instead of accumulating) and
+  `Peer.endpoints` is their stable deduplicated union (a repeated heartbeat is
+  not a change; mDNS supplies the interface addresses, the rendezvous the
+  advertised ones). `Peer.capabilities_known` stops the
   rendezvous relay, which carries
   no capability flags, from clearing the TXT capabilities (`compression`,
   `delta`, `peer_download`) that mDNS advertised. Both sources relay the same
