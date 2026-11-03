@@ -1411,13 +1411,15 @@ def p2p(
 
         effective_map_data_port = get_map_data_port()
 
-    # --no-mdns (or HSYNC_MDNS=false) removes local-network discovery, so at least
-    # one discovery server must remain to find peers: refuse the configuration
-    # rather than start a daemon that can never see anyone.
+    # --no-mdns removes local-network discovery, so at least one discovery server
+    # must remain to find peers: the flag is a per-command request, so a missing
+    # server is a usage error. The HSYNC_MDNS env is a *persistent* setting, so a
+    # misconfigured value there falls back to mDNS at the plan level
+    # (``build_rendezvous_plan``) instead of breaking a daemon that starts on boot.
     from hsync_client.config import get_mdns_enabled
 
     effective_mdns = (not no_mdns) and get_mdns_enabled()
-    if not effective_mdns and not rendezvous_endpoints:
+    if no_mdns and not rendezvous_endpoints:
         raise typer.BadParameter(
             "--no-mdns requires at least one --rendezvous-server endpoint: without "
             "a discovery server there would be no way to find peers."

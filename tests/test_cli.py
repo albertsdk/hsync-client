@@ -639,6 +639,25 @@ class TestTyperCli:
         assert "--no-mdns requires at least one --rendezvous-server" in result.output
 
     @patch("hsync_client.main_logic.run_sync")
+    def test_mdns_env_off_without_a_discovery_server_does_not_fail(
+        self, mock_run_sync, monkeypatch
+    ):
+        """``HSYNC_MDNS=false`` is a persistent setting, not a usage error.
+
+        Unlike the explicit ``--no-mdns`` flag, a misconfigured environment value
+        must not stop a daemon that starts on boot: the plan falls back to mDNS
+        (``build_rendezvous_plan``) instead of refusing the run.
+        """
+        monkeypatch.setenv("HSYNC_MDNS", "false")
+        get_env_settings.cache_clear()
+        try:
+            result = runner.invoke(app, ["p2p", "-b", "test"])
+            assert result.exit_code == 0
+            assert _run_options(mock_run_sync).p2p.mdns_enabled is False
+        finally:
+            get_env_settings.cache_clear()
+
+    @patch("hsync_client.main_logic.run_sync")
     def test_allow_unauthenticated_writes_option(self, mock_run_sync):
         """The dangerous no-key mutation opt-in is explicit and defaults off."""
         result = runner.invoke(app, ["p2p", "-b", "test"])
