@@ -358,6 +358,14 @@ class TestAdvertisement:
         plan._register(publish_endpoint=False)
         assert plan._client.calls[-1][1]["startup_time"] == plan._startup_time
 
+    def test_startup_time_uses_the_sntp_corrected_clock(self, monkeypatch):
+        """The election tie-break must not depend on each host's raw clock."""
+        import hsync_client.p2p_rendezvous as rendezvous_module
+
+        monkeypatch.setattr(rendezvous_module, "now_corrected", lambda: 1760000123.0)
+        plan, _ = make_plan()
+        assert plan._startup_time == 1760000123.0
+
     def test_update_server_ready_marks_the_local_incumbency(self):
         """A serving master must win its own election (regression).
 

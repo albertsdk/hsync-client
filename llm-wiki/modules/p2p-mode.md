@@ -66,7 +66,9 @@ component that actually decided it (`p2p_peers.py::PeerManager._election_reason`
 the first key on which the winner beat the runner-up, or its own strongest
 preferred flag when it ran alone) — two peers that both advertise `server_ready`
 are separated by `startup_time`/`cid`, so restating `server_ready` there would
-misdirect diagnosis. TXT records advertise `protocol`, `cert_fp`,
+misdirect diagnosis. The `startup_time` tie-break is on the SNTP-corrected wall
+clock (`hsync_common.clock.now_corrected`), so a host whose clock runs behind
+cannot win it by accident. TXT records advertise `protocol`, `cert_fp`,
 `sync_direction`, `peer_download` and the election flags.
 
 **`inbound`** is the election input that keeps a relay-only node from winning.

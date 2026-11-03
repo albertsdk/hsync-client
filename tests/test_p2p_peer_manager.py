@@ -111,6 +111,15 @@ class TestPeerManager:
 
         assert pm._peers["peer"].inbound is True
 
+    def test_startup_time_uses_the_sntp_corrected_clock(self, monkeypatch):
+        import hsync_client.p2p_peers as peers_module
+
+        monkeypatch.setattr(peers_module, "now_corrected", lambda: 1760000999.0)
+
+        pm = PeerManager(local_cid="aaa111", bucket="photos")
+
+        assert pm._startup_time == 1760000999.0
+
     def test_master_election_local_wins(self):
         """Test that local client is elected master when it started earliest."""
         pm = PeerManager(local_cid="aaa111", bucket="photos", startup_time=100.0)

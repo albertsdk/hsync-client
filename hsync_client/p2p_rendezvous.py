@@ -27,10 +27,10 @@ Consumers: ``hsync-client`` (p2p handler, the two rendezvous plans, tests).
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from hsync_common.clock import now_corrected
 from hsync_common.protocol.pairing import endpoint_pin_key
 from hsync_common.protocol.tls_trust import TrustPolicy
 
@@ -280,7 +280,10 @@ class RendezvousPlanState:
         self._configured_never_master = never_master
         self._prefer_master = prefer_master
         self._never_master = never_master
-        self._startup_time = startup_time if startup_time > 0 else time.time()
+        # The election compares this value across hosts, so it must be on one
+        # timebase: the SNTP-corrected wall clock, not each host's raw clock
+        # (a slow local clock must not make a peer look like it started first).
+        self._startup_time = startup_time if startup_time > 0 else now_corrected()
         self._sync_direction = sync_direction
         self._peer_timeout = peer_timeout
 

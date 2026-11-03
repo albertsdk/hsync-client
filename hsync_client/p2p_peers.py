@@ -24,6 +24,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Literal
 
+from hsync_common.clock import now_corrected
 from hsync_common.endpoint import build_url
 from hsync_common.protocol.p2p import (
     SYNC_DIRECTION_BIDIRECTIONAL,
@@ -275,7 +276,9 @@ class PeerManager:
         self._group = group
         self._prefer_master = prefer_master
         self._never_master = never_master
-        self._startup_time = startup_time if startup_time > 0 else time.time()
+        # Cross-host election timebase: the SNTP-corrected wall clock, not the
+        # raw local clock (see RendezvousPlanState._init_common_fields).
+        self._startup_time = startup_time if startup_time > 0 else now_corrected()
         self._sync_direction = sync_direction
         self._local_cert_fingerprint = local_cert_fingerprint
         self._local_address = local_address

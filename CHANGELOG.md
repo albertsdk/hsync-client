@@ -38,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of disabling itself, so the master is no longer left awaiting the inventory.
 - The election log names the sort-key component that decided it, not the
   winner's highest flag.
+- A `startup_time` election tie is broken on the SNTP-corrected clock, so a host
+  whose clock runs behind no longer wins it by accident.
 - A resumable upload whose preflight offset no longer matches the peer's
   `.part` (a duplicate writer appended bytes, or the partial was already
   renamed) answers `202` with the true offset and keeps the partial — the peer
