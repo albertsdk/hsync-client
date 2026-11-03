@@ -186,6 +186,16 @@ class RendezvousSource(Protocol):
         """True when the source stopped for good (an untrusted node)."""
         ...
 
+    def discovery_settled(self) -> bool:
+        """True once a first query round was answered, or the grace elapsed.
+
+        The master-claim gate reads it, so a node never advertises itself as
+        the serving master before it has had one chance to see an
+        already-serving peer. Bounded by the source's own grace, so an
+        unreachable rendezvous never blocks a lone node from serving.
+        """
+        ...
+
     def update_server_ready(self) -> None:
         """Publish that the local master server is ready to accept peers."""
         ...
