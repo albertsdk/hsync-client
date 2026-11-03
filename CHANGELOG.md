@@ -57,6 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The p2p rendezvous republishes its endpoint candidates when the local
+  candidate list changes (a new/removed interface), not only when the
+  default-route address changes, so the node stops relaying stale candidates.
 - A multi-homed node no longer reports its own mDNS record as a cloned device
   identity when the record lists a secondary interface first: the self-record
   check accepts any address the node announces, not only the primary one.

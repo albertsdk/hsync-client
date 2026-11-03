@@ -23,6 +23,7 @@ from hsync_common.protocol.rendezvous import (
 from hsync_client.p2p_peers import Peer, PeerManager
 from hsync_client.p2p_rendezvous_rdv import (
     _TEST_ADVERTISED_ENDPOINTS_ENV,
+    _TEST_ADVERTISED_ENDPOINTS_FILE_ENV,
     RdvRendezvous,
 )
 from hsync_client.rdv_client import (
@@ -919,6 +920,35 @@ class TestAdvertisedEndpointsOverride:
         plan, _ = make_plan()
         with pytest.raises(ValueError):
             plan._endpoint_wire(["192.0.2.10"])
+
+    def test_file_seam_replaces_the_derived_candidates(self, monkeypatch, tmp_path):
+        """The file seam feeds the register frame, re-read on every call."""
+        seam = tmp_path / "endpoints"
+        seam.write_text("198.51.100.7:8443,198.51.100.8:8443\n", encoding="utf-8")
+        monkeypatch.setenv(_TEST_ADVERTISED_ENDPOINTS_FILE_ENV, str(seam))
+        monkeypatch.delenv(_TEST_ADVERTISED_ENDPOINTS_ENV, raising=False)
+        plan, _ = make_plan()
+        assert plan._endpoint_wire(["192.0.2.10"]) == [
+            {"proto": "tcp", "host": "198.51.100.7", "port": 8443},
+            {"proto": "tcp", "host": "198.51.100.8", "port": 8443},
+        ]
+
+    def test_a_changed_file_seam_triggers_a_republish(self, monkeypatch, tmp_path):
+        """Rewriting the seam file republishes the new candidates (runtime seam)."""
+        seam = tmp_path / "endpoints"
+        seam.write_text("192.0.2.20:8443\n", encoding="utf-8")
+        monkeypatch.setenv(_TEST_ADVERTISED_ENDPOINTS_FILE_ENV, str(seam))
+        monkeypatch.delenv(_TEST_ADVERTISED_ENDPOINTS_ENV, raising=False)
+        plan, _ = make_plan()
+        plan.update_server_ready()
+        plan._publish_endpoint()
+        assert plan._republish_stale_endpoint() is False
+
+        seam.write_text("198.51.100.7:8443\n", encoding="utf-8")
+        assert plan._republish_stale_endpoint() is True
+        plan._publish_endpoint()
+        _kind, frame = plan._client.calls[-1]
+        assert frame["endpoints"] == [{"proto": "tcp", "host": "198.51.100.7", "port": 8443}]
 
 
 class TestMasterClaimGate:

@@ -29,7 +29,7 @@ from __future__ import annotations
 import os
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from hsync_common.endpoint import format_authority
@@ -100,6 +100,27 @@ _DEFAULT_REFRESH_S = RENDEZVOUS_REFRESH_INTERVAL
 # test can make a real master advertise undialable candidates on a single host
 # and force the relayed path (``tests/test_bb_p2p_rendezvous_relay.py``).
 _TEST_ADVERTISED_ENDPOINTS_ENV = "HSYNC_P2P_TEST_ADVERTISED_ENDPOINTS"
+# File-based variant of the same override: re-read on every publish, so a test
+# can change the advertised endpoints of a *running* peer (the env value is fixed
+# at process start). The file holds the same comma-separated ``host:port`` list.
+_TEST_ADVERTISED_ENDPOINTS_FILE_ENV = "HSYNC_P2P_TEST_ADVERTISED_ENDPOINTS_FILE"
+
+
+def _test_advertised_endpoints_raw() -> str | None:
+    """Read the test override from the file seam, else the env seam."""
+    path = os.environ.get(_TEST_ADVERTISED_ENDPOINTS_FILE_ENV)
+    if path:
+        try:
+            with open(path, encoding="utf-8") as handle:
+                return handle.read().strip() or None
+        except OSError:
+            return None
+    return os.environ.get(_TEST_ADVERTISED_ENDPOINTS_ENV)
+
+
+def _wire_signature(wire: Sequence[Mapping[str, object]]) -> tuple[tuple[str, int], ...]:
+    """The ``(host, port)`` pairs of a wire ``endpoints[]`` list, as a signature."""
+    return tuple((str(entry["host"]), int(str(entry["port"]))) for entry in wire)
 
 
 def _test_advertised_endpoints() -> list[CandidateEndpoint] | None:
@@ -111,7 +132,7 @@ def _test_advertised_endpoints() -> list[CandidateEndpoint] | None:
     useless to a remote peer — while its real listener keeps serving loopback for
     the relay bridge. ``None`` (the production case) keeps the derived list.
     """
-    raw = os.environ.get(_TEST_ADVERTISED_ENDPOINTS_ENV)
+    raw = _test_advertised_endpoints_raw()
     if not raw:
         return None
     endpoints: list[CandidateEndpoint] = []
@@ -261,6 +282,10 @@ class RdvRendezvous(RendezvousPlanState):
         # publishes endpoints (a refresh does not), so this is what detects that
         # the candidates relayed by the node went stale after a network change.
         self._published_local_ip: str | None = None
+        # Candidate list carried by the last endpoint register. A changed list
+        # (a new/removed interface, or the test file seam) is republished like a
+        # changed address, so the node stops relaying stale candidates.
+        self._published_endpoints_sig: tuple[tuple[str, int], ...] | None = None
         self._external_port: int | None = None
         self._inbound = False
         # Master-claim gate state: whether a query round has been answered, and
@@ -525,32 +550,46 @@ class RdvRendezvous(RendezvousPlanState):
         self._burst_left = RENDEZVOUS_QUERY_BURST_COUNT
         self._wake.set()
 
+    def _advertised_signature(self) -> tuple[tuple[str, int], ...]:
+        """The local candidate list the next register would publish, as (host, port)."""
+        local_ips = [self._local_ip] if self._local_ip else get_local_ips()
+        return _wire_signature(self._endpoint_wire(local_ips, include_observed=False))
+
     def _republish_stale_endpoint(self) -> bool:
-        """Invalidate the published endpoints when the local address changed.
+        """Invalidate the published endpoints when the address or list changed.
 
         ``refresh`` carries no endpoints (only a full ``register`` does), so
         while the lease survives a network change the node keeps relaying the
         pre-outage candidates: the address a DHCP reassignment replaced, plus a
-        UPnP mapping that belongs to the previous network. Returns ``True`` when
-        the caller must publish the endpoints again.
+        UPnP mapping that belongs to the previous network. A changed candidate
+        list (a new/removed interface, or the test file seam) is republished the
+        same way. Returns ``True`` when the caller must publish again.
         """
         if not (self._endpoint_ready or self._server_ready or self._published_endpoints):
             return False
         if self._published_local_ip is None:
             return False
         current = self._local_ip or get_local_ip()
-        if current == self._published_local_ip:
-            return False
-        log.info(
-            f"Local address changed from {self._published_local_ip} to {current}; "
-            "republishing the rendezvous endpoint"
+        address_changed = current != self._published_local_ip
+        candidates_changed = (
+            self._published_endpoints_sig is not None
+            and self._advertised_signature() != self._published_endpoints_sig
         )
+        if not address_changed and not candidates_changed:
+            return False
+        if address_changed:
+            log.info(
+                f"Local address changed from {self._published_local_ip} to {current}; "
+                "republishing the rendezvous endpoint"
+            )
+        else:
+            log.info("Advertised endpoint list changed; republishing the rendezvous endpoint")
         self._published_endpoints = False
-        if self._shared_upnp is not None:
+        if self._shared_upnp is not None and address_changed:
             # The mapping was created on the previous network (another router or
             # external address): drop it so the next publish maps the live port.
             self._shared_upnp.unmap()
-        self._external_port = None
+            self._external_port = None
         return True
 
     # -- Lease loop ------------------------------------------------------------
@@ -772,6 +811,9 @@ class RdvRendezvous(RendezvousPlanState):
             if publish_endpoint:
                 self._published_endpoints = True
                 self._published_local_ip = local_ip
+                self._published_endpoints_sig = _wire_signature(
+                    self._endpoint_wire(local_ips, include_observed=False)
+                )
             self._sent_advert_generation = generation
             log.debug(
                 "Rendezvous register ok: observed "
@@ -928,7 +970,17 @@ class RdvRendezvous(RendezvousPlanState):
             endpoints=candidates,
         )
 
-    def _endpoint_wire(self, local_ips: Sequence[str]) -> list[dict[str, object]]:
+    def _endpoint_wire(
+        self, local_ips: Sequence[str], *, include_observed: bool = True
+    ) -> list[dict[str, object]]:
+        """The ``endpoints[]`` list for the register frame.
+
+        ``include_observed=False`` drops the server-reflexive candidate: the
+        stale-endpoint signature tracks only the *local* candidate set (the
+        interfaces and the UPnP mapping), which is what a network change
+        invalidates. The observed address is re-learned on every register, so it
+        must not look like a change.
+        """
         override = _test_advertised_endpoints()
         if override is not None:
             return [candidate.as_wire() for candidate in override]
@@ -937,7 +989,7 @@ class RdvRendezvous(RendezvousPlanState):
             for candidate in candidate_endpoints(
                 local_ips=local_ips,
                 listen_port=self._port,
-                observed=self._observed,
+                observed=self._observed if include_observed else None,
                 external_port=self._external_port,
             )
         ]

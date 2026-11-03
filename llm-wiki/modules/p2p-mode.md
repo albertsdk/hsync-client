@@ -189,9 +189,17 @@ Rendezvous recovers on its own when the host loses and regains connectivity
   the lease loop; before each action the loop runs
   `p2p_rendezvous_rdv.py::RdvRendezvous._republish_stale_endpoint`, which
   compares the sampled address with `_published_local_ip` (recorded by the last
-  endpoint register) and, on a difference, clears `_published_endpoints`, drops
-  the UPnP mapping/`_external_port` from the previous network and forces a full
-  register with the fresh candidates.
+  endpoint register) and the *local* candidate list with
+  `_published_endpoints_sig` (a new/removed interface, or the test file seam) and,
+  on a difference, clears `_published_endpoints`, drops the UPnP
+  mapping/`_external_port` from the previous network (address change only) and
+  forces a full register with the fresh candidates. The observed
+  (server-reflexive) candidate is excluded from the signature: it is re-learned
+  on every register and must not look like a change.
+  `p2p_rendezvous_rdv.py::RdvRendezvous._advertised_signature` builds it. The
+  test-only seams (`_TEST_ADVERTISED_ENDPOINTS_ENV`, and the re-read-on-every-call
+  `_TEST_ADVERTISED_ENDPOINTS_FILE_ENV`) feed the same list, so
+  `tests/test_bb_p2p_master_endpoint_change.py` can move a *running* master.
 - **Self-record.** `p2p_peers.py::PeerManager.set_local_addresses` follows the new
   addresses (all announced interfaces), so the node's own record seen looped back
   is not reported as a duplicated device identity by
