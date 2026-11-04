@@ -34,8 +34,10 @@ import time
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
+from hsync_common.models.sentinel import is_sentinel_file
+
 from hsync_client.config import CONFIG
-from hsync_client.constants import HSYNCKEEP_FILENAME
+from hsync_client.empty_dirs import empty_dir_states
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.sync import _bucket_key, emit_folder_size, get_files_local
 
@@ -59,11 +61,6 @@ FileState = tuple[str, str, int, int]
 LocalIdentity = tuple[tuple[str, str], str, int]
 
 
-def _is_sentinel(path: str) -> bool:
-    """True for the internal empty-directory sentinel (never user content)."""
-    return path.rsplit("/", 1)[-1] == HSYNCKEEP_FILENAME
-
-
 def local_identities(local_files: Iterable[dict], bucket_dir: str) -> list[LocalIdentity]:
     """Comparable local entries: ``((path, sha256), absolute path, size)``.
 
@@ -77,7 +74,7 @@ def local_identities(local_files: Iterable[dict], bucket_dir: str) -> list[Local
         if not path or entry.get("type") == "symlink":
             continue
         key = _bucket_key(path, bucket_dir)
-        if not key or _is_sentinel(key):
+        if not key or is_sentinel_file(key):
             continue
         identity = (key, str(entry.get("sha256sum") or ""))
         entries.append((identity, path, max(int(entry.get("size", 0) or 0), 0)))
@@ -123,7 +120,7 @@ def _classify_entries(
     remote_like: list[dict] = []
     remote_only: dict[str, tuple[tuple[str, str], int]] = {}
     for identity, size in held.items():
-        if _is_sentinel(identity[0]):
+        if is_sentinel_file(identity[0]):
             continue
         remote_like.append({"filepath": identity[0], "size": size})
         if identity[0] not in local_paths:
@@ -132,45 +129,6 @@ def _classify_entries(
         coverage = -1 if holders is None else holders.get(identity, 0)
         states.append(("to_download", os.path.join(bucket_dir, path), size, coverage))
     return states, remote_like
-
-
-def _dir_states(
-    held: Mapping[tuple[str, str], int],
-    local_files: Iterable[dict],
-    bucket_dir: str,
-) -> list[tuple[str, str]]:
-    """``(state, bucket-relative dir)`` for every empty directory of the share.
-
-    An empty directory is synchronised as its ``.hsynckeep`` sentinel, which
-    :func:`local_identities` deliberately skips (it carries no content to
-    compare). The directory itself is a user-facing entry, so its own verdict
-    is derived from the sentinel identity: ``synced`` when the devices hold
-    it, ``to_upload`` when nobody does, and ``to_download`` for a sentinel only
-    the devices hold. It is the verdict a peer renders for the folder row.
-    """
-    states: list[tuple[str, str]] = []
-    local_dirs: set[str] = set()
-    for entry in local_files:
-        path = str(entry.get("filepath") or "")
-        if not path or entry.get("type") == "symlink":
-            continue
-        key = _bucket_key(path, bucket_dir)
-        if not key or not _is_sentinel(key):
-            continue
-        directory = key.rsplit("/", 1)[0]
-        if not directory:
-            continue
-        local_dirs.add(directory)
-        identity = (key, str(entry.get("sha256sum") or ""))
-        states.append(("synced" if identity in held else "to_upload", directory))
-    for identity in held:
-        key = identity[0]
-        if not _is_sentinel(key):
-            continue
-        directory = key.rsplit("/", 1)[0]
-        if directory and directory not in local_dirs:
-            states.append(("to_download", directory))
-    return states
 
 
 class MasterSyncStatus:
@@ -343,7 +301,7 @@ class MasterSyncStatus:
             )
         # The empty directories: their sentinel never becomes a file row, so
         # their own state is reported under the directory path.
-        for state, directory in _dir_states(comparison.held, local_files, bucket_dir):
+        for state, directory in empty_dir_states(comparison.held, local_files, bucket_dir):
             emit_event(UiEventName.dir_status, path=directory, state=state)
 
     def _local_listing(self) -> list[dict]:

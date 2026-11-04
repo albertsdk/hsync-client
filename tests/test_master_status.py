@@ -189,6 +189,25 @@ class TestCompareShare:
         assert comparison.holders[("shared.bin", DIGEST_A)] == 1
         assert comparison.held[("shared.bin", DIGEST_A)] == 4
 
+    def test_a_published_sentinel_stays_out_of_the_backlog(self, tmp_path):
+        """The empty-directory sentinel is internal: never a user backlog row."""
+        store = _store(
+            tmp_path,
+            [
+                {"path": "shared.bin", "sha256": DIGEST_A, "size": 4},
+                {"path": "empty/.hsynckeep", "sha256": DIGEST_B, "size": 0},
+            ],
+        )
+
+        comparison = store.compare_share([("shared.bin", DIGEST_A)])
+
+        view = comparison.devices[0]
+        assert view.held == 1  # only shared.bin
+        assert view.pending_here == 0  # the sentinel is not a user download
+        assert view.pending_there == 0
+        # The sentinel is still in the union, so the empty-dir verdict can use it.
+        assert comparison.held[("empty/.hsynckeep", DIGEST_B)] == 0
+
 
 class _Recorder:
     """Collect the emitted events (monkeypatched over ``emit_event``)."""

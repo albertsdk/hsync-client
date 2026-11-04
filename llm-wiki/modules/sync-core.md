@@ -113,8 +113,9 @@ pairing is the shared `sync.py::split_rename_pairs`; tombstone-backed
 
 An empty directory is synchronised as its internal `.hsynckeep` sentinel, which
 stays out of the plan (never user content). The directory itself is user
-content, so `preview.py::_emit_empty_dir_status` reports its own verdict through
-the `UiEventName.dir_status` event (`state` taken from the sentinel’s action,
+content, so `empty_dirs.py::empty_dir_states` derives its own verdict from the
+sentinel identity the peer’s listing holds and the preview emits it through the
+`UiEventName.dir_status` event (`state` `synced` / `to_upload` / `to_download`,
 `path` the directory): it is what settles the folder row of a directory that is
 in sync on every device, which no transfer ever names.
 

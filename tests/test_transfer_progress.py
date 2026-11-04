@@ -189,3 +189,31 @@ class TestStreamingBodyProgress:
         )
 
         assert b"".join(body)  # drains without a progress callback
+
+
+class TestSentinelTransfers:
+    """The engine never transfers the internal ``.hsynckeep`` sentinel.
+
+    Each peer maintains its own sentinels; the directory is propagated by the
+    directory event, so no download/upload terminal event ever names a sentinel.
+    The emitters are the single seam that enforces it.
+    """
+
+    def test_progress_reporter_is_none_for_a_sentinel(self):
+        assert progress.progress_reporter("docs/empty/.hsynckeep", 0, "upload") is None
+
+    def test_completed_transfer_emits_nothing_for_a_sentinel(self, monkeypatch):
+        events: list[tuple] = []
+        monkeypatch.setattr(progress, "emit_event", lambda name, **kw: events.append((name, kw)))
+
+        progress.emit_completed_transfer("upload", "docs/empty/.hsynckeep", 0)
+
+        assert events == []
+
+    def test_failed_transfer_emits_nothing_for_a_sentinel(self, monkeypatch):
+        events: list[tuple] = []
+        monkeypatch.setattr(progress, "emit_event", lambda name, **kw: events.append((name, kw)))
+
+        progress.emit_failed_transfer("upload", "docs/empty/.hsynckeep", "boom")
+
+        assert events == []

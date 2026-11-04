@@ -30,6 +30,7 @@ from typing import Any, Protocol
 from hsync_common.hashing import is_sha256_hex
 from hsync_common.models.event import is_valid_cid
 from hsync_common.models.file import File
+from hsync_common.models.sentinel import is_sentinel_file
 from hsync_common.protocol.peer_download import (
     P2P_INVENTORY_MAX_ENTRIES,
     P2P_INVENTORY_MAX_FRAME_BYTES,
@@ -886,6 +887,10 @@ class P2PInventoryStore:
         small int per distinct identity, the only structure that grows with the
         share.
 
+        The union and ``holders`` keep the empty-directory sentinel (the
+        empty-dir verdict reads it); the per-device tallies drop it, because it
+        is internal and never a user backlog entry.
+
         Consumers: ``hsync_client.master_status`` (the serving device reports a
         per-device verdict instead of a union that hides which device lags).
         """
@@ -923,6 +928,11 @@ class P2PInventoryStore:
                 identity = (str(row["path"]), str(row["sha256"]))
                 held.setdefault(identity, int(row["size"]))
                 holders[identity] = holders.get(identity, 0) + 1
+                # The empty-directory sentinel is internal (never user content):
+                # it stays out of the per-device backlog, so a device that
+                # already holds every user file reports no pending transfer.
+                if is_sentinel_file(identity[0]):
+                    continue
                 tally[0] += 1
                 if identity in local:
                     tally[2] += 1
