@@ -1840,9 +1840,12 @@ async def p2p_websocket_client(
         _slave_event_handler = None
         log.info("Client file watcher stopped")
         if connected:
-            # The link dropped; continuous mode returns to rendezvous and will
-            # emit "connected" again once a master is reached.
-            emit_event(UiEventName.status, status="connecting")
+            # The link dropped: report the same "waiting" state server mode uses
+            # for a lost link (not "connecting", which is the pre-connection
+            # state), so the front-end clears the stale presence and reports the
+            # loss. Continuous mode re-enters rendezvous and emits "connected"
+            # again once a master is reached.
+            emit_event(UiEventName.status, status="waiting")
 
 
 async def _p2p_periodic_resync(

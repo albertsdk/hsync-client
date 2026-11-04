@@ -599,6 +599,48 @@ class TestReconnectBackoffWaker:
         # counter, so the following failure starts from 0 again.
         assert attempts_seen == [0, 0]
 
+    @pytest.mark.asyncio
+    async def test_a_refused_handshake_backs_off_on_its_own_counter(self):
+        """A refused event channel retries with an escalating backoff.
+
+        The REST sync succeeds in the same iteration, so the refusal carries its
+        own attempt counter: a shared one would be reset by that success and the
+        retry would sit at the base delay, hammering a server that keeps
+        refusing.
+        """
+        from hsync_client.exceptions import WebSocketHandshakeError
+        from hsync_client.remote_websocket import remote_connect
+
+        attempts_seen: list[int] = []
+
+        async def mock_sync():
+            return None
+
+        async def mock_remote_events():
+            raise WebSocketHandshakeError("refused")
+
+        async def mock_backoff(attempts, *, log_msg, waker=None):
+            attempts_seen.append(attempts)
+            if len(attempts_seen) >= 3:
+                raise KeyboardInterrupt("stop")
+            return attempts + 1
+
+        monitor = self._Monitor()
+        with (
+            patch(
+                "hsync_client.remote_websocket.CONFIG",
+                {"RESYNC": None, "RECONNECT_DELAY": 0.01},
+            ),
+            patch("hsync_client.remote_websocket.sync", mock_sync),
+            patch("hsync_client.remote_websocket.remote_events", mock_remote_events),
+            patch("hsync_client.remote_websocket._reconnect_backoff", mock_backoff),
+            patch("hsync_client.remote_websocket.get_network_monitor", lambda: monitor),
+        ):
+            with contextlib.suppress(KeyboardInterrupt):
+                await remote_connect()
+
+        assert attempts_seen == [0, 1, 2]
+
 
 class TestRemoteConnect:
     """Tests for remote_connect function."""
@@ -994,9 +1036,10 @@ class TestRemoteEvents:
 
     @pytest.mark.asyncio
     async def test_remote_events_authentication_failed(self):
-        """remote_events returns early when authentication fails."""
+        """remote_events ends the attempt when authentication fails."""
         from json import dumps
 
+        from hsync_client.exceptions import WebSocketHandshakeError
         from hsync_client.remote_websocket import remote_events
 
         # Mock failed auth response
@@ -1026,11 +1069,12 @@ class TestRemoteEvents:
             patch("hsync_client.remote_websocket.CONFIG", config),
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.remote_websocket.log") as mock_log,
+            pytest.raises(WebSocketHandshakeError),
         ):
             await remote_events()
 
-            # Should return early without processing events
-            mock_websocket.recv.assert_called_once()
+        # The refusal is the whole attempt: nothing beyond the auth frame was read.
+        mock_websocket.recv.assert_called_once()
 
         # A failed authentication must never reach the readiness threshold.
         ready_msgs = [
@@ -1042,9 +1086,10 @@ class TestRemoteEvents:
 
     @pytest.mark.asyncio
     async def test_remote_events_protocol_incompatible(self):
-        """remote_events returns early when the server protocol mismatches."""
+        """remote_events ends the attempt when the server protocol mismatches."""
         from json import dumps
 
+        from hsync_client.exceptions import WebSocketHandshakeError
         from hsync_client.remote_websocket import remote_events
 
         # Auth accepted but the server speaks a different wire protocol.
@@ -1075,11 +1120,12 @@ class TestRemoteEvents:
             patch("hsync_client.remote_websocket.connect", return_value=mock_websocket),
             patch("hsync_client.remote_websocket.CONFIG", config),
             patch("hsync_client.event_dispatch.CONFIG", config),
+            pytest.raises(WebSocketHandshakeError),
         ):
             await remote_events()
 
-            # Should return early after sending the auth frame.
-            mock_websocket.send.assert_called_once()
+        # The auth frame was sent before the version check refused the channel.
+        mock_websocket.send.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_remote_events_ssl_no_verify(self):
@@ -1491,3 +1537,148 @@ class TestRemoteEventsAuthToken:
             sent = mock_websocket.send.call_args.args[0]
             payload = loads(sent)
             assert payload["token"] == "env-var-token"
+
+
+class TestRemoteEventsLinkStatus:
+    """The ``connected`` status follows the event channel's handshake.
+
+    The status a front-end reads means the channel is live: it flips to
+    ``connected`` once the handshake succeeds and to ``waiting`` when the server
+    refuses it. A refusal ends the attempt (``WebSocketHandshakeError``) and
+    marks the channel not ready, so the caller backs off instead of retrying a
+    server that keeps refusing.
+    """
+
+    @staticmethod
+    def _config() -> dict:
+        return {
+            "CID": "my_client",
+            "LOCAL_BUCKET": "/tmp/bucket",
+            "REMOTE_BUCKET": "testbucket",
+            "NO_VERIFY_SSL": False,
+            "CA_CERT": None,
+            "RECONNECT_DELAY": 0.01,
+            "RESYNC": None,
+            "SERVER_COMPRESSION_ENABLED": False,
+            "API": {"events": "wss://api.example.com/events"},
+            "API_KEY": "test-token",
+        }
+
+    @staticmethod
+    def _socket(auth_response: dict):
+        from json import dumps
+
+        mock_websocket = AsyncMock()
+        mock_websocket.__aenter__ = AsyncMock(return_value=mock_websocket)
+        mock_websocket.__aexit__ = AsyncMock(return_value=None)
+        mock_websocket.send = AsyncMock()
+        mock_websocket.recv = AsyncMock(return_value=dumps(auth_response))
+        return mock_websocket
+
+    @pytest.mark.asyncio
+    async def test_a_refused_handshake_reports_waiting(self):
+        """An auth refusal leaves the channel unusable and ends the attempt."""
+        from hsync_client.exceptions import WebSocketHandshakeError
+        from hsync_client.remote_websocket import remote_events
+
+        mock_websocket = self._socket({"type": "auth", "status": "failed", "reason": "bad key"})
+        statuses: list[str] = []
+        ready: list[bool] = []
+
+        with (
+            patch("hsync_client.remote_websocket.connect", return_value=mock_websocket),
+            patch("hsync_client.remote_websocket.CONFIG", self._config()),
+            patch("hsync_client.event_dispatch.CONFIG", self._config()),
+            patch("hsync_client.remote_websocket.set_link_status", side_effect=statuses.append),
+            patch(
+                "hsync_client.remote_websocket.set_event_channel_ready", side_effect=ready.append
+            ),
+            pytest.raises(WebSocketHandshakeError),
+        ):
+            await remote_events()
+
+        assert statuses == ["waiting"]
+        assert ready == [False]
+
+    @pytest.mark.asyncio
+    async def test_a_version_mismatch_reports_waiting(self):
+        """A protocol-incompatible server leaves the channel unusable."""
+        from hsync_client.exceptions import WebSocketHandshakeError
+        from hsync_client.remote_websocket import remote_events
+
+        mock_websocket = self._socket(
+            {
+                "type": "auth",
+                "status": "ok",
+                "protocol_version": "ws/999",
+                "app_version": "1.0.0",
+                "capabilities": [],
+            }
+        )
+        statuses: list[str] = []
+        ready: list[bool] = []
+
+        with (
+            patch("hsync_client.remote_websocket.connect", return_value=mock_websocket),
+            patch("hsync_client.remote_websocket.CONFIG", self._config()),
+            patch("hsync_client.event_dispatch.CONFIG", self._config()),
+            patch("hsync_client.remote_websocket.set_link_status", side_effect=statuses.append),
+            patch(
+                "hsync_client.remote_websocket.set_event_channel_ready", side_effect=ready.append
+            ),
+            pytest.raises(WebSocketHandshakeError),
+        ):
+            await remote_events()
+
+        assert statuses == ["waiting"]
+        assert ready == [False]
+
+    @pytest.mark.asyncio
+    async def test_connected_follows_a_successful_handshake(self):
+        """The status flips to ``connected`` once the handshake succeeds."""
+        from hsync_client.remote_websocket import remote_events
+
+        mock_websocket = self._socket(
+            {
+                "type": "auth",
+                "status": "ok",
+                "protocol_version": "ws/1",
+                "app_version": "1.0.0",
+                "capabilities": [],
+            }
+        )
+        timeline: list[str] = []
+        ready: list[bool] = []
+        mock_websocket.send = AsyncMock(side_effect=lambda *_: timeline.append("auth_sent"))
+
+        mock_observer = MagicMock()
+        queue_mock = MagicMock()
+        queue_mock.process = AsyncMock()
+        queue_mock.stop = MagicMock()
+
+        def mock_create_task(coro):
+            return _close_coro_and_return_task(coro)
+
+        with (
+            patch("hsync_client.remote_websocket.connect", return_value=mock_websocket),
+            patch("hsync_client.remote_websocket.CONFIG", self._config()),
+            patch("hsync_client.event_dispatch.CONFIG", self._config()),
+            patch("hsync_client.remote_websocket.EventQueue", return_value=queue_mock),
+            patch("hsync_client.remote_websocket.RemoteFileEventHandler"),
+            patch("hsync_client.remote_websocket.WatcherManager", return_value=mock_observer),
+            patch(
+                "hsync_client.remote_websocket._process_remote_events",
+                side_effect=_StopLoop("Stop"),
+            ),
+            patch("hsync_client.remote_websocket.create_task", side_effect=mock_create_task),
+            patch("hsync_client.remote_websocket.set_link_status", side_effect=timeline.append),
+            patch(
+                "hsync_client.remote_websocket.set_event_channel_ready", side_effect=ready.append
+            ),
+        ):
+            with contextlib.suppress(_StopLoop):
+                await remote_events()
+
+        assert "connected" in timeline
+        assert timeline.index("connected") > timeline.index("auth_sent")
+        assert ready == [True]

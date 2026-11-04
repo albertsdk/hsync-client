@@ -32,10 +32,12 @@ __all__ = [
     "emit_progress",
     "emit_warning",
     "emit_warning_cleared",
+    "event_channel_ready",
     "note_condition_standing",
     "get_emitter",
     "init_emitter",
     "reset_warning_dedup",
+    "set_event_channel_ready",
 ]
 
 # Atomicity unit of a pipe write (POSIX ``PIPE_BUF``): a line no longer than
@@ -158,15 +160,22 @@ _emitter: EventEmitter | None = None
 # first report), so only transitions reach the consumer.
 _link_status: str | None = None
 
+# Whether the realtime event channel is usable. In server mode a successful REST
+# round reports ``connected`` (the data plane works) and must never override a
+# refused event channel: the status a front-end reads means the channel is live,
+# exactly as in p2p mode.
+_event_channel_ready: bool = True
+
 
 def init_emitter(fd: int | None) -> EventEmitter:
     """Install the process-wide emitter bound to *fd* (replacing any prior one)."""
-    global _emitter, _link_status
+    global _emitter, _link_status, _event_channel_ready
     if _emitter is not None:
         _emitter.close()
     _emitter = EventEmitter(fd)
     # A fresh channel starts from "nothing published yet".
     _link_status = None
+    _event_channel_ready = True
     return _emitter
 
 
@@ -296,3 +305,22 @@ def set_link_status(status: str) -> None:
         return
     _link_status = status
     emit_event(UiEventName.status, status=status)
+
+
+def event_channel_ready() -> bool:
+    """Whether the realtime event channel is usable.
+
+    Read by the REST round before it reports ``connected``: a refused handshake
+    leaves the status at ``waiting`` until the channel is established again.
+    """
+    return _event_channel_ready
+
+
+def set_event_channel_ready(ready: bool) -> None:
+    """Record whether the realtime event channel is usable.
+
+    The event channel owns this fact: ``False`` after a refused handshake,
+    ``True`` once it is authenticated.
+    """
+    global _event_channel_ready
+    _event_channel_ready = ready

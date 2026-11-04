@@ -517,8 +517,9 @@ def _read_pipe(read_fd: int) -> list[str]:
 class TestRemoteRoundLinkStatus:
     """A successful remote round publishes ``connected``.
 
-    The event channel connects only *after* the initial sync, so before this the
-    status stayed at "waiting"/"connecting" while the cycle was transferring.
+    The event channel connects *after* the initial sync, so the REST round
+    reports the link while the cycle is transferring. A refused event channel
+    keeps the status at ``waiting``.
     """
 
     class _Stop(Exception):
@@ -579,6 +580,13 @@ class TestRemoteRoundLinkStatus:
 
     def test_a_successful_remote_round_reports_connected(self, tmp_path):
         assert self._statuses(tmp_path, p2p_mode=False) == ["connected"]
+
+    def test_a_refused_event_channel_keeps_the_status(self, tmp_path):
+        """The REST round does not override a refused event channel."""
+        from hsync_client import sync as sync_mod
+
+        with patch.object(sync_mod, "event_channel_ready", return_value=False):
+            assert self._statuses(tmp_path, p2p_mode=False) == []
 
     def test_a_p2p_round_keeps_the_peer_based_status(self, tmp_path):
         assert self._statuses(tmp_path, p2p_mode=True) == []

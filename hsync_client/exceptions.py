@@ -56,6 +56,20 @@ class ServerError(NetworkError):
     default_message = "Server error"
 
 
+class WebSocketHandshakeError(NetworkError):
+    """The server refused the WebSocket handshake.
+
+    Raised when the event channel cannot be established: a pinned certificate
+    fingerprint that no longer matches, an authentication refusal, or a wire
+    protocol version the client does not speak. The channel is unusable, so the
+    caller retries the connection after a backoff instead of treating the
+    attempt as a completed session.
+    """
+
+    error_code = "HSYNC-C2006"
+    default_message = "WebSocket handshake refused"
+
+
 # =============================================================================
 # Sync Operation Errors (C3XXX)
 # =============================================================================

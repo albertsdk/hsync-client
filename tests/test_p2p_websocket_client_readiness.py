@@ -126,8 +126,8 @@ class TestP2PWebsocketClientReadiness:
         assert ready_msgs == [], f"no [READY] expected on failed auth, got {ready_msgs!r}"
 
     @pytest.mark.asyncio
-    async def test_status_connected_then_connecting(self, tmp_path):
-        """The slave reports the link up (connected) and the drop (connecting)."""
+    async def test_status_connected_then_waiting(self, tmp_path):
+        """The slave reports the link up (connected) and the drop (waiting)."""
         import hsync_client.p2p_websocket as ws
         from hsync_client.events import UiEventName
 
@@ -142,4 +142,4 @@ class TestP2PWebsocketClientReadiness:
             await ws.p2p_websocket_client("master.local", 9000)
 
         statuses = [kw.get("status") for name, kw in events if name == UiEventName.status]
-        assert statuses == ["connected", "connecting"]
+        assert statuses == ["connected", "waiting"]

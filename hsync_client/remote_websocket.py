@@ -27,7 +27,7 @@ from functools import partial
 from json import JSONDecodeError, dumps, loads
 from random import uniform
 from ssl import CERT_NONE, Purpose, create_default_context
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
 from hsync_common.models.event import Event, EventName
 from hsync_common.models.file import File
@@ -50,8 +50,8 @@ from hsync_client.constants import (
 )
 from hsync_client.event_dispatch import EventDispatchContext, apply_inbound_event
 from hsync_client.event_queue import EventQueue
-from hsync_client.events import UiEventName, emit_event, set_link_status
-from hsync_client.exceptions import WatcherStartError
+from hsync_client.events import UiEventName, emit_event, set_event_channel_ready, set_link_status
+from hsync_client.exceptions import WatcherStartError, WebSocketHandshakeError
 from hsync_client.file_event_handler import BaseFileEventHandler
 from hsync_client.net_watch import (
     NetworkChangeMonitor,
@@ -132,6 +132,18 @@ def _verify_server_wss_fingerprint(websocket: Any, expected_fingerprint: str) ->
     return False
 
 
+def _refuse_event_channel(reason: str) -> NoReturn:
+    """Report an unusable event channel and end the attempt.
+
+    A refused handshake leaves no usable channel: the status stops claiming a
+    live link and the caller retries the whole connection after a backoff,
+    instead of treating the attempt as a completed session.
+    """
+    set_event_channel_ready(False)
+    set_link_status("waiting")
+    raise WebSocketHandshakeError(reason)
+
+
 async def remote_events() -> None:
     """
     Handle continuous synchronization via WebSocket events.
@@ -188,10 +200,9 @@ async def remote_events() -> None:
         if expected_fingerprint and not _verify_server_wss_fingerprint(
             websocket, str(expected_fingerprint)
         ):
-            return
+            _refuse_event_channel("Server WSS certificate fingerprint changed")
 
         log.info(f"WebSocket connected to {uri}")
-        set_link_status("connected")
 
         # Authenticate via first message (more secure than URL token). The frame
         # follows the shared handshake contract (hsync_common.protocol.handshake);
@@ -215,7 +226,7 @@ async def remote_events() -> None:
                     f"Server protocol {auth_result.get('protocol_version')} is "
                     f"incompatible with client protocol {PROTOCOL_VERSION_WS}"
                 )
-            return
+            _refuse_event_channel("WebSocket authentication failed")
 
         # Enforce the wire-protocol version: a mismatch is a hard failure
         # (capabilities are feature flags within a version, never a bridge).
@@ -226,7 +237,7 @@ async def remote_events() -> None:
                 f"with client protocol {PROTOCOL_VERSION_WS}"
             )
             emit_event(UiEventName.auth_error, message="WebSocket protocol incompatible")
-            return
+            _refuse_event_channel("WebSocket protocol incompatible")
 
         # Parse the server's advertised capabilities for this session and adopt
         # them as the transfer gates (shared helper, same semantics as the P2P
@@ -239,6 +250,12 @@ async def remote_events() -> None:
             f"(server: {auth_result.get('app_version') or 'unknown'}, "
             f"compression: {compression_status})"
         )
+
+        # The event channel is authenticated: the link is usable, so the channel
+        # is marked ready and the status becomes "connected" (a refused or
+        # version-incompatible handshake never reports a live link).
+        set_event_channel_ready(True)
+        set_link_status("connected")
 
         log.debug(f"Sync reconnection delay: {CONFIG['RECONNECT_DELAY']} sec.")
         log.debug(f"Force resync: {CONFIG['RESYNC']} sec.")
@@ -537,6 +554,10 @@ async def remote_connect() -> None:
     waker = _ReconnectWaker(get_running_loop())
 
     _attempts = 0
+    # Handshake refusals accumulate their own backoff: a successful REST sync in
+    # the same iteration resets ``_attempts``, so a refused event channel would
+    # otherwise retry at the base delay forever.
+    _handshake_attempts = 0
     try:
         while True:
             try:
@@ -571,6 +592,10 @@ async def remote_connect() -> None:
                 # Enter continuous event monitoring
                 await remote_events()
 
+                # The channel was established and then ended: the handshake
+                # works, so the refusal backoff restarts from the base delay.
+                _handshake_attempts = 0
+
             except WatcherStartError:
                 # The local watcher could not start (inotify kernel limits). The
                 # parsable [WATCHER ERROR] line and the remediation hint were already
@@ -588,6 +613,17 @@ async def remote_connect() -> None:
                 _attempts = await _reconnect_backoff(
                     _attempts,
                     log_msg="WebSocket disconnected; reconnecting in {delay:.1f}s…",
+                    waker=waker,
+                )
+
+            except WebSocketHandshakeError:
+                # The server refused the event channel (certificate fingerprint,
+                # authentication or protocol version). Retrying immediately would
+                # hammer a server that keeps refusing, so back off with its own
+                # counter — the sync above succeeded, so ``_attempts`` is reset.
+                _handshake_attempts = await _reconnect_backoff(
+                    _handshake_attempts,
+                    log_msg="WebSocket handshake refused; reconnecting in {delay:.1f}s…",
                     waker=waker,
                 )
 

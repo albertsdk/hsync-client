@@ -73,6 +73,7 @@ from hsync_client.events import (
     emit_event,
     emit_warning,
     emit_warning_cleared,
+    event_channel_ready,
     set_link_status,
 )
 from hsync_client.exceptions import (
@@ -543,11 +544,10 @@ def _collect_listings(
     inventory_observer.replace_snapshot(local_files)
     remote_files = get_files_remote()
     emit_folder_size(local_files, remote_files)
-    if not CONFIG.get("P2P_MODE"):
-        # The REST round just proved the server link, so report it here
-        # instead of waiting for the event channel — which, in remote mode,
-        # only connects *after* the initial sync: the status used to read
-        # "waiting" while the cycle was transferring data.
+    if not CONFIG.get("P2P_MODE") and event_channel_ready():
+        # The REST round proves the data plane works, so report "connected" here
+        # instead of waiting for the event channel, which connects *after* the
+        # initial sync. A refused channel keeps the status at "waiting".
         set_link_status("connected")
     return local_files, remote_files
 

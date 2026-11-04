@@ -83,7 +83,16 @@ the WSS event stream pins the live connection via
   measured RTT/bandwidth rather than the startup safe defaults.
   Any failure of the event channel — `ConnectionClosed` or an unexpected
   exception — reports `waiting` (`remote_websocket.py::remote_events`), so the
-  desktop never keeps claiming a live link while the loop is retrying.
+  desktop never keeps claiming a live link while the loop is retrying. The
+  event channel owns the status: `connected` is published only after the auth
+  handshake and its protocol-version check succeed, and a refused handshake
+  (certificate fingerprint, authentication or protocol version) publishes
+  `waiting`, marks the channel not ready (`events.py::set_event_channel_ready`)
+  and raises `exceptions.py::WebSocketHandshakeError` so the loop backs off on
+  its own attempt counter. While the channel is not ready the REST round does
+  not report `connected` (`sync.py::_collect_listings` consults
+  `events.py::event_channel_ready`), so a refused channel keeps reading
+  `waiting` instead of flipping on every cycle.
 - **Initial connectivity check** (`main_logic._check_server_connectivity`
   `main_logic.py::_check_server_connectivity`) runs before the WS loop and uses exponential backoff
   with **7 attempts, 1–30 s** (default: `CONNECTIVITY_RETRY_*` constants,
