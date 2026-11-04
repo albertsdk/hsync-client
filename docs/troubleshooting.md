@@ -23,47 +23,39 @@ a rendezvous banner), but the peer list stays empty and no sync happens.
   mDNS was intended → a rendezvous is configured; unset `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS` (or drop
   the positional).
 
-## After a network change a device stays "waiting"
+## After a network change a device shows "Waiting…"
 
 **Symptom.** The host lost its connection (Wi-Fi reconnect, cable unplugged,
-another network) and regained it a while ago, but hsync-desktop keeps showing
-**Waiting…** even though the other device is online. Stopping and starting the
-sync makes it work again.
+another network) and regained it, and hsync-desktop shows **Waiting…**.
 
 **Cause.** Rendezvous advertises the host's local address and holds sockets bound
-to the live interface. An older client keeps announcing the pre-outage address (a
-DHCP reassignment replaces it) and never reconciles those sockets, so peers keep
-dialing an endpoint that no longer exists until the process is restarted.
+to the live interface, so a network change must be reconciled before peers can
+reach the node again.
 
 **Remedy.**
 
-- Current builds recover on their own and say so in the log:
+- The client recovers on its own and says so in the log:
   `Network link restored: local address …`, then
   `mDNS discovery rebuilt after a network change: OLD -> NEW` and/or
   `Local address changed from OLD to NEW; republishing the rendezvous endpoint`.
-  No restart is needed.
 - A serving node with no connected device is legitimately **Waiting…** (the label
   is localized): check the role shown in the window. A **Primary node** waits for
   a device by design — the other side is the one that must find and connect to it.
-- On an older build the workaround is to stop and start the sync after the
-  network change.
 
-## Server mode takes a long time to reconnect
+## Server mode reconnects slowly
 
-**Symptom.** In server mode the link drops, the status reads **Waiting…** and
-then **Syncing…** (both labels are localized), and the client keeps retrying well
-after the network is back.
+**Symptom.** In server mode the link drops and the status reads **Waiting…** and
+then **Syncing…** (both labels are localized).
 
 **Cause.** The reconnect loop backs off exponentially with full jitter, capped at
 the retry delay (`--retry-delay`, up to 60 s), and every attempt runs a full
-sync whose requests are bounded by the HTTP timeout. An outage therefore keeps
-delaying the next attempt even once connectivity returns.
+sync whose requests are bounded by the HTTP timeout.
 
 **Remedy.**
 
-- Current builds end the backoff as soon as the host regains connectivity and
-  drop the accumulated retry delay once a sync completes, so recovery is
-  immediate and needs no restart.
+- Recovery is prompt once the host regains connectivity: the client ends the
+  backoff on the network change and drops the accumulated retry delay once a sync
+  completes.
 - If it still fails after the link is back, the problem is the server (see
   [Server mode](server-mode.md)): check the connection settings, the API key and
   the server certificate pin/trust errors reported in the log.
@@ -201,19 +193,19 @@ If the command fails, the hard limit is lower — raise the hard limit (or use
 connections/transfers (see the bandwidth and connection
 settings in [Configuration](configuration.md)).
 
-## An inbound transfer reports "exceeds the maximum download size (N bytes)"
+## An inbound transfer reports "received more bytes than the size declared by the remote (N bytes)"
 
 **Symptom.** A download is aborted with `… received more bytes than the size
-declared by the remote (N bytes)` — or, on an older build, the misleading
-`exceeds the maximum download size (N bytes)` — even though `--max-inbound-size`
-is set much higher than `N`.
+declared by the remote (N bytes)` even though `--max-inbound-size` is set much
+higher than `N`.
 
 **Cause.** `N` is **not** the configured cap: it is the size the remote party
 declared for that file in its listing. The transfer aborts because the bytes
 actually received exceed that declared size — the remote copy changed while it
 was being transferred (or a peer served a copy inconsistent with the listing).
-The absolute `--max-inbound-size` cap is a *different* check and would print a
-number equal to your configured MB value × 1 MiB.
+The absolute `--max-inbound-size` cap is a *different* check and reports
+`exceeds the maximum download size (N bytes)`, with a number equal to your
+configured MB value × 1 MiB.
 
 **Remedy.** Nothing is wrong with the limit configuration. The transfer is a
 *deferral*: once the source copy is stable — a file still being written, e.g.

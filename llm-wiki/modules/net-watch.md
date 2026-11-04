@@ -1,9 +1,9 @@
 # HSYNC Client — network-change recovery
 
 One daemon thread detects that the host lost or regained connectivity and tells
-the long-lived roles to recover **without a process restart**. Before this
-module, a link blip left a peer advertising a dead address and kept the other
-side in the desktop's "waiting" state until the client was restarted.
+the long-lived roles to recover **without a process restart**: a link blip must
+not leave a peer advertising a dead address nor the desktop stuck in its
+"waiting" state until the client is restarted.
 
 ## Symbols
 
