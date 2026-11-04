@@ -245,11 +245,12 @@ class TestRunPreview:
             assert any("TO DELETE" in str(call) for call in mock_logger.info.call_args_list)
 
     def test_preview_with_synced_files(self, tmp_path):
-        """Test preview showing files already in sync."""
+        """An in-sync file is DEBUG detail, but its row still reaches the GUI."""
         from hsync_common.models.file import File
         from hsync_common.models.sync_action import SyncAction, SyncActionName
 
         mock_logger = MagicMock()
+        events: list[tuple[str, dict]] = []
 
         config = {
             "P2P_MODE": False,
@@ -260,6 +261,9 @@ class TestRunPreview:
         file_obj.size = 256
         synced_action = SyncAction(file_obj, SyncActionName.nothing)
 
+        def _emit(event, **payload) -> None:
+            events.append((str(getattr(event, "value", event)), payload))
+
         with (
             patch("hsync_client.preview.CONFIG", config),
             patch("hsync_client.preview.ensure_hsynckeep_files"),
@@ -267,11 +271,24 @@ class TestRunPreview:
             patch("hsync_client.preview.get_files_remote", return_value=[]),
             patch("hsync_client.preview.get_tombstones_remote", return_value={}),
             patch("hsync_client.preview.get_sync_actions", return_value=[synced_action]),
+            patch("hsync_client.preview.emit_event", _emit),
         ):
             _run_preview(mock_logger)
 
-            # Should log synced file
-            assert any("SYNCED" in str(call) for call in mock_logger.info.call_args_list)
+        # The in-sync bulk is DEBUG detail (`-v`) and built lazily, so the line is
+        # produced only when the level is enabled and the default preview stays
+        # concise: never an INFO row for a file with nothing to do.
+        debug_calls = mock_logger.opt.return_value.debug.call_args_list
+        assert len(debug_calls) == 1
+        template, build_line = debug_calls[0].args
+        assert template == "{}"
+        assert "SYNCED" in build_line()
+        assert not any("SYNCED" in str(call) for call in mock_logger.info.call_args_list)
+
+        # The event is level-independent: it is what renders the row per file.
+        assert [payload for name, payload in events if name == "file_status"] == [
+            {"state": "synced", "file": str(tmp_path / "synced.txt"), "size": 256}
+        ]
 
     def test_preview_detects_renames(self, tmp_path):
         """Test preview detecting rename operations."""

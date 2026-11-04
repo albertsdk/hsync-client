@@ -70,6 +70,9 @@ Preview what would change without modifying files:
 hsync server --server-url server.example.com -n -b mybucket -p ~/Sync
 ```
 
+The plan lists one line per pending action and a closing summary; `-v` also
+lists the files already in sync.
+
 ### Conflict Handling
 
 The server is a **transport hub, not an authority**: it never decides conflicts

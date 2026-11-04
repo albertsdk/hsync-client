@@ -111,6 +111,12 @@ pairing is the shared `sync.py::split_rename_pairs`; tombstone-backed
 `delete_remote` rows are listed as `to_delete` too, since the run performs them
 (the keep policy and the mass-deletion guard still never see them).
 
+The plan's text log mirrors those events: one INFO line per pending action and a
+closing one-line summary, while a file already in sync is DEBUG detail (`-v`) and
+built lazily — it is the steady-state majority, so one INFO line per such file
+would drown the plan. The `file_status` event is emitted at every level: the row
+a front-end renders comes from it, never from the text log.
+
 An empty directory is synchronised as its internal `.hsynckeep` sentinel, which
 stays out of the plan (never user content). The directory itself is user
 content, so `empty_dirs.py::empty_dir_states` derives its own verdict from the

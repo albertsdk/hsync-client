@@ -75,6 +75,9 @@ no key is required):
 hsync p2p -n -b mybucket -p ~/Sync
 ```
 
+The plan lists one line per pending action and a closing summary; `-v` also
+lists the files already in sync.
+
 ### Conflict Handling
 
 The elected master is a **transport hub, not an authority**: it serves bytes and

@@ -19,7 +19,8 @@ These patterns apply to **both** Server Mode and p2p Mode.
 hsync server --server-url server.example.com -n -b mybucket -p ~/Sync
 ```
 
-Shows what would change without modifying any files.
+Shows what would change without modifying any files: one line per pending action
+and a closing summary. Add `-v` to also list the files already in sync.
 
 ### 3.2 Verbose output
 

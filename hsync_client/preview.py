@@ -253,9 +253,24 @@ def _run_preview(log) -> None:
                     local=len(local_files),
                 )
 
-        # Emit structured messages for each file status (text log + event channel)
+        # Emit structured messages for each file status (text log + event channel).
+        # A file already in sync is the steady-state majority: its per-file line is
+        # DEBUG detail (`-v`) and is built lazily, so the default run pays neither
+        # the formatting nor the sink for it. The actionable states stay at INFO.
+        # The event is emitted at every level: a front-end renders a row per file
+        # from it, never from the text log.
+        for action in synced:
+            size = action.file.size or 0
+            log.opt(lazy=True).debug(
+                "{}",
+                lambda a=action, s=size: (
+                    f'{ActionLabel.SYNCED} "{a.file.filepath}" ({format_bytes(s)})'
+                ),
+            )
+            emit_event(
+                UiEventName.file_status, state="synced", file=action.file.filepath, size=size
+            )
         for actions, label, state in [
-            (synced, ActionLabel.SYNCED, "synced"),
             (downloads, ActionLabel.TO_DOWNLOAD, "to_download"),
             (uploads, ActionLabel.TO_UPLOAD, "to_upload"),
             (deletes + delete_remotes, ActionLabel.TO_DELETE, "to_delete"),
