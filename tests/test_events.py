@@ -24,9 +24,11 @@ from hsync_client.events import (
     emit_event,
     emit_progress,
     emit_warning,
+    emit_warning_cleared,
     get_emitter,
     get_link_status,
     init_emitter,
+    note_condition_standing,
     set_link_status,
 )
 
@@ -174,6 +176,12 @@ class TestWarningChannel:
         os.close(read_fd)
         return [event for event in parsed if event and event["event"] == "warning"]
 
+    def _cleared(self, read_fd: int) -> list[dict]:
+        get_emitter().close()
+        parsed = [parse_event_line(line) for line in _read_lines(read_fd)]
+        os.close(read_fd)
+        return [event for event in parsed if event and event["event"] == "warning_cleared"]
+
     def test_a_warning_carries_its_source(self):
         read_fd = self._capture()
 
@@ -211,6 +219,48 @@ class TestWarningChannel:
         read_fd = self._capture()
         emit_warning("same", source="watcher")
         assert len(self._warnings(read_fd)) == 1
+
+    def test_a_cleared_warning_carries_its_source(self):
+        read_fd = self._capture()
+        emit_warning("Rendezvous node:443 unreachable", source="rendezvous")
+
+        emit_warning_cleared("rendezvous")
+
+        cleared = self._cleared(read_fd)
+        assert len(cleared) == 1
+        assert cleared[0]["source"] == "rendezvous"
+
+    def test_clearing_a_source_that_never_warned_publishes_nothing(self):
+        read_fd = self._capture()
+
+        emit_warning_cleared("watcher")
+
+        assert self._cleared(read_fd) == []
+
+    def test_a_retraction_can_be_repeated_after_a_new_warning(self):
+        read_fd = self._capture()
+        emit_warning("degraded", source="watcher")
+        emit_warning_cleared("watcher")
+        emit_warning("degraded again", source="watcher")
+        emit_warning_cleared("watcher")
+
+        assert len(self._cleared(read_fd)) == 2
+
+    def test_a_bespoke_condition_can_be_retracted(self):
+        """``no_master`` has its own event, but its retraction must still publish.
+
+        The front-end keys its entry on ``source``, and the retraction is only
+        published out of a standing source — so the producer of a bespoke
+        condition marks it standing where it emits the event.
+        """
+        read_fd = self._capture()
+        note_condition_standing("master")
+
+        emit_warning_cleared("master")
+
+        cleared = self._cleared(read_fd)
+        assert len(cleared) == 1
+        assert cleared[0]["source"] == "master"
 
 
 class TestProgressChannel:

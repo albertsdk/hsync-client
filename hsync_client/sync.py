@@ -68,7 +68,13 @@ from hsync_client.constants import (
     WORKER_MEMORY_BUDGET_BYTES,
     ActionLabel,
 )
-from hsync_client.events import UiEventName, emit_event, emit_warning, set_link_status
+from hsync_client.events import (
+    UiEventName,
+    emit_event,
+    emit_warning,
+    emit_warning_cleared,
+    set_link_status,
+)
 from hsync_client.exceptions import (
     AuthenticationError,
     DeclaredSizeMismatchError,
@@ -150,9 +156,16 @@ def _warn_disk_reserve(local_bucket: str) -> None:
     """Warn once per cycle when free space is below the configured reserve."""
     reserve = int(CONFIG.get("MIN_FREE_DISK_SPACE", 0) or 0)
     if reserve <= 0:
+        # No reserve is configured, so the condition cannot hold.
+        emit_warning_cleared("storage")
         return
     space = check_free_space(local_bucket, reserve_bytes=reserve)
-    if space.error is not None or space.ok:
+    if space.error is not None:
+        # The measurement failed: it says nothing about the condition either way.
+        return
+    if space.ok:
+        # The reserve is met again: the condition the warning described is gone.
+        emit_warning_cleared("storage")
         return
     log.warning(
         f"Free disk space below the reserve: {format_bytes(space.free_bytes)} available, "
@@ -250,6 +263,9 @@ async def periodic_resync(
                     )
                 else:
                     log.debug(skip_msg)
+                    # The running cycle is still within its interval: a stall
+                    # reported earlier is over.
+                    emit_warning_cleared("sync")
                 continue
             log.info(f"{label} ({CONFIG['RESYNC']} sec.)")
             await sync(
@@ -257,6 +273,8 @@ async def periodic_resync(
                 inventory_observer=inventory_observer,
                 source_resolver=source_resolver,
             )
+            # A cycle completed: the safety net is running again.
+            emit_warning_cleared("sync")
     except asyncio.CancelledError:
         raise
     except Exception as e:
@@ -1032,6 +1050,9 @@ async def sync(
             conflicts=0,
             guard_tripped=False,
         )
+
+    # The folder is reachable: whatever the missing-folder warning reported is over.
+    emit_warning_cleared("path")
 
     with _cycle_bookkeeping_lock:
         _sync_cycle_started_at = monotonic()

@@ -136,6 +136,13 @@ def _capture_warnings(monkeypatch) -> list[dict]:
     return warnings
 
 
+def _capture_cleared(monkeypatch) -> list[str]:
+    """Capture the warning retractions the handler publishes, in order."""
+    cleared: list[str] = []
+    monkeypatch.setattr(p2p_handler, "emit_warning_cleared", lambda source: cleared.append(source))
+    return cleared
+
+
 class _Plan:
     def __init__(self, dialer: _Dialer | None) -> None:
         self._dialer = dialer
@@ -310,6 +317,30 @@ def test_a_non_relay_refusal_never_claims_the_relay_is_disabled(monkeypatch) -> 
 
     assert warnings == []
     assert p2p_handler._relay_hint_masters == set()
+
+
+def test_pairing_the_relay_retracts_the_hint(monkeypatch) -> None:
+    """A node that can relay again leaves no "no data relay" problem behind."""
+    cleared = _capture_cleared(monkeypatch)
+    plan = _Plan(_Dialer(("127.0.0.1", 41234)))
+    try:
+        assert _relay_master_endpoint(plan, _Master(), log, _PEERS) == ("127.0.0.1", 41234)
+    finally:
+        _close_relay_dialer()
+
+    assert cleared == ["relay"]
+
+
+def test_a_refused_tunnel_retracts_nothing(monkeypatch) -> None:
+    """Nothing healed: a refusal keeps the problem standing."""
+    cleared = _capture_cleared(monkeypatch)
+
+    assert (
+        _relay_master_endpoint(_Plan(_RefusingDialer("relay_unavailable")), _Master(), log, _PEERS)
+        is None
+    )
+
+    assert cleared == []
 
 
 def test_a_relay_dialer_reports_no_refusal_before_an_attempt() -> None:

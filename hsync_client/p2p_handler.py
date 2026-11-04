@@ -47,7 +47,13 @@ from hsync_client.constants import (
     WATCHER_START_RETRY_DELAY_S,
     ActionLabel,
 )
-from hsync_client.events import UiEventName, emit_event, emit_warning
+from hsync_client.events import (
+    UiEventName,
+    emit_event,
+    emit_warning,
+    emit_warning_cleared,
+    note_condition_standing,
+)
 from hsync_client.exceptions import (
     AuthenticationError,
     NetworkError,
@@ -844,9 +850,17 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
                             UiEventName.no_master,
                             elapsed=int(now - no_master_since),
                         )
+                        # The condition is standing: its retraction (when an
+                        # election gives the group a primary again) must be
+                        # publishable.
+                        note_condition_standing("master")
                         no_master_warned = True
                 else:
                     no_master_since = None
+                    if no_master_warned:
+                        # The group has a primary again: retract the warning so a
+                        # front-end never reports a condition that is gone.
+                        emit_warning_cleared("master")
                     no_master_warned = False
 
                 if not seeder_attempted:
@@ -1438,6 +1452,8 @@ def _relay_master_endpoint(
     _relay_liveness = (peer_manager, master.cid)
     peer_manager.mark_relay_tunnel(master.cid, True)
     _relay_hint_masters.discard(master.cid)
+    # The relay pairs now: the "no data relay" problem it raised no longer holds.
+    emit_warning_cleared("relay")
     log.info(
         f"{ActionLabel.RELAY} master {master.cid} has no reachable inbound port; "
         "relaying the data plane through the rendezvous"
@@ -1622,6 +1638,10 @@ def _run_as_slave(
             log.warning(f"No reachable endpoint for master {master.cid}; retrying rendezvous.")
             return (not one_shot) or wait_indefinitely_for_peer, int(ExitCode.OK)
         master_host, master_port = endpoint
+        if not relayed:
+            # The master answered on a direct candidate again: the "no data relay"
+            # problem (its premise was "unreachable directly") no longer holds.
+            emit_warning_cleared("relay")
 
         # `master_url` is the transport address (loopback when relayed) and is
         # what the HTTP/WS client, the source resolver and the transfer core use.

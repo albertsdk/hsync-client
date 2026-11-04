@@ -858,6 +858,32 @@ class TestSyncCycleFlag:
 
         assert seen and seen[0] is not None, "cycle age was not visible mid-cycle"
         assert sync_mod.sync_cycle_age() is None
+
+    def test_a_reachable_folder_retracts_the_missing_folder_warning(self, tmp_path):
+        """The folder is back: the warning it raised no longer holds."""
+        import asyncio
+        from unittest.mock import patch
+
+        from hsync_client import sync as sync_mod
+
+        async def _run():
+            with (
+                patch.object(sync_mod, "CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+                patch.object(sync_mod, "get_files_local", return_value=[]),
+                patch.object(sync_mod, "get_files_remote", return_value=[]),
+                patch.object(sync_mod, "get_tombstones_remote", return_value={}),
+                patch.object(sync_mod, "push_tombstones_remote"),
+                patch.object(sync_mod, "_cleanup_partial_files"),
+                patch.object(sync_mod, "ensure_hsynckeep_files"),
+                patch.object(sync_mod, "sync_state"),
+                patch.object(sync_mod, "emit_warning_cleared") as cleared,
+            ):
+                await sync_mod.sync()
+            return cleared
+
+        cleared = asyncio.run(_run())
+
+        assert ("path",) in [call.args for call in cleared.call_args_list]
         assert sync_mod.seconds_since_last_cycle() is not None
 
     async def test_resync_warns_when_cycle_outlives_the_interval(self):

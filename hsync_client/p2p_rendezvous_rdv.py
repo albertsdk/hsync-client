@@ -50,7 +50,7 @@ from hsync_client.constants import (
     RENDEZVOUS_REFRESH_INTERVAL_MIN,
     RENDEZVOUS_SOURCE_LEASE_S,
 )
-from hsync_client.events import emit_warning
+from hsync_client.events import emit_warning, emit_warning_cleared
 from hsync_client.nat_traversal import CandidateEndpoint, candidate_endpoints
 from hsync_client.net_utils import get_local_ip, get_local_ips
 from hsync_client.net_watch import (
@@ -676,6 +676,10 @@ class RdvRendezvous(RendezvousPlanState):
                     f"Rendezvous {format_authority(self._rendezvous_host, self._rendezvous_port)}: "
                     f"{action} ok ({len(peers)} peer(s))"
                 )
+                # The node answered: whatever refusal or unreachability it
+                # reported no longer holds, so the warning is retracted (a no-op
+                # when nothing was standing).
+                emit_warning_cleared("rendezvous")
             self._wake.wait(timeout=max(self._query_interval(), backoff))
             self._wake.clear()
 

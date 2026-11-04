@@ -50,6 +50,21 @@ def _reset_realtime_pools():
 
 
 @pytest.fixture(autouse=True)
+def _reset_warning_channel():
+    """Give every test a fresh warning dedup/standing state (test isolation).
+
+    ``events._warning_seen`` and ``events._warning_sources`` are process-wide: a
+    warning one test raised would otherwise stay standing for the next one, and
+    the retraction it publishes would look like a real transition.
+    """
+    from hsync_client import events
+
+    events.reset_warning_dedup()
+    yield
+    events.reset_warning_dedup()
+
+
+@pytest.fixture(autouse=True)
 def _prevent_os_environ_leakage(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
     """Snapshot ``os.environ`` before each test and remove any keys added
     by the test afterwards.

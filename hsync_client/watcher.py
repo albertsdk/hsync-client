@@ -47,7 +47,7 @@ from watchdog.events import (
     FileMovedEvent,
 )
 
-from hsync_client.events import emit_warning
+from hsync_client.events import emit_warning, emit_warning_cleared
 
 # Per-watch event filter for the inotify backend: every class maps to the
 # kernel mask bits its handler consumes, EXCEPT FileOpenedEvent and
@@ -448,6 +448,9 @@ class WatcherManager:
             f"{ActionLabel.WATCHER_RESTORE} file watcher restored to inotify for "
             f"'{self._watch_path}'."
         )
+        # The degraded-watcher warning no longer holds: retract it so a front-end
+        # never reports a condition that is gone.
+        emit_warning_cleared("watcher")
 
     # -- logging -------------------------------------------------------------
 

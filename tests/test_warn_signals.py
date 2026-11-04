@@ -59,6 +59,39 @@ class TestDiskReserveWarning:
         warn_disabled.assert_not_called()
         probe.assert_not_called()
 
+    def test_the_warning_is_retracted_once_the_reserve_is_met_again(self, tmp_path):
+        with (
+            patch.object(sync_mod, "CONFIG", {"MIN_FREE_DISK_SPACE": 1024}),
+            patch.object(sync_mod, "check_free_space", return_value=_space(True)),
+            patch.object(sync_mod, "emit_warning_cleared") as cleared,
+        ):
+            sync_mod._warn_disk_reserve(str(tmp_path))
+
+        cleared.assert_called_once_with("storage")
+
+    def test_a_failed_measurement_retracts_nothing(self, tmp_path):
+        """A probe that failed says nothing about the condition either way."""
+        from hsync_common.disk import FreeSpaceCheck
+
+        failed = FreeSpaceCheck(ok=True, free_bytes=0, required_bytes=0, error="boom")
+        with (
+            patch.object(sync_mod, "CONFIG", {"MIN_FREE_DISK_SPACE": 1024}),
+            patch.object(sync_mod, "check_free_space", return_value=failed),
+            patch.object(sync_mod, "emit_warning_cleared") as cleared,
+        ):
+            sync_mod._warn_disk_reserve(str(tmp_path))
+
+        cleared.assert_not_called()
+
+    def test_a_disabled_reserve_retracts_the_warning(self, tmp_path):
+        with (
+            patch.object(sync_mod, "CONFIG", {"MIN_FREE_DISK_SPACE": 0}),
+            patch.object(sync_mod, "emit_warning_cleared") as cleared,
+        ):
+            sync_mod._warn_disk_reserve(str(tmp_path))
+
+        cleared.assert_called_once_with("storage")
+
 
 class TestMissingBucketWarning:
     def test_a_vanished_shared_folder_is_reported(self, tmp_path):
@@ -125,6 +158,32 @@ class TestSafetyNetWarning:
         warn.assert_called()
         assert warn.call_args.kwargs["source"] == "sync"
         assert warn.call_args.kwargs["reason"] == "safety_net_stalled"
+
+    def test_a_completed_cycle_retracts_the_warning(self):
+        """The safety net runs again: the stall is over."""
+        import asyncio as aio
+        from contextlib import suppress
+
+        async def _noop_sync(**_kwargs) -> None:
+            return None
+
+        async def _run():
+            with (
+                patch.object(sync_mod, "CONFIG", {"RESYNC": 0.01}),
+                patch.object(sync_mod, "sync", _noop_sync),
+                patch.object(sync_mod, "emit_warning_cleared") as cleared,
+            ):
+                sync_mod._sync_cycle_active.clear()
+                task = aio.create_task(sync_mod.periodic_resync())
+                await aio.sleep(0.1)
+                task.cancel()
+                with suppress(aio.CancelledError):
+                    await task
+                return cleared
+
+        cleared = aio.run(_run())
+
+        cleared.assert_called_with("sync")
 
 
 class TestTransferWarnings:

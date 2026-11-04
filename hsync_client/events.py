@@ -31,6 +31,8 @@ __all__ = [
     "emit_event",
     "emit_progress",
     "emit_warning",
+    "emit_warning_cleared",
+    "note_condition_standing",
     "get_emitter",
     "init_emitter",
     "reset_warning_dedup",
@@ -49,6 +51,9 @@ _PIPE_ATOMIC_WRITE = 4096
 _WARNING_DEDUP_WINDOW_S = 600.0
 _WARNING_DEDUP_MAX_ENTRIES = 128
 _warning_seen: dict[tuple[str, str], float] = {}
+# The sources whose condition is currently standing: ``emit_warning_cleared``
+# publishes only the transition out of this set.
+_warning_sources: set[str] = set()
 _warning_lock = threading.Lock()
 
 
@@ -222,6 +227,9 @@ def emit_warning(
             for stale in expired or [min(_warning_seen, key=_warning_seen.__getitem__)]:
                 _warning_seen.pop(stale, None)
         _warning_seen[key] = now
+        # The condition is now standing: ``emit_warning_cleared`` publishes the
+        # transition out of this set, never a retraction that was never raised.
+        _warning_sources.add(source)
     emit_event(
         UiEventName.warning,
         message=message,
@@ -236,6 +244,37 @@ def reset_warning_dedup() -> None:
     """Clear the warning dedup window (tests / a new run in one process)."""
     with _warning_lock:
         _warning_seen.clear()
+        _warning_sources.clear()
+
+
+def note_condition_standing(source: str) -> None:
+    """Mark *source* as a condition that is standing, without a ``warning`` event.
+
+    A condition with a bespoke event — ``no_master`` carries its own payload and
+    its own front-end rendering — still needs a retraction, and
+    :func:`emit_warning_cleared` publishes only the transition out of a standing
+    source. Calling this where the bespoke event is emitted keeps that transition
+    reachable.
+    """
+    with _warning_lock:
+        _warning_sources.add(source)
+
+
+def emit_warning_cleared(source: str) -> None:
+    """Retract the warning *source* last reported, if it is still standing.
+
+    A warning is a state, not a moment: the condition it describes can end (the
+    watcher was restored to inotify, an election gave the group a primary, the
+    rendezvous answered again). The front-end retracts the entry it keyed on
+    ``source``, so it never reports a problem that is gone. Only the transition
+    is published: clearing a source that was never reported carries no
+    information, so it is dropped.
+    """
+    with _warning_lock:
+        if source not in _warning_sources:
+            return
+        _warning_sources.discard(source)
+    emit_event(UiEventName.warning_cleared, source=source)
 
 
 def get_link_status() -> str | None:

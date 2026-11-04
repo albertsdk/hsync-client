@@ -166,6 +166,32 @@ A file skipped for insufficient space is *not* a warning: it is a terminal
 not arrive. A refused p2p master without HTTPS/fingerprint is a
 `security_rejected` (`p2p_handler.py`), not a warning: it is a security decision.
 
+A persistent condition also has a **retraction**: `emit_warning_cleared`
+(`events.py::emit_warning_cleared`) publishes `UiEventName.warning_cleared` with
+the same `source`, so a front-end drops the entry instead of reporting a problem
+that is gone. Only the transition is published — the emitter tracks the sources
+currently standing and drops a retraction that was never raised, so a consumer
+never has to guard against one. Wired today: the watcher restore
+(`watcher.py::_try_upgrade`, the counterpart of the polling downgrade), a
+rendezvous lease succeeding again (`p2p_rendezvous_rdv.py`, which also covers a
+`token_required`/`untrusted` refusal because it fires only on a successful
+lease), and the p2p election giving the group a primary again
+(`p2p_handler.py`, the counterpart of `no_master`). The relay follows the same
+rule from both edges: a tunnel that pairs retracts it
+(`p2p_handler.py::_relay_master_endpoint`, where the hint is already discarded),
+and so does the master answering on a direct candidate again (the same function's
+caller, where the premise — "unreachable directly" — is gone). No probe of its
+own is needed: the relay attempt *is* the probe, and the rendezvous loop already
+re-enters it under `RELAY_RETRY_BACKOFF_S`. The other two persistent sources
+retract where their condition is re-checked: the disk reserve
+(`sync.py::_warn_disk_reserve`, on the cycle that finds the space again, and when
+the reserve is disabled) and the stalled safety net (`sync.py::periodic_resync`,
+on a cycle that completes or is still within its interval). `no_master` is the
+one bespoke condition: it emits its own event, so its producer marks the source
+standing (`events.py::note_condition_standing`) for the retraction to be
+publishable. `path` needs none — the desktop stops the run on the missing folder,
+and the run boundary clears the registry.
+
 In-flight transfers emit throttled `UiEventName.progress` events
 (`progress.py::ProgressReporter`, coalesced to at most one per 0.25 s plus a
 final update at completion) from **both roles**:
