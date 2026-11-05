@@ -55,6 +55,7 @@ from common import (  # noqa: E402  (import after sys.path tweak)
     measure,
     print_table,
 )
+from hsync_common.runtime import platform_tag  # noqa: E402
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _VERSION_RE = re.compile(r"hsync \d+\.\d+\.\d+")
@@ -78,23 +79,8 @@ def _is_capabilities_json(output: str) -> bool:
 
 
 def _platform_tag() -> str:
-    """Platform tag matching hsync-client/compile.sh (e.g. ``linux-amd64``)."""
-    system = platform.system().lower()
-    if system.startswith("mingw") or system.startswith("cygwin") or system.startswith("msys"):
-        system = "windows"
-    machine = platform.machine().lower()
-    arch_map = {
-        "x86_64": "amd64",
-        "amd64": "amd64",
-        "aarch64": "arm64",
-        "arm64": "arm64",
-        "armv7l": "armv7",
-        "armv7": "armv7",
-        "i386": "x86",
-        "i686": "x86",
-    }
-    arch = arch_map.get(machine, machine)
-    return f"{system}-{arch}"
+    """Platform tag matching ``compile.sh`` (SSOT: ``hsync_common.runtime``)."""
+    return platform_tag()
 
 
 def _clean_env() -> dict[str, str]:

@@ -62,6 +62,9 @@ class EndpointOptions:
     server_url: str | None
     rendezvous_server_endpoints: tuple[Any, ...] = ()
     map_data_port: bool | None = None
+    # ``auto`` (default) races QUIC/UDP and TLS/TCP to each rendezvous endpoint,
+    # ``quic``/``tcp`` use one transport only (``--rendezvous-transport``).
+    rendezvous_transport: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -19,6 +19,7 @@ from hsync_common.disk import check_free_space
 from hsync_common.endpoint import format_authority
 from hsync_common.format import format_bytes
 from hsync_common.ignore import IgnoreMatcher, set_active_matcher
+from hsync_common.listing import folder_has_user_content
 from hsync_common.protocol.handshake import PROTOCOL_VERSION_REST
 from hsync_common.protocol.pairing import FingerprintPins, fingerprint_matches
 from hsync_common.protocol.rdv_tokens import (
@@ -75,6 +76,7 @@ from hsync_client.config import (
     get_rendezvous_server_refresh_interval,
     get_rendezvous_server_tofu,
     get_rendezvous_server_trust,
+    get_rendezvous_transport,
     get_resync,
     get_server_fingerprints,
     get_server_tofu,
@@ -98,7 +100,6 @@ from hsync_client.constants import (
     HEADER_PROTOCOL_VERSION,
     HEARTBEAT_INTERVAL,
     HSYNC_VERSION,
-    HSYNCKEEP_FILENAME,
     PEER_TIMEOUT,
     RENDEZVOUS_REFRESH_INTERVAL,
     RENDEZVOUS_TIMEOUT_DEFAULT,
@@ -312,11 +313,6 @@ def _check_deletion_risk(
 
     Raises SystemExit if the user declines to continue.
     """
-    from os import walk
-
-    from hsync_common.models.dir import is_hidden_dir
-    from hsync_common.models.file import is_hidden_file
-
     # upload-only never deletes local files
     if sync_direction == "upload-only":
         return
@@ -340,24 +336,10 @@ def _check_deletion_risk(
         return
 
     # A directory is considered "empty" for deletion-risk purposes when it
-    # contains no user data: hidden/temp/backup files and the .hsynckeep
-    # sentinel are system artefacts and do not represent user content.
-    has_user_content = False
-    try:
-        for _root, dirs, files in walk(local_path):
-            dirs[:] = [d for d in dirs if not is_hidden_dir(d)]
-            for fname in files:
-                if fname == HSYNCKEEP_FILENAME:
-                    continue
-                if is_hidden_file(fname):
-                    continue
-                has_user_content = True
-                break
-            if has_user_content:
-                break
-    except OSError:
-        return
-    if not has_user_content:
+    # contains no user data (hidden/temp/backup files and the .hsynckeep
+    # sentinel are system artefacts); the shared helper owns that rule so the
+    # client and desktop cannot drift.
+    if not folder_has_user_content(local_path):
         return
 
     reason = (
@@ -1246,6 +1228,10 @@ def _build_config(
         "P2P_LISTEN_PORT": p2p_listen_port or get_p2p_listen_port() or 0,
         "RENDEZVOUS_SERVER_ENDPOINTS": tuple(rendezvous_server_endpoints),
         "RENDEZVOUS_SERVER_EXTRA_PORTS": get_rendezvous_server_extra_ports(),
+        # Rendezvous-server transport selector: CLI override (``--rendezvous-transport``)
+        # > the env value (``HSYNC_RENDEZVOUS_TRANSPORT``) > the ``auto`` default.
+        "RENDEZVOUS_TRANSPORT": options.endpoints.rendezvous_transport
+        or get_rendezvous_transport(),
         # Rendezvous-server TLS trust (ADR-0034): explicit fingerprints or opt-in TOFU.
         # Pins are keyed by endpoint: a pin only ever describes a server the
         # client dials, and two independent servers keep their own identity.

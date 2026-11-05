@@ -74,6 +74,7 @@ P2P_ONLY_OPTIONS = frozenset(
         "rendezvous_server_fingerprint",
         "rendezvous_server_trust",
         "rendezvous_server_tofu",
+        "rendezvous_transport",
         "peer_rendezvous_timeout",
         "never_master",
         "no_peer_download",

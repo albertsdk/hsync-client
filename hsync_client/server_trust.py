@@ -28,6 +28,7 @@ from pathlib import Path
 
 from hsync_common.protocol.tls_trust import TrustPolicy, resolve_trust_policy
 from hsync_common.state_paths import state_path
+from hsync_common.tls_context import unverified_ssl_context
 
 from hsync_client._trust_store import StoreError
 from hsync_client.known_hosts import KnownHostsStore
@@ -86,9 +87,7 @@ def fetch_server_fingerprint(
     Returns the bare lowercase hex digest, or ``None`` on any failure (unreachable,
     no certificate, bad port) — never raises.
     """
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
+    context = unverified_ssl_context()
     try:
         with socket.create_connection((host, port), timeout=timeout) as sock:
             with context.wrap_socket(sock, server_hostname=host) as tls:

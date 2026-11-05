@@ -13,14 +13,19 @@ from functools import lru_cache
 from typing import Any, Literal, NotRequired, TypedDict, cast
 
 from hsync_common import defaults as hsync_defaults
-from hsync_common.constants import DELTA_MIN_FILE_SIZE, DELTA_MIN_FILE_SIZE_P2P, RDV_DEFAULT_PORT
+from hsync_common.constants import (
+    DELTA_MIN_FILE_SIZE,
+    DELTA_MIN_FILE_SIZE_P2P,
+    RDV_DEFAULT_PORT,
+    RDV_TRANSPORT_DEFAULT,
+    RDV_TRANSPORTS,
+)
 from hsync_common.endpoint import (
     HostPort,
-    build_https_url,
     normalize_endpoint_list,
+    normalize_server_url,
     parse_endpoint_list,
     parse_host_port,
-    parse_https_url,
     parse_port_list,
 )
 from hsync_common.env import load_env_file as _load_env_file
@@ -116,17 +121,9 @@ class EnvSettings(BaseSettings):
     @field_validator("server_url", mode="before")
     @classmethod
     def _validate_server_url(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        raw = str(v).strip()
-        if not raw:
-            return None
-        if raw.lower().startswith("https://"):
-            return parse_https_url(raw)
-        if "://" in raw or raw.lower().startswith("http://"):
-            raise ValueError("Server URL must use HTTPS")
-        endpoint = parse_host_port(raw)
-        return build_https_url(endpoint, SERVER_DEFAULT_PORT)
+        return normalize_server_url(
+            str(v) if v is not None else None, default_port=SERVER_DEFAULT_PORT
+        )
 
     @field_validator("rendezvous_server_endpoints", mode="before")
     @classmethod
@@ -285,6 +282,25 @@ class EnvSettings(BaseSettings):
         default=None,
         description="Rendezvous-server TLS trust policy (default: ask)",
     )
+    rendezvous_transport: str = Field(
+        default=RDV_TRANSPORT_DEFAULT,
+        description=(
+            "Transport(s) used to reach a rendezvous node: 'auto' (default) races "
+            "QUIC/UDP (preferred) and TLS/TCP on the endpoint's port(s), 'quic' "
+            "and 'tcp' use one transport only"
+        ),
+    )
+
+    @field_validator("rendezvous_transport", mode="before")
+    @classmethod
+    def _validate_rendezvous_transport(cls, v: object) -> str:
+        """Accept only the shared transport vocabulary (``auto``/``quic``/``tcp``)."""
+        value = str(v).strip().lower()
+        if value not in RDV_TRANSPORTS:
+            allowed = ", ".join(RDV_TRANSPORTS)
+            raise ValueError(f"rendezvous transport must be one of: {allowed}")
+        return value
+
     never_master: bool = Field(
         default=False,
         description="Never become master in P2P mode (always remain a client/slave)",
@@ -662,6 +678,16 @@ def get_rendezvous_server_trust() -> str | None:
     return get_env_settings().rendezvous_server_trust
 
 
+def get_rendezvous_transport() -> str:
+    """Get the rendezvous-server transport selector (``auto``/``quic``/``tcp``).
+
+    Validated at settings-load time against the shared vocabulary
+    (``hsync_common.constants.RDV_TRANSPORTS``), so an invalid value fails fast
+    instead of surfacing mid-dial as an unreachable node.
+    """
+    return get_env_settings().rendezvous_transport
+
+
 def get_server_trust() -> str | None:
     """Get the sync-server TLS trust policy from the environment (see ADR-0036)."""
     return get_env_settings().server_trust
@@ -951,6 +977,9 @@ class HsyncConfig(TypedDict):
     RENDEZVOUS_SERVER_ENDPOINTS: tuple[HostPort, ...]
     # Extra UDP ports to try on each rendezvous-server endpoint (dial fallback)
     RENDEZVOUS_SERVER_EXTRA_PORTS: tuple[int, ...]
+    # Rendezvous-server transport selector: ``auto`` (race QUIC/UDP and TLS/TCP,
+    # QUIC preferred), ``quic`` or ``tcp`` (one transport only).
+    RENDEZVOUS_TRANSPORT: str
     # Rendezvous-server certificate fingerprint(s) to pin (up to two for a rotation window)
     RENDEZVOUS_SERVER_PINS: FingerprintPins
     # Rendezvous-server TLS trust policy (ADR-0035; default ask)

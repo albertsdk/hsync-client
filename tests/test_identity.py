@@ -13,7 +13,7 @@ import stat
 from pathlib import Path
 
 import pytest
-from hsync_common.models.event import is_valid_cid
+from hsync_common.ids import is_valid_cid
 
 from hsync_client.identity import (
     DEVICE_DIR_ENV,

@@ -30,6 +30,7 @@ from hsync_common.ssl_utils import (
     load_or_create_service_identity,
     verify_cert_fingerprint,
 )
+from hsync_common.tls_context import disable_certificate_verification
 from loguru import logger as log
 from requests.adapters import DEFAULT_POOLBLOCK, HTTPAdapter
 from urllib3.util.ssl_ import create_urllib3_context
@@ -169,9 +170,7 @@ def create_fingerprint_ssl_context(expected_fingerprint: str) -> ssl.SSLContext:
     if not expected_fingerprint or not is_sha256_hex(expected_fingerprint):
         raise ValueError("A valid SHA-256 fingerprint is required for fingerprint SSL context")
 
-    ctx = create_urllib3_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    ctx = disable_certificate_verification(create_urllib3_context())
     # The fingerprint is enforced by the caller via assert_fingerprint on
     # the urllib3 PoolManager / FingerprintHTTPAdapter; the context itself
     # only disables chain validation (trust is established by the pin).
@@ -196,9 +195,7 @@ class FingerprintHTTPAdapter(HTTPAdapter):
         super().__init__(**kwargs)
 
     def _pin_kwargs(self, kwargs: dict) -> dict:
-        ctx = create_urllib3_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        ctx = disable_certificate_verification(create_urllib3_context())
         kwargs["ssl_context"] = ctx
         kwargs["assert_fingerprint"] = self._assert_fingerprint
         kwargs["assert_hostname"] = False

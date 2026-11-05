@@ -107,7 +107,11 @@ connection a sync cycle opens against the loopback endpoint (REST requests plus
 the WSS channel) is **multiplexed onto the tunnel's single relay session** with a
 small framing layer (`rdv_relay.py::_encode_substream`: kind, stream id, payload
 length, payload) that the node never inspects — it stays an opaque byte pump — so
-one tunnel costs one `relay_connect`, not one per connection. The session
+one tunnel costs one `relay_connect`, not one per connection. The relay dials
+over the client's selected rendezvous transport (`rdv_relay.py::_relay_session`:
+QUIC = one connection with many streams; TLS/TCP = one connection per relay
+stream, pinned to a single resolved IP so every attach reaches the node instance
+holding its `relay_id`). The session
 survives the gaps between data traffic through two pings on
 `constants.py::RELAY_KEEPALIVE_INTERVAL`: one on a dedicated control stream (a
 third of the node's QUIC idle, so a single lost ping — or its ACK, on lossy

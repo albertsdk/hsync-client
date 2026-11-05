@@ -28,7 +28,7 @@ from types import MappingProxyType
 from typing import Any, Protocol
 
 from hsync_common.hashing import is_sha256_hex
-from hsync_common.models.event import is_valid_cid
+from hsync_common.ids import is_valid_cid
 from hsync_common.models.file import File
 from hsync_common.models.sentinel import is_sentinel_file
 from hsync_common.protocol.peer_download import (

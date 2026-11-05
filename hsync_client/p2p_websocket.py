@@ -37,8 +37,9 @@ from typing import Any, cast
 
 from aiohttp import web
 from hsync_common.endpoint import build_url, format_authority
+from hsync_common.ids import is_valid_cid
 from hsync_common.models.dir import is_hidden_dir
-from hsync_common.models.event import Event, EventName, is_valid_cid
+from hsync_common.models.event import Event, EventName
 from hsync_common.models.file import (
     File,
     invalidate_sha256_cache,

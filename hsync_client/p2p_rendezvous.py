@@ -463,6 +463,7 @@ def build_rendezvous_plan(
             shared_upnp=shared_upnp,
             capacity=config.get("P2P_PEER_READ_CAP", 0),
             peer_download_enabled=bool(config.get("P2P_PEER_DOWNLOAD", False)),
+            rendezvous_transport=str(config.get("RENDEZVOUS_TRANSPORT") or "auto"),
         )
         for endpoint in endpoints
     ]

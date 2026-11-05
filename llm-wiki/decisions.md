@@ -40,15 +40,24 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   subcommand appears automatically in `--capabilities-json` (introspected), so
   the desktop gates its button on `supports_subcommand(doc, "state")`.
 - **Rendezvous multi-port dial fallback**: `HSYNC_RENDEZVOUS_SERVER_EXTRA_PORTS`
-  (`config.py::get_rendezvous_server_extra_ports`) adds extra UDP ports for the **same** rendezvous;
-  `RendezvousClient._with_connection` (`rdv_client.py`) dials the last working port
-  first (then the primary and extras) and falls back **only when the QUIC handshake
-  fails** — the blocked-port signal: the "port problem" is the **client's egress
+  (`config.py::get_rendezvous_server_extra_ports`) adds extra ports for the **same** rendezvous;
+  `RendezvousClient._with_connection` (`rdv_client.py`) is the selector; the port
+  order lives in `_candidate_ports` and the memo/race in `_dial_transport_ports`
+  (fixed transport) / `_dial_auto` (`auto`), which dial the last working port
+  first (then the primary and extras) and fall back **only on a connection-phase
+  failure** — the blocked-port signal: the "port problem" is the **client's egress
   firewall**, not the node (decision 57 in `hsync-rendezvous`), so a blocked primary
   is paid once, not on every exchange. A reply timeout or a trust/protocol error is
   a real exchange failure and never re-dials (no duplicate frame is sent).
-  Trust stays a single pin (shared fleet identity), so the fallback never
-  re-prompts; the `rdv/1` wire is unchanged.
+  With `--rendezvous-transport auto` (the default), the client races QUIC/UDP
+  (preferred) and TLS/TCP per endpoint with the RFC 8305 stagger
+  (`rdv_client.py::_race`), the first handshake with the right ALPN wins and the
+  loser is closed before any frame; `quic`/`tcp` use one transport only. The
+  winner is memoized per endpoint (`RDV_TCP_FALLBACK_TTL_S` expires a TLS/TCP
+  winner so QUIC regains priority on a recovered UDP path) and a network change
+  clears it (`reset_transport_memo`). Trust stays a single pin per `(host, port)`
+  — one identity shared by both transports — so the fallback never re-prompts;
+  the `rdv/1` wire is unchanged.
 - **Continuous/daemon mode is the default in both topologies**: the client
   runs indefinitely, retries an unreachable server forever (`run_sync`
   connectivity gate is non-fatal in continuous mode; `remote_connect`

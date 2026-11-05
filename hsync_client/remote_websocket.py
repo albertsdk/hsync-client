@@ -26,7 +26,7 @@ from contextlib import suppress
 from functools import partial
 from json import JSONDecodeError, dumps, loads
 from random import uniform
-from ssl import CERT_NONE, Purpose, create_default_context
+from ssl import Purpose, create_default_context
 from typing import Any, NoReturn, cast
 
 from hsync_common.models.event import Event, EventName
@@ -37,6 +37,7 @@ from hsync_common.protocol.handshake import (
     decode_capabilities,
 )
 from hsync_common.text import safe_json_for_log
+from hsync_common.tls_context import disable_certificate_verification
 from loguru import logger as log
 from websockets import ConnectionClosed, connect
 
@@ -177,8 +178,7 @@ async def remote_events() -> None:
             ssl_context = create_default_context(Purpose.SERVER_AUTH)
             if CONFIG["NO_VERIFY_SSL"]:
                 # Disable SSL verification (insecure mode)
-                ssl_context.check_hostname = False
-                ssl_context.verify_mode = CERT_NONE
+                ssl_context = disable_certificate_verification(ssl_context)
             elif CONFIG.get("CA_CERT"):
                 # Load custom CA certificate for self-signed server certs
                 ssl_context.load_verify_locations(cafile=CONFIG["CA_CERT"])

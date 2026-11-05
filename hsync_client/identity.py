@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
-from hsync_common.models.event import is_valid_cid
+from hsync_common.ids import is_valid_cid
 from hsync_common.state_paths import state_path
 from loguru import logger as log
 

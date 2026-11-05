@@ -12,7 +12,6 @@ namespaces: ``trust`` (certificate pins) and ``state`` (local sync state).
 """
 
 import json
-import re
 import signal
 import sys
 import threading
@@ -30,6 +29,7 @@ from hsync_common.endpoint import (
     parse_host_port,
     parse_https_url,
 )
+from hsync_common.path_validation import is_valid_bucket_name
 from hsync_common.protocol.pairing import (
     FingerprintPins,
     parse_fingerprint,
@@ -160,11 +160,11 @@ def capabilities_json_callback(_ctx: typer.Context, value: bool) -> None:
 
 
 def _validate_bucket(value: str) -> str:
-    """Validate bucket name (alphanumeric, hyphens and underscores allowed)."""
-    if not re.match(r"^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$", value):
+    """Validate bucket name (canonical SSOT ``is_valid_bucket_name``)."""
+    if not is_valid_bucket_name(value):
         raise typer.BadParameter(
             "The bucket name must be alphanumeric (hyphens and underscores allowed, "
-            "but not at the beginning or end)."
+            "but not at the beginning or end) and at most 63 characters."
         )
     return value
 
@@ -370,6 +370,7 @@ def _build_run_options(values: Mapping[str, Any], **overrides: Any) -> RunOption
             server_url=overrides.get("server_url"),
             rendezvous_server_endpoints=overrides.get("rendezvous_server_endpoints", ()),
             map_data_port=overrides.get("map_data_port"),
+            rendezvous_transport=overrides.get("rendezvous_transport"),
         ),
         sync=SyncOptions(
             local_path=values["local_path"],
@@ -1092,6 +1093,20 @@ RendezvousTrustOpt = Annotated[
         rich_help_panel="P2P Mode",
     ),
 ]
+RendezvousTransportOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--rendezvous-transport",
+        help=(
+            "Transport used to reach the rendezvous server(s): 'auto' (default) "
+            "races QUIC/UDP (preferred) and TLS/TCP on each endpoint's port(s), "
+            "'quic' and 'tcp' use one transport only. Env: HSYNC_RENDEZVOUS_TRANSPORT."
+        ),
+        metavar="auto|quic|tcp",
+        show_default=False,
+        rich_help_panel="P2P Mode",
+    ),
+]
 RendezvousTimeoutOpt = Annotated[
     int | None,
     typer.Option(
@@ -1307,6 +1322,7 @@ def p2p(
     rendezvous_server_fingerprint: RendezvousFingerprintOpt = None,
     rendezvous_server_tofu: RendezvousTofuOpt = False,
     rendezvous_server_trust: RendezvousTrustOpt = None,
+    rendezvous_transport: RendezvousTransportOpt = None,
     events_json_fd: EventsJsonFdOpt = None,
     local_path: PathOpt = _DEFAULT_LOCAL_PATH,
     once: OnceOpt = False,
@@ -1451,6 +1467,16 @@ def p2p(
             "one --rendezvous-server endpoint."
         )
 
+    if rendezvous_transport is not None:
+        from hsync_common.constants import RDV_TRANSPORTS
+
+        if rendezvous_transport not in RDV_TRANSPORTS:
+            allowed = ", ".join(RDV_TRANSPORTS)
+            raise typer.BadParameter(
+                f"invalid --rendezvous-transport value: {rendezvous_transport!r}; "
+                f"use one of: {allowed}"
+            )
+
     if p2p_trust is not None:
         try:
             resolve_self_signed_policy(p2p_trust)
@@ -1473,6 +1499,7 @@ def p2p(
             rendezvous_server_pins=pins,
             rendezvous_server_tofu=bool(rendezvous_server_tofu),
             rendezvous_server_trust=rendezvous_server_trust,
+            rendezvous_transport=rendezvous_transport,
             peer_rendezvous_timeout=peer_rendezvous_timeout,
             p2p_group=p2p_group,
             prefer_master=prefer_master,
@@ -1656,10 +1683,13 @@ def rendezvous_trust_remove(hostname: HostArg) -> None:
 @_trust_rendezvous_app.command("fingerprint")
 def rendezvous_trust_fingerprint(hostname: HostArg) -> None:
     """Print a discovery server's certificate fingerprint without trusting it."""
+    from hsync_client.config import get_rendezvous_transport
     from hsync_client.rdv_client import RendezvousClient, RendezvousError
 
     host, resolved_port = _trust_host_port(hostname)
-    client = RendezvousClient(host, resolved_port, policy=TrustPolicy.none)
+    client = RendezvousClient(
+        host, resolved_port, policy=TrustPolicy.none, transport=get_rendezvous_transport()
+    )
     try:
         observed = client.fetch_fingerprint()
     except RendezvousError as exc:

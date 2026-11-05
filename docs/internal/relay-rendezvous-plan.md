@@ -212,6 +212,13 @@ Deno Deploy: no UDP/QUIC). That is a **new transport contract**, therefore
 Kotlin mirror + trust review. Medium-high cost; benefit is cheap hosting and
 443/TCP reachability.
 
+The **443/TCP-reachability half is now shipped** without a new transport profile:
+the node and `RendezvousClient` speak `rdv/1` over TLS/TCP as well as QUIC/UDP on
+the same port, with the client's `auto` policy racing the two and memoizing the
+winner (`--rendezvous-transport`, env `HSYNC_RENDEZVOUS_TRANSPORT`). What remains
+uncovered is only *serverless* hosting, where the runtime itself offers no
+persistent TCP listener either; treat that as the remaining motivation for D.
+
 ### Option summary
 
 | | Security model | Infra to operate | Protocol change | Cross-repo blast radius | Effort |
@@ -411,10 +418,11 @@ are a protocol contract — independent review plus fixtures, not only unit test
 ### 8.4 Option D — `rdv/1` over HTTPS/WSS (only if C is too expensive to host)
 
 Spec bump (`rdv/2` or a negotiated transport profile) → fixtures →
-`hsync-common` mirror → transport abstraction in `rdv_client.py` (today
-aioquic-specific) → Kotlin mirror + parity tests → trust review (the pinning
-model is unchanged, only the transport). Highest blast radius of the four; do not
-start before §6/C is settled.
+`hsync-common` mirror → transport abstraction in `rdv_client.py` (the QUIC *and*
+TLS/TCP paths live behind `_dial_quic`/`_dial_tcp` + `_with_connection`; an
+HTTPS/WSS path plugs in there) → Kotlin mirror + parity tests → trust review (the
+pinning model is unchanged, only the transport). Highest blast radius of the
+four; do not start before §6/C is settled.
 
 ## 9. Resume checklist
 

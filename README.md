@@ -205,7 +205,7 @@ HSYNC Client focuses on reliable, fast transfers.
 * **NAT traversal:** optional UPnP port mapping and the rendezvous's STUN-style echo for cross-network reachability — no manual port forwarding in the common case.
 * **Stable device identity:** a persistent device ID and keypair keep pins across restarts; a rotated key shows up as a changed fingerprint.
 
-> **Internet P2P.** An optional, self-hostable rendezvous node ([HSYNC Rendezvous](https://github.com/albertsdk/hsync-rendezvous)) extends the peer-to-peer topology beyond a single LAN segment over `rdv/1` (QUIC/UDP 443, no-log, RAM-only). Pass a rendezvous hostname to `hsync p2p` (positional argument or `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS`) to sync devices that are **not** on the same local network — same mode, same election, same data plane; only rendezvous differs. Writes are authorized by a shared key, so a keyless LAN is read-only. The rendezvous is a **stable v1** (Python).
+> **Internet P2P.** An optional, self-hostable rendezvous node ([HSYNC Rendezvous](https://github.com/albertsdk/hsync-rendezvous)) extends the peer-to-peer topology beyond a single LAN segment over `rdv/1` (QUIC/UDP or TLS/TCP on port 443, no-log, RAM-only). Pass a rendezvous hostname to `hsync p2p` (positional argument or `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS`) to sync devices that are **not** on the same local network — same mode, same election, same data plane; only rendezvous differs. Writes are authorized by a shared key, so a keyless LAN is read-only. The rendezvous is a **stable v1** (Python).
 
 ## Documentation
 

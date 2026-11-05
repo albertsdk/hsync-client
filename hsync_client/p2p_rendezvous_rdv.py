@@ -32,6 +32,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
+from hsync_common.constants import RDV_TRANSPORT_DEFAULT
 from hsync_common.endpoint import format_authority
 from hsync_common.protocol.rendezvous import RdvPeer, derive_bucket_token
 from hsync_common.protocol.tls_trust import TrustPolicy
@@ -221,6 +222,7 @@ class RdvRendezvous(RendezvousPlanState):
         client_factory: Callable[..., RendezvousClient] = RendezvousClient,
         upnp_factory: Callable[[], UpnpMapper] = UpnpMapper,
         local_ip: str | None = None,
+        rendezvous_transport: str = RDV_TRANSPORT_DEFAULT,
     ) -> None:
         self._rendezvous_host = rendezvous_host
         self._rendezvous_port = rendezvous_port
@@ -259,6 +261,7 @@ class RdvRendezvous(RendezvousPlanState):
             fingerprints=fingerprints,
             policy=policy,
             prompt=prompt,
+            transport=rendezvous_transport,
         )
         self._upnp_factory = upnp_factory
         # One mapping per process, not per source: the multi-source plan passes a
@@ -548,6 +551,11 @@ class RdvRendezvous(RendezvousPlanState):
             return
         # A new network is a new chance to be seen: sample in a burst again.
         self._burst_left = RENDEZVOUS_QUERY_BURST_COUNT
+        reset = getattr(self._client, "reset_transport_memo", None)
+        if reset is not None:
+            # A new network is a new reachability landscape: forget a TCP-only
+            # winner so QUIC gets its fair chance on the new path.
+            reset()
         self._wake.set()
 
     def _advertised_signature(self) -> tuple[tuple[str, int], ...]:

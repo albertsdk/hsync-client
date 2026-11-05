@@ -10,12 +10,13 @@ p2p configuration for peer-to-peer synchronization without a central server.
 | Option | Description | Default |
 |---|---|---|
 | `p2p` subcommand | Enable p2p mode (selected with `hsync p2p`) | — (CLI only) |
-| `--rendezvous-server` | Rendezvous-server endpoint for cross-network rendezvous: `HOST[:PORT]`, QUIC/UDP, no scheme (optional; omit for mDNS only). Repeatable, and each value may carry a comma-separated list; the client leases and queries every listed server and merges the peers | — |
+| `--rendezvous-server` | Rendezvous-server endpoint for cross-network rendezvous: `HOST[:PORT]`, QUIC/UDP or TLS/TCP, no scheme (optional; omit for mDNS only). Repeatable, and each value may carry a comma-separated list; the client leases and queries every listed server and merges the peers | — |
 | `--map-data-port` | Map the p2p data-plane TCP port with UPnP when a discovery server is used (opt-in) | `false` (UPnP off; enable explicitly) |
 | `--no-mdns` | Exclude the local network: discover peers only through the configured discovery server(s), not mDNS (requires `--rendezvous-server`; without one there would be no discovery channel) | `false` |
 | `--rendezvous-server-fingerprint` | Pin a discovery server's certificate fingerprint (`sha256:<hex>` or bare hex); repeatable up to two per server for a rotation window; refused without `--rendezvous-server` | — (`ask`: confirm at the prompt on a terminal, fail closed without one) |
 | `--rendezvous-server-tofu` | Trust a discovery server's certificate on first use; a later mismatch is refused | `false` |
 | `--rendezvous-server-trust` | Rendezvous-server TLS trust policy: `ask` (prompt on a terminal and remember, fail closed without one), `accept-new`, `strict`, `none` | `ask` |
+| `--rendezvous-transport` | Transport used to reach every rendezvous server: `auto` (default) races QUIC/UDP (preferred) and TLS/TCP on each endpoint's port(s) (RFC 8305), `quic` or `tcp` uses one transport only | `auto` |
 | `--group` | p2p group name (only peers in the same group see each other) | — (all peers visible) |
 | `--listen-port` | Port when acting as p2p master; `0` = pick a free port | `0` (auto) |
 | *(data relay)* | No client option: when no advertised candidate is reachable (both peers behind carrier-grade NAT) the client relays the data plane through the rendezvous automatically, if the node runs with `--relay` | — (last resort; see [Sync across networks](p2p-rendezvous.md#behind-carrier-grade-nat-mobile-hotspot-guest-network)) |
@@ -101,8 +102,8 @@ Both must be explicit: a TTY or `--allow-deletions` never grants them.
 | `HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES` | Dangerously allow p2p filesystem mutations with no shared key | `false` |
 | `HSYNC_P2P_ALLOW_UNAUTHENTICATED` | Explicitly acknowledge running p2p without a shared key (peers unauthenticated, reads open) | `false` |
 | `HSYNC_P2P_LISTEN_PORT` | p2p master port (`1`–`65535`); unset keeps CLI auto (`0`) | — |
-| `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS` | Ordered, comma-separated rendezvous-server endpoints for cross-network rendezvous (`host`, `host:port`, `[IPv6]`, `[IPv6]:port`; QUIC/UDP, no scheme). The client leases **and queries every reachable entry** and merges the peers. Unset = mDNS-only | — |
-| `HSYNC_RENDEZVOUS_SERVER_EXTRA_PORTS` | Extra UDP ports tried on **each** endpoint, comma-separated and ordered (dial fallback); e.g. `53` so a client whose **egress firewall** blocks UDP 443 can still reach the same node on 53. Tried after the endpoint's own/default port | — |
+| `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS` | Ordered, comma-separated rendezvous-server endpoints for cross-network rendezvous (`host`, `host:port`, `[IPv6]`, `[IPv6]:port`; QUIC/UDP or TLS/TCP, no scheme). The client leases **and queries every reachable entry** and merges the peers. Unset = mDNS-only | — |
+| `HSYNC_RENDEZVOUS_SERVER_EXTRA_PORTS` | Extra ports tried on **each** endpoint for **both** transports, comma-separated and ordered (dial fallback); e.g. `53` so a client whose **egress firewall** blocks port 443 on one transport can still reach the same node on 53. Tried after the endpoint's own/default port | — |
 | `HSYNC_RENDEZVOUS_SERVER_FINGERPRINTS` | Pins **per endpoint**: `ENDPOINT=FINGERPRINT[|FINGERPRINT]`, comma-separated (`sha256:<hex>` or bare hex; `|` separates the rotation window). A pin must name a configured endpoint; a bare fingerprint is accepted only with one endpoint. With several servers each keeps its own identity | — |
 | `HSYNC_RENDEZVOUS_SERVER_TOFU` | Trust a discovery server's certificate on first use (`1` = on) | `false` |
 | `HSYNC_RENDEZVOUS_SERVER_TRUST` | Rendezvous-server TLS trust policy: `ask` (prompt on a terminal and remember, fail closed without one), `accept-new`, `strict` (each configured server needs its pin), `none` | `ask` |

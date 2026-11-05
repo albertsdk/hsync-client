@@ -485,7 +485,7 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
 
         cid = meta.get("cid", "")
         if cid:
-            from hsync_common.models.event import is_valid_cid
+            from hsync_common.ids import is_valid_cid
 
             from hsync_client.p2p_websocket import mark_inbound_origin
 

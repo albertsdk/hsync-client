@@ -59,8 +59,8 @@ from hsync_common.constants import (
 )
 from hsync_common.disk import check_free_space
 from hsync_common.hashing import compute_sha256, is_sha256_hex
+from hsync_common.ids import is_valid_cid
 from hsync_common.listing import file_entry, iter_dir_entries, symlink_entry
-from hsync_common.models.event import is_valid_cid
 from hsync_common.models.file import File
 from hsync_common.models.tombstone import TOMBSTONE_MAX_ENTRIES
 from hsync_common.path_validation import resolve_within, validate_remote_relpath

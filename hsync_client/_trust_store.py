@@ -18,12 +18,13 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+
+from hsync_common.fs import atomic_write_text
 
 from hsync_client._filelock import lock_blocking, unlock
 
@@ -83,30 +84,14 @@ class JsonStore:
         return data
 
     def _save_unlocked(self, data: dict[str, Any]) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True, mode=_DIR_MODE)
-        fd, tmp = tempfile.mkstemp(
-            prefix=f".{self._path.name}.",
-            suffix=".tmp",
-            dir=str(self._path.parent),
+        # Shared durable writer: owner-only temp in the target directory, fsync
+        # of the file and its directory, then an atomic replace.
+        atomic_write_text(
+            self._path,
+            json.dumps(data, indent=2, sort_keys=True),
+            mode=TRUST_FILE_MODE,
+            fsync_dir=True,
         )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(json.dumps(data, indent=2, sort_keys=True))
-                f.flush()
-                os.fsync(f.fileno())
-            os.chmod(tmp, TRUST_FILE_MODE)
-            os.replace(tmp, self._path)
-            if hasattr(os, "O_DIRECTORY"):
-                dir_fd = os.open(self._path.parent, os.O_RDONLY | os.O_DIRECTORY)
-                try:
-                    os.fsync(dir_fd)
-                finally:
-                    os.close(dir_fd)
-        finally:
-            try:
-                os.unlink(tmp)
-            except FileNotFoundError:
-                pass
 
     @contextmanager
     def _transaction(self) -> Iterator[None]:

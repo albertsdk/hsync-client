@@ -11,7 +11,7 @@ network without a round trip through the node.
 
 ## Before you start
 
-- A reachable rendezvous (its host or IP, and its UDP port — default `443`).
+- A reachable rendezvous (its host or IP, and its port — default `443`, shared by QUIC/UDP and TLS/TCP).
 - On a terminal, no further preparation: the client shows the node's SHA-256
   fingerprint on first contact and asks you to confirm it once (the default
   `ask` policy, like `ssh`). A run without a terminal has no prompt, so it must
@@ -145,8 +145,31 @@ Service units pass the same inputs as environment variables
 repeatable `--rendezvous-server` option: `rdv.example.net`,
 `rdv.example.net:8443`, `[2001:db8::1]` or `[2001:db8::1]:8443` — no scheme,
 no path, one destination per comma-separated entry. A port in the value selects
-the QUIC port (UDP); an entry without one uses `443`. There is no separate port
+the rendezvous port, used by both QUIC/UDP and TLS/TCP; an entry without one uses `443`. There is no separate port
 option: the port belongs to the endpoint.
+
+## Transport
+
+Every rendezvous node speaks `rdv/1` over two interchangeable transports on the
+same ports: **QUIC/UDP** (the classic path) and **TLS/TCP** (TLS 1.3, same ALPN
+`hsync-rdv/1`, same certificate, same frames). The client picks with
+`--rendezvous-transport` (env `HSYNC_RENDEZVOUS_TRANSPORT`):
+
+- `auto` (default) — race both, QUIC preferred (RFC 8305): QUIC starts first,
+  TLS/TCP after a 0.25 s stagger, the first handshake to complete wins and the
+  loser is closed before any frame is sent. The winning `(transport, port)` is
+  remembered per endpoint: a QUIC winner never expires, a TLS/TCP winner keeps
+  priority for five minutes so a network whose UDP recovered moves back to
+  QUIC. A network change resets the memory. A trust, protocol or refusal error
+  is an exchange failure and never falls back (the node answered — duplicating
+  a frame would be wrong); only a failed **connection** (blocked port, TLS
+  handshake failure, ALPN mismatch, timeout) advances to the next candidate.
+- `quic` / `tcp` — use one transport only, candidate ports in order, no race.
+
+Use `tcp` when the client's UDP is filtered entirely (a guest network, a
+corporate firewall): discovery and the relay work identically over TLS/TCP, and
+the certificate fingerprint you pin is the same one the node presents over
+QUIC.
 
 ## Let the node be reachable
 

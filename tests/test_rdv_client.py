@@ -193,7 +193,9 @@ class TestLeave:
         monkeypatch.setattr("hsync_client.rdv_client.connect", lambda *_a, **_k: _Manager())
         # ``insecure`` (policy ``none``) skips the trust check so this test stays
         # focused on the reply contract; trust is covered by its own tests.
-        client = RendezvousClient("127.0.0.1", 4433, policy=TrustPolicy.none, timeout=5.0)
+        client = RendezvousClient(
+            "127.0.0.1", 4433, policy=TrustPolicy.none, timeout=5.0, transport="quic"
+        )
         client.leave(build_leave_frame(cid=CID, bucket="shared"))
         assert writer.closed is True
         assert b'"type":"leave"' in writer.written
@@ -240,7 +242,7 @@ class TestMultiPort:
 
         monkeypatch.setattr("hsync_client.rdv_client.connect", _connect)
         client = RendezvousClient(
-            "127.0.0.1", 443, ports=(53,), policy=TrustPolicy.none, timeout=5.0
+            "127.0.0.1", 443, ports=(53,), policy=TrustPolicy.none, timeout=5.0, transport="quic"
         )
         client.leave(build_leave_frame(cid=CID, bucket="shared"))
         assert attempts == [443, 53]
@@ -278,7 +280,7 @@ class TestMultiPort:
 
         monkeypatch.setattr("hsync_client.rdv_client.connect", _connect)
         client = RendezvousClient(
-            "127.0.0.1", 443, ports=(53,), policy=TrustPolicy.none, timeout=5.0
+            "127.0.0.1", 443, ports=(53,), policy=TrustPolicy.none, timeout=5.0, transport="quic"
         )
         client.leave(build_leave_frame(cid=CID, bucket="shared"))
         client.leave(build_leave_frame(cid=CID, bucket="shared"))
@@ -322,7 +324,12 @@ class TestMultiPort:
 
         monkeypatch.setattr("hsync_client.rdv_client.connect", _connect)
         client = RendezvousClient(
-            "127.0.0.1", 443, ports=(53,), policy=TrustPolicy.none, timeout=0.05
+            "127.0.0.1",
+            443,
+            ports=(53,),
+            policy=TrustPolicy.none,
+            timeout=0.05,
+            transport="quic",
         )
         with pytest.raises(RendezvousUnreachable) as exc:
             client.query(build_query_frame(bucket="shared"))
@@ -337,7 +344,9 @@ class TestMultiPort:
             raise TimeoutError("handshake timed out")
 
         monkeypatch.setattr("hsync_client.rdv_client.connect", _connect)
-        client = RendezvousClient("127.0.0.1", 443, ports=(53,), policy=TrustPolicy.none)
+        client = RendezvousClient(
+            "127.0.0.1", 443, ports=(53,), policy=TrustPolicy.none, transport="quic"
+        )
         with pytest.raises(RendezvousUnreachable) as exc:
             client.query(build_query_frame(bucket="shared"))
         assert ":53:" in str(exc.value)
@@ -386,7 +395,7 @@ class TestPinVerify:
         client = RendezvousClient(
             "rdv.example.net", 443, fingerprints=(fp,), policy=TrustPolicy.strict
         )
-        client._verify_peer(_FakePeer(cert))  # no raise
+        client.verify_peer(_FakePeer(cert))  # no raise
 
     def test_explicit_pin_mismatch_raises(self, tmp_path, monkeypatch):
         from hsync_client.rendezvous_trust import RENDEZVOUS_TRUST_FILE_ENV
@@ -397,14 +406,14 @@ class TestPinVerify:
             "rdv.example.net", 443, fingerprints=("f" * 64,), policy=TrustPolicy.strict
         )
         with pytest.raises(RendezvousFingerprintMismatch):
-            client._verify_peer(_FakePeer(cert))
+            client.verify_peer(_FakePeer(cert))
 
     def test_rotation_accepts_second_pin(self):
         cert, fp = _fake_cert()
         client = RendezvousClient(
             "rdv.example.net", 443, fingerprints=("0" * 64, fp), policy=TrustPolicy.strict
         )
-        client._verify_peer(_FakePeer(cert))  # second pin matches
+        client.verify_peer(_FakePeer(cert))  # second pin matches
 
     def test_tofu_first_use_records(self, tmp_path, monkeypatch):
         from hsync_client.rendezvous_trust import RENDEZVOUS_TRUST_FILE_ENV, RendezvousTrustStore
@@ -412,7 +421,7 @@ class TestPinVerify:
         monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
         cert, fp = _fake_cert()
         client = RendezvousClient("rdv.example.net", 443, policy=TrustPolicy.accept_new)
-        client._verify_peer(_FakePeer(cert))  # first use: trusted
+        client.verify_peer(_FakePeer(cert))  # first use: trusted
         assert RendezvousTrustStore(tmp_path / "trust.json").get("rdv.example.net", 443) == fp
 
     def test_tofu_changed_raises(self, tmp_path, monkeypatch):
@@ -424,7 +433,7 @@ class TestPinVerify:
         cert, _ = _fake_cert()
         client = RendezvousClient("rdv.example.net", 443, policy=TrustPolicy.accept_new)
         with pytest.raises(RendezvousFingerprintMismatch):
-            client._verify_peer(_FakePeer(cert))
+            client.verify_peer(_FakePeer(cert))
 
     def test_ask_unknown_prompts_and_pins(self, tmp_path, monkeypatch):
         """Policy ``ask`` prompts on an unknown node and records the source."""
@@ -439,7 +448,7 @@ class TestPinVerify:
             return True
 
         client = RendezvousClient("rdv.example.net", 443, policy=TrustPolicy.ask, prompt=prompt)
-        client._verify_peer(_FakePeer(cert))  # accepted
+        client.verify_peer(_FakePeer(cert))  # accepted
         assert prompts == [("rdv.example.net", 443, fp)]
         entry = RendezvousTrustStore(tmp_path / "trust.json").entries()[0]
         assert entry["fingerprint"] == fp
@@ -453,7 +462,7 @@ class TestPinVerify:
         cert, _ = _fake_cert()
         client = RendezvousClient("rdv.example.net", 443, policy=TrustPolicy.ask)
         with pytest.raises(RendezvousNotTrusted) as excinfo:
-            client._verify_peer(_FakePeer(cert))
+            client.verify_peer(_FakePeer(cert))
         assert excinfo.value.non_interactive is True
 
     def test_ask_declined_prompt_refuses(self, tmp_path, monkeypatch):
@@ -466,7 +475,7 @@ class TestPinVerify:
             "rdv.example.net", 443, policy=TrustPolicy.ask, prompt=lambda *_a: False
         )
         with pytest.raises(RendezvousNotTrusted) as excinfo:
-            client._verify_peer(_FakePeer(cert))
+            client.verify_peer(_FakePeer(cert))
         assert excinfo.value.non_interactive is False
         assert RendezvousTrustStore(tmp_path / "trust.json").entries() == []
 
@@ -481,7 +490,7 @@ class TestPinVerify:
             raise AssertionError("must not prompt when the pin matches")
 
         client = RendezvousClient("rdv.example.net", 443, policy=TrustPolicy.ask, prompt=_never)
-        client._verify_peer(_FakePeer(cert))  # no raise
+        client.verify_peer(_FakePeer(cert))  # no raise
 
     def test_missing_peer_certificate_fails_closed(self):
         client = RendezvousClient(
@@ -491,18 +500,35 @@ class TestPinVerify:
             "_NoCert", (), {"_quic": type("_Quic", (), {"tls": type("_Tls", (), {})()})()}
         )()
         with pytest.raises(RendezvousFingerprintMismatch):
-            client._verify_peer(peer)
+            client.verify_peer(peer)
 
-    def test_verify_runs_before_create_stream(self, monkeypatch, tmp_path):
+    def test_verify_runs_before_the_first_write(self, monkeypatch, tmp_path):
         """A fingerprint mismatch must close before any frame is written."""
         from hsync_client.rendezvous_trust import RENDEZVOUS_TRUST_FILE_ENV
 
         monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
         cert, fp = _fake_cert()
         client = RendezvousClient(
-            "rdv.example.net", 443, fingerprints=("f" * 64,), policy=TrustPolicy.strict
+            "rdv.example.net",
+            443,
+            fingerprints=("f" * 64,),
+            policy=TrustPolicy.strict,
+            transport="quic",
         )
-        calls: dict[str, bool] = {}
+        writes: list[bytes] = []
+
+        class _Writer:
+            def write(self, data):
+                writes.append(data)
+
+            async def drain(self):
+                return None
+
+            def is_closing(self):
+                return False
+
+            def close(self):
+                return None
 
         class _Manager:
             def __init__(self):
@@ -515,8 +541,7 @@ class TestPinVerify:
                 return False
 
             async def create_stream(self):
-                calls["create_stream"] = True
-                raise AssertionError("create_stream must not be reached")
+                return object(), _Writer()
 
         monkeypatch.setattr("hsync_client.rdv_client.connect", lambda *_a, **_k: _Manager())
         with pytest.raises(RendezvousFingerprintMismatch):
@@ -528,7 +553,9 @@ class TestPinVerify:
                     version="1.0.0",
                 )
             )
-        assert "create_stream" not in calls
+        # The trust check runs on the winner before the first write: the
+        # bucket_token in the register frame must never leave the host.
+        assert writes == []
 
 
 class TestTrustFailureGuidance:
@@ -548,7 +575,7 @@ class TestTrustFailureGuidance:
         cert, fp = _fake_cert()
         client = RendezvousClient("rdv.example.net", 443, policy=TrustPolicy.accept_new)
         with pytest.raises(RendezvousFingerprintMismatch) as excinfo:
-            client._verify_peer(_FakePeer(cert))
+            client.verify_peer(_FakePeer(cert))
         message = str(excinfo.value)
         guidance = excinfo.value.guidance
         assert "does not match the pinned fingerprint (possible man-in-the-middle)" in message
@@ -570,7 +597,7 @@ class TestTrustFailureGuidance:
         cert, fp = _fake_cert()
         client = RendezvousClient("rdv.example.net", 443, policy=TrustPolicy.strict)
         with pytest.raises(RendezvousFingerprintMismatch) as excinfo:
-            client._verify_peer(_FakePeer(cert))
+            client.verify_peer(_FakePeer(cert))
         assert "is not pinned and the trust policy is 'strict'" in str(excinfo.value)
         guidance = excinfo.value.guidance or ""
         assert f"hsync trust rendezvous-server add rdv.example.net:443 sha256:{fp}" in guidance
@@ -585,7 +612,7 @@ class TestTrustFailureGuidance:
             "rdv.example.net", 443, fingerprints=("0" * 64,), policy=TrustPolicy.strict
         )
         with pytest.raises(RendezvousFingerprintMismatch) as excinfo:
-            client._verify_peer(_FakePeer(cert))
+            client.verify_peer(_FakePeer(cert))
         assert "--rendezvous-server-fingerprint" in str(excinfo.value)
         guidance = excinfo.value.guidance or ""
         assert "hsync trust rendezvous-server fingerprint rdv.example.net:443" in guidance
@@ -605,7 +632,7 @@ class TestTrustFailureGuidance:
             client = RendezvousClient(
                 "rdv.example.net", 443, policy=TrustPolicy.ask, prompt=lambda *_a: True
             )
-            client._verify_peer(_FakePeer(cert))
+            client.verify_peer(_FakePeer(cert))
         finally:
             log.remove(sink_id)
         assert RendezvousTrustStore(trust_file).get("rdv.example.net", 443) == fp
@@ -627,7 +654,7 @@ class TestTrustFailureGuidance:
         sink_id = log.add(messages.append, level="INFO", format="{message}")
         try:
             client = RendezvousClient("rdv.example.net", 443, policy=TrustPolicy.accept_new)
-            client._verify_peer(_FakePeer(cert))
+            client.verify_peer(_FakePeer(cert))
         finally:
             log.remove(sink_id)
         assert any(
@@ -645,7 +672,7 @@ class TestTrustFailureGuidance:
             "rdv.example.net", 443, policy=TrustPolicy.ask, prompt=lambda *_a: False
         )
         with pytest.raises(RendezvousNotTrusted) as excinfo:
-            client._verify_peer(_FakePeer(cert))
+            client.verify_peer(_FakePeer(cert))
         message = str(excinfo.value)
         assert "nothing was saved" in message
         assert "--rendezvous-server-tofu" in message

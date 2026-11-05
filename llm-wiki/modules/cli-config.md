@@ -104,14 +104,25 @@ surface and the election stays single.
 Multi-port dial fallback: `HSYNC_RENDEZVOUS_SERVER_EXTRA_PORTS`
 (`config.py::get_rendezvous_server_extra_ports`, a thin lenient wrapper over the shared
 `hsync_common.endpoint.parse_port_list` SSOT) adds extra UDP ports to try for the
-SAME rendezvous; `RendezvousClient` (`rdv_client.py::_with_connection`) dials the last
-working port first (then the primary and extras) and falls back only on a
-**handshake** failure — the blocked-port signal — so a client whose egress
-firewall blocks UDP 443 reaches the node on another port (e.g. 53) and every
-later exchange skips the blocked one. Once the handshake succeeds the port is
+SAME rendezvous; `RendezvousClient._with_connection` (`rdv_client.py`) selects the
+transport, and the port order (`_candidate_ports` with the memo, applied by
+`_dial_transport_ports`/`_dial_auto`) dials the last working port first (then the
+primary and extras) and falls back only on a **handshake** failure — the
+blocked-port signal — so a client whose egress firewall blocks UDP 443 reaches the
+node on another port (e.g. 53) and every later exchange skips the blocked one. Once the handshake succeeds the port is
 reachable, so a reply timeout or a trust/protocol error propagates without
-re-dialling. The wire is unchanged and trust stays a single pin (shared fleet
-identity), so the fallback never re-prompts.
+re-dialling. The transport is selected by `--rendezvous-transport`
+(`HSYNC_RENDEZVOUS_TRANSPORT`, `config.py::get_rendezvous_transport`).
+`auto` (default) races QUIC/UDP (preferred) and TLS/TCP per endpoint
+(`rdv_client.py::_race`, RFC 8305 stagger, first handshake with the right ALPN
+wins, loser closed before any frame) and remembers the winner; `quic`/`tcp` use
+one transport only. A memoized TLS/TCP winner expires after
+`hsync_common.constants.RDV_TCP_FALLBACK_TTL_S` so a network whose UDP recovered
+moves back to QUIC, and a network change clears the memo
+(`rdv_client.py::RendezvousClient.reset_transport_memo`, called by
+`p2p_rendezvous_rdv.py::RdvRendezvous._on_network_change`). The wire is unchanged
+and trust stays a single pin per `(host, port)` shared by both transports, so the
+fallback never re-prompts.
 
 The rendezvous-server endpoints are `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS`
 (`_validate_rendezvous_server_endpoints` normalizes the list through the shared

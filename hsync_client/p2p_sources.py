@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 
 from hsync_common.constants import CONTENT_TYPE_JSON
 from hsync_common.hashing import is_sha256_hex
-from hsync_common.models.event import is_valid_cid
+from hsync_common.ids import is_valid_cid
 from hsync_common.models.file import File
 from hsync_common.protocol.p2p import P2P_FILES_SOURCES_SUFFIX
 from hsync_common.protocol.peer_download import (

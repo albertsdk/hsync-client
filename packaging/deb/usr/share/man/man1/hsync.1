@@ -398,6 +398,27 @@ Require a pin (same as
 .I none
 No verification (loopback/tests only; same as an unpinned insecure link).
 .RE
+.TP
+.BI \-\-rendezvous\-transport\fP= auto|quic|tcp
+Transport used to reach every rendezvous server. One of:
+.RS
+.TP
+.I auto
+(default) Race QUIC/UDP (preferred) and TLS/TCP on each endpoint's port(s)
+(QUIC starts first, TLS/TCP after a short stagger; the first handshake to
+complete wins and the loser is closed before any frame). Remembered per
+endpoint: a TLS/TCP winner keeps priority for five minutes, so a network whose
+UDP recovered moves back to QUIC.
+.TP
+.I quic
+Use QUIC/UDP only.
+.TP
+.I tcp
+Use TLS/TCP only.
+.RE
+.IP
+Also readable from
+.BR HSYNC_RENDEZVOUS_TRANSPORT .
 .IP
 The decision is remembered in the known-hosts store (see
 .BR HSYNC_RENDEZVOUS_SERVER_TRUST_FILE );
