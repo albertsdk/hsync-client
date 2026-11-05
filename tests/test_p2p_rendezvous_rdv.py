@@ -915,6 +915,19 @@ class TestAdvertisedEndpointsOverride:
         ]
         assert validate_rdv_frame(frame) is not None
 
+    def test_non_routable_override_candidates_are_dropped(self, monkeypatch):
+        """A loopback/link-local candidate must not invalidate the whole register."""
+        monkeypatch.setenv(_TEST_ADVERTISED_ENDPOINTS_ENV, "127.0.0.1:8443,198.51.100.7:8443")
+        plan, _ = make_plan()
+        assert plan._endpoint_wire(["192.0.2.10"]) == [
+            {"proto": "tcp", "host": "198.51.100.7", "port": 8443},
+        ]
+
+    def test_all_non_routable_candidates_yield_an_endpointless_register(self, monkeypatch):
+        monkeypatch.setenv(_TEST_ADVERTISED_ENDPOINTS_ENV, "127.0.0.1:8443")
+        plan, _ = make_plan()
+        assert plan._endpoint_wire(["192.0.2.10"]) == []
+
     def test_malformed_override_fails_fast(self, monkeypatch):
         monkeypatch.setenv(_TEST_ADVERTISED_ENDPOINTS_ENV, "not-an-endpoint")
         plan, _ = make_plan()

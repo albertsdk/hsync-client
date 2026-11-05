@@ -33,7 +33,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from hsync_common.constants import RDV_TRANSPORT_DEFAULT
-from hsync_common.endpoint import format_authority
+from hsync_common.endpoint import format_authority, is_valid_endpoint_host
 from hsync_common.protocol.rendezvous import RdvPeer, derive_bucket_token
 from hsync_common.protocol.tls_trust import TrustPolicy
 from loguru import logger as log
@@ -994,17 +994,26 @@ class RdvRendezvous(RendezvousPlanState):
         must not look like a change.
         """
         override = _test_advertised_endpoints()
-        if override is not None:
-            return [candidate.as_wire() for candidate in override]
-        return [
-            candidate.as_wire()
-            for candidate in candidate_endpoints(
+        candidates = (
+            override
+            if override is not None
+            else candidate_endpoints(
                 local_ips=local_ips,
                 listen_port=self._port,
                 observed=self._observed if include_observed else None,
                 external_port=self._external_port,
             )
-        ]
+        )
+        # Only advertise hosts a remote peer can actually dial: a non-routable
+        # candidate (a test seam, or a host with only loopback) would make the
+        # whole register frame invalid. Dropping it keeps the register valid;
+        # an empty list is the legal endpoint-less (reachable=false) form.
+        wired: list[dict[str, object]] = []
+        for candidate in candidates:
+            wire = candidate.as_wire()
+            if is_valid_endpoint_host(str(wire["host"])):
+                wired.append(wire)
+        return wired
 
     def _send_leave(self) -> None:
         try:
