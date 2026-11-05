@@ -15,7 +15,7 @@ implements it, plus client-only operational rules.
 | [0004 desktop-subprocess-contract](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0004-desktop-subprocess-contract.md) | `events.py` (`EventEmitter`), `--capabilities-json` (`hsync_client/cli.py::capabilities_json_callback`) |
 | [0005 protocol-versioning](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0005-protocol-versioning.md) | WS handshake (`hsync_client/remote_websocket.py::remote_connect`); REST `X-Protocol-Version` (`utils/http.py`) — hard-fail on mismatch |
 | [0017 p2p-slave-outbound-event-reliability](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0017-p2p-slave-outbound-event-reliability.md) | `P2PSlaveFileEventHandler` defer-to-close uploads (`_schedule_create_upload`/`_cancel_create_upload`) + `record_inbound_rename`/`is_inbound_rename_echo` 404 echo cache ([p2p-mode.md](modules/p2p-mode.md)) |
-| [0022 causal-vector-clock-conflict-model](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0022-causal-vector-clock-conflict-model.md) | `_compare_files` (`hsync_client/sync.py::_compare_files`) resolves via `resolve_three_way` with vclocks; `_save_conflict_copy` (`hsync_client/sync.py::_save_conflict_copy`)on `conflict_download`; upload arbitration mirrored in `arbitration.py` (client) / `hsync_server.arbitration` (server. |
+| [0022 causal-vector-clock-conflict-model](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0022-causal-vector-clock-conflict-model.md) | `_compare_files` (`hsync_client/sync.py::_compare_files`) resolves via `resolve_three_way` with vclocks; `_save_conflict_copy` (`hsync_client/sync.py::_save_conflict_copy`) on `conflict_download`; upload arbitration mirrored in `arbitration.py` (client) / `hsync_server.arbitration` (server). |
 | [0023 corrected-mtime-tie-break](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0023-corrected-mtime-tie-break.md) | `timesync.py` (server RTT probe in `main_logic.py`, background NTP multi-host probe via `start_ntp_clock_offset_probe` called from `p2p_handler.run_p2p_mode`; `HSYNC_NTP_HOSTS` CSV with `host[:port]` entries); `sync_state._corrected_mtime_of`/`upload_version_fields` 3-tuple (`hsync_client/sync_state.py::_corrected_mtime_of`/`hsync_client/sync_state.py::upload_version_fields`) feeds `corrected_mtime` to upload + delta-apply (`hsync_client/sync_state.py::resolve_upload_version_fields`) and to the mirror master arbitration (`hsync_client/arbitration.py::arbitrate_upload`, `hsync_client/p2p_server.py::P2PServer`); `_compare_files` passes corrected mtimes to `resolve_three_way` (`hsync_client/sync.py::_compare_files`). |
 | [0025 sqlite-external-state-store](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0025-sqlite-external-state-store.md) | `state_backend.resolve_bucket_folder`; `sync_state.py` / `tombstones.py` (folder UUID + per-folder DB under the device dir); `HSYNC_STATE_DIR` / `HSYNC_STATE_DB` |
 | [0030 p2p-seeder-capacity-advertisement](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0030-p2p-seeder-capacity-advertisement.md) | Seeder advertisement (`p2p_websocket.py` `p2p_websocket_client` handshake), master session storage (`p2p_inventory.py` `begin_session(serve_slots=…)`/`session_serve_slots`), candidate echo (`p2p_sources.py` `P2PSourceService`), requester admission + busy-as-scheduling (`p2p_sources.py` `acquire_slot`/`release_slot`, `transfer.py` `_parse_retry_after`), seeder `Retry-After` (`p2p_server.py`) |
@@ -270,7 +270,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
 
 - **rdv/1 lease cadence has its own budget**: the `rdv/1` plan uses
   `RENDEZVOUS_REFRESH_INTERVAL` (`hsync_client.constants`, default `30`, spec
-  ``rdv-1.md``: "client refresh every 30 s"; env `HSYNC_RENDEZVOUS_SERVER_REFRESH_INTERVAL`,
+  `rdv-1.md`: "client refresh every 30 s"; env `HSYNC_RENDEZVOUS_SERVER_REFRESH_INTERVAL`,
   range 1–300) to drive the lease loop's register/refresh/query, distinct from the
   mDNS `HEARTBEAT_INTERVAL` (5 s). `RdvRendezvous.wait_for_rendezvous` is
   event-based (`PeerManager.wait_for_change`, like mDNS) and never polls `query`
@@ -356,7 +356,8 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   endpoint is `--server-url`/`HSYNC_SERVER_URL` (a URL: it may carry a
   reverse-proxy path), the discovery servers are the repeatable
   `--rendezvous-server`/`HSYNC_RENDEZVOUS_SERVER_ENDPOINTS` (scheme-less
-  `HOST[:PORT]` endpoints, because the QUIC/UDP channel refuses a scheme), extra
+  `HOST[:PORT]` endpoints, because the `rdv/1` endpoint grammar is scheme-less on
+  both transports), extra
   dial ports of those same endpoints are `HSYNC_RENDEZVOUS_SERVER_EXTRA_PORTS`,
   and bind addresses are `--listen-*`. No flag is a bare `--port` any more: a
   port always travels inside the endpoint it belongs to, so the same word can no
