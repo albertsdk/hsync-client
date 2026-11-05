@@ -393,7 +393,7 @@ local file):
 
 Findings: the SQL side must be one bulk read — the per-file helper is three
 orders of magnitude worse at scale — and the local side is dominated by the
-content hash, which the shared cache in `hsync_common/models/file.py` already
+content hash, which the shared cache in `hsync-common/hsync_common/models/file.py` already
 avoids on a repeat pass (`File.get` invalidates on `mtime_ns`/`ctime_ns`/`size`).
 `MasterSyncStatus` therefore never clears that cache and reuses its local listing
 for `master_status.LOCAL_CACHE_TTL_S`.

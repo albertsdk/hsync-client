@@ -329,8 +329,8 @@ values; identical pairs are deduplicated (`sync.py::_last_folder_size`).
 
 No node is authoritative: the server and the elected p2p master are transport
 hubs. Upload arbitration is the shared decision in
-`hsync_common/models/arbitration.py::decide_arbitration` (bound client-side in
-`hsync_client/arbitration.py` and server-side in `hsync_server/arbitration.py`);
+`hsync-common/hsync_common/models/arbitration.py::decide_arbitration` (bound client-side in
+`hsync_client/arbitration.py` and server-side in `hsync-server/hsync_server/arbitration.py`);
 the tie-break is deterministic by highest
 SHA-256 so every node converges without a central authority.
 

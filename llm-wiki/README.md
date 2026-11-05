@@ -16,6 +16,12 @@ one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
 > **first search surface**:
 > start here, follow the `path::symbol` references to reach code directly.
 
+**Source references.** Local paths are relative to this repository root and use
+`path/to/file.ext::Symbol`. Cross-repo references are relative to the `hsync/`
+workspace root and start with the sibling repo directory (`hsync-common/…`,
+`hsync-client/…`, `hsync-server/…`, `hsync-rendezvous/…`, `hsync-desktop/…`);
+they are code spans, not hyperlinks.
+
 ## Map
 
 | Doc | Scope |
@@ -44,7 +50,7 @@ one watcher + transfer core. Built on `hsync-common` (models, protocol, utils).
 - Mode branch: remote → `remote_websocket.remote_events` (`remote_websocket.py::remote_events`);
   p2p → `p2p_handler.run_p2p_mode` (`p2p_handler.py::run_p2p_mode`).
 - Version SSOT: `HSYNC_VERSION` re-exported from `hsync_common.constants`
-  (`hsync_common/constants.py::HSYNC_VERSION`); `CLIENT_NAME = "hsync-client"` (`constants.py::CLIENT_NAME`) feeds the
+  (`hsync-common/hsync_common/constants.py::HSYNC_VERSION`); `CLIENT_NAME = "hsync-client"` (`constants.py::CLIENT_NAME`) feeds the
   `X-Client-Name` REST header build in `main_logic.py`.
 - Config: env + CLI merged into the global `CONFIG: HsyncConfig` (`config.py::CONFIG`),
   set via `set_config` (`config.py::set_config`); modules read `CONFIG` directly.

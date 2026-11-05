@@ -169,13 +169,13 @@ write opt-in is `CLI-opt-in OR environment-opt-in` and defaults false.
    cgroup memory limit to cap parallelism inside containers (no effect on bare
    metal, where the memory probe returns `None`).
 - `constants.py::SERVER_DEFAULT_PORT` — a re-export of
-  `hsync_common/constants.py::SERVER_DEFAULT_PORT`: the port `hsync server
+  `hsync-common/hsync_common/constants.py::SERVER_DEFAULT_PORT`: the port `hsync server
   HOSTNAME` uses when the endpoint carries no port (the same default the server binds),
   so the omitted-port form targets a default server install directly;
   reverse-proxy deployments pass `--server-url https://host` (or `host:443`).
 - Shared CLI/GUI defaults and their accepted bounds (HTTP timeout, retry/stability
   delays, sync direction, bandwidth bounds, mass-delete guard, free-space/inbound
-  limits, max-wait timeout, peer-download caps) live in `hsync_common/defaults.py`;
+  limits, max-wait timeout, peer-download caps) live in `hsync-common/hsync_common/defaults.py`;
   `hsync_client.constants` re-exports them under its own names, and the desktop
   reads the same values and bounds, so the GUI cannot drift from the engine.
 - Range and bucket validation is inline in `cli.py` (Typer) — e.g.
