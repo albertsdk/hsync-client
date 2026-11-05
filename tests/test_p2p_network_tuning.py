@@ -99,7 +99,7 @@ class TestRefreshLanNetworkTuning:
         CONFIG.update(config)
         log = MagicMock()
 
-        with patch("hsync_client.p2p_handler.measure_rtt", return_value=80.0):
+        with patch("hsync_client.autotune.measure_rtt", return_value=80.0):
             _refresh_p2p_network_tuning(_make_master(), config, log)
 
         # factor = 1 + 80/100 = 1.8 -> min_wait 9, max_wait 18, reconnect 9;
@@ -121,7 +121,7 @@ class TestRefreshLanNetworkTuning:
         CONFIG.clear()
         CONFIG.update(config)
 
-        with patch("hsync_client.p2p_handler.measure_rtt", return_value=80.0):
+        with patch("hsync_client.autotune.measure_rtt", return_value=80.0):
             _refresh_p2p_network_tuning(_make_master(), config, MagicMock())
 
         assert config["HTTP_TIMEOUT"] == 45
@@ -141,7 +141,7 @@ class TestRefreshLanNetworkTuning:
         CONFIG.update(config)
         log = MagicMock()
 
-        with patch("hsync_client.p2p_handler.measure_rtt", return_value=None):
+        with patch("hsync_client.autotune.measure_rtt", return_value=None):
             _refresh_p2p_network_tuning(_make_master(), config, log)
 
         for cfg in (config, CONFIG):
@@ -155,7 +155,7 @@ class TestRefreshLanNetworkTuning:
 
         config = _make_config(tmp_path, AUTOTUNE_ENABLED=False)
 
-        with patch("hsync_client.p2p_handler.measure_rtt") as mock_rtt:
+        with patch("hsync_client.autotune.measure_rtt") as mock_rtt:
             _refresh_p2p_network_tuning(_make_master(), config, MagicMock())
 
         mock_rtt.assert_not_called()
@@ -171,7 +171,7 @@ class TestRefreshLanNetworkTuning:
 
         config = cast(HsyncConfig, {"HTTP_TIMEOUT": 30})
 
-        with patch("hsync_client.p2p_handler.measure_rtt") as mock_rtt:
+        with patch("hsync_client.autotune.measure_rtt") as mock_rtt:
             _refresh_p2p_network_tuning(_make_master(), config, MagicMock())
 
         mock_rtt.assert_not_called()
@@ -207,7 +207,7 @@ class TestRefreshLanNetworkTuning:
 
         handler_id = logger.add(sink, level="INFO", format=_format_record_plain, catch=False)
         try:
-            with patch("hsync_client.p2p_handler.measure_rtt", return_value=0.1):
+            with patch("hsync_client.autotune.measure_rtt", return_value=0.1):
                 # Pass the real loguru logger so emit() runs the formatter.
                 _refresh_p2p_network_tuning(_make_master(), config, logger)
         finally:
@@ -265,7 +265,7 @@ class TestRefreshCheckOrdering:
 
         config = _make_config(tmp_path, AUTOTUNE_MANAGED_KEYS=[])
 
-        with patch("hsync_client.p2p_handler.measure_rtt") as mock_rtt:
+        with patch("hsync_client.autotune.measure_rtt") as mock_rtt:
             _refresh_p2p_network_tuning(_make_master(), config, MagicMock())
 
         mock_rtt.assert_not_called()

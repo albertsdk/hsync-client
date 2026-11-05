@@ -320,6 +320,22 @@ def _run_preview(log) -> None:
     emit_event(UiEventName.preview_end)
 
 
+def _install_stdin_commands(handler: StdinCommandHandler, log) -> None:
+    """Register the commands shared by every preview entry point.
+
+    PREVIEW/PEERS/SET_BANDWIDTH are identical in the LAN and server flows; only
+    each caller's SYNC handler differs (one-shot vs preview-confirm), so it is
+    registered separately by the caller.
+    """
+    handler.register("PREVIEW", lambda **_kw: _run_preview(log))
+    handler.register("PEERS", lambda **_kw: reemit_presence())
+
+    async def _on_set_bandwidth(**kw: object) -> None:
+        await _handle_set_bandwidth(log, **kw)
+
+    handler.register("SET_BANDWIDTH", _on_set_bandwidth)
+
+
 async def _with_stdin_commands(
     log,
     coro,
@@ -337,8 +353,7 @@ async def _with_stdin_commands(
     import asyncio
 
     handler = StdinCommandHandler(log)
-    handler.register("PREVIEW", lambda **_kw: _run_preview(log))
-    handler.register("PEERS", lambda **_kw: reemit_presence())
+    _install_stdin_commands(handler, log)
 
     async def _handle_sync(**_kw: object) -> None:
         lan = CONFIG.get("P2P_MODE", False)
@@ -375,11 +390,6 @@ async def _with_stdin_commands(
 
     handler.register("SET_SYNC_DIRECTION", _handle_set_sync_direction)
 
-    async def _on_set_bandwidth(**kw: object) -> None:
-        await _handle_set_bandwidth(log, **kw)
-
-    handler.register("SET_BANDWIDTH", _on_set_bandwidth)
-
     stdin_task = asyncio.create_task(handler.run())
 
     try:
@@ -409,8 +419,7 @@ async def _run_stdin_wait(
     which is the real initial sync of the desktop flow.
     """
     handler = StdinCommandHandler(log)
-    handler.register("PREVIEW", lambda **_kw: _run_preview(log))
-    handler.register("PEERS", lambda **_kw: reemit_presence())
+    _install_stdin_commands(handler, log)
 
     async def _handle_sync(**_kw: object) -> None:
         if not _p2p_write_allowed(CONFIG.get("SYNC_DIRECTION", "bidirectional"), log):
@@ -436,9 +445,4 @@ async def _run_stdin_wait(
         handler.stop()
 
     handler.register("SYNC", _handle_sync)
-
-    async def _on_set_bandwidth(**kw: object) -> None:
-        await _handle_set_bandwidth(log, **kw)
-
-    handler.register("SET_BANDWIDTH", _on_set_bandwidth)
     await handler.run()

@@ -307,14 +307,14 @@ def _find_base_block_device(st_dev: int) -> str:
     major, minor = (st_dev >> 8) & 0xFFF, st_dev & 0xFF
     dev_str = f"{major}:{minor}"
 
-    source: str | None = None
-    for line in mountinfo.splitlines():
-        fields = line.split()
-        if len(fields) < 5:
-            continue
-        if fields[2] == dev_str:
-            source = fields[4]
-            break
+    source = next(
+        (
+            fields[4]
+            for line in mountinfo.splitlines()
+            if len(fields := line.split()) >= 5 and fields[2] == dev_str
+        ),
+        None,
+    )
     if source is None:
         raise OSError(f"Cannot find device for st_dev {dev_str} in mountinfo")
 
@@ -445,6 +445,22 @@ def derive_managed_rtt_updates(rtt_ms: float, managed: set[str]) -> dict[str, in
         if "RECONNECT_DELAY" in managed:
             updates["RECONNECT_DELAY"] = reconnect
     return updates
+
+
+def measure_rtt_tuning(
+    host: str, port: int, managed: set[str]
+) -> tuple[float, NetClass, dict[str, int | float]] | None:
+    """Measure the endpoint RTT and derive the autotune-managed updates.
+
+    One place owns the "unmeasurable ⇒ keep current tuning" contract used by the
+    remote and P2P refreshes: returns ``(rtt_ms, net_class, updates)``, or
+    ``None`` when the probe produced no sample. Callers keep their own guard,
+    logging and application policy (which keys/dicts they write).
+    """
+    rtt_ms = measure_rtt(host, port)
+    if rtt_ms is None:
+        return None
+    return rtt_ms, classify_network(rtt_ms), derive_managed_rtt_updates(rtt_ms, managed)
 
 
 def derive_timeout(

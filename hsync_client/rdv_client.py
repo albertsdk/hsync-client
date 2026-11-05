@@ -265,11 +265,7 @@ class RendezvousClient:
 
     def _candidate_ports(self) -> tuple[int, ...]:
         """Ordered ports to dial: the last working port first, then the rest."""
-        seen: list[int] = []
-        for candidate in (*self._preferred, self.port, *self.ports):
-            if candidate not in seen:
-                seen.append(candidate)
-        return tuple(seen)
+        return tuple(dict.fromkeys((*self._preferred, self.port, *self.ports)))
 
     def reset_transport_memo(self) -> None:
         """Forget the memoized transport/port (network change resets the race).
@@ -322,10 +318,6 @@ class RendezvousClient:
         """Ordered ports to try for this node (multi-port egress fallback)."""
         return self._candidate_ports()
 
-    def transport_name(self) -> str:
-        """The active transport selector (``auto``/``quic``/``tcp``)."""
-        return self.transport
-
     def resolved_relay_ip(self, port: int | None = None) -> str:
         """Resolve the node host once (the IP relay attach connections pin to).
 
@@ -351,15 +343,18 @@ class RendezvousClient:
         address = infos[0][4][0]
         return str(address)
 
-    async def dial_relay_tcp(self, port: int, *, ip: str) -> tuple[Any, Any, bytes | None]:
-        """Dial one TLS/TCP relay connection (one connection = one session).
+    async def _open_rdv_tls_stream(
+        self, ip: str, port: int, context: ssl.SSLContext
+    ) -> tuple[Any, Any, bytes | None]:
+        """Open one TLS/TCP stream, enforce ALPN and return the peer certificate DER.
 
-        Returns ``(reader, writer, peer_cert_der)`` with the peer certificate in
-        DER form; the caller (``rdv_relay``) runs :meth:`verify_peer_der` on it
-        before the first write. ALPN is enforced as in ``_dial_tcp``.
+        The node is self-signed by contract, so the fingerprint is verified by
+        the caller on the returned DER before the first write. ALPN is enforced
+        client-side because Python's client handshake does not abort on no
+        overlap; parity with the node's server-side check.
         """
         reader, writer = await asyncio.open_connection(
-            ip, port, ssl=self._tls_context(), server_hostname=self.host
+            ip, port, ssl=context, server_hostname=self.host
         )
         ssl_object = writer.get_extra_info("ssl_object")
         selected = ssl_object.selected_alpn_protocol() if ssl_object is not None else None
@@ -370,6 +365,15 @@ class RendezvousClient:
             )
         cert_der = ssl_object.getpeercert(binary_form=True) if ssl_object is not None else None
         return reader, writer, cert_der
+
+    async def dial_relay_tcp(self, port: int, *, ip: str) -> tuple[Any, Any, bytes | None]:
+        """Dial one TLS/TCP relay connection (one connection = one session).
+
+        Returns ``(reader, writer, peer_cert_der)`` with the peer certificate in
+        DER form; the caller (``rdv_relay``) runs :meth:`verify_peer_der` on it
+        before the first write. ALPN is enforced as in ``_dial_tcp``.
+        """
+        return await self._open_rdv_tls_stream(ip, port, self._tls_context())
 
     def register(self, frame: RdvRegister) -> RdvAck | None:
         """Send ``register``; return the ``ack`` (STUN-echo) or ``None`` if dropped."""
@@ -618,21 +622,7 @@ class RendezvousClient:
 
     async def _dial_tcp(self, port: int, context: ssl.SSLContext) -> _Dial:
         """Open one TLS/TCP connection (one connection = one ``rdv/1`` session)."""
-        reader, writer = await asyncio.open_connection(
-            self.host, port, ssl=context, server_hostname=self.host
-        )
-        ssl_object = writer.get_extra_info("ssl_object")
-        selected = ssl_object.selected_alpn_protocol() if ssl_object is not None else None
-        # ALPN is enforced client-side too: Python's client-side handshake does
-        # not abort on no overlap, so the node selection is checked here (parity
-        # with the node's server-side check; the seal is broken by closing).
-        if selected != RDV_ALPN:
-            writer.close()
-            raise ConnectionError(
-                f"rendezvous {format_authority(self.host, port)}: node did not select hsync-rdv/1"
-            )
-
-        cert_der = ssl_object.getpeercert(binary_form=True) if ssl_object is not None else None
+        reader, writer, cert_der = await self._open_rdv_tls_stream(self.host, port, context)
 
         async def _close() -> None:
             try:

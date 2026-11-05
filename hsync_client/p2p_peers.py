@@ -82,14 +82,9 @@ def _endpoints_union(
     stable source-insertion order, so a repeated heartbeat from either source
     yields the same tuple and is not reported as a change.
     """
-    ordered: list[tuple[str, int]] = []
-    seen: set[tuple[str, int]] = set()
-    for candidates in by_source.values():
-        for candidate in candidates:
-            if candidate not in seen:
-                seen.add(candidate)
-                ordered.append(candidate)
-    return tuple(ordered)
+    return tuple(
+        dict.fromkeys(candidate for candidates in by_source.values() for candidate in candidates)
+    )
 
 
 def server_url(address: str, port: int, *, use_https: bool) -> str:

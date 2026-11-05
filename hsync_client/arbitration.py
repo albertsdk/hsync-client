@@ -16,6 +16,10 @@ client-side store/CID binding.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
+from hsync_common.labels import ActionLabel
 from hsync_common.models.arbitration import (
     ArbitrationOutcome,
     ArbitrationResult,
@@ -24,6 +28,8 @@ from hsync_common.models.arbitration import (
     plan_self_record,
 )
 from hsync_common.models.version import new_version_id
+from hsync_common.time_utils import conflict_timestamp
+from loguru import logger as log
 
 from hsync_client.sync_state import get_sync_state_store
 
@@ -32,7 +38,41 @@ __all__ = [
     "ArbitrationResult",
     "arbitrate_upload",
     "conflicted_copy_name",
+    "preserve_conflict_copy",
 ]
+
+
+def preserve_conflict_copy(
+    source: str,
+    dest_path: str,
+    loser_cid: str,
+    *,
+    side: str,
+    ensure_parent: bool = False,
+) -> bool:
+    """Move *source* aside as the conflicted copy of *dest_path*.
+
+    A concurrent edit must never destroy the losing side, so the bytes are moved
+    (``os.replace``) to ``<name>_conflicted_copy_<cid>_<ts>`` before the winner
+    is committed. *side* names the losing side in the warning ("incoming" /
+    "local"); *ensure_parent* creates the destination directory first (only the
+    accepted-winner site needs it). Returns ``True`` when the copy was stored; a
+    failed move is logged and returns ``False`` (the caller keeps its own
+    response/cleanup handling).
+    """
+    conflict_path = conflicted_copy_name(dest_path, loser_cid, conflict_timestamp())
+    try:
+        if ensure_parent:
+            Path(conflict_path).parent.mkdir(parents=True, exist_ok=True)
+        os.replace(source, conflict_path)
+    except OSError as exc:
+        log.error(f'Could not save conflict copy for "{dest_path}": {exc}')
+        return False
+    log.warning(
+        f'{ActionLabel.CONFLICT} "{dest_path}" concurrent edit; '
+        f'{side} version saved as "{conflict_path}"'
+    )
+    return True
 
 
 def arbitrate_upload(

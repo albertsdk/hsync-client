@@ -56,6 +56,7 @@ __all__ = [
     "load_or_create_master_cert",
     "verify_cert_fingerprint",
     "verify_peer_cert_fingerprint",
+    "websocket_ssl_object",
 ]
 
 
@@ -229,3 +230,14 @@ def verify_peer_cert_fingerprint(ssl_object, expected_fingerprint: str) -> bool:
     if not cert_der:
         return False
     return verify_cert_fingerprint(cert_der, expected_fingerprint)
+
+
+def websocket_ssl_object(websocket) -> ssl.SSLObject | None:
+    """The TLS object of a live ``websockets`` connection, or ``None``.
+
+    ``websockets`` exposes the underlying asyncio transport as ``.transport``;
+    the TLS object is its ``ssl_object`` extra info. Centralised so the
+    remote-event and P2P channels read the live pin the same way.
+    """
+    transport = getattr(websocket, "transport", None)
+    return transport.get_extra_info("ssl_object") if transport is not None else None

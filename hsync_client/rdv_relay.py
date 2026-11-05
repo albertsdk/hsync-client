@@ -70,12 +70,7 @@ __all__ = [
     "GroupRelayAcceptor",
     "RelayAcceptor",
     "RelayDialer",
-    "RelayOpenError",
 ]
-
-
-class RelayOpenError(RuntimeError):
-    """The node refused, or failed, to pair a relay session."""
 
 
 # One relay tunnel carries many loopback connections over its single paired

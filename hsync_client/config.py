@@ -575,12 +575,11 @@ def _parse_fingerprint_list(raw: str | None) -> tuple[str, ...]:
     """Normalize a comma-separated pinned-fingerprint list, dropping invalid parts."""
     if not raw:
         return ()
-    pins: list[str] = []
-    for part in raw.split(","):
-        normalized = parse_fingerprint(part.strip())
-        if normalized is not None:
-            pins.append(normalized)
-    return tuple(pins)
+    return tuple(
+        normalized
+        for part in raw.split(",")
+        if (normalized := parse_fingerprint(part.strip())) is not None
+    )
 
 
 def resolve_rendezvous_server_pins(

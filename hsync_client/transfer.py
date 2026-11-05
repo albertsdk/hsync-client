@@ -308,13 +308,12 @@ def _build_multipart_streaming(
     file_size = max(file_size, 0)
 
     # Pre-compute body parts so Content-Length is exact
-    field_parts: list[bytes] = []
-    for name, value in fields.items():
-        field_parts.append(
-            f"--{boundary}\r\n"
-            f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
-            f"{value}\r\n".encode()
-        )
+    field_parts: list[bytes] = [
+        (
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'
+        ).encode()
+        for name, value in fields.items()
+    ]
 
     # Sanitize the filename for use in the multipart header: a double quote
     # would close the quoted-string early and CRLF sequences would inject
@@ -1751,9 +1750,8 @@ def _reschedule_upload(
     timer_kwargs: dict[str, object] = {
         "_reschedules_left": reschedules_left - 1,
         "permissions_only": permissions_only,
+        "inventory_observer": inventory_observer,
     }
-    if inventory_observer is not NOOP_INVENTORY_OBSERVER:
-        timer_kwargs["inventory_observer"] = inventory_observer
     timer = threading.Timer(delay, upload_file, args=(file,), kwargs=timer_kwargs)
     timer.daemon = True
     timer.start()
@@ -1972,15 +1970,7 @@ def upload_file(
         if not _wait_for_stable_file(file, from_closed):
             # File never stopped being written within the wait window: defer the
             # upload instead of transferring a half-written file.
-            if inventory_observer is NOOP_INVENTORY_OBSERVER:
-                _reschedule_upload(file, _reschedules_left, permissions_only)
-            else:
-                _reschedule_upload(
-                    file,
-                    _reschedules_left,
-                    permissions_only,
-                    inventory_observer,
-                )
+            _reschedule_upload(file, _reschedules_left, permissions_only, inventory_observer)
             return
 
         # Refresh metadata after the write is complete. Reuse the digest
@@ -2002,18 +1992,14 @@ def upload_file(
         log.debug(f'Written file: "{file.filepath}" ({format_bytes(file.size)})')
         inventory_observer.upsert(file)
 
-        # Recursive call with check_size=False to do actual upload
-        if inventory_observer is NOOP_INVENTORY_OBSERVER:
-            upload_file(file, False, permissions_only=permissions_only)
-        else:
-            upload_file(
-                file,
-                False,
-                permissions_only=permissions_only,
-                inventory_observer=inventory_observer,
-            )
+        _dispatch_upload(file, permissions_only)
         return
 
+    _dispatch_upload(file, permissions_only)
+
+
+def _dispatch_upload(file: File, permissions_only: bool) -> None:
+    """Run the retry-wrapped upload attempt for an already-stabilized file."""
     max_attempts, min_wait, max_wait = _transfer_retry_params()
     attempt = retry_on_transient_transfer_error(max_attempts, min_wait, max_wait)(
         _upload_file_attempt

@@ -596,12 +596,7 @@ def _safe_config_for_log(config: HsyncConfig, env_file: str | None) -> dict[str,
 
 def _flatten_pins(pins: FingerprintPins) -> tuple[str, ...]:
     """Unique pinned digests across endpoints (the trust policy needs presence)."""
-    seen: list[str] = []
-    for values in pins.values():
-        for value in values:
-            if value not in seen:
-                seen.append(value)
-    return tuple(seen)
+    return tuple(dict.fromkeys(value for values in pins.values() for value in values))
 
 
 def _resolve_rendezvous_server_trust(

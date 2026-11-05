@@ -1622,12 +1622,12 @@ async def p2p_websocket_client(
             # trusted by pin, not by a CA), so the check below is what
             # establishes trust.
             if use_https and expected_fingerprint:
-                from hsync_client.ssl_utils import verify_peer_cert_fingerprint
-
-                transport = getattr(websocket, "transport", None)
-                ssl_object = (
-                    transport.get_extra_info("ssl_object") if transport is not None else None
+                from hsync_client.ssl_utils import (
+                    verify_peer_cert_fingerprint,
+                    websocket_ssl_object,
                 )
+
+                ssl_object = websocket_ssl_object(websocket)
                 if not verify_peer_cert_fingerprint(ssl_object, str(expected_fingerprint)):
                     log.error("Master WSS certificate fingerprint mismatch; refusing connection")
                     return
@@ -2288,6 +2288,15 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
         # .part files are used during downloads
         return is_partial_file(filepath)
 
+    def _ignore_watcher_paths(self, *paths: str) -> bool:
+        """Whether an event on any of *paths* must not be broadcast back.
+
+        A path we own (an in-flight ``.part`` artifact) or are receiving from
+        the master must not echo back as a local change. One predicate so the
+        five watcher handlers cannot drift on the suppression policy.
+        """
+        return any(self._is_temp_file(path) or self.is_receiving(path) for path in paths)
+
     def _upload_to_master(
         self, file_obj: File, from_closed: bool = False, permissions_only: bool = False
     ) -> None:
@@ -2472,12 +2481,9 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
         """Handle file/directory creation events."""
         src_path = ensure_str_path(event.src_path)
 
-        # Skip temp files (.part files used during downloads)
-        if self._is_temp_file(src_path):
-            return
-
-        # Skip if we're receiving this file from master
-        if self.is_receiving(src_path):
+        # Skip temp files (.part files used during downloads) and files we are
+        # receiving from the master (no echo back).
+        if self._ignore_watcher_paths(src_path):
             return
 
         if event.is_directory and not is_hidden_dir(src_path):
@@ -2555,12 +2561,9 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
         """Handle file/directory modification events."""
         src_path = ensure_str_path(event.src_path)
 
-        # Skip temp files (.part files used during downloads)
-        if self._is_temp_file(src_path):
-            return
-
-        # Skip if we're receiving this file from master
-        if self.is_receiving(src_path):
+        # Skip temp files (.part files used during downloads) and files we are
+        # receiving from the master (no echo back).
+        if self._ignore_watcher_paths(src_path):
             return
 
         if event.is_directory:
@@ -2709,12 +2712,9 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
 
         src_path = ensure_str_path(event.src_path)
 
-        # Skip temp files (.part files used during downloads)
-        if self._is_temp_file(src_path):
-            return
-
-        # Skip if we're receiving this file from master
-        if self.is_receiving(src_path):
+        # Skip temp files (.part files used during downloads) and files we are
+        # receiving from the master (no echo back).
+        if self._ignore_watcher_paths(src_path):
             return
 
         if event.is_directory or is_hidden_file(src_path):
@@ -2842,12 +2842,8 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
         # a stale timer does not try to upload a deleted file.
         self._reset_path_tracking(src_path)
 
-        # Skip temp files (.part files used during downloads)
-        if self._is_temp_file(src_path):
-            return
-
-        # Skip if we're receiving this deletion from master (echo suppression).
-        if self.is_receiving(src_path):
+        # Skip temp files and the echo of an inbound receiving write.
+        if self._ignore_watcher_paths(src_path):
             return
 
         # Skip the echo of an inbound recursive delete: `apply_inbound_event`
@@ -2939,12 +2935,8 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
         # against the stale one from the source.
         self._reset_path_tracking(dest_path)
 
-        # Skip temp files (.part files used during downloads)
-        if self._is_temp_file(src_path) or self._is_temp_file(dest_path):
-            return
-
-        # Skip if we're receiving these files from master
-        if self.is_receiving(src_path) or self.is_receiving(dest_path):
+        # Skip temp files and the echo of an inbound receiving write (both ends).
+        if self._ignore_watcher_paths(src_path, dest_path):
             return
 
         # Handle hidden file/dir scenarios

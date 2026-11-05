@@ -23,7 +23,6 @@ from hsync_common import defaults as _defaults
 # rdv/1 UDP default (QUIC, not HTTPS) — one SSOT with the rendezvous's `--port`.
 from hsync_common.constants import (  # noqa: F401
     CORRECTED_MTIME_MAX_FUTURE_SKEW,
-    HOSTNAME_PATTERN,
     HSYNC_VERSION,
     HSYNCKEEP_FILENAME,
     PARTIAL_DOWNLOAD_SUFFIX,

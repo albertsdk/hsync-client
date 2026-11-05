@@ -46,7 +46,11 @@ from urllib.parse import parse_qs, urlparse
 
 import zstandard as zstd
 from aiohttp import web
-from hsync_common.clock import clamp_incoming_corrected_mtime, uncorrect_mtime
+from hsync_common.clock import (
+    clamp_incoming_corrected_mtime,
+    clamp_incoming_raw_mtime,
+    uncorrect_mtime,
+)
 from hsync_common.compression import compression_level
 from hsync_common.constants import (
     CHUNK_SIZE_SMALL,
@@ -89,13 +93,13 @@ from hsync_common.text import compact_json_bytes
 from hsync_common.time_utils import utc_now_epoch
 from loguru import logger as log
 
-from hsync_client.arbitration import conflicted_copy_name
+from hsync_client.arbitration import preserve_conflict_copy
 from hsync_client.compression import (
     CONTENT_ENCODING_ZSTD,
     should_compress,
 )
 from hsync_client.config import CONFIG
-from hsync_client.constants import HSYNCKEEP_FILENAME, MTIME_MAX_FUTURE_SKEW_SECONDS, ActionLabel
+from hsync_client.constants import HSYNCKEEP_FILENAME, ActionLabel
 from hsync_client.multipart import (
     _MULTIPART_BOUNDARY_RE,
     _CappedBytesWriter,
@@ -1377,9 +1381,8 @@ class P2PEndpointMixin(_HTTPTransportBase):
                 # Apply the uploader's raw mtime with the same far-future clamp
                 # the central server applies: an absurd value must not win every
                 # tie-break (ADR-0023).
-                max_ts = utc_now_epoch() + MTIME_MAX_FUTURE_SKEW_SECONDS
-                if mtime > max_ts:
-                    mtime = int(max_ts)
+                clamped = clamp_incoming_raw_mtime(mtime, utc_now_epoch())
+                mtime = int(clamped) if clamped != mtime else mtime
                 os.utime(dst_path, (mtime, mtime))
 
             # The move vacated the source path: keep the empty directory alive
@@ -2524,20 +2527,8 @@ class P2PEndpointMixin(_HTTPTransportBase):
         if arb.outcome is ArbitrationOutcome.conflict_lost:
             # Concurrent: incoming loses the tie-break. Preserve the
             # incoming bytes as a conflicted copy, keep the local winner.
-            from hsync_common.time_utils import conflict_timestamp
-
-            ts = conflict_timestamp()
-            loser_cid = arb.loser_cid
-            conflict_path = conflicted_copy_name(dest_path, loser_cid, ts)
-            try:
-                os.replace(tmp_path, conflict_path)
+            if preserve_conflict_copy(tmp_path, dest_path, arb.loser_cid, side="incoming"):
                 ctx.tmp_path = None
-                log.warning(
-                    f'{ActionLabel.CONFLICT} "{dest_path}" concurrent edit; '
-                    f'incoming version saved as "{conflict_path}"'
-                )
-            except OSError as e:
-                log.error(f'Could not save conflict copy for "{dest_path}": {e}')
             self._send_error_response(HTTP_CONFLICT, "conflict_lost")
             ctx.response_sent = True
             return
@@ -2563,19 +2554,9 @@ class P2PEndpointMixin(_HTTPTransportBase):
         if arb.outcome is ArbitrationOutcome.accepted_conflict_won and disk_hash is not None:
             # Preserve the displaced local content as a conflict copy
             # before overwriting it with the incoming winner.
-            from hsync_common.time_utils import conflict_timestamp
-
-            ts = conflict_timestamp()
-            conflict_path = conflicted_copy_name(dest_path, arb.loser_cid, ts)
-            try:
-                Path(conflict_path).parent.mkdir(parents=True, exist_ok=True)
-                os.replace(dest_path, conflict_path)
-                log.warning(
-                    f'{ActionLabel.CONFLICT} "{dest_path}" concurrent edit; '
-                    f'local version saved as "{conflict_path}"'
-                )
-            except OSError as e:
-                log.error(f'Could not save conflict copy for "{dest_path}": {e}')
+            preserve_conflict_copy(
+                dest_path, dest_path, arb.loser_cid, side="local", ensure_parent=True
+            )
 
         os.replace(tmp_path, dest_path)
         ctx.tmp_path = None
@@ -2598,14 +2579,14 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
         if mtime or ctime:
             try:
-                max_ts = time.time() + MTIME_MAX_FUTURE_SKEW_SECONDS
+                now = time.time()
                 mtime_val = float(mtime) if mtime else None
                 atime_val = mtime_val or (float(ctime) if ctime else None)
                 if mtime_val:
                     # Clamp far-future peer-supplied timestamps (conflict
                     # engineering would favour the newest mtime).
-                    mtime_val = min(mtime_val, max_ts)
-                    atime_val = min(atime_val, max_ts) if atime_val else mtime_val
+                    mtime_val = clamp_incoming_raw_mtime(mtime_val, now)
+                    atime_val = clamp_incoming_raw_mtime(atime_val, now) if atime_val else mtime_val
                     os.utime(dest_path, (atime_val, mtime_val))
             except (ValueError, OSError):
                 pass

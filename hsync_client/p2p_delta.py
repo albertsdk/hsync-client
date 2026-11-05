@@ -30,11 +30,11 @@ import os
 import shutil
 import tempfile
 import threading
-import time
 import uuid
 from pathlib import Path
 
 import zstandard as zstd
+from hsync_common.clock import clamp_incoming_raw_mtime
 from hsync_common.constants import (
     CONTENT_TYPE_OCTET_STREAM,
     DELTA_MAX_LITERAL_SIZE,
@@ -77,7 +77,6 @@ from hsync_client.compression import (
     should_compress,
 )
 from hsync_client.config import CONFIG
-from hsync_client.constants import MTIME_MAX_FUTURE_SKEW_SECONDS
 from hsync_client.progress import (
     emit_completed_transfer,
     progress_reporter,
@@ -510,7 +509,7 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
         mtime = meta.get("mtime")
         if mtime:
             try:
-                mtime_val = min(float(mtime), time.time() + MTIME_MAX_FUTURE_SKEW_SECONDS)
+                mtime_val = clamp_incoming_raw_mtime(float(mtime))
                 os.utime(filepath, (mtime_val, mtime_val))
             except (ValueError, OSError):
                 pass

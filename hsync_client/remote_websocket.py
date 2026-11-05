@@ -112,10 +112,9 @@ def _verify_server_wss_fingerprint(websocket: Any, expected_fingerprint: str) ->
     """
     from hsync_common.ssl_utils import fingerprint_from_der
 
-    from hsync_client.ssl_utils import verify_peer_cert_fingerprint
+    from hsync_client.ssl_utils import verify_peer_cert_fingerprint, websocket_ssl_object
 
-    transport = getattr(websocket, "transport", None)
-    ssl_object = transport.get_extra_info("ssl_object") if transport is not None else None
+    ssl_object = websocket_ssl_object(websocket)
     if verify_peer_cert_fingerprint(ssl_object, expected_fingerprint):
         return True
     observed = ""
@@ -420,10 +419,8 @@ async def _refresh_network_tuning() -> None:
 
         import hsync_client.autotune as autotune_mod
         from hsync_client.autotune import (
-            classify_network,
-            derive_managed_rtt_updates,
             measure_bandwidth_active,
-            measure_rtt,
+            measure_rtt_tuning,
             seed_bw_ema,
         )
 
@@ -432,13 +429,11 @@ async def _refresh_network_tuning() -> None:
         rtt_host = parsed.hostname or "localhost"
         rtt_port = parsed.port or (443 if parsed.scheme == "https" else 80)
 
-        rtt_ms = measure_rtt(rtt_host, rtt_port)
-        if rtt_ms is None:
+        measured = measure_rtt_tuning(rtt_host, rtt_port, managed)
+        if measured is None:
             log.debug("autotune (reconnect): RTT not measurable; keeping current tuning")
             return
-
-        updates = derive_managed_rtt_updates(rtt_ms, managed)
-        net_class = classify_network(rtt_ms)
+        rtt_ms, net_class, updates = measured
         for key, value in updates.items():
             cast(dict[str, Any], CONFIG)[key] = value
         if updates:

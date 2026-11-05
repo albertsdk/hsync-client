@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from hsync_common.models.file import File
 
+from hsync_client.p2p_inventory import NOOP_INVENTORY_OBSERVER
 from hsync_client.transfer import upload_file
 
 _BASE_CONFIG = {
@@ -103,7 +104,8 @@ class TestUploadFileMaxWaitTimeout:
             upload_file(file, check_size=True)
             # The file never stabilized, so the upload must be deferred, not forced.
             mock_post.assert_not_called()
-            mock_reschedule.assert_called_once_with(file, None, False)
+            args = mock_reschedule.call_args.args
+            assert args[:3] == (file, None, False)
 
     def test_max_wait_budget_is_wall_clock_seconds(self, tmp_path):
         """The cap is seconds even though each probe sleeps ``STABILITY_DELAY``.
@@ -155,7 +157,8 @@ class TestUploadFileMaxWaitTimeout:
         assert len(probes) == 3
         assert now[0] == 15.0
         mock_post.assert_not_called()
-        mock_reschedule.assert_called_once_with(file, None, False)
+        args = mock_reschedule.call_args.args
+        assert args[:3] == (file, None, False)
 
     def test_upload_uses_default_max_wait_timeout(self, tmp_path):
         """Upload uses default timeout when not configured."""
@@ -230,7 +233,11 @@ class TestRescheduleUpload:
             assert args[1] is upload_file
             # re-arms upload_file(file, _reschedules_left=2, permissions_only=False)
             assert kwargs["args"] == (file,)
-            assert kwargs["kwargs"] == {"_reschedules_left": 2, "permissions_only": False}
+            assert kwargs["kwargs"] == {
+                "_reschedules_left": 2,
+                "permissions_only": False,
+                "inventory_observer": NOOP_INVENTORY_OBSERVER,
+            }
             assert mock_timer.return_value.daemon is True
             mock_timer.return_value.start.assert_called_once()
 
@@ -254,6 +261,7 @@ class TestRescheduleUpload:
             assert mock_timer.call_args.kwargs["kwargs"] == {
                 "_reschedules_left": 3,
                 "permissions_only": False,
+                "inventory_observer": NOOP_INVENTORY_OBSERVER,
             }
 
     def test_exhausted_does_not_schedule(self, tmp_path):

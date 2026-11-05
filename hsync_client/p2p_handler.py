@@ -32,7 +32,7 @@ from hsync_common.protocol.tls_trust import (
 from hsync_common.text import safe_json_for_log
 from loguru import logger as module_log
 
-from hsync_client.autotune import classify_network, derive_managed_rtt_updates, measure_rtt
+from hsync_client.autotune import measure_rtt_tuning
 from hsync_client.config import CONFIG, set_config
 from hsync_client.constants import (
     HEARTBEAT_INTERVAL,
@@ -449,22 +449,22 @@ def _refresh_p2p_network_tuning(
         log.debug("autotune (P2P): no autotune-managed keys (all overridden via CLI/env)")
         return
 
-    rtt_ms = measure_rtt(
+    measured = measure_rtt_tuning(
         host if host is not None else master.address,
         port if port is not None else master.port,
+        managed,
     )
-    if rtt_ms is None:
+    if measured is None:
         log.debug("autotune (P2P): RTT to master not measurable; keeping startup tuning")
         return
+    rtt_ms, net_class, updates = measured
 
     # The class tunes the slave WSS liveness timeouts even when no tuning key is
     # re-derived below, so record it as soon as the RTT is known (the slave reads
     # ``CONFIG["P2P_NET_CLASS"]`` before connecting its WebSocket).
-    net_class = classify_network(rtt_ms).value
-    cast(dict[str, Any], CONFIG)["P2P_NET_CLASS"] = net_class
-    cast(dict[str, Any], config)["P2P_NET_CLASS"] = net_class
+    cast(dict[str, Any], CONFIG)["P2P_NET_CLASS"] = net_class.value
+    cast(dict[str, Any], config)["P2P_NET_CLASS"] = net_class.value
 
-    updates = derive_managed_rtt_updates(rtt_ms, managed)
     if not updates:
         return
 
@@ -472,8 +472,7 @@ def _refresh_p2p_network_tuning(
         cast(dict[str, Any], CONFIG)[key] = value
         cast(dict[str, Any], config)[key] = value
     log.info(
-        f"autotune (P2P): rtt={rtt_ms:.1f}ms net={classify_network(rtt_ms).value} "
-        f"-> {safe_json_for_log(updates)}"
+        f"autotune (P2P): rtt={rtt_ms:.1f}ms net={net_class.value} -> {safe_json_for_log(updates)}"
     )
 
 

@@ -91,10 +91,7 @@ def _merge_local_ips(primary: str) -> list[str]:
     Used after a network change: the monitor names the recovered source address,
     which must head the list, and the rest of the current interfaces follow.
     """
-    ips: list[str] = [primary] if primary else []
-    for address in get_local_ips():
-        if address not in ips:
-            ips.append(address)
+    ips = list(dict.fromkeys(([primary] if primary else []) + get_local_ips()))
     return ips or [get_local_ip()]
 
 
