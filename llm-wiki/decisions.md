@@ -9,14 +9,14 @@ implements it, plus client-only operational rules.
 
 | ADR | Client implementation |
 | --- | --------------------- |
-| [0001 server-vs-p2p-modes](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0001-server-vs-p2p-modes.md) | `run_sync` branch (`main_logic.py::run_sync`); remote stack ([remote-mode.md](modules/remote-mode.md)) vs P2P stack ([p2p-mode.md](modules/p2p-mode.md)) |
-| [0002 p2p-master-election](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0002-p2p-master-election.md) | `PeerManager._elect_master` (`p2p_peers.py::PeerManager._elect_master`) → calls common `elect_master` |
-| [0003 tombstone-gossip](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0003-tombstone-gossip.md) | `tombstones.py` per-peer store + `merge_payload`; exchange in `sync.py::sync` |
-| [0004 desktop-subprocess-contract](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0004-desktop-subprocess-contract.md) | `events.py` (`EventEmitter`), `--capabilities-json` (`cli.py::capabilities_json_callback`) |
-| [0005 protocol-versioning](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0005-protocol-versioning.md) | WS handshake (`remote_websocket.py::remote_connect`); REST `X-Protocol-Version` (`utils/http.py`) — hard-fail on mismatch |
+| [0001 server-vs-p2p-modes](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0001-server-vs-p2p-modes.md) | `run_sync` branch (`hsync_client/main_logic.py::run_sync`); remote stack ([remote-mode.md](modules/remote-mode.md)) vs P2P stack ([p2p-mode.md](modules/p2p-mode.md)) |
+| [0002 p2p-master-election](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0002-p2p-master-election.md) | `PeerManager._elect_master` (`hsync_client/p2p_peers.py::PeerManager._elect_master`) → calls common `elect_master` |
+| [0003 tombstone-gossip](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0003-tombstone-gossip.md) | `tombstones.py` per-peer store + `merge_payload`; exchange in `hsync_client/sync.py::sync` |
+| [0004 desktop-subprocess-contract](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0004-desktop-subprocess-contract.md) | `events.py` (`EventEmitter`), `--capabilities-json` (`hsync_client/cli.py::capabilities_json_callback`) |
+| [0005 protocol-versioning](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0005-protocol-versioning.md) | WS handshake (`hsync_client/remote_websocket.py::remote_connect`); REST `X-Protocol-Version` (`utils/http.py`) — hard-fail on mismatch |
 | [0017 p2p-slave-outbound-event-reliability](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0017-p2p-slave-outbound-event-reliability.md) | `P2PSlaveFileEventHandler` defer-to-close uploads (`_schedule_create_upload`/`_cancel_create_upload`) + `record_inbound_rename`/`is_inbound_rename_echo` 404 echo cache ([p2p-mode.md](modules/p2p-mode.md)) |
-| [0022 causal-vector-clock-conflict-model](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0022-causal-vector-clock-conflict-model.md) | `_compare_files` (`sync.py::_compare_files`) resolves via `resolve_three_way` with vclocks; `_save_conflict_copy` (`sync.py::_save_conflict_copy`)on `conflict_download`; upload arbitration mirrored in `arbitration.py` (client) / `hsync_server.arbitration` (server. |
-| [0023 corrected-mtime-tie-break](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0023-corrected-mtime-tie-break.md) | `timesync.py` (server RTT probe in `main_logic.py`, background NTP multi-host probe via `start_ntp_clock_offset_probe` called from `p2p_handler.run_p2p_mode`; `HSYNC_NTP_HOSTS` CSV with `host[:port]` entries); `sync_state._corrected_mtime_of`/`upload_version_fields` 3-tuple (`sync_state.py::_corrected_mtime_of`/`sync_state.py::upload_version_fields`) feeds `corrected_mtime` to upload + delta-apply (`sync_state.py::resolve_upload_version_fields`) and to the mirror master arbitration (`arbitration.py::arbitrate_upload`, `p2p_server.py::P2PServer`); `_compare_files` passes corrected mtimes to `resolve_three_way` (`sync.py::_compare_files`). |
+| [0022 causal-vector-clock-conflict-model](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0022-causal-vector-clock-conflict-model.md) | `_compare_files` (`hsync_client/sync.py::_compare_files`) resolves via `resolve_three_way` with vclocks; `_save_conflict_copy` (`hsync_client/sync.py::_save_conflict_copy`)on `conflict_download`; upload arbitration mirrored in `arbitration.py` (client) / `hsync_server.arbitration` (server. |
+| [0023 corrected-mtime-tie-break](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0023-corrected-mtime-tie-break.md) | `timesync.py` (server RTT probe in `main_logic.py`, background NTP multi-host probe via `start_ntp_clock_offset_probe` called from `p2p_handler.run_p2p_mode`; `HSYNC_NTP_HOSTS` CSV with `host[:port]` entries); `sync_state._corrected_mtime_of`/`upload_version_fields` 3-tuple (`hsync_client/sync_state.py::_corrected_mtime_of`/`hsync_client/sync_state.py::upload_version_fields`) feeds `corrected_mtime` to upload + delta-apply (`hsync_client/sync_state.py::resolve_upload_version_fields`) and to the mirror master arbitration (`hsync_client/arbitration.py::arbitrate_upload`, `hsync_client/p2p_server.py::P2PServer`); `_compare_files` passes corrected mtimes to `resolve_three_way` (`hsync_client/sync.py::_compare_files`). |
 | [0025 sqlite-external-state-store](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0025-sqlite-external-state-store.md) | `state_backend.resolve_bucket_folder`; `sync_state.py` / `tombstones.py` (folder UUID + per-folder DB under the device dir); `HSYNC_STATE_DIR` / `HSYNC_STATE_DB` |
 | [0030 p2p-seeder-capacity-advertisement](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0030-p2p-seeder-capacity-advertisement.md) | Seeder advertisement (`p2p_websocket.py` `p2p_websocket_client` handshake), master session storage (`p2p_inventory.py` `begin_session(serve_slots=…)`/`session_serve_slots`), candidate echo (`p2p_sources.py` `P2PSourceService`), requester admission + busy-as-scheduling (`p2p_sources.py` `acquire_slot`/`release_slot`, `transfer.py` `_parse_retry_after`), seeder `Retry-After` (`p2p_server.py`) |
 | [0041 serving-side-status-pass-events](https://github.com/albertsdk/hsync-common/blob/main/docs/internal/adr/0041-serving-side-status-pass-events.md) | `MasterSyncStatus.run_now` brackets every classification pass with `status_pass_start`/`status_pass_end`; `_MasterChannel` dispatches the front-end's `PREVIEW`/`SYNC` to it ([p2p-mode.md](modules/p2p-mode.md)) |
@@ -29,8 +29,8 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
 ## Client-only operational rules
 - **Sync-state reset lives in the client, never in a front-end**: the per-folder
   DB is client-owned and guarded by the per-directory `InstanceLock`
-  (`identity.py::InstanceLock`), so `hsync state reset`
-  (`state_reset.py::reset_folder_state`) acquires the lock and refuses while any
+  (`hsync_client/identity.py::InstanceLock`), so `hsync state reset`
+  (`hsync_client/state_reset.py::reset_folder_state`) acquires the lock and refuses while any
   hsync process syncs the same folder. A GUI cannot see a concurrent CLI/service
   sync (ADR 0004 forbids importing client internals) and would reset state a live
   process keeps writing. The reset deletes **rows** (`StateDb.reset_folder` in
@@ -40,7 +40,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   subcommand appears automatically in `--capabilities-json` (introspected), so
   the desktop gates its button on `supports_subcommand(doc, "state")`.
 - **Rendezvous multi-port dial fallback**: `HSYNC_RENDEZVOUS_SERVER_EXTRA_PORTS`
-  (`config.py::get_rendezvous_server_extra_ports`) adds extra ports for the **same** rendezvous;
+  (`hsync_client/config.py::get_rendezvous_server_extra_ports`) adds extra ports for the **same** rendezvous;
   `RendezvousClient._with_connection` (`rdv_client.py`) is the selector; the port
   order lives in `_candidate_ports` and the memo/race in `_dial_transport_ports`
   (fixed transport) / `_dial_auto` (`auto`), which dial the last working port
@@ -51,7 +51,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   a real exchange failure and never re-dials (no duplicate frame is sent).
   With `--rendezvous-transport auto` (the default), the client races QUIC/UDP
   (preferred) and TLS/TCP per endpoint with the RFC 8305 stagger
-  (`rdv_client.py::_race`), the first handshake with the right ALPN wins and the
+  (`hsync_client/rdv_client.py::_race`), the first handshake with the right ALPN wins and the
   loser is closed before any frame; `quic`/`tcp` use one transport only. The
   winner is memoized per endpoint (`RDV_TCP_FALLBACK_TTL_S` expires a TLS/TCP
   winner so QUIC regains priority on a recovered UDP path) and a network change
@@ -70,7 +70,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   peers**). The finite rendezvous window ends a one-shot run even when the
   local role was resolved as MASTER at rendezvous start: with no live peer the
   rendezvous loop exits with `ExitCode.P2P_NO_PEER` (5)
-  (`exitcodes.py::ExitCode`) instead of serving as a peer-less master, so a
+  (`hsync_client/exitcodes.py::ExitCode`) instead of serving as a peer-less master, so a
   scheduled `--once` run always terminates unless `--rendezvous-timeout 0`
   explicitly waits forever. Rationale: sync
   daemons (Syncthing, Nextcloud/Dropbox clients) never exit on a transient
@@ -149,17 +149,17 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
 - **Mandatory TLS in p2p mode**: HTTPS/WSS only; no plaintext fallback
   (`ssl_utils.py`). Master identity is a persistent pinned cert.
 - **Write-policy gate**: non-interactive write-capable p2p sync requires a p2p key
-  (`_check_p2p_write_policy`, `main_logic.py::_check_p2p_write_policy`).
+  (`_check_p2p_write_policy`, `hsync_client/main_logic.py::_check_p2p_write_policy`).
 - **Mass-deletion guard (§12)**: bulk deletes pause the cycle
-  (`_mass_deletion_blocked`, `sync.py::_mass_deletion_blocked`) unless explicitly allowed.
+  (`_mass_deletion_blocked`, `hsync_client/sync.py::_mass_deletion_blocked`) unless explicitly allowed.
 - **Per-path serialization (§14)**: all transfers take `utils.path_lock`
-  (`utils/paths.py::path_lock`) to avoid concurrent writes to the same file.
+  (`hsync_client/utils/paths.py::path_lock`) to avoid concurrent writes to the same file.
 - **Failover via periodic staleness sweep**: a hard-crashed master sends no
   mDNS goodbye and no further announce, so election is also re-run on every
   rendezvous wake and on a slave WebSocket drop
-  (`PeerManager.reconcile_stale_peers`, `p2p_peers.py::PeerManager.reconcile_stale_peers`), which demotes a
+  (`PeerManager.reconcile_stale_peers`, `hsync_client/p2p_peers.py::PeerManager.reconcile_stale_peers`), which demotes a
   peer no source holds any more. Liveness is the union of independent sources,
-  each in its own unit (`p2p_peers.py::LivenessSource`): a heartbeat announce
+  each in its own unit (`hsync_client/p2p_peers.py::LivenessSource`): a heartbeat announce
   within `HSYNC_PEER_TIMEOUT` (≥ 2× `HSYNC_HEARTBEAT_INTERVAL`, enforced in
   `config.EnvSettings`, so a single missed announce never flaps a live peer), a
   discovery server's **answered samples** within `RENDEZVOUS_MISSED_SAMPLES`, or a
@@ -242,8 +242,8 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   the CPython build out of qemu-user emulation, where the host's
   `qemu-aarch64` 7.2.0 crashed (`cc1` SIGSEGV) compiling `Modules/readline`.
 - **PyInstaller × multiprocessing (`freeze_support`)**: `main.main`
-  (`main.py::main`) calls `multiprocessing.freeze_support()` before importing the
-  CLI. The loguru sinks use `enqueue=True` (`logger.py::setup_logging`), which makes
+  (`hsync_client/main.py::main`) calls `multiprocessing.freeze_support()` before importing the
+  CLI. The loguru sinks use `enqueue=True` (`hsync_client/logger.py::setup_logging`), which makes
   the stdlib start a `multiprocessing` helper (the resource tracker) by
   re-executing `sys.executable` — the frozen `hsync` — with the interpreter flags
   plus `-c 'from multiprocessing.resource_tracker import main; …'`. Without the
@@ -286,14 +286,14 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
 - **A rendezvous source failure degrades rendezvous, it never fails the run**: with
   a rendezvous configured, mDNS and the rendezvous channel run side by side
   (ADR-0039). A rendezvous that cannot confirm the node's identity disables **that
-  source** (`p2p_rendezvous_rdv.py::RdvRendezvous._disable_source`,
+  source** (`hsync_client/p2p_rendezvous_rdv.py::RdvRendezvous._disable_source`,
   `source_disabled()`): the lease loop stops, the node is never contacted again
   (not even for the departure frame) and a structured warning
   (`source="rendezvous"`, `reason="untrusted"`) is published; the mDNS source keeps
   the group discoverable, so the run continues — there is no fatal rendezvous
   error and no `ExitCode.FATAL` path for it (ADR-0045). An *unreachable* node is
   retried at the `rdv/1` cadence with a transient warning
-  (`reason="unreachable"`). Readiness (`p2p_rendezvous_hybrid.py::HybridRendezvous.endpoint_published`)
+  (`reason="unreachable"`). Readiness (`hsync_client/p2p_rendezvous_hybrid.py::HybridRendezvous.endpoint_published`)
   follows the sources that can still carry traffic, so a disabled source never
   delays mastership. The desktop pre-flight mirrors the rule: an unreachable
   discovery servers produces a warning and the run proceeds on the local network,

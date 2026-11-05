@@ -9,15 +9,15 @@ not leave a peer advertising a dead address nor the desktop stuck in its
 
 | Symbol | Location | Role |
 | ------ | -------- | ---- |
-| `NetworkSignature` | `net_watch.py::NetworkSignature` | frozen posture (`source_ip`, `online`) the monitor compares across polls |
-| `network_signature` | `net_watch.py::network_signature` | samples `net_utils.get_local_ip` (one UDP `connect`, no packet) and marks the loopback fallback as offline |
-| `NetworkChangeMonitor` | `net_watch.py::NetworkChangeMonitor` | the polling thread (`NETWORK_POLL_INTERVAL_S`), `subscribe`/`unsubscribe`, `poll_once`, `signature` |
-| `get_network_monitor` | `net_watch.py::get_network_monitor` | process-wide singleton, thread started on first use |
-| `MdnsRendezvous._on_network_change` / `_rebuild_mdns` / `_recover_mdns` | `p2p_rendezvous_mdns.py::MdnsRendezvous._on_network_change` | rebuild the Zeroconf stack on the fresh address / repair after a failed announcement |
-| `RdvRendezvous._on_network_change` / `_republish_stale_endpoint` | `p2p_rendezvous_rdv.py::RdvRendezvous._republish_stale_endpoint` | wake the lease loop / force a full endpoint re-register |
-| `PeerManager.set_local_addresses` | `p2p_peers.py::PeerManager.set_local_addresses` | keep the self-rendezvous check on the addresses we currently announce |
-| `_ReconnectWaker` | `remote_websocket.py::_ReconnectWaker` | bridges a change into the remote mode's backoff sleep |
-| `_NetworkCloseWaker` | `p2p_websocket.py::_NetworkCloseWaker` | closes the slave WSS on a change so the p2p rendezvous loop reconnects on the fresh interface instead of waiting for the keepalive ping to time out |
+| `NetworkSignature` | `hsync_client/net_watch.py::NetworkSignature` | frozen posture (`source_ip`, `online`) the monitor compares across polls |
+| `network_signature` | `hsync_client/net_watch.py::network_signature` | samples `net_utils.get_local_ip` (one UDP `connect`, no packet) and marks the loopback fallback as offline |
+| `NetworkChangeMonitor` | `hsync_client/net_watch.py::NetworkChangeMonitor` | the polling thread (`NETWORK_POLL_INTERVAL_S`), `subscribe`/`unsubscribe`, `poll_once`, `signature` |
+| `get_network_monitor` | `hsync_client/net_watch.py::get_network_monitor` | process-wide singleton, thread started on first use |
+| `MdnsRendezvous._on_network_change` / `_rebuild_mdns` / `_recover_mdns` | `hsync_client/p2p_rendezvous_mdns.py::MdnsRendezvous._on_network_change` | rebuild the Zeroconf stack on the fresh address / repair after a failed announcement |
+| `RdvRendezvous._on_network_change` / `_republish_stale_endpoint` | `hsync_client/p2p_rendezvous_rdv.py::RdvRendezvous._republish_stale_endpoint` | wake the lease loop / force a full endpoint re-register |
+| `PeerManager.set_local_addresses` | `hsync_client/p2p_peers.py::PeerManager.set_local_addresses` | keep the self-rendezvous check on the addresses we currently announce |
+| `_ReconnectWaker` | `hsync_client/remote_websocket.py::_ReconnectWaker` | bridges a change into the remote mode's backoff sleep |
+| `_NetworkCloseWaker` | `hsync_client/p2p_websocket.py::_NetworkCloseWaker` | closes the slave WSS on a change so the p2p rendezvous loop reconnects on the fresh interface instead of waiting for the keepalive ping to time out |
 
 ## Semantics
 

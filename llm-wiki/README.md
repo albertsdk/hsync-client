@@ -40,20 +40,20 @@ they are code spans, not hyperlinks.
 ## Quick facts
 
 - Package root: `hsync_client/` (`hsync_client/__init__.py`).
-- Entry points: `main.main` (`main.py::main`) → Typer command `cli.main`
-  (`cli.py::main`); console script `cli.run` (`cli.py::run`). `main` calls
+- Entry points: `main.main` (`hsync_client/main.py::main`) → Typer command `cli.main`
+  (`hsync_client/cli.py::main`); console script `cli.run` (`hsync_client/cli.py::run`). `main` calls
   `multiprocessing.freeze_support()` first, then imports the CLI lazily (see
   `decisions.md`: PyInstaller × loguru `enqueue=True` helper re-exec).
-- Orchestrator: `run_sync` (`main_logic.py::run_sync`) — validates, branches to remote or
+- Orchestrator: `run_sync` (`hsync_client/main_logic.py::run_sync`) — validates, branches to remote or
   p2p, starts the watcher. Logs `hsync_common.runtime.runtime_summary()`
   (container/TTY/cgroup limits) at startup.
-- Mode branch: remote → `remote_websocket.remote_events` (`remote_websocket.py::remote_events`);
-  p2p → `p2p_handler.run_p2p_mode` (`p2p_handler.py::run_p2p_mode`).
+- Mode branch: remote → `remote_websocket.remote_events` (`hsync_client/remote_websocket.py::remote_events`);
+  p2p → `p2p_handler.run_p2p_mode` (`hsync_client/p2p_handler.py::run_p2p_mode`).
 - Version SSOT: `HSYNC_VERSION` re-exported from `hsync_common.constants`
-  (`hsync-common/hsync_common/constants.py::HSYNC_VERSION`); `CLIENT_NAME = "hsync-client"` (`constants.py::CLIENT_NAME`) feeds the
+  (`hsync-common/hsync_common/constants.py::HSYNC_VERSION`); `CLIENT_NAME = "hsync-client"` (`hsync_client/constants.py::CLIENT_NAME`) feeds the
   `X-Client-Name` REST header build in `main_logic.py`.
-- Config: env + CLI merged into the global `CONFIG: HsyncConfig` (`config.py::CONFIG`),
-  set via `set_config` (`config.py::set_config`); modules read `CONFIG` directly.
+- Config: env + CLI merged into the global `CONFIG: HsyncConfig` (`hsync_client/config.py::CONFIG`),
+  set via `set_config` (`hsync_client/config.py::set_config`); modules read `CONFIG` directly.
 - Reuses `hsync_common.models` directly — there is **no** `hsync_client/models/`.
 
 ## Conventions used in this wiki

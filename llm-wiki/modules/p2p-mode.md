@@ -14,18 +14,18 @@ SSOT in `hsync-common`.
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `run_p2p_mode` | `p2p_handler.py::run_p2p_mode` | start rendezvous, elect, branch to role; kicks off the background SNTP clock-offset probe (`timesync.start_ntp_clock_offset_probe`) so rendezvous never waits on an external time source |
-| `_run_as_master` | `p2p_handler.py::_run_as_master` | start the `P2PServer` (HTTPS REST + WSS on **one** port, with `P2PWebSocketServer` attached as the canonical `/api/v1/buckets/{bucket}/events/{cid}` route) + watcher; **readiness threshold**: after the listener is bound, the watcher is running and `update_server_ready()` ran, it logs `[READY] Master ready — serving …`. It re-checks `peer_manager.is_master()` first and yields instead of advertising readiness when a peer won during the startup window (a loser that advertised `server_ready` would out-rank the winner and re-serve the same bucket — see [decisions.md](../decisions.md)). On `WatcherStartError` (the watcher could not start even on the polling fallback, see [modules/sync-core.md](sync-core.md) "Watcher lifecycle") it does NOT advertise `server_ready` and backs off `WATCHER_START_RETRY_DELAY_S` before the rendezvous loop retries |
-| `_run_as_slave` | `p2p_handler.py::_run_as_slave` | TOFU-pin master, select the reachable data-plane endpoint (`_select_master_endpoint`: a multi-candidate rendezvous peer is probed host/LAN-first in **parallel rounds** — `_probe_round`, a short `MASTER_PROBE_FAST_TIMEOUT_S` round first and the full `MASTER_CANDIDATE_PROBE_TIMEOUT_S` only for the candidates that stayed silent — with the candidate order deciding the *preference*, so a LAN path wins in milliseconds while a silent candidate costs one round instead of one timeout each; a single-candidate peer keeps its endpoint), refresh tuning, then connect + sync; on `WatcherStartError` it backs off `WATCHER_START_RETRY_DELAY_S` before re-entering the rendezvous loop (a kernel limit never clears at the normal cadence) |
-| `_evaluate_master_pin` | `p2p_handler.py::_evaluate_master_pin` | apply pin decision before slave connect |
-| `_refresh_p2p_network_tuning` | `p2p_handler.py::_refresh_p2p_network_tuning` | re-derive autotune-managed keys from real master RTT (slave, post-rendezvous) |
-| `NO_MASTER_WARNING_TIMEOUT` | `p2p_handler.py::NO_MASTER_WARNING_TIMEOUT` | warn when no master appears |
+| `run_p2p_mode` | `hsync_client/p2p_handler.py::run_p2p_mode` | start rendezvous, elect, branch to role; kicks off the background SNTP clock-offset probe (`timesync.start_ntp_clock_offset_probe`) so rendezvous never waits on an external time source |
+| `_run_as_master` | `hsync_client/p2p_handler.py::_run_as_master` | start the `P2PServer` (HTTPS REST + WSS on **one** port, with `P2PWebSocketServer` attached as the canonical `/api/v1/buckets/{bucket}/events/{cid}` route) + watcher; **readiness threshold**: after the listener is bound, the watcher is running and `update_server_ready()` ran, it logs `[READY] Master ready — serving …`. It re-checks `peer_manager.is_master()` first and yields instead of advertising readiness when a peer won during the startup window (a loser that advertised `server_ready` would out-rank the winner and re-serve the same bucket — see [decisions.md](../decisions.md)). On `WatcherStartError` (the watcher could not start even on the polling fallback, see [modules/sync-core.md](sync-core.md) "Watcher lifecycle") it does NOT advertise `server_ready` and backs off `WATCHER_START_RETRY_DELAY_S` before the rendezvous loop retries |
+| `_run_as_slave` | `hsync_client/p2p_handler.py::_run_as_slave` | TOFU-pin master, select the reachable data-plane endpoint (`_select_master_endpoint`: a multi-candidate rendezvous peer is probed host/LAN-first in **parallel rounds** — `_probe_round`, a short `MASTER_PROBE_FAST_TIMEOUT_S` round first and the full `MASTER_CANDIDATE_PROBE_TIMEOUT_S` only for the candidates that stayed silent — with the candidate order deciding the *preference*, so a LAN path wins in milliseconds while a silent candidate costs one round instead of one timeout each; a single-candidate peer keeps its endpoint), refresh tuning, then connect + sync; on `WatcherStartError` it backs off `WATCHER_START_RETRY_DELAY_S` before re-entering the rendezvous loop (a kernel limit never clears at the normal cadence) |
+| `_evaluate_master_pin` | `hsync_client/p2p_handler.py::_evaluate_master_pin` | apply pin decision before slave connect |
+| `_refresh_p2p_network_tuning` | `hsync_client/p2p_handler.py::_refresh_p2p_network_tuning` | re-derive autotune-managed keys from real master RTT (slave, post-rendezvous) |
+| `NO_MASTER_WARNING_TIMEOUT` | `hsync_client/p2p_handler.py::NO_MASTER_WARNING_TIMEOUT` | warn when no master appears |
 
 The outer rendezvous loop also owns the **one-shot window**: with `ONE_SHOT` and
-a finite `RENDEZVOUS_TIMEOUT` it arms `rendezvous_deadline` (`p2p_handler.py::run_p2p_mode`)
+a finite `RENDEZVOUS_TIMEOUT` it arms `rendezvous_deadline` (`hsync_client/p2p_handler.py::run_p2p_mode`)
 and, once that deadline has passed with no live peer, logs `No master elected -
 this client is alone, nothing to sync` and returns `ExitCode.P2P_NO_PEER` (5)
-(`p2p_handler.py::run_p2p_mode`). The gate exists because a lone eligible node is already
+(`hsync_client/p2p_handler.py::run_p2p_mode`). The gate exists because a lone eligible node is already
 MASTER at rendezvous start (see the election section below), so without it the
 continuous master role would turn `--once` into a run that never ends. A master
 that has live peers — and any continuous run, which has no deadline — keeps the
@@ -41,20 +41,20 @@ configured `HybridRendezvous` runs **both** over one shared `PeerManager`:
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `RendezvousPlan` | `p2p_rendezvous.py::RendezvousPlan` | minimal interface every plan implements (`start`/`stop`/`wait_for_rendezvous`, `update_endpoint_ready`/`update_server_ready`/`update_server_not_ready`, `set_connected_clients*`, `port`, `peer_manager`) |
-| `RendezvousPlanState` | `p2p_rendezvous.py::RendezvousPlanState` | shared trivial state and the single `create_peer_manager()` builder (`port`, `peer_manager`, `set_connected_clients_provider`), plus `_init_common_fields()` — the election-advertisement fields both plans set identically |
-| `PeerManager` | `p2p_peers.py::PeerManager` | tracks peers, runs election, liveness (shared) |
-| `Peer` | `p2p_peers.py::Peer` | a discovered peer (cid, endpoint, cert_fp, sync_direction) |
-| `PeerSnapshot` | `p2p_peers.py::PeerSnapshot` | immutable projection for the handler |
-| `get_free_port` / `HSYNC_P2P_LISTEN_PORT` | `p2p_peers.py::get_free_port` / `p2p_peers.py::HSYNC_P2P_LISTEN_PORT` | bind an ephemeral serving port |
-| `MdnsRendezvous` | `p2p_rendezvous_mdns.py::MdnsRendezvous` | mDNS/Zeroconf plan (browse + advertise); always active. Advertises one A record per active interface so a multi-homed node is discoverable on any of its networks |
-| `HybridRendezvous` | `p2p_rendezvous_hybrid.py::HybridRendezvous` | runs mDNS + rendezvous over one shared `PeerManager` when a rendezvous is configured; with `CONFIG["MDNS_ENABLED"]` off, `build_rendezvous_plan` returns the rendezvous-only plan instead (exclude the local network: `--no-mdns` / `HSYNC_MDNS`) |
-| `HsyncServiceListener` | `p2p_rendezvous_mdns.py::HsyncServiceListener` | Zeroconf callbacks (add/update/remove; parses the ``connected`` TXT value). Promotes a discovered peer's same-subnet address to its primary one (`dial_candidates`) and, when the peer advertises several interfaces, keeps them all in `Peer.endpoints` so the dial probe picks the reachable one |
-| `NetworkChangeMonitor` | `net_watch.py::NetworkChangeMonitor` | host address/link changes shared by both plans: the mDNS rebuild and the rendezvous endpoint republish (see [net-watch.md](net-watch.md)) |
-| `_NetworkCloseWaker` | `p2p_websocket.py::_NetworkCloseWaker` | closes the slave WSS the moment `NetworkChangeMonitor` reports a change, so `_run_as_slave` re-enters the rendezvous loop and reconnects on the fresh interface instead of blackholing on the old one until the keepalive ping times out |
-| `_ws_liveness_timeouts` | `p2p_websocket.py::_ws_liveness_timeouts` | `open_timeout`/`ping_interval`/`ping_timeout` for the slave WSS, derived from the autotune network class (`CONFIG["P2P_NET_CLASS"]`, set by `p2p_handler._refresh_p2p_network_tuning`): a high-RTT mobile path gets a longer, more tolerant set |
-| `_MasterEndpointGuard` | `p2p_handler.py::_MasterEndpointGuard` | reports that the master's advertised endpoint changed mid-session (address, port, or candidate list; also when it disappears). `_run_as_slave` passes it to `p2p_websocket_client` (`endpoint_guard`), which closes the WSS (`p2p_websocket.py::_close_ws_on_endpoint_change`) so the loop re-selects the master endpoint — directly, or through the relay — instead of dialing the stale address for the whole session |
-| `HSYNC_SERVICE_TYPE` | `p2p_rendezvous_mdns.py::HSYNC_SERVICE_TYPE` | `_hsync._tcp.local.` mDNS type |
+| `RendezvousPlan` | `hsync_client/p2p_rendezvous.py::RendezvousPlan` | minimal interface every plan implements (`start`/`stop`/`wait_for_rendezvous`, `update_endpoint_ready`/`update_server_ready`/`update_server_not_ready`, `set_connected_clients*`, `port`, `peer_manager`) |
+| `RendezvousPlanState` | `hsync_client/p2p_rendezvous.py::RendezvousPlanState` | shared trivial state and the single `create_peer_manager()` builder (`port`, `peer_manager`, `set_connected_clients_provider`), plus `_init_common_fields()` — the election-advertisement fields both plans set identically |
+| `PeerManager` | `hsync_client/p2p_peers.py::PeerManager` | tracks peers, runs election, liveness (shared) |
+| `Peer` | `hsync_client/p2p_peers.py::Peer` | a discovered peer (cid, endpoint, cert_fp, sync_direction) |
+| `PeerSnapshot` | `hsync_client/p2p_peers.py::PeerSnapshot` | immutable projection for the handler |
+| `get_free_port` / `HSYNC_P2P_LISTEN_PORT` | `hsync_client/p2p_peers.py::get_free_port` / `hsync_client/p2p_peers.py::HSYNC_P2P_LISTEN_PORT` | bind an ephemeral serving port |
+| `MdnsRendezvous` | `hsync_client/p2p_rendezvous_mdns.py::MdnsRendezvous` | mDNS/Zeroconf plan (browse + advertise); always active. Advertises one A record per active interface so a multi-homed node is discoverable on any of its networks |
+| `HybridRendezvous` | `hsync_client/p2p_rendezvous_hybrid.py::HybridRendezvous` | runs mDNS + rendezvous over one shared `PeerManager` when a rendezvous is configured; with `CONFIG["MDNS_ENABLED"]` off, `build_rendezvous_plan` returns the rendezvous-only plan instead (exclude the local network: `--no-mdns` / `HSYNC_MDNS`) |
+| `HsyncServiceListener` | `hsync_client/p2p_rendezvous_mdns.py::HsyncServiceListener` | Zeroconf callbacks (add/update/remove; parses the ``connected`` TXT value). Promotes a discovered peer's same-subnet address to its primary one (`dial_candidates`) and, when the peer advertises several interfaces, keeps them all in `Peer.endpoints` so the dial probe picks the reachable one |
+| `NetworkChangeMonitor` | `hsync_client/net_watch.py::NetworkChangeMonitor` | host address/link changes shared by both plans: the mDNS rebuild and the rendezvous endpoint republish (see [net-watch.md](net-watch.md)) |
+| `_NetworkCloseWaker` | `hsync_client/p2p_websocket.py::_NetworkCloseWaker` | closes the slave WSS the moment `NetworkChangeMonitor` reports a change, so `_run_as_slave` re-enters the rendezvous loop and reconnects on the fresh interface instead of blackholing on the old one until the keepalive ping times out |
+| `_ws_liveness_timeouts` | `hsync_client/p2p_websocket.py::_ws_liveness_timeouts` | `open_timeout`/`ping_interval`/`ping_timeout` for the slave WSS, derived from the autotune network class (`CONFIG["P2P_NET_CLASS"]`, set by `p2p_handler._refresh_p2p_network_tuning`): a high-RTT mobile path gets a longer, more tolerant set |
+| `_MasterEndpointGuard` | `hsync_client/p2p_handler.py::_MasterEndpointGuard` | reports that the master's advertised endpoint changed mid-session (address, port, or candidate list; also when it disappears). `_run_as_slave` passes it to `p2p_websocket_client` (`endpoint_guard`), which closes the WSS (`hsync_client/p2p_websocket.py::_close_ws_on_endpoint_change`) so the loop re-selects the master endpoint — directly, or through the relay — instead of dialing the stale address for the whole session |
+| `HSYNC_SERVICE_TYPE` | `hsync_client/p2p_rendezvous_mdns.py::HSYNC_SERVICE_TYPE` | `_hsync._tcp.local.` mDNS type |
 
 Election is delegated to the common SSOT: `PeerManager._elect_master` builds
 `ElectionCandidate`s and calls `hsync_common.protocol.p2p.elect_master`
@@ -65,7 +65,7 @@ bidirectional `sync_direction`, then earliest `startup_time`, then lowest `cid`;
 its role (a lone `--prefer-master` node serves immediately, which is what lets a
 joining slave connect) — the election otherwise runs only on peer add/remove, a
 local readiness change and the stale sweep. The election log names the sort-key
-component that actually decided it (`p2p_peers.py::PeerManager._election_reason`:
+component that actually decided it (`hsync_client/p2p_peers.py::PeerManager._election_reason`:
 the first key on which the winner beat the runner-up, or its own strongest
 preferred flag when it ran alone) — two peers that both advertise `server_ready`
 are separated by `startup_time`/`cid`, so restating `server_ready` there would
@@ -76,7 +76,7 @@ cannot win it by accident. TXT records advertise `protocol`, `cert_fp`,
 
 **`inbound`** is the election input that keeps a relay-only node from winning.
 The rendezvous plan sets it once UPnP confirms an external port
-(`p2p_rendezvous_rdv.py::RdvRendezvous._set_inbound`), mirrors it into the shared
+(`hsync_client/p2p_rendezvous_rdv.py::RdvRendezvous._set_inbound`), mirrors it into the shared
 `PeerManager` (`set_local_inbound`) and advertises it on `register`; mDNS peers
 parse it from TXT and `PeerManager.add_peer` OR-merges it across sources, since
 an mDNS record never knows it. A node that can be dialled directly serves every
@@ -89,50 +89,50 @@ advertisement (ADR-0030).
 
 **No early incumbency claim (E2).** A node must not advertise `server_ready`
 before it has had one chance to see an already-serving peer, or it out-ranks that
-peer and splits the bucket until the next election. `p2p_handler.py::run_p2p_mode`
+peer and splits the bucket until the next election. `hsync_client/p2p_handler.py::run_p2p_mode`
 therefore holds the claim while `_master_claim_settled(plan)` is false: a
 rendezvous-aware plan reports `discovery_settled()` only after its first answered
 `query` (or a bounded grace, `MASTER_CLAIM_SETTLE_S`, so an unreachable node
 never blocks a lone master from serving); mDNS-only plans are always settled.
 
 The rendezvous plan also supplies the **data plane** when no candidate is dialable
-(`rdv_relay.py::RelayDialer` / `RelayAcceptor`, ADR-0047): the master registers a
+(`hsync_client/rdv_relay.py::RelayDialer` / `RelayAcceptor`, ADR-0047): the master registers a
 relay listener with the node as part of the serving role
-(`p2p_handler.py::_start_master_relay`, withdrawn by `_stop_p2p_serving`), and a
+(`hsync_client/p2p_handler.py::_start_master_relay`, withdrawn by `_stop_p2p_serving`), and a
 slave that failed every direct candidate asks the node for a tunnel
-(`p2p_handler.py::_relay_master_endpoint`) and dials the loopback endpoint it gets
+(`hsync_client/p2p_handler.py::_relay_master_endpoint`) and dials the loopback endpoint it gets
 back. The bytes are the peers' own TLS, so certificate pinning still authenticates
 the master and the displayed master address stays the real one. Each TCP
 connection a sync cycle opens against the loopback endpoint (REST requests plus
 the WSS channel) is **multiplexed onto the tunnel's single relay session** with a
-small framing layer (`rdv_relay.py::_encode_substream`: kind, stream id, payload
+small framing layer (`hsync_client/rdv_relay.py::_encode_substream`: kind, stream id, payload
 length, payload) that the node never inspects — it stays an opaque byte pump — so
 one tunnel costs one `relay_connect`, not one per connection. The relay dials
-over the client's selected rendezvous transport (`rdv_relay.py::_relay_session`:
+over the client's selected rendezvous transport (`hsync_client/rdv_relay.py::_relay_session`:
 QUIC = one connection with many streams; TLS/TCP = one connection per relay
 stream, pinned to a single resolved IP so every attach reaches the node instance
 holding its `relay_id`). The session
 survives the gaps between data traffic through two pings on
-`constants.py::RELAY_KEEPALIVE_INTERVAL`: one on a dedicated control stream (a
+`hsync_client/constants.py::RELAY_KEEPALIVE_INTERVAL`: one on a dedicated control stream (a
 third of the node's QUIC idle, so a single lost ping — or its ACK, on lossy
 CGNAT/mobile UDP — cannot idle-terminate the tunnel) and one on the data stream,
 which also keeps the node's per-session idle pump from reaping it. The full chain
 is exercised end-to-end by `tests/test_bb_p2p_rendezvous_relay.py` (gated
 `HSYNC_BB_P2P=1`, sibling rendezvous with `--relay`): the test-only seam
-`p2p_rendezvous_rdv.py::_TEST_ADVERTISED_ENDPOINTS_ENV` makes the real master
+`hsync_client/p2p_rendezvous_rdv.py::_TEST_ADVERTISED_ENDPOINTS_ENV` makes the real master
 publish only undialable candidates on a single host, so the slave's probes fail
 and the file exchange must ride the relay — no real NAT isolation needed.
 
 When the node **refuses** to pair — `relay_unavailable`, the usual case for a node
 started without `--relay` — the refusal code reaches the handler
-(`rdv_relay.py::RelayDialer.refusal`, aggregated by
-`rdv_relay.py::FailoverRelayDialer.refusal`) and
-`p2p_handler.py::_warn_relay_unavailable` logs and publishes one actionable
+(`hsync_client/rdv_relay.py::RelayDialer.refusal`, aggregated by
+`hsync_client/rdv_relay.py::FailoverRelayDialer.refusal`) and
+`hsync_client/p2p_handler.py::_warn_relay_unavailable` logs and publishes one actionable
 warning per master (`source="relay"`, `reason="relay_unavailable"`, message names
 `--relay`) instead of leaving only the generic `No reachable endpoint for master`
 line; it fires only after every direct candidate failed and is deduped per master
 so the rendezvous loop's retries do not repeat it. The structured counterpart goes
-through `events.py::emit_warning`, which the desktop surfaces as a banner.
+through `hsync_client/events.py::emit_warning`, which the desktop surfaces as a banner.
 
 Serving side, the master's relay listener survives the node dropping it. A
 relayed slave is seen by the master as `127.0.0.1` (the acceptor demultiplexes the
@@ -140,18 +140,18 @@ relayed stream onto the local data plane over loopback, opening a local
 connection only on the first `DATA` frame for a stream id, so a connection that
 never sends bytes never reaches the master's TLS listener), so a dropped control stream surfaces as a normal
 `WebSocket client disconnected: 127.0.0.1` and the master's status falls to
-`waiting`. `rdv_relay.py::RelayAcceptor._run` ends as soon as its control stream
+`waiting`. `hsync_client/rdv_relay.py::RelayAcceptor._run` ends as soon as its control stream
 dies (`_read_incoming`/`_keepalive` returning, not only `stop()`), clearing
 `_registered` so `active` reports no listener once the node dropped it;
-`p2p_handler.py::_run_as_master` calls `_start_master_relay` on **every** re-entry,
+`hsync_client/p2p_handler.py::_run_as_master` calls `_start_master_relay` on **every** re-entry,
 so the next one-second tick re-offers a listener the node dropped.
 
 The local node's candidacy can also be dropped at runtime
-(`p2p_peers.py::PeerManager.set_master_candidacy`): a client parked in
+(`hsync_client/p2p_peers.py::PeerManager.set_master_candidacy`): a client parked in
 continuous dry-run, waiting for the desktop's `PREVIEW`/`SYNC` commands, cannot
 serve, so it is excluded from the election — a peer that elected it would wait
-forever for its `server_ready`. `p2p_handler.py::_run_as_slave` calls
-`p2p_rendezvous.py::RendezvousPlanState.set_master_eligibility(False)` around the
+forever for its `server_ready`. `hsync_client/p2p_handler.py::_run_as_slave` calls
+`hsync_client/p2p_rendezvous.py::RendezvousPlanState.set_master_eligibility(False)` around the
 `_run_stdin_wait` call and restores it when the dry run ends. The withdrawal
 must reach the **wire**, not only the local election: the plan re-announces
 `never_master` and no `prefer_master`
@@ -160,7 +160,7 @@ must reach the **wire**, not only the local election: the plan re-announces
 both), because peers only rank the advertisement they receive.
 
 The automatic dry-run preview first probes the master's data endpoint
-(`p2p_handler.py::_master_endpoint_reachable`, a short TCP connect). A master
+(`hsync_client/p2p_handler.py::_master_endpoint_reachable`, a short TCP connect). A master
 that just exited can still look "fresh" to `reconcile_stale_peers`, and
 previewing against its dead endpoint would burn the whole retry budget and
 surface a spurious error. When the probe fails, the slave demotes that peer
@@ -170,13 +170,13 @@ picks a reachable node.
 ### Network-change recovery
 
 Rendezvous recovers on its own when the host loses and regains connectivity
-(`net_watch.py::get_network_monitor`, one shared polling thread — see
+(`hsync_client/net_watch.py::get_network_monitor`, one shared polling thread — see
 [net-watch.md](net-watch.md)). Both plans subscribe in `start` and unsubscribe in
 `stop`; the callback runs on the monitor thread.
 
 - **mDNS.** The advertised addresses are re-sampled on a return transition:
   `MdnsRendezvous._on_network_change` calls
-  `p2p_rendezvous_mdns.py::MdnsRendezvous._rebuild_mdns`, which retires the
+  `hsync_client/p2p_rendezvous_mdns.py::MdnsRendezvous._rebuild_mdns`, which retires the
   previous `Zeroconf`, creates a fresh instance, re-registers the record on the
   current addresses and recreates the `ServiceBrowser`. The record carries one A
   record per active interface (`_local_ips`, sampled by `get_local_ips`; the
@@ -185,13 +185,13 @@ Rendezvous recovers on its own when the host loses and regains connectivity
   `update_service`) is what restores the per-interface sockets and multicast
   memberships an interface bounce destroys **and** replaces the advertised A
   records, so peers stop dialing the pre-outage addresses. A failed heartbeat
-  re-announce triggers `p2p_rendezvous_mdns.py::MdnsRendezvous._recover_mdns`,
+  re-announce triggers `hsync_client/p2p_rendezvous_mdns.py::MdnsRendezvous._recover_mdns`,
   which first reconciles the sockets (`Zeroconf.update_interfaces`) and escalates
   to a rebuild when that fails.
 - **rendezvous.** `refresh` carries no endpoints, so a lease that survives the
   outage would keep relaying the old candidates. The monitor callback only wakes
   the lease loop; before each action the loop runs
-  `p2p_rendezvous_rdv.py::RdvRendezvous._republish_stale_endpoint`, which
+  `hsync_client/p2p_rendezvous_rdv.py::RdvRendezvous._republish_stale_endpoint`, which
   compares the sampled address with `_published_local_ip` (recorded by the last
   endpoint register) and the *local* candidate list with
   `_published_endpoints_sig` (a new/removed interface, or the test file seam) and,
@@ -200,11 +200,11 @@ Rendezvous recovers on its own when the host loses and regains connectivity
   forces a full register with the fresh candidates. The observed
   (server-reflexive) candidate is excluded from the signature: it is re-learned
   on every register and must not look like a change.
-  `p2p_rendezvous_rdv.py::RdvRendezvous._advertised_signature` builds it. The
+  `hsync_client/p2p_rendezvous_rdv.py::RdvRendezvous._advertised_signature` builds it. The
   test-only seams (`_TEST_ADVERTISED_ENDPOINTS_ENV`, and the re-read-on-every-call
   `_TEST_ADVERTISED_ENDPOINTS_FILE_ENV`) feed the same list, so
   `tests/test_bb_p2p_master_endpoint_change.py` can move a *running* master.
-- **Self-record.** `p2p_peers.py::PeerManager.set_local_addresses` follows the new
+- **Self-record.** `hsync_client/p2p_peers.py::PeerManager.set_local_addresses` follows the new
   addresses (all announced interfaces), so the node's own record seen looped back
   is not reported as a duplicated device identity by
   `PeerManager._is_foreign_duplicate` whichever interface the record lists first.
@@ -212,23 +212,23 @@ Rendezvous recovers on its own when the host loses and regains connectivity
 Protocol-mismatched peers are ignored.
 
 **Serving role: command channel and sync status.**
-`p2p_handler.py::_run_as_master` runs outside any asyncio loop (it yields with a
+`hsync_client/p2p_handler.py::_run_as_master` runs outside any asyncio loop (it yields with a
 plain sleep), so the slave-side readers in `preview.py` never see its commands: a
 front-end's `PREVIEW`/`SYNC` would be silently dropped and its file table would
 stay on the pre-connect state while the status bar already said "connected".
-`p2p_handler.py::_MasterChannel` therefore runs
-`stdin_commands.py::StdinCommandHandler.run_in_thread` (a plain thread on a
+`hsync_client/p2p_handler.py::_MasterChannel` therefore runs
+`hsync_client/stdin_commands.py::StdinCommandHandler.run_in_thread` (a plain thread on a
 duplicate of stdin, same line contract as the async reader) for the whole master
 stint and answers `PREVIEW`/`SYNC` through
-`master_status.py::MasterSyncStatus`. That thread waits on stdin **and** on a wake
+`hsync_client/master_status.py::MasterSyncStatus`. That thread waits on stdin **and** on a wake
 pipe (`select`): closing a descriptor does not interrupt a pending `os.read`, so
-`stdin_commands.py::StdinCommandHandler.stop_thread` writes a byte to the wake
+`hsync_client/stdin_commands.py::StdinCommandHandler.stop_thread` writes a byte to the wake
 pipe — closing it instead made `_MasterChannel.stop` burn its whole 5 s
 `thread.join(timeout=…)`, the same budget the desktop allows between `SIGTERM`
 and `SIGKILL`. The master is the source of the share, so
 `get_files_remote()` (the configured server URL) says nothing: the classification
 compares the local listing with the identities the devices published, read in
-**one** pass by `p2p_inventory.py::P2PInventoryStore.compare_share` (the union,
+**one** pass by `hsync_client/p2p_inventory.py::P2PInventoryStore.compare_share` (the union,
 the per-identity holder count and the per-device tallies), never by
 `holders_for` (a JOIN per file). A local file a device holds is `synced`, one
 nobody holds is `to_upload`, a path only the devices hold is `to_download`, and
@@ -236,7 +236,7 @@ every row carries its coverage (`holders` out of `devices`, see ADR 0042). The
 inventory store exists for every master (it is the classification input), even
 when the master serves no blocks.
 
-The verdict is **per device**, not a union: `master_status.py::MasterSyncStatus._classify`
+The verdict is **per device**, not a union: `hsync_client/master_status.py::MasterSyncStatus._classify`
 emits one `device_status` row per live device (`pending_here`, `pending_there`,
 `held`), because the union answers "does any device hold this?" while a front-end
 has to answer "is every device converged?". A file only one device holds is in
@@ -245,7 +245,7 @@ sync for that device and still pending for the others.
 When it cannot classify yet it emits `sync_pending` with the counts: `devices`
 of `expected` inventories are published. A live session that has not committed
 its snapshot
-(`p2p_inventory.py::P2PInventoryStore.published_session_cids`) is not a device
+(`hsync_client/p2p_inventory.py::P2PInventoryStore.published_session_cids`) is not a device
 view, so a partial group never produces a file verdict — `reason="no_device"`
 only when nobody is there (`expected == 0`) and `reason="awaiting_inventory"`
 otherwise.
@@ -267,14 +267,14 @@ serving node answering them consumed the desktop's confirmation state — it the
 showed a summary with the classification's counters and never sent the `SYNC`
 that ends its dry run. Every pass brackets itself with the **serving-side** pair
 instead (`hsync-common/hsync_common/protocol/events.py::UiEventName.status_pass_start`):
-`master_status.py::MasterSyncStatus.run_now` emits `status_pass_start` before the
+`hsync_client/master_status.py::MasterSyncStatus.run_now` emits `status_pass_start` before the
 classification and `status_pass_end` after it, whatever the outcome, so a
 front-end renders the comparison and settles its summary without inferring the
 end of a burst and without touching the preview confirmation. Cost: see
 [benchmarks.md](benchmarks.md).
 
 The pass also classifies **empty directories**
-(`empty_dirs.py::empty_dir_states`, shared with the preview): they travel as
+(`hsync_client/empty_dirs.py::empty_dir_states`, shared with the preview): they travel as
 their internal `.hsynckeep` sentinel, which carries no content to compare and
 stays out of the per-file rows and the per-device backlog, so their own verdict
 is emitted as a `dir_status` row under the directory’s path.
@@ -361,24 +361,24 @@ group where no further peer event would otherwise arrive:
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `LivenessSource` | `p2p_peers.py::LivenessSource` | one source of liveness evidence in **its own unit**: `seconds` for a heartbeat (a clock stamp against a duration), `samples` for a discovery server (the answered-sample generation that drew the peer, against a window of answered samples) plus a **lease** — how long that evidence stays valid without a new answer, because a node that went away must not hold a dead peer forever |
-| `Peer.note_evidence` / `Peer.evidence` | `p2p_peers.py::Peer.note_evidence` | the stamp a source wrote for a peer; the record keeps one entry per source, so a peer seen by an announce *and* by a sample is held by both |
-| `PeerManager._is_peer_alive` | `p2p_peers.py::PeerManager._is_peer_alive` | liveness = **any** source holding the peer: the heartbeat window, an answered-sample window inside the source's lease, the WebSocket mark (`_connected_cids`) or the relay tunnel mark (`_relay_cids`) |
-| `PeerManager.register_source` / `advance_source` | `p2p_peers.py::PeerManager.register_source` / `p2p_peers.py::PeerManager.advance_source` | a rendezvous server declares its sample window and lease when it starts and renews both once per **answered** sample; a refused or unanswered query renews nothing (no information about any peer) |
-| `PeerManager.forget_source` | `p2p_peers.py::PeerManager.forget_source` | drops a source and the evidence it contributed, then re-runs the sweep and the election: called when a source is disabled for good (an untrusted node), so the peers it introduced are not kept alive on evidence that will never be refreshed |
-| `PeerManager.mark_relay_tunnel` | `p2p_peers.py::PeerManager.mark_relay_tunnel` | the relay data plane as evidence: the node pairs a session only for a target with a listener, so an open tunnel holds the peer while it is open |
-| `PeerManager.mark_peer_connected` / `mark_peer_disconnected` | `p2p_peers.py::PeerManager.mark_peer_connected` / `p2p_peers.py::PeerManager.mark_peer_disconnected` | feed the WebSocket-authoritative liveness signal (set by the master's WSS admission/release and by the slave around its WSS connection) |
-| `PeerManager.is_wss_connected` | `p2p_peers.py::PeerManager.is_wss_connected` | lock-guarded query on `_connected_cids`; used by the listener's goodbye grace |
-| `HsyncServiceListener.remove_service` | `p2p_rendezvous_mdns.py::HsyncServiceListener.remove_service` | **goodbye grace** (`GOODBYE_GRACE_S`): delay `remove_peer` so an Android heartbeat re-register can cancel it (covers slave<->slave, not only WSS); a live WSS link is still an immediate ignore |
-| `PeerManager.reconcile_stale_peers` | `p2p_peers.py::PeerManager.reconcile_stale_peers` | expire peers no source holds any more and re-elect; invoked every rendezvous wake (`p2p_handler.run_p2p_mode`) and on a slave WebSocket drop (`_run_as_slave`) |
-| `_validate_peer_timeout_relationship` | `config.py::_validate_peer_timeout_relationship` | enforces `HSYNC_PEER_TIMEOUT ≥ 2× HSYNC_HEARTBEAT_INTERVAL` for the heartbeat source |
-| timeout wiring | `p2p_handler.py::run_p2p_mode` → `MdnsRendezvous` / `build_rendezvous_plan` → `PeerManager` | `HSYNC_PEER_TIMEOUT` is the **heartbeat** window (it judges the peers mDNS announces every `HSYNC_HEARTBEAT_INTERVAL`); a rendezvous server's peers are judged by that server's own sample window (`RENDEZVOUS_MISSED_SAMPLES`), so no discovery cadence is encoded in the timeout |
-| `RdvRendezvous._source_name` / `RdvRendezvous.start` | `p2p_rendezvous_rdv.py::RdvRendezvous.start` | registers one sample source per discovery server (`rdv:<host>:<port>`); `RdvRendezvous._query_peers` advances it on every answered sample and stamps the peers it drew |
-| `MdnsRendezvous._record_lock` | `p2p_rendezvous_mdns.py::MdnsRendezvous` | serializes every record publication (initial register, heartbeat re-announce, in-place refresh, teardown) across the heartbeat thread, the debounced presence timer and the main thread; `stop()` publishes `_running = False` under it so a queued refresh bails instead of racing the unregister |
-| `MdnsRendezvous._refresh_service` | `p2p_rendezvous_mdns.py::MdnsRendezvous._refresh_service` | **in-place** TXT update (`zeroconf.update_service`), never unregister+register: a goodbye would make slaves see a spurious master `remove_service` |
-| `MdnsRendezvous._heartbeat` / `_heartbeat_loop` | `p2p_rendezvous_mdns.py::MdnsRendezvous._heartbeat_loop` / `p2p_rendezvous_mdns.py::MdnsRendezvous._heartbeat` | liveness heartbeat: a background thread re-announces the TXT record every `heartbeat_interval` (env `HSYNC_HEARTBEAT_INTERVAL`, wired in `p2p_handler.py`) with an incremented opaque `heartbeat` counter. A fresh record (start, network change, recovered interface) is announced in a **burst** first — `MDNS_ANNOUNCE_BURST_INTERVAL` for `MDNS_ANNOUNCE_BURST_COUNT` cycles — because a peer that is already running learns about this node only from an announce |
-| `MdnsRendezvous.update_server_not_ready` | `p2p_rendezvous_mdns.py::MdnsRendezvous.update_server_not_ready` | leadership lease (ADR-0027): on yield, clear the local `server_ready` flag and update mDNS in place without `server_ready`/`connected` |
-| yield path | `p2p_handler.py::run_p2p_mode` | when `is_master()` flips false after serving, stop servers **and** revoke incumbency + log `[MASTER YIELD]` (mirrored in Android `LogAction.MASTER_YIELD`) |
+| `LivenessSource` | `hsync_client/p2p_peers.py::LivenessSource` | one source of liveness evidence in **its own unit**: `seconds` for a heartbeat (a clock stamp against a duration), `samples` for a discovery server (the answered-sample generation that drew the peer, against a window of answered samples) plus a **lease** — how long that evidence stays valid without a new answer, because a node that went away must not hold a dead peer forever |
+| `Peer.note_evidence` / `Peer.evidence` | `hsync_client/p2p_peers.py::Peer.note_evidence` | the stamp a source wrote for a peer; the record keeps one entry per source, so a peer seen by an announce *and* by a sample is held by both |
+| `PeerManager._is_peer_alive` | `hsync_client/p2p_peers.py::PeerManager._is_peer_alive` | liveness = **any** source holding the peer: the heartbeat window, an answered-sample window inside the source's lease, the WebSocket mark (`_connected_cids`) or the relay tunnel mark (`_relay_cids`) |
+| `PeerManager.register_source` / `advance_source` | `hsync_client/p2p_peers.py::PeerManager.register_source` / `hsync_client/p2p_peers.py::PeerManager.advance_source` | a rendezvous server declares its sample window and lease when it starts and renews both once per **answered** sample; a refused or unanswered query renews nothing (no information about any peer) |
+| `PeerManager.forget_source` | `hsync_client/p2p_peers.py::PeerManager.forget_source` | drops a source and the evidence it contributed, then re-runs the sweep and the election: called when a source is disabled for good (an untrusted node), so the peers it introduced are not kept alive on evidence that will never be refreshed |
+| `PeerManager.mark_relay_tunnel` | `hsync_client/p2p_peers.py::PeerManager.mark_relay_tunnel` | the relay data plane as evidence: the node pairs a session only for a target with a listener, so an open tunnel holds the peer while it is open |
+| `PeerManager.mark_peer_connected` / `mark_peer_disconnected` | `hsync_client/p2p_peers.py::PeerManager.mark_peer_connected` / `hsync_client/p2p_peers.py::PeerManager.mark_peer_disconnected` | feed the WebSocket-authoritative liveness signal (set by the master's WSS admission/release and by the slave around its WSS connection) |
+| `PeerManager.is_wss_connected` | `hsync_client/p2p_peers.py::PeerManager.is_wss_connected` | lock-guarded query on `_connected_cids`; used by the listener's goodbye grace |
+| `HsyncServiceListener.remove_service` | `hsync_client/p2p_rendezvous_mdns.py::HsyncServiceListener.remove_service` | **goodbye grace** (`GOODBYE_GRACE_S`): delay `remove_peer` so an Android heartbeat re-register can cancel it (covers slave<->slave, not only WSS); a live WSS link is still an immediate ignore |
+| `PeerManager.reconcile_stale_peers` | `hsync_client/p2p_peers.py::PeerManager.reconcile_stale_peers` | expire peers no source holds any more and re-elect; invoked every rendezvous wake (`p2p_handler.run_p2p_mode`) and on a slave WebSocket drop (`_run_as_slave`) |
+| `_validate_peer_timeout_relationship` | `hsync_client/config.py::_validate_peer_timeout_relationship` | enforces `HSYNC_PEER_TIMEOUT ≥ 2× HSYNC_HEARTBEAT_INTERVAL` for the heartbeat source |
+| timeout wiring | `hsync_client/p2p_handler.py::run_p2p_mode` → `MdnsRendezvous` / `build_rendezvous_plan` → `PeerManager` | `HSYNC_PEER_TIMEOUT` is the **heartbeat** window (it judges the peers mDNS announces every `HSYNC_HEARTBEAT_INTERVAL`); a rendezvous server's peers are judged by that server's own sample window (`RENDEZVOUS_MISSED_SAMPLES`), so no discovery cadence is encoded in the timeout |
+| `RdvRendezvous._source_name` / `RdvRendezvous.start` | `hsync_client/p2p_rendezvous_rdv.py::RdvRendezvous.start` | registers one sample source per discovery server (`rdv:<host>:<port>`); `RdvRendezvous._query_peers` advances it on every answered sample and stamps the peers it drew |
+| `MdnsRendezvous._record_lock` | `hsync_client/p2p_rendezvous_mdns.py::MdnsRendezvous` | serializes every record publication (initial register, heartbeat re-announce, in-place refresh, teardown) across the heartbeat thread, the debounced presence timer and the main thread; `stop()` publishes `_running = False` under it so a queued refresh bails instead of racing the unregister |
+| `MdnsRendezvous._refresh_service` | `hsync_client/p2p_rendezvous_mdns.py::MdnsRendezvous._refresh_service` | **in-place** TXT update (`zeroconf.update_service`), never unregister+register: a goodbye would make slaves see a spurious master `remove_service` |
+| `MdnsRendezvous._heartbeat` / `_heartbeat_loop` | `hsync_client/p2p_rendezvous_mdns.py::MdnsRendezvous._heartbeat_loop` / `hsync_client/p2p_rendezvous_mdns.py::MdnsRendezvous._heartbeat` | liveness heartbeat: a background thread re-announces the TXT record every `heartbeat_interval` (env `HSYNC_HEARTBEAT_INTERVAL`, wired in `p2p_handler.py`) with an incremented opaque `heartbeat` counter. A fresh record (start, network change, recovered interface) is announced in a **burst** first — `MDNS_ANNOUNCE_BURST_INTERVAL` for `MDNS_ANNOUNCE_BURST_COUNT` cycles — because a peer that is already running learns about this node only from an announce |
+| `MdnsRendezvous.update_server_not_ready` | `hsync_client/p2p_rendezvous_mdns.py::MdnsRendezvous.update_server_not_ready` | leadership lease (ADR-0027): on yield, clear the local `server_ready` flag and update mDNS in place without `server_ready`/`connected` |
+| yield path | `hsync_client/p2p_handler.py::run_p2p_mode` | when `is_master()` flips false after serving, stop servers **and** revoke incumbency + log `[MASTER YIELD]` (mirrored in Android `LogAction.MASTER_YIELD`) |
 
 **Liveness is evidence from independent sources.** A peer is alive while **any**
 source holds it, and it is expired only when every source that had seen it has
@@ -448,10 +448,10 @@ behaviour:
 
 | Line | Source | Answers |
 | --- | --- | --- |
-| `Peer timed out: <cid>` + `Peer liveness lost: <cid> <source>: …` | `p2p_peers.py::PeerManager.reconcile_stale_peers` | one entry per source that had seen the peer: `unseen for Ns (window Ns)` for a heartbeat, `N answered sample(s) without it (window N)` for a discovery server; WARNING instead when the expired record was the elected master (the churn trigger) |
-| `Rendezvous <node> query refused: <error>; next sample in Ns` | `p2p_rendezvous_rdv.py::RdvRendezvous._query_peers` | a refused sample (rate limit / token) and the backoff it armed; it moves no source, so it cannot expire a peer |
-| `Rendezvous <node> sample without the elected master <cid> (N peer(s) drawn)` | `p2p_rendezvous_rdv.py::RdvRendezvous._query_peers` | the drawn sample omitted the master, i.e. one of the `RENDEZVOUS_MISSED_SAMPLES` misses the window tolerates |
-| `WebSocket greeting received in Ns` / `WebSocket handshake completed in Ns` / `WebSocket connection error after Ns` | `p2p_websocket.py::p2p_websocket_client` | how much of the fixed per-frame handshake budget the (possibly relayed) path consumed |
+| `Peer timed out: <cid>` + `Peer liveness lost: <cid> <source>: …` | `hsync_client/p2p_peers.py::PeerManager.reconcile_stale_peers` | one entry per source that had seen the peer: `unseen for Ns (window Ns)` for a heartbeat, `N answered sample(s) without it (window N)` for a discovery server; WARNING instead when the expired record was the elected master (the churn trigger) |
+| `Rendezvous <node> query refused: <error>; next sample in Ns` | `hsync_client/p2p_rendezvous_rdv.py::RdvRendezvous._query_peers` | a refused sample (rate limit / token) and the backoff it armed; it moves no source, so it cannot expire a peer |
+| `Rendezvous <node> sample without the elected master <cid> (N peer(s) drawn)` | `hsync_client/p2p_rendezvous_rdv.py::RdvRendezvous._query_peers` | the drawn sample omitted the master, i.e. one of the `RENDEZVOUS_MISSED_SAMPLES` misses the window tolerates |
+| `WebSocket greeting received in Ns` / `WebSocket handshake completed in Ns` / `WebSocket connection error after Ns` | `hsync_client/p2p_websocket.py::p2p_websocket_client` | how much of the fixed per-frame handshake budget the (possibly relayed) path consumed |
 
 The query loop runs in the lease-loop thread and keeps sampling while a slave
 session is active, so a stale record always means *samples stopped arriving*, not
@@ -479,59 +479,59 @@ matrix on the wire data.
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `P2PServer` | `p2p_server.py::P2PServer` | HTTPS file server (REST mirror of hsync-server) |
+| `P2PServer` | `hsync_client/p2p_server.py::P2PServer` | HTTPS file server (REST mirror of hsync-server) |
 | `P2PServerMode` | `p2p_server.py` | explicit `master` or `seeder` route surface. Seeder mode allows health/time and exact-hash `GET /files/download` only; all mutating or unrelated routes are `405`. Health and clock are dispatched before the seeder/master split, so both roles share one implementation of those two routes |
 | `P2PInventoryStore` | `p2p_inventory.py` | master-owned SQLite availability index keyed by `(bucket, normalized path, lowercase SHA-256, CID)` with per-session tokens; stale disconnect cleanup cannot delete a newer reconnect session |
 | `P2PSourceService` | `p2p_sources.py` | validates count/byte-bounded wantlists, joins inventory holders with live/seed-ready peer snapshots, excludes requester/self by CID (distinct peers may share an IP), matches a holder’s session against every endpoint it announced (a multi-homed peer connects from an interface other than the one it is discovered on), shuffles otherwise-equal candidates, and emits strict source responses. Each candidate carries the seeder's advertised `serve_slots`; a CID without a live capacity advertisement is not a candidate at all (ADR-0030) |
 | `/files/sources` | `p2p_server.py` | authenticated-if-key, read-only bounded POST. Wrong buckets are `404`; no-key default-deny mutation policy does not block this read operation |
-| `P2PServer` (single aiohttp listener) | `p2p_server.py` | ONE TLS listener for the whole data plane. An `aiohttp` app runs the endpoint mixin on a bounded `ThreadPoolExecutor` (`P2P_SERVER_MAX_THREADS=64`) so the blocking data plane (file IO, sha256, zstd) never blocks the event loop; an `asyncio.Semaphore` of the same size caps in-flight requests so a peer flood cannot grow the executor's unbounded queue. `web.SockSite` + `ssl_context` terminate TLS once and expose one `port` (`port=0` → the real bound port, read from `getsockname()`). HTTP/1.1 keep-alive is aiohttp's; idle connections are reaped after `keepalive_timeout` = `P2P_HANDLER_IDLE_TIMEOUT_S` (300 s). DoS guards: per-IP admission is rate-limited (`TokenBucketLimiter` from `hsync_common.ratelimit`, `P2P_REQ_RATE_*`), a peer holds at most `_per_ip_inflight_cap(active_ips)` in-flight requests (fair-share over the 64 slots: floor `P2P_MIN_INFLIGHT_PER_IP`, ceiling `P2P_MAX_INFLIGHT_PER_IP`). Relayed peers all arrive from the loopback address, so their bucket key is `relay:<cid>` (`p2p_server.py::_admission_key`) instead of `127.0.0.1`: distinct relayed slaves get independent fair shares, and one busy relayed peer cannot starve the others. The CID comes from the `cid` query parameter or the `X-Client-Id` header, which the P2P client sends on every request (`main_logic` `REQUEST_HEADERS`), so requests whose URL has no `cid` are covered too. `_AiohttpTransport._check_progress` aborts a **request body** whose sustained read throughput stays below `P2P_REQUEST_MIN_RATE_BPS` after `P2P_REQUEST_GRACE_S` (response writes are excluded so a compute-bound handler is never mistaken for a trickle) — the per-I/O timeout alone resets on any byte, so this is what stops a trickle from pinning a slot. `client_max_size` is bounded by `MAX_INBOUND_SIZE`, the listen `backlog` is `P2P_SERVER_BACKLOG`, and `_P2PSite` bounds the TLS handshake (`P2P_TLS_HANDSHAKE_TIMEOUT_S`). `configure_role(...)` installs the serving role and `stop_serving()` retires it (503 while not serving) — the WS control plane is refused unless `master` |
+| `P2PServer` (single aiohttp listener) | `p2p_server.py` | ONE TLS listener for the whole data plane. An `aiohttp` app runs the endpoint mixin on a bounded `ThreadPoolExecutor` (`P2P_SERVER_MAX_THREADS=64`) so the blocking data plane (file IO, sha256, zstd) never blocks the event loop; an `asyncio.Semaphore` of the same size caps in-flight requests so a peer flood cannot grow the executor's unbounded queue. `web.SockSite` + `ssl_context` terminate TLS once and expose one `port` (`port=0` → the real bound port, read from `getsockname()`). HTTP/1.1 keep-alive is aiohttp's; idle connections are reaped after `keepalive_timeout` = `P2P_HANDLER_IDLE_TIMEOUT_S` (300 s). DoS guards: per-IP admission is rate-limited (`TokenBucketLimiter` from `hsync_common.ratelimit`, `P2P_REQ_RATE_*`), a peer holds at most `_per_ip_inflight_cap(active_ips)` in-flight requests (fair-share over the 64 slots: floor `P2P_MIN_INFLIGHT_PER_IP`, ceiling `P2P_MAX_INFLIGHT_PER_IP`). Relayed peers all arrive from the loopback address, so their bucket key is `relay:<cid>` (`hsync_client/p2p_server.py::_admission_key`) instead of `127.0.0.1`: distinct relayed slaves get independent fair shares, and one busy relayed peer cannot starve the others. The CID comes from the `cid` query parameter or the `X-Client-Id` header, which the P2P client sends on every request (`main_logic` `REQUEST_HEADERS`), so requests whose URL has no `cid` are covered too. `_AiohttpTransport._check_progress` aborts a **request body** whose sustained read throughput stays below `P2P_REQUEST_MIN_RATE_BPS` after `P2P_REQUEST_GRACE_S` (response writes are excluded so a compute-bound handler is never mistaken for a trickle) — the per-I/O timeout alone resets on any byte, so this is what stops a trickle from pinning a slot. `client_max_size` is bounded by `MAX_INBOUND_SIZE`, the listen `backlog` is `P2P_SERVER_BACKLOG`, and `_P2PSite` bounds the TLS handshake (`P2P_TLS_HANDSHAKE_TIMEOUT_S`). `configure_role(...)` installs the serving role and `stop_serving()` retires it (503 while not serving) — the WS control plane is refused unless `master` |
 | `P2PEndpointMixin` / `_AiohttpTransport` | `p2p_server.py` | the transport-agnostic endpoint logic (every `do_*` dispatcher and `_handle_*`, plus `_check_auth`/`_check_mutation_auth`) lives in `P2PEndpointMixin` and depends only on a low-level HTTP surface (`send_response`/`send_header`/`end_headers`/`wfile`/`rfile`/`headers`/`client_address`/`close_connection`). `_AiohttpTransport` supplies that surface on the listener: `end_headers` prepares a `web.StreamResponse`, `wfile.write` streams the body and `rfile.read` pulls the request body, each bridging the worker thread to the loop via `run_coroutine_threadsafe`. Endpoints keep their exact `Content-Length` framing so keep-alive persists. Every response also emits one DEBUG request line (`<addr> - "METHOD /path?query HTTP/1.1" <status> -`): `_AiohttpTransport.send_response` calls the mixin's stdlib-parity `log_request` explicitly, since aiohttp never invokes the `BaseHTTPRequestHandler` hook — this is what keeps the incoming request (and its query string, e.g. the seeder's `filename=…&sha256=…`) observable at `-v` |
-| `P2PWebSocketServer` (control plane route) | `p2p_websocket.py` | WSS event hub served **on the single listener** (no own socket/thread): `handle(request)` is the `GET /api/v1/buckets/{bucket}/events/{cid}` route on `P2PServer`, using `web.WebSocketResponse(heartbeat=30, max_msg_size=WS_MAX_MESSAGE_BYTES)`. Every handshake refusal goes through `_reject_auth` (`p2p_websocket.py::P2PWebSocketServer._reject_auth`): warn + `auth_failed` frame + `close()`, so a new rejection cannot return with the socket still attached. p2p-key auth (`hmac.compare_digest`) with CID validation (`is_valid_cid`); **`p2p/1` capability exchange (ADR-0024)** — greeting/hello/auth frames carry `protocol_version` + `capabilities`; a protocol mismatch on the auth path is a hard fail (`reason: protocol_incompatible`); when no `P2P_KEY` is set the `hello` handshake exchanges capabilities for coherence only (logged `unauthenticated`); the watcher (`start`) broadcasts through the listener loop and `stop` closes every client and clears the registry. The route is the `hsync_common.protocol.p2p.P2P_WS_EVENTS_PATH` SSOT (the slave builds the URI with `p2p_ws_events_path`), and the SQLite inventory calls (`begin_session`/`apply_frame`/`end_session`) are dispatched with `asyncio.to_thread` so they never stall the listener loop shared with the HTTP worker pool. A publish gate (`set_publishing`) is closed by `P2PServer.stop_serving()` **before** the role is retired and bumps a publish epoch that an in-flight broadcast (checked before every send) and a handshake completing after the yield both observe, so a yielded master pushes no event and admits no new client; `stop_serving()` returns the client-close future so `_stop_p2p_serving` waits (bounded) before detaching the shared inventory store |
+| `P2PWebSocketServer` (control plane route) | `p2p_websocket.py` | WSS event hub served **on the single listener** (no own socket/thread): `handle(request)` is the `GET /api/v1/buckets/{bucket}/events/{cid}` route on `P2PServer`, using `web.WebSocketResponse(heartbeat=30, max_msg_size=WS_MAX_MESSAGE_BYTES)`. Every handshake refusal goes through `_reject_auth` (`hsync_client/p2p_websocket.py::P2PWebSocketServer._reject_auth`): warn + `auth_failed` frame + `close()`, so a new rejection cannot return with the socket still attached. p2p-key auth (`hmac.compare_digest`) with CID validation (`is_valid_cid`); **`p2p/1` capability exchange (ADR-0024)** — greeting/hello/auth frames carry `protocol_version` + `capabilities`; a protocol mismatch on the auth path is a hard fail (`reason: protocol_incompatible`); when no `P2P_KEY` is set the `hello` handshake exchanges capabilities for coherence only (logged `unauthenticated`); the watcher (`start`) broadcasts through the listener loop and `stop` closes every client and clears the registry. The route is the `hsync_common.protocol.p2p.P2P_WS_EVENTS_PATH` SSOT (the slave builds the URI with `p2p_ws_events_path`), and the SQLite inventory calls (`begin_session`/`apply_frame`/`end_session`) are dispatched with `asyncio.to_thread` so they never stall the listener loop shared with the HTTP worker pool. A publish gate (`set_publishing`) is closed by `P2PServer.stop_serving()` **before** the role is retired and bumps a publish epoch that an in-flight broadcast (checked before every send) and a handshake completing after the yield both observe, so a yielded master pushes no event and admits no new client; `stop_serving()` returns the client-close future so `_stop_p2p_serving` waits (bounded) before detaching the shared inventory store |
 | `_handle_patch_permissions` | `p2p_server.py` (PATCH route) | metadata-only chmod from a slave: `PATCH /files/permissions?filename&permissions&cid` applies the sanitized mode to an existing file (owner rwx floor via `set_permissions_on_dir` for dirs; no file bytes cross the wire), attributes the resulting IN_ATTRIB to the slave (`_mark_origin`, the shared validity+authentication gate for `mark_inbound_origin`) so the master's watcher re-broadcasts the change to the other slaves. Mirrors the central server's `PATCH …/files/permissions` |
 | `_handle_rename` | `p2p_server.py` (PATCH route) | `PATCH /files?src&dst&cid[&expected_sha256&mtime&permissions]` — the zero-byte move, same contract the central server serves (ADR-0044). Confines both endpoints (`resolve_within(..., resolve_final=False)`) and refuses `dst` when it exists (`409`, never an overwrite), an `expected_sha256` that no longer matches the source (`409`, the slave falls back to an upload), an invalid digest/mode/mtime (`400`) and a missing source (`404`). On success the master renames, carries the stored merge base to the new path (`sync_state.move_base`, no clock tick), applies the advertised mode/mtime (far-future clamp), keeps the vacated parent alive with a `.hsynckeep` sentinel (`_ensure_sentinel_in_parent`) and answers `{info, file, version}` (`version_info_for_path`) so the slave records the same base. The source's tombstone is minted by the master's own watcher (`on_moved` → `_on_deleted`) and the `renamed` broadcast carries the slave's CID for echo suppression |
 | `_handle_list_dirs` | `p2p_server.py` (GET route) | `GET /dirs` returns `[{"path", "permissions"}]` for every non-hidden, non-symlink directory (shared `hsync_common.listing.iter_dir_entries`) — mirrors the central server so the client's download-only directory-permission converge (`converge_directory_permissions`) works identically in both modes |
-| `_create_dir_on_master` (permissions param) | `p2p_websocket.py::_create_dir_on_master` | `POST /dirs` gains an optional `permissions` query param: the slave's directory-chmod propagate (`_propagate_dir_permission_change`, `_last_dir_mode` dedup map) reuses the endpoint to push the new mode; the master applies it and re-broadcasts |
-| `_handle_create_dir` parent marking | `p2p_server.py::_handle_create_dir` | `mkdir(parents=True)` also creates every missing ancestor of the requested path, and the master's recursive watcher fires a create event for each. `_handle_create_dir` marks **every missing ancestor inside the bucket** (plus the leaf, only when it does not already exist) with `mark_inbound_origin` before the mkdir, so those synthetic create events carry the slave's CID: without it they would be logged/broadcast as local creates and the slave could never echo-suppress them (`[REMOTE CREATE]` lines on the slave side). Ancestors above the bucket root are never candidates |
-| `_StreamingMultipartParser` | `multipart.py::_StreamingMultipartParser` | streaming upload parsing (extracted to `multipart.py`) |
-| `_handle_upload_status` | `p2p_server.py::_handle_upload_status` | `GET /files/upload-status` — reports `.part` size for resume (mirrors central server `get_upload_status`); returns `complete`/`resumable`/`new` + offset |
-| `_handle_upload` (offset) | `p2p_server.py::_handle_upload` | resumable upload: `offset > 0` appends to `.part` in `"ab"` mode (size validated); incomplete uploads return `202` with the new offset; compressed + offset rejected. The handler is an orchestrator over `_admit_upload` (413 space gate), `_open_upload_destination` (untrusted-path resolution + writer setup), `_close_upload_stream` (zstd flush + fsync), `_maybe_partial_upload_response` (202) and `_finalize_upload` (arbitration + conflict copies + commit + sync-state record + terminal event) |
+| `_create_dir_on_master` (permissions param) | `hsync_client/p2p_websocket.py::_create_dir_on_master` | `POST /dirs` gains an optional `permissions` query param: the slave's directory-chmod propagate (`_propagate_dir_permission_change`, `_last_dir_mode` dedup map) reuses the endpoint to push the new mode; the master applies it and re-broadcasts |
+| `_handle_create_dir` parent marking | `hsync_client/p2p_server.py::_handle_create_dir` | `mkdir(parents=True)` also creates every missing ancestor of the requested path, and the master's recursive watcher fires a create event for each. `_handle_create_dir` marks **every missing ancestor inside the bucket** (plus the leaf, only when it does not already exist) with `mark_inbound_origin` before the mkdir, so those synthetic create events carry the slave's CID: without it they would be logged/broadcast as local creates and the slave could never echo-suppress them (`[REMOTE CREATE]` lines on the slave side). Ancestors above the bucket root are never candidates |
+| `_StreamingMultipartParser` | `hsync_client/multipart.py::_StreamingMultipartParser` | streaming upload parsing (extracted to `multipart.py`) |
+| `_handle_upload_status` | `hsync_client/p2p_server.py::_handle_upload_status` | `GET /files/upload-status` — reports `.part` size for resume (mirrors central server `get_upload_status`); returns `complete`/`resumable`/`new` + offset |
+| `_handle_upload` (offset) | `hsync_client/p2p_server.py::_handle_upload` | resumable upload: `offset > 0` appends to `.part` in `"ab"` mode (size validated); incomplete uploads return `202` with the new offset; compressed + offset rejected. The handler is an orchestrator over `_admit_upload` (413 space gate), `_open_upload_destination` (untrusted-path resolution + writer setup), `_close_upload_stream` (zstd flush + fsync), `_maybe_partial_upload_response` (202) and `_finalize_upload` (arbitration + conflict copies + commit + sync-state record + terminal event) |
 | safe download serving | `P2PEndpointMixin._handle_download` / `_serve_open_file` | opens beneath the bucket with component-by-component `O_NOFOLLOW`, hashes and streams the same descriptor, checks identity/size during transfer, emits canonical `X-Checksum-SHA256`, and treats `Content-Length` as wire bytes. Zstd is selected only after explicit negotiation and is staged in a bounded temporary file; ranges are always identity. A bounded checksum cache (512 entries, keyed `(st_dev, st_ino, st_size, st_mtime_ns, st_ctime_ns)`, invalidated via the same `_same_open_file` identity checks) collapses the 2–3 disk passes per download to one pass + send |
-| `_CappedBytesWriter` | `multipart.py::_CappedBytesWriter` | abort uploads whose bytes exceed the effective cap — min(declared size, `MAX_INBOUND_SIZE`) — (decompression-bomb containment) |
-| `p2p_delta.py` | `p2p_delta.py` | the four delta endpoints of the embedded master (`GET/POST /files/delta/signatures`, `POST /files/delta/apply`, `GET /files/delta/data`) as thin shells over `hsync_common.delta` (wire shapes, paths and status codes identical to the FastAPI server, pinned by cross-mode fixtures); signature matching runs under its own sub-semaphore (4) so CPU-bound work cannot occupy the global thread cap. Literal payloads are parked in ONE process-scoped temp dir (`hsync-delta-lan-*`, outside `LOCAL_BUCKET` so the sync engine never sees them) and reached only through tokens (single use; shared registry `hsync-common/hsync_common/delta/token_store.py::DeltaTokenStore`, TTL `hsync-common/hsync_common/constants.py::DELTA_TOKEN_TTL`, max 100 live); the dir is removed at interpreter exit by the `atexit` hook `_discard_payload_dir`. **A new process-scoped temp dir must register the same cleanup** — an unregistered one leaks a directory per run, and `test_p2p_delta.py::TestTokenStore::test_process_scoped_temp_dirs_register_their_cleanup` fails as soon as one appears. `POST /files/delta/apply` resolves its target through the shared `_resolve_servable` gate, so an empty/absent `path` is 400 "Missing path parameter" like the other LAN file endpoints, and re-validates the destination right before the final move (`destination_mutation_since`, see data-models.md): the base-sha race check covers a *changed* base, this covers a base *removed or replaced* during the apply, answered 409 `destination_changed` |
-| `P2PMasterFileEventHandler` | `p2p_websocket.py::P2PMasterFileEventHandler` | master-local FS changes → broadcast; logs every event with the originator CID (via `peek_inbound_origin`, which does NOT consume the entry) |
+| `_CappedBytesWriter` | `hsync_client/multipart.py::_CappedBytesWriter` | abort uploads whose bytes exceed the effective cap — min(declared size, `MAX_INBOUND_SIZE`) — (decompression-bomb containment) |
+| `p2p_delta.py` | `p2p_delta.py` | the four delta endpoints of the embedded master (`GET/POST /files/delta/signatures`, `POST /files/delta/apply`, `GET /files/delta/data`) as thin shells over `hsync_common.delta` (wire shapes, paths and status codes identical to the FastAPI server, pinned by cross-mode fixtures); signature matching runs under its own sub-semaphore (4) so CPU-bound work cannot occupy the global thread cap. Literal payloads are parked in ONE process-scoped temp dir (`hsync-delta-lan-*`, outside `LOCAL_BUCKET` so the sync engine never sees them) and reached only through tokens (single use; shared registry `hsync-common/hsync_common/delta/token_store.py::DeltaTokenStore`, TTL `hsync-common/hsync_common/constants.py::DELTA_TOKEN_TTL`, max 100 live); the dir is removed at interpreter exit by the `atexit` hook `_discard_payload_dir`. **A new process-scoped temp dir must register the same cleanup** — an unregistered one leaks a directory per run, and `tests/test_p2p_delta.py::TestTokenStore::test_process_scoped_temp_dirs_register_their_cleanup` fails as soon as one appears. `POST /files/delta/apply` resolves its target through the shared `_resolve_servable` gate, so an empty/absent `path` is 400 "Missing path parameter" like the other LAN file endpoints, and re-validates the destination right before the final move (`destination_mutation_since`, see data-models.md): the base-sha race check covers a *changed* base, this covers a base *removed or replaced* during the apply, answered 409 `destination_changed` |
+| `P2PMasterFileEventHandler` | `hsync_client/p2p_websocket.py::P2PMasterFileEventHandler` | master-local FS changes → broadcast; logs every event with the originator CID (via `peek_inbound_origin`, which does NOT consume the entry) |
 
 Peer-supplied paths on download/delete/rename/upload are validated with
 `validate_remote_relpath` and confined with `resolve_within` (no `startswith`
 prefix checks — sibling directories cannot bypass confinement).
 
 Uploads to the same destination are **serialized per path**
-(`p2p_server.py::_path_lock_for`): a duplicate trigger (watcher + full sync)
+(`hsync_client/p2p_server.py::_path_lock_for`): a duplicate trigger (watcher + full sync)
 racing the master would give the second writer a stale offset and corrupt the
 `.part`. When a resumable upload's declared offset no longer matches the `.part`
 the master holds (the `.part` is gone because the completing writer renamed it,
 or a duplicate writer appended bytes), the incoming body is consumed and
 discarded and the master answers `202` with the true offset
-(`p2p_server.py::_send_resync_response`) — it never 400s and deletes, so the
+(`hsync_client/p2p_server.py::_send_resync_response`) — it never 400s and deletes, so the
 peer re-probes `upload-status` and resumes (or restarts) instead of losing the
 partial progress. The client mirrors the contract: a `202` on the standard
 upload branch is a retryable outcome that re-probes and resumes, and the
 terminal `transfer_failed` is published once the retries are exhausted
-(`transfer.py::_upload_file_attempt`).
+(`hsync_client/transfer.py::_upload_file_attempt`).
 
 **The serving role reports its own transfers** on the structured UI-event
 channel, so a client that starts first (and is therefore the master) shows the
 same activity the syncing side always showed: `progress` samples while it
-streams a file to a peer (`p2p_server.py::_write_served_chunk`, wire size) or a
-parked delta payload (`p2p_delta.py::handle_delta_data`), samples while it
-receives a peer's upload or delta-apply (`progress.py::ProgressWriter`), and one
-terminal `transfer` per committed file (`progress.py::emit_completed_transfer`,
+streams a file to a peer (`hsync_client/p2p_server.py::_write_served_chunk`, wire size) or a
+parked delta payload (`hsync_client/p2p_delta.py::handle_delta_data`), samples while it
+receives a peer's upload or delta-apply (`hsync_client/progress.py::ProgressWriter`), and one
+terminal `transfer` per committed file (`hsync_client/progress.py::emit_completed_transfer`,
 file size). `op` follows the local direction — served bytes are an `upload`, a
 push received from a peer is a `download`. A serve that aborts mid-stream (the
 peer goes away, the file changes under the reader, a socket error) emits the
-terminal counterpart `transfer_failed` (`progress.py::emit_failed_transfer`) with
+terminal counterpart `transfer_failed` (`hsync_client/progress.py::emit_failed_transfer`) with
 `op="upload"`, so the Desktop resets the row instead of leaving a bar frozen at
 its last sample. Samples use the best-effort
-non-blocking emitter path (`events.py::EventEmitter.emit_progress`), so a slow
+non-blocking emitter path (`hsync_client/events.py::EventEmitter.emit_progress`), so a slow
 consumer can never stall the server's worker threads; the terminal events keep
 the lossless path. Covered by `tests/test_p2p_server_progress.py`,
 `tests/test_p2p_delta.py` and the black-box
@@ -540,44 +540,44 @@ the lossless path. Covered by `tests/test_p2p_server_progress.py`,
 **The receiver owns the progress of an upload it receives**: a sender knows only
 what it handed to its transport, the master knows what it stored, so the
 receiving side publishes `file_progress` frames on the uploader's own session
-(`p2p_server.py::P2PServer._upload_progress_echo` →
-`p2p_websocket.py::P2PWebSocketServer.send_to_sync`) and the uploading slave
+(`hsync_client/p2p_server.py::P2PServer._upload_progress_echo` →
+`hsync_client/p2p_websocket.py::P2PWebSocketServer.send_to_sync`) and the uploading slave
 renders them as its own `progress` samples
-(`p2p_websocket.py::_apply_master_progress`), standing its local counter down
-for that path (`progress.py::note_delivery_progress`). The frame is defined once
+(`hsync_client/p2p_websocket.py::_apply_master_progress`), standing its local counter down
+for that path (`hsync_client/progress.py::note_delivery_progress`). The frame is defined once
 in `hsync-common` (`hsync-common/hsync_common/protocol/transfer_progress.py`, schema
 `protocol/p2p/wss-schema.json`, fixture `p2p-wss-file-progress`).
 
 **The relayed data plane is addressed by a loopback endpoint** the dialer binds
-once (`rdv_relay.py::RelayDialer._bind_endpoint`): every accepted TCP connection
+once (`hsync_client/rdv_relay.py::RelayDialer._bind_endpoint`): every accepted TCP connection
 is framed onto the tunnel's single relay session
-(`rdv_relay.py::RelayDialer._handle`), so the REST client and the WebSocket keep
+(`hsync_client/rdv_relay.py::RelayDialer._handle`), so the REST client and the WebSocket keep
 their pooled connections on that port and one tunnel spends one
 `relay_connect`. The endpoint never moves — a tunnel that
 loses its QUIC session **re-pairs underneath the same port**
-(`rdv_relay.py::RelayDialer._hold_session`, immediate on a drop and then at
+(`hsync_client/rdv_relay.py::RelayDialer._hold_session`, immediate on a drop and then at
 `RELAY_RETRY_BACKOFF_S`, or the `retry_after` the node asked for when it refused
 the attempt), because re-binding a new port would strand every pooled connection
 (and any request in flight) — the peer sees that as an SSL EOF. A tunnel that
 exists but is repairing its session is therefore **kept and waited for**, not
-replaced (`rdv_relay.py::RelayDialer.wait_session` from
-`p2p_handler.py::_relay_master_endpoint`, which waits only while
+replaced (`hsync_client/rdv_relay.py::RelayDialer.wait_session` from
+`hsync_client/p2p_handler.py::_relay_master_endpoint`, which waits only while
 `RelayDialer.repairing` is true and never on a tunnel whose last attempt the node
 refused), and the cycle simply reports no endpoint when the wait expires.
 `RelayDialer.alive` says the tunnel exists, `RelayDialer.session_up` that it can
 serve now; `FailoverRelayDialer` exposes the same members for its winning tunnel,
 so the caller speaks to one contract whatever the number of discovery servers.
 A relayed slave still caps its transfer pool at
-`constants.py::MAX_CONCURRENT_TRANSFERS_RELAY`
-(`p2p_handler.py::_apply_relay_transfer_tuning`) so a burst does not swamp the
+`hsync_client/constants.py::MAX_CONCURRENT_TRANSFERS_RELAY`
+(`hsync_client/p2p_handler.py::_apply_relay_transfer_tuning`) so a burst does not swamp the
 single session's flow-control window. The value in force before the cap is
 remembered and restored when a direct path is chosen again
-(`p2p_handler.py::_restore_relay_transfer_tuning`), before the RTT refresh —
+(`hsync_client/p2p_handler.py::_restore_relay_transfer_tuning`), before the RTT refresh —
 necessary because autotune re-derives `MAX_CONCURRENT_TRANSFERS` only when it
 manages that key (a CLI/env override or `--no-autotune` would otherwise keep the
 relay value on the fast path).
 Independently, the shared HTTP session retries a **dropped connection** for
-idempotent methods only (`utils/http.py::_retry_policy`): one dead keep-alive
+idempotent methods only (`hsync_client/utils/http.py::_retry_policy`): one dead keep-alive
 socket no longer fails a whole comparison, while an upload (POST) is never
 replayed blindly.
 
@@ -600,7 +600,7 @@ never be able to dereference `secret -> /etc/passwd` through the master and
 learn its hash (listing) or content (download). The listing itself is **streamed**
 as a chunked JSON array (`P2PEndpointMixin._handle_list_files`, path order): the
 master holds O(fanout + one entry) instead of the whole listing in RAM, and the
-slave (`sync.py::get_files_remote`) sorts the collected entries by `mtime` to keep
+slave (`hsync_client/sync.py::get_files_remote`) sorts the collected entries by `mtime` to keep
 the oldest-first priority. The walk, the hidden/ignored filters, the
 symlink-confinement check and the entry dicts come from the shared
 `hsync-common/hsync_common/listing.py` (`iter_bucket_entries` / `file_entry` /
@@ -632,18 +632,18 @@ echo-suppression `cid` on upload/delete/rename is honoured only when it passes
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `p2p_websocket_client` | `p2p_websocket.py::p2p_websocket_client` | connect to master WSS, verify cert fp, **`p2p/1` handshake**: hard-fail on greeting protocol mismatch, auth/hello frames carry `protocol_version` + `capabilities`; `local_capabilities()` is announced, `adopt_remote_capabilities()` applies the auth reply as the authoritative capability source (compression/delta gates). **Readiness threshold**: the local watcher starts before the WS connect, but `[READY]` (`p2p_websocket.py::p2p_websocket_client`) fires only after the handshake completed — a failed auth never reaches it. The link status follows the same rule: `connected` once the handshake completes, and `waiting` when the established link drops (the same state server mode reports for a lost link) — never `connecting`, which is only the pre-connection state — so the front-end clears the stale presence and reports the loss. **Inbound file downloads are fanned out** (`event_dispatch._spawn_file_download`): the receive loop never awaits a download — events for the same path are chained (order preserved, plus `path_lock` inside `download_file`), distinct paths run concurrently under a semaphore sized by `MAX_CONCURRENT_TRANSFERS`; the bounded tasks are drained (`drain_file_downloads`) in the connection teardown before the rendezvous loop's full sync. The fan-out exists so a burst is not capped by a serial `await update_file` per event (~60 files/s) while the master serves 200+ req/s |
+| `p2p_websocket_client` | `hsync_client/p2p_websocket.py::p2p_websocket_client` | connect to master WSS, verify cert fp, **`p2p/1` handshake**: hard-fail on greeting protocol mismatch, auth/hello frames carry `protocol_version` + `capabilities`; `local_capabilities()` is announced, `adopt_remote_capabilities()` applies the auth reply as the authoritative capability source (compression/delta gates). **Readiness threshold**: the local watcher starts before the WS connect, but `[READY]` (`hsync_client/p2p_websocket.py::p2p_websocket_client`) fires only after the handshake completed — a failed auth never reaches it. The link status follows the same rule: `connected` once the handshake completes, and `waiting` when the established link drops (the same state server mode reports for a lost link) — never `connecting`, which is only the pre-connection state — so the front-end clears the stale presence and reports the loss. **Inbound file downloads are fanned out** (`event_dispatch._spawn_file_download`): the receive loop never awaits a download — events for the same path are chained (order preserved, plus `path_lock` inside `download_file`), distinct paths run concurrently under a semaphore sized by `MAX_CONCURRENT_TRANSFERS`; the bounded tasks are drained (`drain_file_downloads`) in the connection teardown before the rendezvous loop's full sync. The fan-out exists so a burst is not capped by a serial `await update_file` per event (~60 files/s) while the master serves 200+ req/s |
 | `P2PInventoryPublisher` | `p2p_inventory.py` | slave WSS publisher (started for every slave, including dry-run and one-shot): immutable snapshot + bounded pending journal, chunked snapshot/delta frames, one in-flight generation, ACK timeout/retry, and resnapshot fallback on overflow/reject/reconnect. **ACK timeouts never close the WSS**: after a timeout the publisher keeps the socket (its event channel stays flowing) and retries a fresh snapshot after a bounded backoff (`P2P_INVENTORY_ACK_RETRY_MIN_S`..`P2P_INVENTORY_ACK_RETRY_MAX_S`), so a backlogged master still receives this peer's inventory instead of being left `awaiting_inventory` until a reconnect — closing the socket would tear the channel down and force a full resync on both peers |
 | slave inventory lifecycle | `p2p_handler.py` | the read-only inventory publisher starts for **every** slave (`_start_slave_inventory`), independent of the dry-run preview phase and of block serving; the read-only HTTPS seeder role binds and advertises endpoint readiness (`https`/`cert_fp`) and its `serve_slots` capacity on the master WSS handshake only when `P2P_PEER_DOWNLOAD` is enabled. Stops accepting, withdraws that readiness when it served, and drops role-owned publisher/resolver state before becoming master or exiting. Bind/readiness failure degrades to requester-only |
 | `P2PSourceResolver` / `P2PSourceTelemetry` | `p2p_sources.py` | count- and byte-bounded master wantlists plus one fresh single-file lookup for realtime events (measured on the LAN burst: the whole peer-offload block costs ~4.3 ms CPU/file and ~47 % throughput when disabled — see `hsync-client/docs/internal/testing.md`. The per-file lookup is one POST, ~1.0-1.1 ms, because `candidates_for(refresh=True)` calls `resolve([file])` even though `resolve` batches up to `P2P_SOURCES_MAX_FILES` identities; micro-batching those lookups (3 ms collection window) produces no resolvable gain at the default 5-way concurrency); immutable candidate maps are passed explicitly. Invalid/auth/pin-rotated CIDs stay disabled for the role session, while transient failures use deterministic cooldown. **Admission control (ADR-0030)**: `acquire_slot`/`release_slot` bound in-flight reads per CID to the candidate's advertised `serve_slots`, waiting up to `P2P_PEER_SLOT_WAIT_S` (2 s) before selecting the master — an expired wait is never a refused attempt. **Ranking (ADR-0030)**: `rank(sources, size=…)` orders by failures, then by `_SourceMetrics.predicted_cost_s` = `rtt_ema + size/throughput_ema` — a predicted transfer time, not a raw rate, so a peer that served a large file cannot outrank a lower-latency one for a small file (with no size the setup term decides). A `busy` (503 + `Retry-After`) is a scheduling signal: it defers the source for exactly that interval (`BUSY_DEFAULT_BACKOFF_S` fallback) without incrementing its failure count or dropping it from ranking; candidate URLs are bucket-bound before TOFU and pinned HTTPS uses fingerprint-only verification |
-| `_handle_p2p_event` | `p2p_websocket.py::_handle_p2p_event` | apply inbound master events locally; the `p2p_websocket_client` loop builds **one `EventDispatchContext` per connection** (`_build_p2p_dispatch_ctx`, `p2p_websocket.py::_handle_p2p_event`) and passes it to every call so the inbound directory dedup cache survives across events (a per-event context would reset the cache and re-log every duplicate `added`/`modified` directory burst as a fresh `[REMOTE CREATE]`/`[REMOTE MODIFY]`) |
-| `P2PSlaveFileEventHandler` | `p2p_websocket.py::P2PSlaveFileEventHandler` | slave-local FS changes → upload to master. Realtime operations (uploads, inbound event downloads, deletes, renames) run on a process-wide bounded pool (`_get_realtime_executor:109`, `REALTIME_MAX_WORKERS=8`; lazy singleton from the shared `hsync_client.pools.get_singleton_executor`) instead of one thread per event: long-lived workers reuse their keep-alive HTTP sessions to the master (no TCP+TLS handshake per file) and the parallelism stays predictable; `_start_operation` tracks `Future`s so `wait_pending` can still wait them out gracefully |
-| metadata-only touch (slave) | `P2PSlaveFileEventHandler.on_modified` (inotify `mtime` branch) | a content-identical local `utime` is pushed to the master as a metadata-only PATCH (`_propagate_metadata_change` → `PATCH /files/permissions` with the corrected mtime and the effective vclock/version). Gated by `file_event_handler.py::content_unchanged` against the recorded merge base (`sync_state.get_base_hash`): while a writer is still appending the bytes differ from the version the peers hold, so the content path (`on_closed` → upload) owns the change and no version that never corresponded to real content is advertised. The `[TOUCH]` line carries the current on-disk size and folds repeated mtimes (`file_event_handler.py::fold_metadata_touch`) |
-| live deletion marker (slave) | `P2PSlaveFileEventHandler.on_deleted` (`p2p_websocket.py::P2PSlaveFileEventHandler`) / `on_moved` visible→hidden | a slave-side file deletion records a **causal tombstone locally** via the shared `_record_deletion_marker` (`p2p_websocket.py::_record_deletion_marker`) before the best-effort HTTP DELETE reaches the master. Correctness never depends on the transport being up: the marker inherits the merge-base hash + clock (ticked by this peer) and drops the merge base, so the next reconciliation deletes the stale remote copy (`delete_remote`) instead of resurrecting it |
-| `_p2p_periodic_resync` | `p2p_websocket.py::_p2p_periodic_resync` | thin wrapper around `sync.periodic_resync(p2p_mode=True)` |
-| echo suppression | `p2p_websocket.py::mark_inbound_origin`/`p2p_websocket.py::consume_inbound_origin` | `mark_inbound_origin` / `consume_inbound_origin` (TTL `p2p_websocket.py::INBOUND_ORIGIN_TTL`) |
-| rename redundancy (inbound + outbound) | `P2PSlaveFileEventHandler.record_inbound_rename` / `is_inbound_rename_echo` + `_record_outbound_dir_rename` / `is_outbound_dir_descendant` | exact `(src,dst)` pair cache (TTL `p2p_websocket.py::is_outbound_dir_descendant`); also matches **descendant** echoes of a directory rename in both directions: inbound (master renamed `ABC -> ABC-123`, slave's watcher echoes children) and outbound (slave renames `ABC-123 -> ABC-123-X`, its watcher emits child `on_moved` events). A single PATCH already renamed the whole tree on the master, so `on_moved` skips the redundant child PATCHes proactively and a 404 from the master is degraded to DEBUG when it matches, else stays WARNING (real divergence). Identifier-suffix guard (starts with `/`) avoids suppressing genuine renames that merely share a path prefix |
-| inbound-delete echo | `event_dispatch._apply_delete` (dir / file branches, `event_dispatch.py::_apply_delete`) | a `deleted` event for a path already absent locally is a benign echo (originator removed it / peer delete converged / never existed here): logged at DEBUG, not WARNING. Echo suppression can miss when the master has no `P2P_KEY` (the `mark_inbound_origin` cid gate is a security measure) or when `rmtree` removes a directory's children without individually marking them |
+| `_handle_p2p_event` | `hsync_client/p2p_websocket.py::_handle_p2p_event` | apply inbound master events locally; the `p2p_websocket_client` loop builds **one `EventDispatchContext` per connection** (`_build_p2p_dispatch_ctx`, `hsync_client/p2p_websocket.py::_handle_p2p_event`) and passes it to every call so the inbound directory dedup cache survives across events (a per-event context would reset the cache and re-log every duplicate `added`/`modified` directory burst as a fresh `[REMOTE CREATE]`/`[REMOTE MODIFY]`) |
+| `P2PSlaveFileEventHandler` | `hsync_client/p2p_websocket.py::P2PSlaveFileEventHandler` | slave-local FS changes → upload to master. Realtime operations (uploads, inbound event downloads, deletes, renames) run on a process-wide bounded pool (`_get_realtime_executor:109`, `REALTIME_MAX_WORKERS=8`; lazy singleton from the shared `hsync_client.pools.get_singleton_executor`) instead of one thread per event: long-lived workers reuse their keep-alive HTTP sessions to the master (no TCP+TLS handshake per file) and the parallelism stays predictable; `_start_operation` tracks `Future`s so `wait_pending` can still wait them out gracefully |
+| metadata-only touch (slave) | `P2PSlaveFileEventHandler.on_modified` (inotify `mtime` branch) | a content-identical local `utime` is pushed to the master as a metadata-only PATCH (`_propagate_metadata_change` → `PATCH /files/permissions` with the corrected mtime and the effective vclock/version). Gated by `hsync_client/file_event_handler.py::content_unchanged` against the recorded merge base (`sync_state.get_base_hash`): while a writer is still appending the bytes differ from the version the peers hold, so the content path (`on_closed` → upload) owns the change and no version that never corresponded to real content is advertised. The `[TOUCH]` line carries the current on-disk size and folds repeated mtimes (`hsync_client/file_event_handler.py::fold_metadata_touch`) |
+| live deletion marker (slave) | `P2PSlaveFileEventHandler.on_deleted` (`hsync_client/p2p_websocket.py::P2PSlaveFileEventHandler`) / `on_moved` visible→hidden | a slave-side file deletion records a **causal tombstone locally** via the shared `_record_deletion_marker` (`hsync_client/p2p_websocket.py::_record_deletion_marker`) before the best-effort HTTP DELETE reaches the master. Correctness never depends on the transport being up: the marker inherits the merge-base hash + clock (ticked by this peer) and drops the merge base, so the next reconciliation deletes the stale remote copy (`delete_remote`) instead of resurrecting it |
+| `_p2p_periodic_resync` | `hsync_client/p2p_websocket.py::_p2p_periodic_resync` | thin wrapper around `sync.periodic_resync(p2p_mode=True)` |
+| echo suppression | `hsync_client/p2p_websocket.py::mark_inbound_origin`/`hsync_client/p2p_websocket.py::consume_inbound_origin` | `mark_inbound_origin` / `consume_inbound_origin` (TTL `hsync_client/p2p_websocket.py::INBOUND_ORIGIN_TTL`) |
+| rename redundancy (inbound + outbound) | `P2PSlaveFileEventHandler.record_inbound_rename` / `is_inbound_rename_echo` + `_record_outbound_dir_rename` / `is_outbound_dir_descendant` | exact `(src,dst)` pair cache (TTL `hsync_client/p2p_websocket.py::is_outbound_dir_descendant`); also matches **descendant** echoes of a directory rename in both directions: inbound (master renamed `ABC -> ABC-123`, slave's watcher echoes children) and outbound (slave renames `ABC-123 -> ABC-123-X`, its watcher emits child `on_moved` events). A single PATCH already renamed the whole tree on the master, so `on_moved` skips the redundant child PATCHes proactively and a 404 from the master is degraded to DEBUG when it matches, else stays WARNING (real divergence). Identifier-suffix guard (starts with `/`) avoids suppressing genuine renames that merely share a path prefix |
+| inbound-delete echo | `event_dispatch._apply_delete` (dir / file branches, `hsync_client/event_dispatch.py::_apply_delete`) | a `deleted` event for a path already absent locally is a benign echo (originator removed it / peer delete converged / never existed here): logged at DEBUG, not WARNING. Echo suppression can miss when the master has no `P2P_KEY` (the `mark_inbound_origin` cid gate is a security measure) or when `rmtree` removes a directory's children without individually marking them |
 | recursive inbound delete echo | `event_dispatch._apply_delete` dir branch + `P2PSlaveFileEventHandler.record_inbound_delete` / `is_inbound_delete_echo` | before `rmtree`, the confined absolute root path is passed to `EventDispatchContext.record_inbound_delete` (wired in `_handle_p2p_event`). The slave caches the root with a 10 s TTL and its `on_deleted` drops any later delete equal to or under that root (same `/`-suffix guard as the rename echo): those are its own watcher echoes of the rmtree it just applied, not new local deletions — without the cache each would be re-sent to the master where it 404s as a benign echo. Remote mode never installs the callback |
 | create-upload deferral | `P2PSlaveFileEventHandler._schedule_create_upload` / `_cancel_create_upload` / `cancel_all_create_timers` | an `on_created` upload for a non-empty regular file is deferred (`CREATE_UPLOAD_DEFER_S` = `STABILITY_DELAY_ON_CLOSED`) so `on_closed` (`IN_CLOSE_WRITE`, the reliable fd-closed trigger) can cancel it and take precedence with the fast stability re-check; the timer is the fallback for files that arrive already complete with no writer fd (atomic rename / hard-link / `mv` in). `on_deleted` / `on_moved(src)` / shutdown cancel pending timers so stale uploads never fire. Eliminates the duplicate upload-intent/`[UPLOAD]` pair and avoids uploading half-written files. |
 | sentinel never uploaded | `P2PSlaveFileEventHandler._handle_file_upload` | a `.hsynckeep` basename is skipped before building the `File` and starting the upload. The sentinel is a per-peer local artifact: the periodic reconcile already excludes it from sync actions in both directions (`sync.py`), each peer maintains its own (`ensure_hsynckeep_files` / `_ensure_sentinel*`), and the directory itself is propagated by the directory event — uploading it only produced a 0-byte `[UPLOAD]` line and a broadcast round-trip. This is the single chokepoint covering every slave upload path (`on_created` deferred, `on_closed`, symlink, hidden→visible). |
@@ -668,7 +668,7 @@ echo-suppression `cid` on upload/delete/rename is honoured only when it passes
 | Device identity | `identity.py` (`load_or_create_device_identity`) | Syncthing-style: one identity per installation — stable device ID (`device_id` file, CID_PATTERN-valid) + keypair under `HSYNC_DEVICE_DIR` (`default_device_dir`, default `<HSYNC_STATE_DIR>/device`); cached process-wide. The device ID **is** the p2p `cid` (resolved in `main_logic.run_sync`), so pins survive restarts and cert rotation (delete `*.pem`, keep `device_id`) is detected as `[FINGERPRINT CHANGED]`. Keypair itself: `ssl_utils.load_or_create_master_cert` (dir delegates to `identity.default_device_dir`) |
 | Instance lock | `identity.py` (`InstanceLock`) | cross-process advisory lock per synced dir (key = sha256 of realpath) in `$HSYNC_LOCKS_DIR`, else `$XDG_RUNTIME_DIR/hsync/locks`, else `<device-dir>/locks`; the primitive is shared with the JSON stores in `_filelock.py` (`flock` on POSIX, one-byte `msvcrt.locking` on Windows, loaded lazily so the module imports on every platform); OS-released on death (never stale); a second process on the same dir is refused with the holder PID in the message. Acquired for the whole run in `main_logic.run_sync`; same-process re-entry is a no-op (CliRunner tests) |
 | mDNS name clash | `p2p_peers.py`/`p2p_rendezvous_mdns.py` (`_register_service`) | `NonUniqueNameException` → clear `RuntimeError`: same device identity + same bucket already announced on this host → use a separate `HSYNC_DEVICE_DIR` (different buckets on one host share the identity fine: service name is `{bucket}-{device_id}`) |
-| Duplicate identity detection | `p2p_peers.py`/`p2p_rendezvous_mdns.py` (`PeerManager.add_peer` `_is_foreign_duplicate`/`_report_duplicate_identity` `p2p_peers.py::_report_duplicate_identity`/`p2p_peers.py::_report_duplicate_identity`) + `p2p_websocket.py` (`P2PWebSocketServer._admit_slave` `p2p_websocket.py::P2PWebSocketServer._admit_slave` via `SlaveCidRegistry` `p2p_websocket.py::SlaveCidRegistry`) + `p2p_server.py` (`P2PEndpointMixin._reject_duplicate_cid`) | A foreign host presenting our own CID (a cloned `HSYNC_DEVICE_DIR`) is told apart from a legitimate self-rendezvous via the advertised address + cert fingerprint and refused with a `[SECURITY]` error (dedup'd per signature, so mDNS heartbeats don't spam). The master's `SlaveCidRegistry` reserves every admitted slave CID against its source IP atomically (no check→reserve race), refuses conflicts on the WSS path (`auth_failed("cid_conflict")`, same-address reconnects replace their own binding) and on every authenticated HTTP write (`409 Duplicate device identity`) — a clone cannot corrupt the causal vector-clock/tombstone authorship on any channel. The slave surfaces the `cid_conflict` reason as a clear `[SECURITY]` error. Every detection point emits the `duplicate_identity` UI event (`hsync_common.protocol.events.UiEventName`), surfaced as a Desktop notification |
+| Duplicate identity detection | `p2p_peers.py`/`p2p_rendezvous_mdns.py` (`PeerManager.add_peer` `_is_foreign_duplicate`/`_report_duplicate_identity` `hsync_client/p2p_peers.py::_report_duplicate_identity`/`hsync_client/p2p_peers.py::_report_duplicate_identity`) + `p2p_websocket.py` (`P2PWebSocketServer._admit_slave` `hsync_client/p2p_websocket.py::P2PWebSocketServer._admit_slave` via `SlaveCidRegistry` `hsync_client/p2p_websocket.py::SlaveCidRegistry`) + `p2p_server.py` (`P2PEndpointMixin._reject_duplicate_cid`) | A foreign host presenting our own CID (a cloned `HSYNC_DEVICE_DIR`) is told apart from a legitimate self-rendezvous via the advertised address + cert fingerprint and refused with a `[SECURITY]` error (dedup'd per signature, so mDNS heartbeats don't spam). The master's `SlaveCidRegistry` reserves every admitted slave CID against its source IP atomically (no check→reserve race), refuses conflicts on the WSS path (`auth_failed("cid_conflict")`, same-address reconnects replace their own binding) and on every authenticated HTTP write (`409 Duplicate device identity`) — a clone cannot corrupt the causal vector-clock/tombstone authorship on any channel. The slave surfaces the `cid_conflict` reason as a clear `[SECURITY]` error. Every detection point emits the `duplicate_identity` UI event (`hsync_common.protocol.events.UiEventName`), surfaced as a Desktop notification |
 
 On the unauthenticated (no `P2P_KEY`) WSS `hello` path the declared CID is not
 authenticated, so a hostile peer that observes mDNS could squat another
@@ -733,19 +733,19 @@ peer state:
 
 | Symbol | Line | Role |
 | ------ | ---- | ---- |
-| `RendezvousClient` | `rdv_client.py::RendezvousClient` | synchronous `rdv/1` client: one QUIC/TLS 1.3 connection (ALPN `hsync-rdv/1`), one bidi stream per request, NDJSON frames; `register`/`refresh`/`leave`/`query`. ADR-0034 trust fields: `fingerprints` (pin, up to two) / `tofu` (trust on first use) |
-| `build_register_frame` / `build_refresh_frame` / `build_leave_frame` / `build_query_frame` | `rdv_client.py::build_register_frame`–`rdv_client.py::build_query_frame` | TypedDict frame builders; every request is re-validated against the mirror before it is sent (fail-fast, no network on an invalid frame). `build_register_frame` always emits the election advertisement |
-| `RendezvousError` / `RendezvousUnreachable` / `RendezvousProtocolError` / `RendezvousRefused` / `RendezvousFingerprintMismatch` | `rdv_client.py::RendezvousError`–`rdv_client.py::RendezvousFingerprintMismatch` | transport failure vs contract violation vs **uniform refusal** (`token_required`/`rate_limited`/`overloaded` answered to `register`/`refresh`; `overloaded` is node capacity, not client abuse) vs pin/TOFU mismatch (disables the rendezvous source; ADR-0045) |
-| `observed_address` | `stun.py::observed_address` | server-reflexive public `ip:port` from a validated `ack` (STUN-echo) |
+| `RendezvousClient` | `hsync_client/rdv_client.py::RendezvousClient` | synchronous `rdv/1` client: one QUIC/TLS 1.3 connection (ALPN `hsync-rdv/1`), one bidi stream per request, NDJSON frames; `register`/`refresh`/`leave`/`query`. ADR-0034 trust fields: `fingerprints` (pin, up to two) / `tofu` (trust on first use) |
+| `build_register_frame` / `build_refresh_frame` / `build_leave_frame` / `build_query_frame` | `hsync_client/rdv_client.py::build_register_frame`–`hsync_client/rdv_client.py::build_query_frame` | TypedDict frame builders; every request is re-validated against the mirror before it is sent (fail-fast, no network on an invalid frame). `build_register_frame` always emits the election advertisement |
+| `RendezvousError` / `RendezvousUnreachable` / `RendezvousProtocolError` / `RendezvousRefused` / `RendezvousFingerprintMismatch` | `hsync_client/rdv_client.py::RendezvousError`–`hsync_client/rdv_client.py::RendezvousFingerprintMismatch` | transport failure vs contract violation vs **uniform refusal** (`token_required`/`rate_limited`/`overloaded` answered to `register`/`refresh`; `overloaded` is node capacity, not client abuse) vs pin/TOFU mismatch (disables the rendezvous source; ADR-0045) |
+| `observed_address` | `hsync_client/stun.py::observed_address` | server-reflexive public `ip:port` from a validated `ack` (STUN-echo) |
 
-| `RdvRendezvous` | `p2p_rendezvous_rdv.py::RdvRendezvous` | the `RendezvousPlan` implementation (extends `RendezvousPlanState`): lease loop (register → refresh → query) at the `rdv/1` cadence `RENDEZVOUS_SERVER_REFRESH_INTERVAL` (default 30 s, spec `rdv-1.md`; env `HSYNC_RENDEZVOUS_SERVER_REFRESH_INTERVAL`, range 1–300), peer sample → `PeerManager`, plus an **event-based** `wait_for_rendezvous` (`PeerManager.wait_for_change`, no network) so the wait never polls `query` — the node rate-limits queries to a burst of ten per (IP, bucket) and then 5/min, and a refusal arms a `retry_after` backoff. `RdvRendezvous._query_interval` is what the cadence actually is: a start-up burst (`RENDEZVOUS_QUERY_BURST_INTERVAL` × `RENDEZVOUS_QUERY_BURST_COUNT`, restarted on a network change and ended by a refusal), then `RENDEZVOUS_QUERY_ACTIVE_INTERVAL` while no master is known — the fastest the budget allows — and the configured lease cadence once the group is complete. A `RendezvousFingerprintMismatch` / `RendezvousNotTrusted` stops the lease loop (never retried, never contacted again) and disables **that source only** (`_disable_source`, `source_disabled()`, which also forgets the evidence it contributed): a structured warning (`reason="untrusted"`) is published and mDNS keeps the group discoverable, so the run continues (ADR-0045); an unreachable node keeps retrying with a transient warning (`reason="unreachable"`). Registration republishes the election advertisement on every role change (`_republish_advert`, `p2p_rendezvous_rdv.py::RdvRendezvous`) and `update_server_ready`/`update_server_not_ready` mirror the incumbency into the shared `PeerManager`; relayed peers map the advertisement verbatim (`_peer_from_wire`, `p2p_rendezvous_rdv.py::RdvRendezvous`) and keep the relayed `endpoints[]` candidates (at most four, the node's relay bound), promoting a same-subnet candidate to the peer's primary address so a same-NAT peer dials the local path (no NAT hairpin); a register is never sent without the local certificate fingerprint (the frame would carry an unusable pin) |
-| `MultiRdvRendezvous` | `p2p_rendezvous_rdv.py::MultiRdvRendezvous` | the fan-out over N discovery servers: one `RdvRendezvous` per endpoint (each keeps its own transport, trust policy, observed endpoint and published candidates) over **one** shared `PeerManager`, so `add_peer` merges the samples by CID and the election stays single. Readiness is *any usable source published* (a server that is down or refused must not delay the data plane); `source_disabled()` is true only when every source stopped for good. Relay wiring is composite too: `FailoverRelayDialer` tries the servers in order (the record does not say which node paired the peer) and `GroupRelayAcceptor` registers the listener on every server. `SharedUpnpMapping` (same module) keeps a single UPnP mapping for the whole process. |
-| `candidate_endpoints` | `nat_traversal.py::candidate_endpoints` | ordered, de-duplicated dialable endpoints for the `register` `endpoints[]`: the observed (server-reflexive) address, the UPnP-mapped endpoint on the **default-route** interface, then one `listen_port` candidate per active local interface (default-route first, LAN before globally routable). A multi-homed node is thus dialable from any of its real networks; the UPnP external port is never paired with a non-primary interface, and the list is capped at `MAX_ADVERTISED_ENDPOINTS` (4) because the rendezvous relays only the first four declared (rdv-1.md) |
+| `RdvRendezvous` | `hsync_client/p2p_rendezvous_rdv.py::RdvRendezvous` | the `RendezvousPlan` implementation (extends `RendezvousPlanState`): lease loop (register → refresh → query) at the `rdv/1` cadence `RENDEZVOUS_SERVER_REFRESH_INTERVAL` (default 30 s, spec `rdv-1.md`; env `HSYNC_RENDEZVOUS_SERVER_REFRESH_INTERVAL`, range 1–300), peer sample → `PeerManager`, plus an **event-based** `wait_for_rendezvous` (`PeerManager.wait_for_change`, no network) so the wait never polls `query` — the node rate-limits queries to a burst of ten per (IP, bucket) and then 5/min, and a refusal arms a `retry_after` backoff. `RdvRendezvous._query_interval` is what the cadence actually is: a start-up burst (`RENDEZVOUS_QUERY_BURST_INTERVAL` × `RENDEZVOUS_QUERY_BURST_COUNT`, restarted on a network change and ended by a refusal), then `RENDEZVOUS_QUERY_ACTIVE_INTERVAL` while no master is known — the fastest the budget allows — and the configured lease cadence once the group is complete. A `RendezvousFingerprintMismatch` / `RendezvousNotTrusted` stops the lease loop (never retried, never contacted again) and disables **that source only** (`_disable_source`, `source_disabled()`, which also forgets the evidence it contributed): a structured warning (`reason="untrusted"`) is published and mDNS keeps the group discoverable, so the run continues (ADR-0045); an unreachable node keeps retrying with a transient warning (`reason="unreachable"`). Registration republishes the election advertisement on every role change (`_republish_advert`, `hsync_client/p2p_rendezvous_rdv.py::RdvRendezvous`) and `update_server_ready`/`update_server_not_ready` mirror the incumbency into the shared `PeerManager`; relayed peers map the advertisement verbatim (`_peer_from_wire`, `hsync_client/p2p_rendezvous_rdv.py::RdvRendezvous`) and keep the relayed `endpoints[]` candidates (at most four, the node's relay bound), promoting a same-subnet candidate to the peer's primary address so a same-NAT peer dials the local path (no NAT hairpin); a register is never sent without the local certificate fingerprint (the frame would carry an unusable pin) |
+| `MultiRdvRendezvous` | `hsync_client/p2p_rendezvous_rdv.py::MultiRdvRendezvous` | the fan-out over N discovery servers: one `RdvRendezvous` per endpoint (each keeps its own transport, trust policy, observed endpoint and published candidates) over **one** shared `PeerManager`, so `add_peer` merges the samples by CID and the election stays single. Readiness is *any usable source published* (a server that is down or refused must not delay the data plane); `source_disabled()` is true only when every source stopped for good. Relay wiring is composite too: `FailoverRelayDialer` tries the servers in order (the record does not say which node paired the peer) and `GroupRelayAcceptor` registers the listener on every server. `SharedUpnpMapping` (same module) keeps a single UPnP mapping for the whole process. |
+| `candidate_endpoints` | `hsync_client/nat_traversal.py::candidate_endpoints` | ordered, de-duplicated dialable endpoints for the `register` `endpoints[]`: the observed (server-reflexive) address, the UPnP-mapped endpoint on the **default-route** interface, then one `listen_port` candidate per active local interface (default-route first, LAN before globally routable). A multi-homed node is thus dialable from any of its real networks; the UPnP external port is never paired with a non-primary interface, and the list is capped at `MAX_ADVERTISED_ENDPOINTS` (4) because the rendezvous relays only the first four declared (rdv-1.md) |
 | `UpnpMapper` / `discover_igd` | `hsync_client/upnp.py` / `hsync-common/hsync_common/upnp.py` | best-effort TCP port mapping for the master (opt-in, off by default); the SSDP/SOAP core (SSRF-hardened) is the shared `hsync_common.upnp` SSOT, the client adds only the lifecycle; every failure degrades to "no UPnP" (node stays slave-only) |
-| `get_local_ip` / `get_local_ips` | `net_utils.py::get_local_ip` / `net_utils.py::get_local_ips` | shared local-source-IP probe (mDNS advertiser, rendezvous candidates, p2p handler); `get_local_ips` enumerates every active non-loopback IPv4 (Linux/Android `SIOCGIFADDR`, hostname lookup elsewhere) with the default-route address first and LAN before globally routable, skipping container/bridge interfaces (`docker*`, `br-*`, `veth*`, `virbr*`, `vboxnet*`, `vmnet*`, `lo`), and degrades to `get_local_ip` alone when interfaces cannot be listed |
-| `same_subnet` | `net_utils.py::same_subnet` | LAN-adjacency test (IPv4 `/24`, IPv6 `/64`) shared by the peer-source ranking and `dial_candidates` |
-| `dial_candidates` / `Peer.ordered_endpoints` | `p2p_peers.py::dial_candidates` / `Peer.ordered_endpoints` | order a peer's dial candidates host/LAN-first (loopback + any-local-interface same-subnet before the advertised ones), degrading to the primary endpoint when no candidate list is known |
-| `_probe_master_endpoint` / `_select_master_endpoint` | `p2p_handler.py::_probe_master_endpoint` / `p2p_handler.py::_select_master_endpoint` | pick the first reachable candidate by a fingerprint-pinned TLS handshake with a bounded per-candidate timeout (`MASTER_CANDIDATE_PROBE_TIMEOUT_S`, 3 s); single-candidate peers skip the probe |
+| `get_local_ip` / `get_local_ips` | `hsync_client/net_utils.py::get_local_ip` / `hsync_client/net_utils.py::get_local_ips` | shared local-source-IP probe (mDNS advertiser, rendezvous candidates, p2p handler); `get_local_ips` enumerates every active non-loopback IPv4 (Linux/Android `SIOCGIFADDR`, hostname lookup elsewhere) with the default-route address first and LAN before globally routable, skipping container/bridge interfaces (`docker*`, `br-*`, `veth*`, `virbr*`, `vboxnet*`, `vmnet*`, `lo`), and degrades to `get_local_ip` alone when interfaces cannot be listed |
+| `same_subnet` | `hsync_client/net_utils.py::same_subnet` | LAN-adjacency test (IPv4 `/24`, IPv6 `/64`) shared by the peer-source ranking and `dial_candidates` |
+| `dial_candidates` / `Peer.ordered_endpoints` | `hsync_client/p2p_peers.py::dial_candidates` / `Peer.ordered_endpoints` | order a peer's dial candidates host/LAN-first (loopback + any-local-interface same-subnet before the advertised ones), degrading to the primary endpoint when no candidate list is known |
+| `_probe_master_endpoint` / `_select_master_endpoint` | `hsync_client/p2p_handler.py::_probe_master_endpoint` / `hsync_client/p2p_handler.py::_select_master_endpoint` | pick the first reachable candidate by a fingerprint-pinned TLS handshake with a bounded per-candidate timeout (`MASTER_CANDIDATE_PROBE_TIMEOUT_S`, 3 s); single-candidate peers skip the probe |
 
 Readiness & banner: `run_p2p_mode` logs the active plan at startup
 (`Discovery: mDNS on the local network` vs `Discovery: mDNS on the local network
@@ -842,7 +842,7 @@ list of `HOST[:PORT]` endpoints: `host`, `host:port`, `[IPv6]`, `[IPv6]:port` vi
 `hsync_common.endpoint.parse_endpoint_list` + the channel default port; no
 scheme/path), `HSYNC_RENDEZVOUS_SERVER_FINGERPRINTS` (`ENDPOINT=FP[|FP]` entries
 parsed by `hsync_common.protocol.pairing.parse_pin_map`, bound to the configured
-endpoints by `config.py::resolve_rendezvous_server_pins`, then handed to each
+endpoints by `hsync_client/config.py::resolve_rendezvous_server_pins`, then handed to each
 child as `CONFIG["RENDEZVOUS_SERVER_PINS"]` so every server keeps its own
 identity), `HSYNC_RENDEZVOUS_SERVER_TOFU`, `HSYNC_MAP_DATA_PORT`,
 `HSYNC_P2P_LISTEN_PORT` (`constants.RENDEZVOUS_DEFAULT_PORT = 443`).
@@ -853,8 +853,8 @@ the client derives from the **p2p group key** — `derive_bucket_token(P2P_KEY,
 REMOTE_BUCKET)` (SSOT `hsync_common.protocol.rendezvous`), fed from
 `config["P2P_KEY"]` (`main_logic.py`; a `HSYNC_P2P_PASSPHRASE` is derived to the
 key first, a raw `HSYNC_P2P_KEY` is used as-is; hidden `--p2p-passphrase-fd` /
-`--p2p-key-fd` pipes for a parent) into `p2p_rendezvous.py::build_rendezvous_plan` → `RdvRendezvous`
-(`p2p_rendezvous_rdv.py::RdvRendezvous`), so a token exists only when a key is set. The
+`--p2p-key-fd` pipes for a parent) into `hsync_client/p2p_rendezvous.py::build_rendezvous_plan` → `RdvRendezvous`
+(`hsync_client/p2p_rendezvous_rdv.py::RdvRendezvous`), so a token exists only when a key is set. The
 same key is the p2p data-plane credential (`Authorization: Bearer`): one key per
 client, which authenticates to any protected bucket whose group key equals it.
 Refusals stay uniform (`token_required` → `rate_limited`), so the client cannot

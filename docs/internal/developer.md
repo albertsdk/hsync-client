@@ -173,7 +173,7 @@ flowchart TD
 - **Network errors** are retried with backoff up to a bounded number of attempts,
   then the item is marked failed and the sync continues with the next file.
 - **Authentication errors** abort early with a clear message (see
-  [Configuration > API Key & Encryption Policy](../configuration.md#api-key--encryption-policy)).
+  [Authentication — Client-Side](../authentication.md)).
 - **Not-found** items are skipped; **permission** issues are logged as warnings.
 
 ## Compression Internals

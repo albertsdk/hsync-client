@@ -4,7 +4,7 @@ How flags/env become the running `CONFIG` and how `run_sync` drives a session.
 
 The `p2p`/`server` commands build a typed `RunOptions`
 (`hsync_client/run_options.py::RunOptions`, seven grouped option
-sub-dataclasses) via `cli.py::_build_run_options`; `main_logic.py::run_sync`
+sub-dataclasses) via `hsync_client/cli.py::_build_run_options`; `hsync_client/main_logic.py::run_sync`
 consumes it as its single argument (`run_sync(options)`), so the 57-parameter
 funnel signature is gone.
 
@@ -12,16 +12,16 @@ funnel signature is gone.
 
 | Symbol | Location | Role |
 | ------ | -------- | ---- |
-| `main` (parent callback) | `cli.py::main` | global options `--version` / `--capabilities-json` / `--help-symbols` (typed before the subcommand); no implicit mode |
-| `p2p` | `cli.py::p2p` | p2p subcommand: shared + p2p-only flags, including final `--no-peer-download` opt-out and dangerous `--allow-unauthenticated-writes`; validates and calls `run_sync` |
-| `server` | `cli.py::server` | central-server subcommand: `--server-url URL` (a full `https://…[/path]` URL or a bare `HOST[:PORT]`) + shared flags, resolves the server URL eagerly (else `HSYNC_SERVER_URL` from shell or `--env-file`) and fails fast with `typer.BadParameter` when no server can be resolved, then calls `run_sync` |
-| `run` | `cli.py::run` | console-script entry: installs the `SIGTERM`→`KeyboardInterrupt` handler (`cli.py::_install_sigterm_handler`, so a service/desktop stop unwinds like Ctrl+C), maps an operator stop to a clean exit (plain `KeyboardInterrupt`, plus Typer's own `Exit(130)` kept in `cli.py::_INTERRUPTED_EXIT_CODE)`), and in its `finally` drains and closes the log sinks (`logger.py::shutdown_logging`) — the close is what releases the semaphores `resource_tracker` would otherwise report as leaked |
-| `collect_subcommand_options` | `cli.py::collect_subcommand_options` | introspects each subcommand's long flags for the capabilities document |
-| `capabilities_json_callback` | `cli.py::capabilities_json_callback` | `--capabilities-json` (per-subcommand introspection via `collect_subcommand_options`) |
-| `_validate_bucket` | `cli.py::_validate_bucket` | bucket flag validation |
-| `_build_server_url` | `cli.py::_build_server_url` | `--server-url` → the canonical `https://` URL: a full `https://…[/path]` value is validated by the shared `parse_https_url`, a bare `HOST[:PORT]` becomes `https://host:port` (`SERVER_DEFAULT_PORT` when it carries no port, IPv6 auto-bracketed). A non-HTTPS scheme is a usage error; the port always belongs to the endpoint (no `--port`). `None` → the `server` subcommand resolves the `HSYNC_SERVER_URL` fallback (shell env or `--env-file`) and raises `typer.BadParameter` if still unset |
-| `_validate_shared_options` | `cli.py::_validate_shared_options` | numeric-range / bandwidth / direction / concurrency / mass-delete / delta checks shared by both subcommands. Accepted names are declared once in `_SharedValidationValues` (`cli.py::_SharedValidationValues`), whose field names drive the frame extraction and type every read (a typo is a mypy error); a command frame missing one fails fast naming the option. Shared/mode-specific classification pinned by `tests/test_cli_option_parity.py` |
-| `state` namespace + `state_reset` | `cli.py::state_reset` | `hsync state reset --folder DIR [--json] [--quarantine]`: forgets one folder's versions + tombstones; the CLI is a thin shell and the logic lives in [state_reset.py](../data-models.md#state_resetpy-sync-state-reset) |
+| `main` (parent callback) | `hsync_client/cli.py::main` | global options `--version` / `--capabilities-json` / `--help-symbols` (typed before the subcommand); no implicit mode |
+| `p2p` | `hsync_client/cli.py::p2p` | p2p subcommand: shared + p2p-only flags, including final `--no-peer-download` opt-out and dangerous `--allow-unauthenticated-writes`; validates and calls `run_sync` |
+| `server` | `hsync_client/cli.py::server` | central-server subcommand: `--server-url URL` (a full `https://…[/path]` URL or a bare `HOST[:PORT]`) + shared flags, resolves the server URL eagerly (else `HSYNC_SERVER_URL` from shell or `--env-file`) and fails fast with `typer.BadParameter` when no server can be resolved, then calls `run_sync` |
+| `run` | `hsync_client/cli.py::run` | console-script entry: installs the `SIGTERM`→`KeyboardInterrupt` handler (`hsync_client/cli.py::_install_sigterm_handler`, so a service/desktop stop unwinds like Ctrl+C), maps an operator stop to a clean exit (plain `KeyboardInterrupt`, plus Typer's own `Exit(130)` kept in `hsync_client/cli.py::_INTERRUPTED_EXIT_CODE)`), and in its `finally` drains and closes the log sinks (`hsync_client/logger.py::shutdown_logging`) — the close is what releases the semaphores `resource_tracker` would otherwise report as leaked |
+| `collect_subcommand_options` | `hsync_client/cli.py::collect_subcommand_options` | introspects each subcommand's long flags for the capabilities document |
+| `capabilities_json_callback` | `hsync_client/cli.py::capabilities_json_callback` | `--capabilities-json` (per-subcommand introspection via `collect_subcommand_options`) |
+| `_validate_bucket` | `hsync_client/cli.py::_validate_bucket` | bucket flag validation |
+| `_build_server_url` | `hsync_client/cli.py::_build_server_url` | `--server-url` → the canonical `https://` URL: a full `https://…[/path]` value is validated by the shared `parse_https_url`, a bare `HOST[:PORT]` becomes `https://host:port` (`SERVER_DEFAULT_PORT` when it carries no port, IPv6 auto-bracketed). A non-HTTPS scheme is a usage error; the port always belongs to the endpoint (no `--port`). `None` → the `server` subcommand resolves the `HSYNC_SERVER_URL` fallback (shell env or `--env-file`) and raises `typer.BadParameter` if still unset |
+| `_validate_shared_options` | `hsync_client/cli.py::_validate_shared_options` | numeric-range / bandwidth / direction / concurrency / mass-delete / delta checks shared by both subcommands. Accepted names are declared once in `_SharedValidationValues` (`hsync_client/cli.py::_SharedValidationValues`), whose field names drive the frame extraction and type every read (a typo is a mypy error); a command frame missing one fails fast naming the option. Shared/mode-specific classification pinned by `tests/test_cli_option_parity.py` |
+| `state` namespace + `state_reset` | `hsync_client/cli.py::state_reset` | `hsync state reset --folder DIR [--json] [--quarantine]`: forgets one folder's versions + tombstones; the CLI is a thin shell and the logic lives in [state_reset.py](../data-models.md#state_resetpy-sync-state-reset) |
 
 Startup note: `build_capabilities` (`hsync_common.protocol.capabilities`) and
 `legend_lines` (`hsync_client.log_labels`) are imported **inside** their eager
@@ -61,35 +61,35 @@ across topologies. Continuous is the default and `--once` is the only run-mode k
 
 | Symbol | Location | Role |
 | ------ | -------- | ---- |
-| `run_sync` | `main_logic.py::run_sync` | validate → safety checks → branch mode → watcher loop; logs `hsync_common.runtime.runtime_summary()` (container, mem/cpu cgroup limits, TTY) at startup. A 58-line orchestrator over the phase helpers `main_logic.py::_init_runtime` (env/secrets/logging/paths), `main_logic.py::_resolve_endpoints` (URL + WS), `main_logic.py::_resolve_identity` (device/session CID), `main_logic.py::_resolve_secrets` + `_ResolvedSecrets` (keys + gates), `main_logic.py::_resolve_autotune` + `_ResolvedTuning`, `main_logic.py::_build_config` (pins + CONFIG payload), `main_logic.py::_finish_startup` (matcher/observer, run lock, ready) and `main_logic.py::_run_remote_mode` (trust + connectivity + cycle loop). Identity: p2p mode resolves the persistent device identity (`identity.load_or_create_device_identity`) and uses its device ID as `CID` (logged as `Device ID`); remote mode keeps a per-session random `get_cid()`. Before the mode branch it acquires the per-directory `InstanceLock` for `local_path` (released in `finally`); a refusal is logged, reported as `error(reason="startup")` and exits `1`, and the `ready` event is emitted only *after* the lock — the Desktop treats an exit before `ready` as a startup failure |
-| `_check_deletion_risk` | `main_logic.py::_check_deletion_risk` | warn/prompt on risky delete settings (`--allow-deletions` bypass; fails fast with exit 1 when no interactive TTY) |
+| `run_sync` | `hsync_client/main_logic.py::run_sync` | validate → safety checks → branch mode → watcher loop; logs `hsync_common.runtime.runtime_summary()` (container, mem/cpu cgroup limits, TTY) at startup. A 58-line orchestrator over the phase helpers `hsync_client/main_logic.py::_init_runtime` (env/secrets/logging/paths), `hsync_client/main_logic.py::_resolve_endpoints` (URL + WS), `hsync_client/main_logic.py::_resolve_identity` (device/session CID), `hsync_client/main_logic.py::_resolve_secrets` + `_ResolvedSecrets` (keys + gates), `hsync_client/main_logic.py::_resolve_autotune` + `_ResolvedTuning`, `hsync_client/main_logic.py::_build_config` (pins + CONFIG payload), `hsync_client/main_logic.py::_finish_startup` (matcher/observer, run lock, ready) and `hsync_client/main_logic.py::_run_remote_mode` (trust + connectivity + cycle loop). Identity: p2p mode resolves the persistent device identity (`identity.load_or_create_device_identity`) and uses its device ID as `CID` (logged as `Device ID`); remote mode keeps a per-session random `get_cid()`. Before the mode branch it acquires the per-directory `InstanceLock` for `local_path` (released in `finally`); a refusal is logged, reported as `error(reason="startup")` and exits `1`, and the `ready` event is emitted only *after* the lock — the Desktop treats an exit before `ready` as a startup failure |
+| `_check_deletion_risk` | `hsync_client/main_logic.py::_check_deletion_risk` | warn/prompt on risky delete settings (`--allow-deletions` bypass; fails fast with exit 1 when no interactive TTY) |
 | `_check_p2p_write_policy` | `main_logic.py` | default-deny every write-capable no-key p2p run, independent of TTY; only `--allow-unauthenticated-writes` or `HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES=true` opts in |
 | `_check_p2p_keyless_policy` | `main_logic.py` | confirm keyless p2p (no shared secret); `--allow-unauthenticated-p2p` or the writes opt-in acknowledges; fails closed without a TTY |
-| `_warn_if_p2p_in_container` | `main_logic.py::_warn_if_p2p_in_container` | warn that mDNS rendezvous cannot cross container bridge/NAT networking (suggests `--network host`) |
-| `_check_disk_space` | `main_logic.py::_check_disk_space` | min-free-disk guard |
-| `_check_server_connectivity` | `main_logic.py::_check_server_connectivity` | startup health gate; one-shot mode fails fast on an unreachable server, continuous mode (default) logs a warning and lets `remote_connect` retry forever (p2p parity) |
-| `_get_stability_delay_value` / `_get_peer_rendezvous_timeout_value` / `_get_resync_value` | `main_logic.py::_get_stability_delay_value` / `main_logic.py::_get_peer_rendezvous_timeout_value` / `main_logic.py::_get_resync_value` | resolve CLI > env > default |
-| `_start_hsyncignore_watcher` | `main_logic.py::_start_hsyncignore_watcher` | hot-reload `.hsyncignore` matcher |
-| `_safe_config_for_log` | `main_logic.py::_safe_config_for_log` | builds the redacted verbose `Local configuration` dump: masks `API_KEY`/`P2P_KEY`/`Authorization` and appends a `PATHS` section (`ENV_FILE`, `DEVICE_DIR`, `STATE_DIR`, `STATE_DB`, `LOCKS_DIR`) resolved from `identity.default_device_dir`/`default_locks_dir` + `folder.default_state_dir`/`default_syncstate_db_path` |
-| `_run_preview` | `preview.py::_run_preview` | dry-run action preview |
-| stdin runtime control | `main_logic.py::_run_with_stdin_commands` / `stdin_commands.py::StdinCommandHandler` | live commands (e.g. change direction) via `stdin_commands.StdinCommandHandler` (`stdin_commands.py::StdinCommandHandler`) |
+| `_warn_if_p2p_in_container` | `hsync_client/main_logic.py::_warn_if_p2p_in_container` | warn that mDNS rendezvous cannot cross container bridge/NAT networking (suggests `--network host`) |
+| `_check_disk_space` | `hsync_client/main_logic.py::_check_disk_space` | min-free-disk guard |
+| `_check_server_connectivity` | `hsync_client/main_logic.py::_check_server_connectivity` | startup health gate; one-shot mode fails fast on an unreachable server, continuous mode (default) logs a warning and lets `remote_connect` retry forever (p2p parity) |
+| `_get_stability_delay_value` / `_get_peer_rendezvous_timeout_value` / `_get_resync_value` | `hsync_client/main_logic.py::_get_stability_delay_value` / `hsync_client/main_logic.py::_get_peer_rendezvous_timeout_value` / `hsync_client/main_logic.py::_get_resync_value` | resolve CLI > env > default |
+| `_start_hsyncignore_watcher` | `hsync_client/main_logic.py::_start_hsyncignore_watcher` | hot-reload `.hsyncignore` matcher |
+| `_safe_config_for_log` | `hsync_client/main_logic.py::_safe_config_for_log` | builds the redacted verbose `Local configuration` dump: masks `API_KEY`/`P2P_KEY`/`Authorization` and appends a `PATHS` section (`ENV_FILE`, `DEVICE_DIR`, `STATE_DIR`, `STATE_DB`, `LOCKS_DIR`) resolved from `identity.default_device_dir`/`default_locks_dir` + `folder.default_state_dir`/`default_syncstate_db_path` |
+| `_run_preview` | `hsync_client/preview.py::_run_preview` | dry-run action preview |
+| stdin runtime control | `hsync_client/main_logic.py::_run_with_stdin_commands` / `hsync_client/stdin_commands.py::StdinCommandHandler` | live commands (e.g. change direction) via `stdin_commands.StdinCommandHandler` (`hsync_client/stdin_commands.py::StdinCommandHandler`) |
 
 ## Config (`config.py`)
 
 | Symbol | Location | Role |
 | ------ | -------- | ---- |
-| `EnvSettings` | `config.py::EnvSettings` | pydantic-settings model for all `HSYNC_*` vars |
-| `HsyncConfig` / `ApiEndpoints` | `config.py::HsyncConfig` / `config.py::ApiEndpoints` | the merged runtime config TypedDicts |
-| `CONFIG` (global) | `config.py::CONFIG` | the live config SSOT |
-| `set_config` | `config.py::set_config` | write the global in-place; modules read `CONFIG` directly — **no** `get_config` |
-| `set_debug` / `is_debug` | `config.py::set_debug` / `config.py::is_debug` | debug flag |
-| `load_env_file` | `config.py::load_env_file` | dotenv loader |
-| typed getters | `config.py::get_server_url`–`config.py::get_connectivity_retry_max_wait` | `get_server_url`, `get_api_key`, p2p getters (`get_p2p_key`/`get_p2p_group`/`get_p2p_listen_port`), the rendezvous-server getters (`get_rendezvous_server_endpoints`/`_extra_ports`/`_fingerprints`/`_tofu`/`_trust`/`_refresh_interval`), `get_map_data_port`, `get_peer_rendezvous_timeout`, guard getters, delta getters, etc. |
+| `EnvSettings` | `hsync_client/config.py::EnvSettings` | pydantic-settings model for all `HSYNC_*` vars |
+| `HsyncConfig` / `ApiEndpoints` | `hsync_client/config.py::HsyncConfig` / `hsync_client/config.py::ApiEndpoints` | the merged runtime config TypedDicts |
+| `CONFIG` (global) | `hsync_client/config.py::CONFIG` | the live config SSOT |
+| `set_config` | `hsync_client/config.py::set_config` | write the global in-place; modules read `CONFIG` directly — **no** `get_config` |
+| `set_debug` / `is_debug` | `hsync_client/config.py::set_debug` / `hsync_client/config.py::is_debug` | debug flag |
+| `load_env_file` | `hsync_client/config.py::load_env_file` | dotenv loader |
+| typed getters | `hsync_client/config.py::get_server_url`–`hsync_client/config.py::get_connectivity_retry_max_wait` | `get_server_url`, `get_api_key`, p2p getters (`get_p2p_key`/`get_p2p_group`/`get_p2p_listen_port`), the rendezvous-server getters (`get_rendezvous_server_endpoints`/`_extra_ports`/`_fingerprints`/`_tofu`/`_trust`/`_refresh_interval`), `get_map_data_port`, `get_peer_rendezvous_timeout`, guard getters, delta getters, etc. |
 
 The `p2p` subcommand takes a repeatable `--rendezvous-server ENDPOINT`
 (`HOST[:PORT]`, QUIC/UDP, no scheme; each value may itself carry a comma list)
 plus `--map-data-port` (opt-in UPnP for the data-plane port, off by default).
-`_build_rendezvous_servers` (`cli.py::_build_rendezvous_servers`) parses the values
+`_build_rendezvous_servers` (`hsync_client/cli.py::_build_rendezvous_servers`) parses the values
 with the shared `hsync_common.endpoint.parse_endpoint_list` in strict mode
 (an invalid or duplicated entry is a usage error, never a silently ignored
 flag), applies the channel default port, and falls back to
@@ -102,7 +102,7 @@ one or more → `HybridRendezvous` running mDNS **and** one
 surface and the election stays single.
 
 Multi-port dial fallback: `HSYNC_RENDEZVOUS_SERVER_EXTRA_PORTS`
-(`config.py::get_rendezvous_server_extra_ports`, a thin lenient wrapper over the shared
+(`hsync_client/config.py::get_rendezvous_server_extra_ports`, a thin lenient wrapper over the shared
 `hsync_common.endpoint.parse_port_list` SSOT) adds extra UDP ports to try for the
 SAME rendezvous; `RendezvousClient._with_connection` (`rdv_client.py`) selects the
 transport, and the port order (`_candidate_ports` with the memo, applied by
@@ -112,15 +112,15 @@ blocked-port signal — so a client whose egress firewall blocks UDP 443 reaches
 node on another port (e.g. 53) and every later exchange skips the blocked one. Once the handshake succeeds the port is
 reachable, so a reply timeout or a trust/protocol error propagates without
 re-dialling. The transport is selected by `--rendezvous-transport`
-(`HSYNC_RENDEZVOUS_TRANSPORT`, `config.py::get_rendezvous_transport`).
+(`HSYNC_RENDEZVOUS_TRANSPORT`, `hsync_client/config.py::get_rendezvous_transport`).
 `auto` (default) races QUIC/UDP (preferred) and TLS/TCP per endpoint
-(`rdv_client.py::_race`, RFC 8305 stagger, first handshake with the right ALPN
+(`hsync_client/rdv_client.py::_race`, RFC 8305 stagger, first handshake with the right ALPN
 wins, loser closed before any frame) and remembers the winner; `quic`/`tcp` use
 one transport only. A memoized TLS/TCP winner expires after
 `hsync_common.constants.RDV_TCP_FALLBACK_TTL_S` so a network whose UDP recovered
 moves back to QUIC, and a network change clears the memo
-(`rdv_client.py::RendezvousClient.reset_transport_memo`, called by
-`p2p_rendezvous_rdv.py::RdvRendezvous._on_network_change`). The wire is unchanged
+(`hsync_client/rdv_client.py::RendezvousClient.reset_transport_memo`, called by
+`hsync_client/p2p_rendezvous_rdv.py::RdvRendezvous._on_network_change`). The wire is unchanged
 and trust stays a single pin per `(host, port)` shared by both transports, so the
 fallback never re-prompts.
 
@@ -160,15 +160,15 @@ write opt-in is `CLI-opt-in OR environment-opt-in` and defaults false.
   the same shape: `MIN_FREE_DISK_SPACE_DEFAULT/_MIN/_MAX` are **bytes**
   (500 MiB / 0 / 100 GiB) and feed `CONFIG["MIN_FREE_DISK_SPACE"]`; the
   `--min-free-disk-space` option takes a size string (`500MB`, `2GB`) that
-  `cli.py::_parse_size_option` converts with `hsync_common.format.parse_size`
+  `hsync_client/cli.py::_parse_size_option` converts with `hsync_common.format.parse_size`
   (`require_unit=True`, so a bare number is rejected; `0` = disabled). The visual
    `ActionLabel` enum comes from `hsync_common.labels`; delta transfer (`constants.py`): `DELTA_ENABLED`,
    `DELTA_MIN_FILE_SIZE` 256 KB, `DELTA_MIN_FILE_SIZE_P2P` 1 MB, `DELTA_TOCTOU_REHASH_THRESHOLD` 10 MB.
-   `WORKER_MEMORY_BUDGET_BYTES` (`constants.py::WORKER_MEMORY_BUDGET_BYTES`, 8 MiB) — per-worker memory budget for the
+   `WORKER_MEMORY_BUDGET_BYTES` (`hsync_client/constants.py::WORKER_MEMORY_BUDGET_BYTES`, 8 MiB) — per-worker memory budget for the
    parallel local-file scan/hash pool (`_get_optimal_workers`), combined with the
    cgroup memory limit to cap parallelism inside containers (no effect on bare
    metal, where the memory probe returns `None`).
-- `constants.py::SERVER_DEFAULT_PORT` — a re-export of
+- `hsync_client/constants.py::SERVER_DEFAULT_PORT` — a re-export of
   `hsync-common/hsync_common/constants.py::SERVER_DEFAULT_PORT`: the port `hsync server
   HOSTNAME` uses when the endpoint carries no port (the same default the server binds),
   so the omitted-port form targets a default server install directly;
@@ -180,8 +180,8 @@ write opt-in is `CLI-opt-in OR environment-opt-in` and defaults false.
   reads the same values and bounds, so the GUI cannot drift from the engine.
 - Range and bucket validation is inline in `cli.py` (Typer) — e.g.
   `resync`/`reconnect_delay` bounds raise `typer.BadParameter` from
-  `_validate_shared_options` (`cli.py::_validate_shared_options`); bucket naming
-  via `_validate_bucket` (`cli.py::_validate_bucket`); p2p-only checks (rendezvous timeout,
+  `_validate_shared_options` (`hsync_client/cli.py::_validate_shared_options`); bucket naming
+  via `_validate_bucket` (`hsync_client/cli.py::_validate_bucket`); p2p-only checks (rendezvous timeout,
   `--prefer-master` exclusivity) live in the `p2p` subcommand. There is no
   separate validators module.
 - Docs drift guard: `tests/test_docs_option_parity.py` walks every command
@@ -191,9 +191,9 @@ write opt-in is `CLI-opt-in OR environment-opt-in` and defaults false.
 
 ## UI events (`events.py`)
 
-`EventEmitter` (`events.py::EventEmitter`) writes structured `UiEventName` events (from
-`hsync_common.protocol.events`) to a desktop-provided fd. `init_emitter` (`events.py::init_emitter`),
-`get_emitter` (`events.py::get_emitter`), `emit_event` (`events.py::emit_event`). Consumed by `hsync-desktop`.
+`EventEmitter` (`hsync_client/events.py::EventEmitter`) writes structured `UiEventName` events (from
+`hsync_common.protocol.events`) to a desktop-provided fd. `init_emitter` (`hsync_client/events.py::init_emitter`),
+`get_emitter` (`hsync_client/events.py::get_emitter`), `emit_event` (`hsync_client/events.py::emit_event`). Consumed by `hsync-desktop`.
 
 > **Domain-critical**: any change to `HSYNC_*` flags / defaults requires a
 > synchronized update of the WD OS5 package (`hsync-wd-os5`,

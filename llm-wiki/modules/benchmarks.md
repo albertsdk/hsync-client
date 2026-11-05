@@ -221,7 +221,7 @@ producing false positives. A scenario present in `before` but missing from
   ~0.0002–0.0003 ms on the in-sync/download/upload branches (it routes straight
   through `resolve_three_way`); the conflict branches are ~0.0011–0.0014 ms
   (the corrected-mtime tie-break plus an **eager `log.debug` f-string** in the
-  conflict-download branch, `sync.py::_compare_files` — a candidate lazy-logging fix). The
+  conflict-download branch, `hsync_client/sync.py::_compare_files` — a candidate lazy-logging fix). The
   tombstone and `parse_advertised_version` helpers are ~0.0001–0.0018 ms.
 * **The full steady-state reconcile is ~2.27 ms / 100 files ≈ ~23 µs/file**
   (`get_sync_actions(persist_state=False)` over an in-sync listing): the
@@ -231,7 +231,7 @@ producing false positives. A scenario present in `before` but missing from
 * **Double `sync_state` read folded (candidate D, fixed)** — the reconcile used
   `local_version_for_compare` *then* `get_base_hash` per file (two relpath
   resolutions + two lock acquisitions + two reads of the same store entry). A
-  single `sync_state.local_version_and_base` (`sync_state.py::local_version_and_base`) now returns
+  single `sync_state.local_version_and_base` (`hsync_client/sync_state.py::local_version_and_base`) now returns
   both the effective version and the stored base hash in one read;
   `get_sync_actions` and `update_file` use it (`sync.py`).
   `local_version_and_base(same)` costs ~0.0022 ms vs the old pair
@@ -380,7 +380,7 @@ too.
 
 ## Serving-role classification (measured 2026-10-25, dev laptop, share on `tmpfs`)
 
-Inputs of `master_status.py::classify`, measured on a share of 3000 × 1 KB files
+Inputs of `hsync_client/master_status.py::classify`, measured on a share of 3000 × 1 KB files
 plus one 64 MB file (3001 entries, one publisher session with one holder row per
 local file):
 
