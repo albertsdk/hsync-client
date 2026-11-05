@@ -56,6 +56,7 @@ from hsync_client.p2p_sources import (  # noqa: E402
 from hsync_client.pinning import PinStore  # noqa: E402
 from hsync_client.ssl_utils import load_or_create_master_cert  # noqa: E402
 from hsync_client.state_backend import reset_bucket_folder_cache  # noqa: E402
+from hsync_client.utils import http as http_utils  # noqa: E402
 
 # Bucket name shared by every bench node: it is part of the peer download URL,
 # so the source URL, the seeder route and the requester's expected bucket must
@@ -237,7 +238,7 @@ def build_file(relpath: str, content: bytes, digest: str) -> File:
 
 def clear_http_sessions() -> None:
     """Evict this thread's cached HTTPS sessions (models a fresh requester thread)."""
-    client_utils._http_session_cache.store = {}
+    http_utils._http_session_cache.store = {}
 
 
 def measure_with_setup(

@@ -15,14 +15,18 @@ import pytest
 from hsync_common.models.file import File
 from hsync_common.protocol.peer_download import (
     P2P_SOURCES_MAX_BODY_BYTES,
+    P2PSourceFile,
+    P2PSourcesResponseFile,
     build_p2p_inventory_frame,
     build_p2p_sources_response,
 )
+from hsync_common.text import compact_json_bytes
 
 from hsync_client.p2p_inventory import P2PInventoryStore
 from hsync_client.p2p_peers import Peer, PeerManager, PeerSnapshot
 from hsync_client.p2p_server import P2PServer
 from hsync_client.p2p_sources import (
+    _SOURCE_FILE_JSON_OVERHEAD,
     BUSY_DEFAULT_BACKOFF_S,
     P2PPeerSource,
     P2PSourceResolver,
@@ -41,6 +45,16 @@ PEER_D = "D" * 21
 PEER_E = "E" * 21
 DIGEST = "a" * 64
 CERT = "c" * 64
+
+
+def test_source_batch_json_overhead_matches_the_models() -> None:
+    """The batch sizer derives the response item size; keep it byte-exact."""
+    request_item = P2PSourceFile(path="a/b.txt", sha256=DIGEST)
+    response_item = P2PSourcesResponseFile(path="a/b.txt", sha256=DIGEST, sources=[])
+    assert (
+        len(compact_json_bytes(response_item)) - len(compact_json_bytes(request_item))
+        == _SOURCE_FILE_JSON_OVERHEAD
+    )
 
 
 class NoShuffle:

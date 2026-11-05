@@ -18,9 +18,21 @@ from __future__ import annotations
 
 import socket
 import sys
-from ipaddress import ip_address, ip_network
+from functools import lru_cache
+from ipaddress import IPv4Address, IPv6Address, ip_address
 
 __all__ = ["get_local_ip", "get_local_ips", "same_subnet"]
+
+
+@lru_cache(maxsize=2048)
+def _parse_ip(value: str) -> IPv4Address | IPv6Address:
+    """Parse an address once; callers repeat the same peer/reference strings.
+
+    The cache is bounded (2048 entries) and holds only immutable address
+    objects, so it cannot grow with attacker-controlled churn.
+    """
+    return ip_address(value)
+
 
 # A non-routable TEST-NET address: connecting a UDP socket to it makes the
 # kernel pick the outgoing interface without sending a single packet.
@@ -146,11 +158,13 @@ def same_subnet(reference_address: str, peer_address: str) -> bool:
     prefer a LAN-adjacent dial candidate over a NATed public one.
     """
     try:
-        reference = ip_address(reference_address)
-        peer = ip_address(peer_address)
+        reference = _parse_ip(reference_address)
+        peer = _parse_ip(peer_address)
     except ValueError:
         return False
     if reference.version != peer.version:
         return False
-    prefix = 24 if reference.version == 4 else 64
-    return peer in ip_network(f"{reference}/{prefix}", strict=False)
+    # /24 (IPv4) and /64 (IPv6) are byte-aligned, so comparing the packed prefix
+    # is exactly the network membership test and avoids building an ip_network.
+    prefix_bytes = 3 if reference.version == 4 else 8
+    return reference.packed[:prefix_bytes] == peer.packed[:prefix_bytes]

@@ -97,6 +97,33 @@ class ShuffleRng(Protocol):
 
 _FILES_DOWNLOAD_ROUTE = rest_bucket_template(REST_FILES_DOWNLOAD_SUFFIX)
 
+# The response item is byte-for-byte the request item plus the trailing
+# ``,"sources":[]`` (same path/sha256 order, sources last). Deriving it once lets
+# the batch sizer serialize one item instead of two per identity; the value is
+# computed from the real models so a model change cannot silently desync it.
+_SOURCE_FILE_JSON_OVERHEAD = len(
+    compact_json_bytes(P2PSourcesResponseFile(path="", sha256="", sources=[]))
+) - len(compact_json_bytes(P2PSourceFile(path="", sha256="")))
+
+
+def _announced_ip_set(peer: PeerSourceSnapshot) -> frozenset[object]:
+    """Every address *peer* announced, parsed once (invalid entries skipped)."""
+    parsed: set[object] = set()
+    for candidate in (peer.address, *(address for address, _port in peer.endpoints)):
+        try:
+            parsed.add(ip_address(candidate))
+        except ValueError:
+            continue
+    return frozenset(parsed)
+
+
+def _owner_is_announced(owner_address: str, announced: frozenset[object]) -> bool:
+    """Whether the session's *owner_address* is one of the announced addresses."""
+    try:
+        return ip_address(owner_address) in announced
+    except ValueError:
+        return False
+
 
 def _download_url_matches_bucket(download_url: str, bucket: str) -> bool:
     """Bind a validated source endpoint to the requester's expected bucket."""
@@ -180,8 +207,11 @@ class P2PSourceService:
             except ValueError:
                 continue
             unique.setdefault(peer.cid, peer)
-        same = [p for p in unique.values() if same_subnet(requester_address, p.address)]
-        other = [p for p in unique.values() if not same_subnet(requester_address, p.address)]
+        same: list[PeerSourceSnapshot] = []
+        other: list[PeerSourceSnapshot] = []
+        for peer in unique.values():
+            # One proximity check per peer (the predicate used to run twice).
+            (same if same_subnet(requester_address, peer.address) else other).append(peer)
         with self._rng_lock:
             self._rng.shuffle(same)
             self._rng.shuffle(other)
@@ -202,14 +232,7 @@ class P2PSourceService:
             owner = ip_address(owner_address)
         except ValueError:
             return False
-        announced = [peer.address, *(address for address, _port in peer.endpoints)]
-        for candidate in announced:
-            try:
-                if ip_address(candidate) == owner:
-                    return True
-            except ValueError:
-                continue
-        return False
+        return owner in _announced_ip_set(peer)
 
     @staticmethod
     def _compact_size(value: object) -> int:
@@ -235,14 +258,32 @@ class P2PSourceService:
             return build_p2p_sources_response(files=response_files)
 
         candidates_by_file: list[list[P2PSourceCandidate]] = []
-        for file in files:
-            holder_cids = {holder.cid for holder in holders.get((file["path"], file["sha256"]), ())}
+        holder_sets = [
+            {holder.cid for holder in holders.get((file["path"], file["sha256"]), ())}
+            for file in files
+        ]
+        needed = set().union(*holder_sets)
+        # URL and announced-address set depend only on the peer, not on the file:
+        # compute them once per resolve (and only for peers that hold something),
+        # not once per (file, peer). The live session lookups stay per file so a
+        # concurrent update is still observed.
+        prepared: dict[str, tuple[str, frozenset[object]]] = {}
+        for peer in peers:
+            if peer.cid not in needed:
+                continue
+            prepared[peer.cid] = (
+                build_peer_download_url(self.bucket, peer.address, peer.port),
+                _announced_ip_set(peer),
+            )
+        for holder_cids in holder_sets:
             candidates: list[P2PSourceCandidate] = []
             for peer in peers:
-                if peer.cid not in holder_cids:
+                prepared_item = prepared.get(peer.cid)
+                if prepared_item is None or peer.cid not in holder_cids:
                     continue
+                download_url, announced = prepared_item
                 owner_address = self._store.session_address(peer.cid)
-                if owner_address is None or not self._session_is_announced(owner_address, peer):
+                if owner_address is None or not _owner_is_announced(owner_address, announced):
                     continue
                 # A candidate exists only with a live capacity advertisement:
                 # without it the requester could not respect the seeder's cap.
@@ -252,7 +293,7 @@ class P2PSourceService:
                 candidates.append(
                     P2PSourceCandidate(
                         cid=peer.cid,
-                        download_url=build_peer_download_url(self.bucket, peer.address, peer.port),
+                        download_url=download_url,
                         cert_fp=str(peer.cert_fingerprint),
                         compression=peer.compression_enabled,
                         serve_slots=serve_slots,
@@ -610,13 +651,11 @@ class P2PSourceResolver:
         for identity in identities:
             path, digest = identity
             request_item = P2PSourceFile(path=path, sha256=digest)
-            response_item = P2PSourcesResponseFile(
-                path=path,
-                sha256=digest,
-                sources=[],
-            )
-            request_added = len(compact_json_bytes(request_item)) + bool(current)
-            response_added = len(compact_json_bytes(response_item)) + bool(current)
+            item_size = len(compact_json_bytes(request_item))
+            request_added = item_size + bool(current)
+            # One serialization: the response item is the request item plus a
+            # fixed ``,"sources":[]`` suffix (see _SOURCE_FILE_JSON_OVERHEAD).
+            response_added = request_added + _SOURCE_FILE_JSON_OVERHEAD
             full = len(current) >= P2P_SOURCES_MAX_FILES
             too_large = (
                 request_size + request_added > P2P_SOURCES_MAX_BODY_BYTES
@@ -627,8 +666,8 @@ class P2PSourceResolver:
                 current = []
                 request_size = request_base
                 response_size = response_base
-                request_added = len(compact_json_bytes(request_item))
-                response_added = len(compact_json_bytes(response_item))
+                request_added = item_size
+                response_added = item_size + _SOURCE_FILE_JSON_OVERHEAD
 
             if (
                 request_size + request_added > P2P_SOURCES_MAX_BODY_BYTES
