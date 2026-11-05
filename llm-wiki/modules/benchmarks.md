@@ -312,7 +312,7 @@ Warmup cycles included; the first value is the coldest cycle. Seven cycles each
 
 * **A cycle pays handshakes only at first contact, then zero.** The number of
   workers sets the one-time cost (2 vs 8, one connection per worker thread) and
-  after that every cycle reuses the existing connections: `utils._http_session_cache`
+  after that every cycle reuses the existing connections: `utils.http._http_session_cache`
   is per-thread (`threading.local()`), so each worker owns a warm keep-alive
   session and the process keeps it for the whole role lifetime.
 * **Grouping downloads per seeder would lose more than it saves.** Forcing a

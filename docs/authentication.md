@@ -109,7 +109,7 @@ Slave                                Master
 |---|---|
 | Server-side auth | `hsync_client/p2p_websocket.py` → `P2PWebSocketServer._handle_client` |
 | Client-side auth | `hsync_client/p2p_websocket.py` → `p2p_websocket_client` |
-| CID validation | `hsync_common/models/event.py` → `is_valid_cid()`, `CID_PATTERN` |
+| CID validation | `hsync_common/ids.py` → `is_valid_cid()`, `CID_PATTERN` |
 
 ### Source code (Android)
 

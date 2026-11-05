@@ -120,7 +120,7 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   sink closed). The deletion-risk guard therefore also echoes its full
   diagnostic through the synchronous stderr channel, the same channel the CLI
   uses for other fatal errors. Regression:
-  `tests/test_bb_p2p_security.py::TestLanDeletionRiskGuard::test_download_only_without_yes_aborts_in_noninteractive`.
+  `tests/test_bb_p2p_security.py::TestP2PDeletionRiskGuard::test_download_only_without_yes_aborts_in_noninteractive`.
 
 - **One device identity per installation (Syncthing model)**: p2p mode identifies
   with the persistent device ID from `identity.py` (anchored in
