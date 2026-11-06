@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The discovery server can be reached over **TLS/TCP** as well as QUIC/UDP:
+  `--rendezvous-transport auto|quic|tcp` (`HSYNC_RENDEZVOUS_TRANSPORT`) uses one
+  transport when fixed and, on `auto` (the default), races both per endpoint with
+  the RFC 8305 stagger (QUIC/UDP preferred); the winning transport is memoized per
+  endpoint and a TLS/TCP winner expires so QUIC regains priority on a recovered
+  UDP path. The data relay works over TLS/TCP too.
 - The p2p master election prefers a node that confirms an externally dialable
   endpoint (`inbound`), and a node defers advertising itself as the serving
   master until the rendezvous answered once, so a relay-only peer no longer
@@ -57,6 +63,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A rendezvous exchange over QUIC no longer waits for the peer's connection drain
+  when the per-exchange connection is closed (~95 ms per request on loopback);
+  a TLS/TCP connection releases its socket immediately instead of at garbage
+  collection.
 - The p2p rendezvous republishes its endpoint candidates when the local
   candidate list changes (a new/removed interface), not only when the
   default-route address changes, so the node stops relaying stale candidates.
