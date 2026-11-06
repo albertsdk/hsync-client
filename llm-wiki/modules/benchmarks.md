@@ -48,6 +48,7 @@ requester (`download_file`, `P2PSourceResolver`, telemetry) and the peer seeder.
 | `bench/bench_reconcile.py` | `hsync_client/sync.py` reconcile-core scenarios (decision leaves + bulk `get_sync_actions`) |
 | `bench/bench_p2p_peer_transfer.py` | **L2** p2p peer-download wire scenarios: peer cold/warm vs master warm per size, seeder read-cap sweep, concurrent production fallback, cycle acceptance, and (`--latency`) the per-cycle TLS-handshake question behind an injected RTT |
 | `bench/bench_p2p_sources.py` | **L2** source-lookup scenarios: eligibility filter, batch splitting, wire `POST /files/sources`, telemetry rank/record |
+| `bench/bench_p2p_rendezvous_transport.py` | **L2** rendezvous-channel scenario, **per transport** (TLS/TCP then QUIC/UDP): handshake-only (`fetch_fingerprint`), `register`/`query`/`refresh`/`leave` against a real sibling node run with `--no-rate-limit`; `--stress` adds N concurrent lease cycles with cycles/s, frames/s, error rate and both processes' RSS |
 | `bench/bench_startup.py` | **Startup** — wall-clock of every fast `hsync` invocation (`--version`, `--capabilities-json`, `--help`, `--help-symbols`) plus `import hsync_client.cli` / `import hsync_client.main_logic` and the two mode stacks (`import hsync_client.p2p_handler` / `import hsync_client.remote_websocket`), from source and from the packaged `--onefile`/`--onedir` binary; standalone (spawns processes), compared with `compare.py` |
 | `bench/soak_p2p.py` | **L3 soak** — real master+slave over loopback mDNS; mutation waves with quiet-poll convergence, RSS of both peers from `/proc`; PASS = 0 mismatches + RSS delta under `--max-rss-mb` |
 | `bench/p2p_peer_common.py` | Shared L2 fixtures: loopback seeder/master harness (`P2PServer` + temp cert + bucket), requester env (CONFIG/state dir/pin file/session cache), `measure_with_setup`, `LatencyRelay` (unprivileged RTT injection that counts TLS handshakes) |
@@ -238,6 +239,45 @@ producing false positives. A scenario present in `before` but missing from
   (`local_version_for_compare` ~0.0035 + `get_base_hash` ~0.0020 = ~0.0055 ms),
   and `get_sync_actions(100 in_sync)` dropped ~24.6 → ~22.7 µs/file.
 
+## p2p rendezvous channel (`bench_p2p_rendezvous_transport.py`) — what the transport comparison found
+
+Run: `bench_p2p_rendezvous_transport.py --count 100 --stress --stress-seconds 8
+--clients 8`, loopback, real sibling `hsync-rendezvous` (`--ephemeral
+--no-relay --no-rate-limit`), Python 3.14, one client process.
+
+| Scenario (ms, p50) | TLS/TCP | QUIC/UDP |
+|---|---|---|
+| handshake only (`fetch_fingerprint`) | 1.7 | 13.3 |
+| `register` | 2.1 | 12.7 |
+| `query` | 3.8 | 14.6 |
+| `refresh` | 2.1 | 9.7 |
+| `leave` | 1.7 | 10.6 |
+| stress, 8 clients × 8 s | **104 cycles/s (418 frames/s), 0 errors** | **20 cycles/s (82 frames/s), 0 errors** |
+
+* **A fresh connection per exchange makes the handshake the unit of cost.** The
+  `rdv/1` client opens one connection per exchange, so `register`/`query` cost
+  is dominated by connect + TLS, not by the frame. TCP/TLS lands at ~2–4 ms and
+  QUIC at ~10–15 ms on loopback; aioquic's pure-Python congestion/crypto path is
+  the difference, and it is CPU-bound under concurrency (20 vs 104 cycles/s).
+* **The QUIC close was ~95 % of the per-exchange cost.** `connect()`'s context
+  exit calls `close()` (which only *transmits* CONNECTION_CLOSE) and then
+  `wait_closed()`, which blocks until the peer terminates the connection. On
+  loopback that drain cost ~95 ms per exchange (~130–160 ms end to end, 6–8/s).
+  The client now marks the connection terminated after the close is queued, which
+  removed the wait: QUIC went from ~140 ms to ~13 ms per exchange (~8×).
+* **A pre-TLS read race dropped ~10–15 % of TLS/TCP handshakes under load.** The
+  in-place `start_tls` upgrade can read a client's ClientHello with the pre-TLS
+  protocol (which has no `data_received`, so the bytes are discarded); the
+  handshake then stalls until the 10 s timeout. The listener now admits the
+  accepted socket and hands it to asyncio's TLS stack via
+  `connect_accepted_socket`, so there is no upgrade window: a 320-connection/8-
+  thread probe went from 30 s with 9–27 resets to 0.3 s with 0 errors.
+* **Regression guards.** `tests/test_bb_p2p_rendezvous_stress.py` (opt-in,
+  `HSYNC_BB_STRESS=1`) runs both transports concurrently and fails on any
+  exchange error, a cycle median above the loopback bound (TCP 100 ms, QUIC
+  400 ms per four-exchange cycle — well under the old ~520 ms QUIC cycle), or a
+  node RSS delta above 128 MB.
+
 ## p2p peer download (`bench_p2p_peer_transfer.py`, `bench_p2p_sources.py`) — what the L2 coverage found
 
 Run: `bench_p2p_peer_transfer.py --count 40` and `bench_p2p_sources.py --count 2000`,
@@ -363,6 +403,9 @@ cd hsync-client
 .venv/bin/python bench/bench_p2p_peer_transfer.py --count 40 [--json-out FILE]
 .venv/bin/python bench/bench_p2p_peer_transfer.py --count 6 --latency   # + handshake/RTT scenario
 .venv/bin/python bench/bench_p2p_sources.py --count 2000 [--json-out FILE]
+.venv/bin/python bench/bench_p2p_rendezvous_transport.py --count 100   # TLS/TCP then QUIC/UDP
+.venv/bin/python bench/bench_p2p_rendezvous_transport.py --count 50 \
+    --stress --stress-seconds 8 --clients 8 [--json-out FILE]
 
 # startup benchmark (standalone: spawns processes, depends on binary paths)
 .venv/bin/python bench/bench_startup.py --count 30 --no-binary [--json-out FILE]

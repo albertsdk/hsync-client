@@ -609,6 +609,17 @@ class RendezvousClient:
             except Exception:  # noqa: BLE001 - teardown must never raise
                 pass
             finally:
+                # aioquic's context exit transmits CONNECTION_CLOSE and then
+                # blocks on ``wait_closed()`` until the peer terminates the
+                # connection (a draining timer / round trip: ~95 ms on a
+                # loopback here). The close datagram is already queued, so the
+                # wait delays only this caller — and ``rdv/1`` opens a fresh
+                # connection per exchange, so it is paid every time. Mark the
+                # connection terminated to skip the wait; if a future aioquic
+                # renames the attribute, fall back to the normal graceful exit.
+                closed = getattr(client, "_closed", None)
+                if isinstance(closed, asyncio.Event):
+                    closed.set()
                 await manager.__aexit__(None, None, None)
 
         return _Dial(
@@ -629,6 +640,10 @@ class RendezvousClient:
                 is_closing = getattr(writer, "is_closing", lambda: False)
                 if not is_closing():
                     writer.close()
+                # Release the socket now instead of at GC: the client opens one
+                # TLS/TCP connection per exchange, so an unawaited close leaks a
+                # descriptor per exchange under sustained load.
+                await writer.wait_closed()
             except Exception:  # noqa: BLE001 - teardown must never raise
                 pass
 

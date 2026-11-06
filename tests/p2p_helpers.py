@@ -797,11 +797,19 @@ def _reserve_udp_port() -> int:
         return int(probe.getsockname()[1])
 
 
-def _rendezvous_start(port: int, ready_file: Path, *, relay: bool = False) -> subprocess.Popen:
+def _rendezvous_start(
+    port: int,
+    ready_file: Path,
+    *,
+    relay: bool = False,
+    extra_args: tuple[str, ...] = (),
+) -> subprocess.Popen:
     """Spawn the sibling rendezvous on loopback (scrubbed env + ready file).
 
     ``relay=True`` enables the data relay (``--relay``), so two peers that no
-    inbound NAT mapping reaches can sync through the node. Raises
+    inbound NAT mapping reaches can sync through the node. ``extra_args`` appends
+    daemon flags (e.g. ``("--no-rate-limit", "--ephemeral")`` for the transport
+    stress, where admission policy must not mask transport cost). Raises
     ``FileNotFoundError`` when the sibling repo is not built; callers translate
     that into a skip.
     """
@@ -820,6 +828,7 @@ def _rendezvous_start(port: int, ready_file: Path, *, relay: bool = False) -> su
     ]
     if relay:
         args.append("--relay")
+    args.extend(extra_args)
     return subprocess.Popen(
         args,
         env=_rendezvous_env(),

@@ -33,6 +33,7 @@ from .p2p_helpers import (
     _terminate,
     _wait_for_file,
     _wait_for_rendezvous,
+    _wait_for_slave_events,
     _wait_for_text_in_stderr,
 )
 
@@ -46,7 +47,6 @@ pytestmark = pytest.mark.skipif(not _P2P_ENABLED, reason=_P2P_REASON)
 
 
 class TestRendezvousRelay:
-    @pytest.mark.flaky(reruns=3, reruns_delay=5)
     def test_master_with_no_dialable_candidate_syncs_through_the_relay(
         self, p2p_master_dir, p2p_slave_dir, p2p_bucket, tmp_path
     ):
@@ -61,7 +61,16 @@ class TestRendezvousRelay:
         rendezvous_port = _reserve_udp_port()
         ready_file = tmp_path / "rendezvous.ready"
         try:
-            rendezvous = _rendezvous_start(rendezvous_port, ready_file, relay=True)
+            # ``--no-rate-limit`` (which also disables the per-IP connection
+            # guard): this test verifies the relay path, not admission policy,
+            # and a rate-limited query would otherwise delay discovery until
+            # the relayed-tunnel assertion timed out.
+            rendezvous = _rendezvous_start(
+                rendezvous_port,
+                ready_file,
+                relay=True,
+                extra_args=("--no-rate-limit",),
+            )
         except FileNotFoundError:
             pytest.skip("hsync-rendezvous is not built (sibling repo venv missing)")
         try:
@@ -118,6 +127,15 @@ class TestRendezvousRelay:
                     assert _wait_for_text_in_stderr(
                         slave, "relaying the data plane through the rendezvous", timeout=120
                     ), "the slave did not fall back to the relayed tunnel"
+
+                    # Wait for the slave's watcher + handshake threshold before
+                    # mutating the master: a write between the initial-sync
+                    # listing and [READY] is in neither the served listing nor
+                    # the realtime stream, and only the periodic resync (300 s)
+                    # would recover it.
+                    assert _wait_for_slave_events(slave, timeout=60), (
+                        "the slave never reported [READY] through the relayed tunnel"
+                    )
 
                     content = b"relayed-through-the-rendezvous\n"
                     (Path(p2p_master_dir) / "notes.txt").write_bytes(content)

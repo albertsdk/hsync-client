@@ -510,16 +510,19 @@ The full report and residual risks live in `pentest/SECURITY_FINDINGS.md`.
 
 ## Stress suites
 
-`tests/test_bb_server_stress.py` and `tests/test_bb_p2p_stress.py` exercise the
-server-mode and p2p paths under burst load (many files created in one
-wave, then mutated, deleted and re-verified). They are **opt-in black-box
-suites** gated by `HSYNC_BB_STRESS=1`, with bounded scale by default so
-`make ci` stays fast:
+`tests/test_bb_server_stress.py`, `tests/test_bb_p2p_stress.py` and
+`tests/test_bb_p2p_rendezvous_stress.py` exercise the server-mode, p2p and
+rendezvous-transport paths under burst load (many files created in one wave,
+then mutated, deleted and re-verified; the rendezvous suite runs concurrent
+lease cycles over TLS/TCP and QUIC/UDP). They are **opt-in black-box suites**
+gated by `HSYNC_BB_STRESS=1`, with bounded scale by default so `make ci`
+stays fast:
 
 ```bash
 # Bounded run (default knobs: 300 files / 50 dirs / 1 iteration)
 cd hsync-client && HSYNC_BB_STRESS=1 .venv/bin/python -m pytest -q tests/test_bb_server_stress.py
 cd hsync-client && HSYNC_BB_STRESS=1 .venv/bin/python -m pytest -q tests/test_bb_p2p_stress.py
+cd hsync-client && HSYNC_BB_STRESS=1 .venv/bin/python -m pytest -q tests/test_bb_p2p_rendezvous_stress.py
 
 # Full-scale benchmark (long)
 make -C .. test-stress

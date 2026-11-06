@@ -945,14 +945,17 @@ class RdvRendezvous(RendezvousPlanState):
         The full ``endpoints`` candidate list is kept on the peer and a
         same-subnet candidate is promoted to the primary address, so two peers
         behind the same NAT dial the local path instead of the public endpoint
-        (which has no hairpin route on most home routers).
+        (which has no hairpin route on most home routers). Only a *dialable*
+        host is kept: the node validates the list, but a relayed candidate is
+        still an unauthenticated claim, so the client never dials a loopback or
+        link-local address that would point at its own local services.
         """
         if not wire.get("reachable", True):
             return None
         candidates = tuple(
             (endpoint["host"], endpoint["port"])
             for endpoint in wire["endpoints"]
-            if endpoint["proto"] == "tcp"
+            if endpoint["proto"] == "tcp" and is_valid_endpoint_host(endpoint["host"])
         )
         if not candidates:
             return None

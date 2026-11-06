@@ -42,6 +42,7 @@ standalone (see below) and compare with `--json-out` + `compare.py`.
 | `bench_reconcile.py` | reconcile core: `_compare_files` (5 branches), `_tombstone_clock_dominates`/`_tombstone_deletes_local`, `_parse_advertised_version`, and the full `get_sync_actions` bulk diff over an in-sync listing |
 | `bench_p2p_peer_transfer.py` | **L2** — cold/warm peer download vs warm master download per size (4 KiB…8 MiB) through the production `download_file`, seeder read-cap saturation sweep, concurrent production fallback |
 | `bench_p2p_sources.py` | **L2** — `P2PSourceResolver._identity` eligibility branches, `_source_batches` splitting, real `POST /files/sources` round trips, `P2PSourceTelemetry` rank/record cost |
+| `bench_p2p_rendezvous_transport.py` | **L2** — the rendezvous channel per transport (TLS/TCP then QUIC/UDP) against a real sibling `hsync-rendezvous`: handshake, `register`/`query`/`refresh`/`leave`, and (`--stress`) N concurrent lease cycles with cycles/s, frames/s, error rate and both processes' RSS |
 | `p2p_peer_common.py` | Shared L2 fixtures (loopback seeder/master harness, temp cert + bucket + pin file + state dir, `measure_with_setup`); also `LatencyRelay`, the unprivileged RTT injector that counts TLS handshakes (`tc netem` needs root). Imports `hsync_client`, so it stays out of `common.py`, which is stdlib-only |
 | `run_all.py` | Chained runner: runs every **L1** script above and writes `bench_result.txt` at the repo root (committed baseline, diff-friendly); `--json-out-dir DIR` also dumps one `<script>.json` per scenario for A/B comparison |
 | `compare.py` | A/B comparator of two `--json-out` runs (single file or directory): flags median regressions over a noise floor, `exit 1` on any regression |
@@ -70,6 +71,8 @@ cd hsync-client
 .venv/bin/python bench/bench_p2p_peer_transfer.py --count 40 --json-out /tmp/peer.json
 .venv/bin/python bench/bench_p2p_peer_transfer.py --count 6 --latency   # handshake/RTT scenario
 .venv/bin/python bench/bench_p2p_sources.py --count 2000 --json-out /tmp/sources.json
+.venv/bin/python bench/bench_p2p_rendezvous_transport.py --count 100 --json-out /tmp/rdv.json
+.venv/bin/python bench/bench_p2p_rendezvous_transport.py --count 50 --stress --stress-seconds 8 --clients 8
 
 # startup benchmark (standalone: spawns processes, depends on binary paths)
 .venv/bin/python bench/bench_startup.py --count 30 --no-binary
