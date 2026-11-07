@@ -105,3 +105,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A resumed upload anchors its first progress sample at the resuming offset, so
   the desktop no longer reports an impossible burst speed for the bytes already
   on the peer.
+- A TLS/TCP rendezvous dial is bounded (10 s connect + handshake), so a node
+  that only answers on QUIC/UDP fails fast with a logged `unreachable` instead
+  of stalling the lease loop for minutes on the kernel's connect timeout.
+- The `<fp>` placeholder in the rendezvous-server trust refusals
+  (`--rendezvous-server-fingerprint <fp>`) no longer crashes the colored log
+  formatter and silently drops the error: the placeholder reads `FINGERPRINT`
+  and the colorizer escapes `<` in every message, so an unpinned server now
+  surfaces "Rendezvous … not trusted" loudly instead of failing silently.
