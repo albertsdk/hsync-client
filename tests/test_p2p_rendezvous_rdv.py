@@ -686,6 +686,38 @@ class TestWaitForRendezvous:
 
         assert plan.source_disabled() is True
 
+    def test_disable_source_logs_guidance_with_angle_brackets_literally(self):
+        """A ``<...>`` in the recovery prose must reach the log, not crash it.
+
+        Regression: ``--rendezvous-server-fingerprint <fp>`` made loguru's
+        colorizer raise on the record, which dropped the ERROR and hid that the
+        source stopped. The record must be emitted verbatim.
+        """
+        import io
+
+        import loguru
+
+        from hsync_client.logger import _format_record_colored
+
+        buffer = io.StringIO()
+        # The client's console formatter with ``colorize=True`` parses markup in
+        # the message, reproducing the runtime sink: pre-fix the ``<fp>`` made it
+        # raise and the ERROR record was dropped.
+        sink = loguru.logger.add(
+            buffer, format=_format_record_colored, colorize=True, enqueue=False
+        )
+        try:
+            plan, _ = make_plan()
+            plan._peer_manager = PeerManager(local_cid=CID, bucket="shared", group="home")
+            plan._disable_source(
+                "untrusted", guidance="pass --rendezvous-server-fingerprint <fp> to trust it"
+            )
+        finally:
+            loguru.logger.remove(sink)
+
+        assert plan.source_disabled() is True
+        assert "pass --rendezvous-server-fingerprint <fp> to trust it" in buffer.getvalue()
+
 
 class TestUntrustedNodeDisablesTheSource:
     def test_lease_loop_disables_the_source_on_a_pin_mismatch(self):

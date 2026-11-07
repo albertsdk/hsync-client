@@ -22,6 +22,14 @@ a rendezvous banner), but the peer list stays empty and no sync happens.
 - The log shows `Discovery: mDNS on the local network  + discovery server …` although only
   mDNS was intended → a rendezvous is configured; unset `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS` (or drop
   the positional).
+- Transport `--rendezvous-transport tcp` (or the desktop's **TLS/TCP only**)
+  with a peer list that stays empty: the rendezvous node must itself serve
+  TLS/TCP on the same port (`--tcp`, on by default in current nodes; older
+  nodes accept QUIC/UDP only). With a current client this fails **loudly**
+  within seconds — `Rendezvous … unreachable` (the node does not answer on
+  TCP) or `Rendezvous … not trusted` (an unpinned node under the default
+  `ask` policy) — never silently. Use `--rendezvous-transport auto` (default)
+  when the node is reachable over QUIC, or have it listen on TCP too.
 
 ## After a network change a device shows "Waiting…"
 

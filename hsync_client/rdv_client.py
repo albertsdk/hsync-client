@@ -96,6 +96,12 @@ __all__ = [
 # on any usable link; the timeout bounds a stalled handshake, not throughput.
 DEFAULT_QUIC_IDLE_TIMEOUT = 30.0
 
+# Bound for the TLS/TCP connect + handshake. aioquic gives up a stalled QUIC
+# handshake on its own, while ``asyncio.open_connection`` would otherwise leave
+# the lease loop blocked on the kernel's connect timeout — minutes when the node
+# is unreachable over TCP (a firewall drop) but still answers on QUIC/UDP.
+RDV_TCP_CONNECT_TIMEOUT_S = 10.0
+
 # SSH-style trust prompt: ``(host, port, observed_fingerprint) -> accept?``.
 # Supplied by the front-end (terminal for the CLI; the desktop confirms with a
 # pre-flight instead). ``None`` means the caller cannot prompt (non-interactive),
@@ -351,10 +357,14 @@ class RendezvousClient:
         The node is self-signed by contract, so the fingerprint is verified by
         the caller on the returned DER before the first write. ALPN is enforced
         client-side because Python's client handshake does not abort on no
-        overlap; parity with the node's server-side check.
+        overlap; parity with the node's server-side check. The connect +
+        handshake is bounded (``RDV_TCP_CONNECT_TIMEOUT_S``) so a node that only
+        answers on QUIC fails this path fast instead of stalling the lease loop
+        on the kernel's connect timeout.
         """
-        reader, writer = await asyncio.open_connection(
-            ip, port, ssl=context, server_hostname=self.host
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(ip, port, ssl=context, server_hostname=self.host),
+            timeout=RDV_TCP_CONNECT_TIMEOUT_S,
         )
         ssl_object = writer.get_extra_info("ssl_object")
         selected = ssl_object.selected_alpn_protocol() if ssl_object is not None else None
@@ -834,7 +844,7 @@ class RendezvousClient:
             raise RendezvousNotTrusted(
                 f"rendezvous {format_authority(self.host, self.port)}: certificate fingerprint {observed} "
                 "is not trusted and there is no terminal to confirm it; pass "
-                "--rendezvous-server-tofu (accept new) or --rendezvous-server-fingerprint <fp> to trust it",
+                "--rendezvous-server-tofu (accept new) or --rendezvous-server-fingerprint FINGERPRINT to trust it",
                 non_interactive=True,
             )
         if self.prompt(self.host, self.port, observed):
@@ -844,7 +854,7 @@ class RendezvousClient:
         raise RendezvousNotTrusted(
             f"rendezvous {format_authority(self.host, self.port)}: certificate fingerprint {observed} "
             "was not accepted; nothing was saved. Pass --rendezvous-server-tofu to trust the "
-            "first sighting or --rendezvous-server-fingerprint <fp> to pin it"
+            "first sighting or --rendezvous-server-fingerprint FINGERPRINT to pin it"
         )
 
     def _announce_known_host(self, store: RendezvousTrustStore) -> None:

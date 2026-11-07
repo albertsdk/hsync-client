@@ -150,8 +150,14 @@ def _append_json_data(record: "Record", message: str) -> str:
 
 
 def _transform_colored(record: "Record", message: str) -> str:
-    """Colorize action labels then append any json_data payload."""
-    return _append_json_data(record, colorize_labels(message, use_colors=True))
+    r"""Colorize action labels then append any json_data payload.
+
+    ``<`` is escaped for loguru (``\<`` renders a literal ``<``): the colored
+    console handler parses the formatted line for color tags, so a ``<fp>``-style
+    placeholder in any message (paths, recovery guidance) would otherwise make
+    the colorizer raise and drop the record.
+    """
+    return _append_json_data(record, colorize_labels(message.replace("<", "\\<"), use_colors=True))
 
 
 def _transform_plain(record: "Record", message: str) -> str:

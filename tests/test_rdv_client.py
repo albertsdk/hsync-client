@@ -603,6 +603,34 @@ class TestTrustFailureGuidance:
         assert f"hsync trust rendezvous-server add rdv.example.net:443 sha256:{fp}" in guidance
         assert "--rendezvous-server-tofu" in guidance
 
+    def test_guidance_and_refusals_carry_no_loguru_markup(self, tmp_path, monkeypatch):
+        """A ``<...>`` in a logged message would crash loguru's colorizer.
+
+        Regression: ``--rendezvous-server-fingerprint <fp>`` made the colorizer
+        raise, which dropped the ERROR record and disabled the source silently.
+        """
+        from hsync_client.rendezvous_trust import RENDEZVOUS_TRUST_FILE_ENV
+        from hsync_client.trust_messages import mismatch_guidance
+
+        monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
+        cert, _ = _fake_cert()
+        client = RendezvousClient("rdv.example.net", 443, policy=TrustPolicy.ask)
+        with pytest.raises(RendezvousNotTrusted) as excinfo:
+            client.verify_peer(_FakePeer(cert))
+        refused = str(excinfo.value)
+        assert "<fp>" not in refused
+        assert "FINGERPRINT" in refused
+        guidance = mismatch_guidance(
+            "rdv.example.net",
+            443,
+            "0" * 64,
+            stored=None,
+            store_path=tmp_path,
+            explicit_pins=False,
+        )
+        assert "<fp>" not in guidance
+        assert "FINGERPRINT" in guidance
+
     def test_explicit_pin_mismatch_points_at_the_flag(self, tmp_path, monkeypatch):
         from hsync_client.rendezvous_trust import RENDEZVOUS_TRUST_FILE_ENV
 
@@ -782,3 +810,27 @@ class TestStunEcho:
     def test_malformed_ack_is_rejected_by_the_mirror(self):
         bad = {**ACK, "observed_endpoint": {"proto": "udp", "ip": "198.51.100.7"}}
         assert validate_rdv_ack(bad) is None
+
+
+class TestTcpConnectTimeout:
+    """A stalled TLS/TCP connect must fail fast, never stall the lease loop.
+
+    ``asyncio.open_connection`` has no timeout of its own: a node that answers
+    on QUIC/UDP but drops the TCP connect (a firewall) would otherwise block the
+    lease loop for the kernel's multi-minute connect timeout with zero logs.
+    """
+
+    def test_dial_times_out_when_the_host_never_answers(self, monkeypatch):
+        import hsync_client.rdv_client as rdv_module
+
+        monkeypatch.setattr(rdv_module, "RDV_TCP_CONNECT_TIMEOUT_S", 0.05)
+
+        async def _hang(*_args, **_kwargs):
+            await asyncio.sleep(60)
+
+        monkeypatch.setattr(rdv_module.asyncio, "open_connection", _hang)
+        client = RendezvousClient("127.0.0.1", 19443, transport="tcp")
+        with pytest.raises(asyncio.TimeoutError):
+            asyncio.run(
+                client._open_rdv_tls_stream("127.0.0.1", 19443, rdv_module.unverified_ssl_context())
+            )

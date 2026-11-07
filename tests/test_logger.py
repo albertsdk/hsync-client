@@ -482,6 +482,16 @@ class TestFormatRecordColored:
         assert '"k"' in result
         assert '"v"' in result
 
+    def test_angle_brackets_in_the_message_are_escaped(self):
+        """``<...>`` in a message must never become an invalid loguru color tag.
+
+        Regression: ``--rendezvous-server-fingerprint <fp>`` made the colored
+        console handler raise in loguru's colorizer and drop the ERROR record.
+        """
+        record = self._make_record("pass --rendezvous-server-fingerprint <fp> to trust it")
+        result = _format_record_colored(record)
+        assert "\\<fp>" in result
+
 
 class TestFormatRecordPlain:
     """Tests for _format_record_plain function."""

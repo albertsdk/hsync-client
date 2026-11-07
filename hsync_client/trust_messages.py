@@ -143,7 +143,7 @@ def _host_mismatch_guidance(
             "Verify it out of band and pin it with:",
             f"  hsync trust {kind} add {format_authority(host, port)} sha256:{observed}",
             f"Alternatively, start the client with --{kind}-tofu (trust the first "
-            f"sighting) or --{flag_name} <fp>.",
+            f"sighting) or --{flag_name} FINGERPRINT.",
         ]
     return "\n".join(lines)
 
