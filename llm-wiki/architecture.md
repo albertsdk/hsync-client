@@ -133,7 +133,10 @@ end-to-end as a bare non-zero exit with no explanation, because `CliRunner`
 captured stream down before the writer thread flushes
 (`ValueError: I/O operation on closed file`). Every fatal exit therefore
 drains the queue first: `main_logic._acquire_instance_lock` (the lock refusal
-message *is* the error), the `finally` of the one-shot run (twice: once before
+message *is* the error), `main_logic._check_deletion_risk` (both aborts — the
+non-interactive refusal and the declined prompt — happen in `_finish_startup`,
+*before* the run's own `finally`, so nothing else would drain them), the
+`finally` of the one-shot run (twice: once before
 the shutdown steps so the diagnostic cannot be lost if they fail, once after
 them), and `cli.run` as the process-level net — the latter importing `loguru`
 **lazily and only when `hsync_client.logger` is already in `sys.modules`**, so

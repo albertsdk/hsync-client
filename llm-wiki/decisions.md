@@ -117,9 +117,12 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
 - **Guard abort diagnostics are synchronous**: the loguru sinks are
   `enqueue=True`, so a message written immediately before `raise SystemExit`
   can be lost (the queue drains after the process/stream teardown marks the
-  sink closed). The deletion-risk guard therefore also echoes its full
-  diagnostic through the synchronous stderr channel, the same channel the CLI
-  uses for other fatal errors. Regression:
+  sink closed). The deletion-risk guard therefore drains the queue first
+  (`hsync_client/logger.py::flush_logs`, as it aborts before the run's own
+  `finally`) *and* echoes its full diagnostic through the synchronous stderr
+  channel, the same channel the CLI uses for other fatal errors. Regression:
+  `tests/test_main_logic_deletion_risk.py::TestCheckDeletionRisk` (both abort
+  paths drain) and
   `tests/test_bb_p2p_security.py::TestP2PDeletionRiskGuard::test_download_only_without_yes_aborts_in_noninteractive`.
 
 - **One device identity per installation (Syncthing model)**: p2p mode identifies

@@ -83,6 +83,50 @@ class TestCheckDeletionRisk:
             )
         assert mock_logger.warning.called
 
+    def test_non_interactive_abort_flushes_the_async_sinks(self, tmp_path):
+        """The fatal exit drains the queued records before leaving.
+
+        The sinks are asynchronous (``enqueue=True``) and this guard runs before
+        the run's own ``finally``, so an undrained queue loses both the warning
+        and the abort reason — an in-process CLI driver then reports loguru's
+        ``I/O operation on closed file`` instead of the lines.
+        """
+        (tmp_path / "file.txt").write_text("content")
+        with (
+            patch("hsync_client.main_logic.CONFIG", {"DELETION_POLICY": "propagate"}),
+            patch("hsync_client.main_logic.is_tty_interactive", return_value=False),
+            patch("hsync_client.main_logic.flush_logs") as flush_logs,
+            pytest.raises(SystemExit),
+        ):
+            _check_deletion_risk(
+                local_path=str(tmp_path),
+                p2p_mode=False,
+                prefer_master=False,
+                sync_direction="download-only",
+                allow_deletions=False,
+                logger=MagicMock(),
+            )
+        flush_logs.assert_called_once()
+
+    def test_operator_decline_flushes_the_async_sinks(self, tmp_path):
+        """Declining the prompt is a fatal exit too: drain before leaving."""
+        (tmp_path / "file.txt").write_text("content")
+        with (
+            patch("hsync_client.main_logic.CONFIG", {"DELETION_POLICY": "propagate"}),
+            patch("builtins.input", return_value="n"),
+            patch("hsync_client.main_logic.flush_logs") as flush_logs,
+            pytest.raises(SystemExit),
+        ):
+            _check_deletion_risk(
+                local_path=str(tmp_path),
+                p2p_mode=False,
+                prefer_master=False,
+                sync_direction="download-only",
+                allow_deletions=False,
+                logger=MagicMock(),
+            )
+        flush_logs.assert_called_once()
+
     def test_upload_only_no_warning(self, tmp_path):
         """No warning for upload-only mode (never deletes local files)."""
         (tmp_path / "file.txt").write_text("content")

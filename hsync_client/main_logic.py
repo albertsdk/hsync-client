@@ -372,6 +372,12 @@ def _check_deletion_risk(
         # the synchronous CLI error channel too, so the operator always sees why
         # the run aborted.
         print("Error: " + " ".join([*warnings, error]), file=sys.stderr)
+        # This fatal exit happens before the run's own ``finally`` (which drains
+        # the sinks), so it must drain here: without it the warning/error records
+        # sit in the queue while the process unwinds, and an in-process caller
+        # (the CLI driven through Click's test isolation) loses them once its
+        # capture stream is gone.
+        flush_logs()
         raise SystemExit(1)
 
     try:
@@ -381,6 +387,7 @@ def _check_deletion_risk(
 
     if response not in ("y", "yes"):
         logger.info("Sync cancelled by user.")
+        flush_logs()
         raise SystemExit(0)
 
 
