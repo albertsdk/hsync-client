@@ -60,9 +60,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The relay's transfer-concurrency cap is lifted when a direct path is used
   again, so a CLI/env override or `--no-autotune` no longer keeps the fast path
   throttled to the relay value.
+- A newly joined P2P peer appears in the other devices' peer lists within a
+  second instead of up to the 30 s rendezvous refresh: a serving peer samples
+  the discovery server as soon as it admits the new WebSocket, and the client
+  keeps sampling at the sustainable floor while the group is not provably
+  complete (a peer that joined after the last sample, or one still unpublished).
 
 ### Fixed
 
+- A rendezvous `retry_after` (rate limit or node capacity) is now honoured as a
+  wake-up time: the lease loop slept the full refresh interval, so the announced
+  retry never happened and a peer stayed undiscovered for up to 30 s longer than
+  the node allowed.
 - A rendezvous exchange over QUIC no longer waits for the peer's connection drain
   when the per-exchange connection is closed (~95 ms per request on loopback);
   a TLS/TCP connection releases its socket immediately instead of at garbage
