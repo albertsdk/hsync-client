@@ -30,6 +30,13 @@ a rendezvous banner), but the peer list stays empty and no sync happens.
   TCP) or `Rendezvous … not trusted` (an unpinned node under the default
   `ask` policy) — never silently. Use `--rendezvous-transport auto` (default)
   when the node is reachable over QUIC, or have it listen on TCP too.
+- A device that **just joined** shows up in the others' peer lists within a
+  couple of seconds: the serving peer samples the rendezvous the moment it
+  accepts the connection. Two devices behind the **same public IP** (one
+  household) share the node's query budget — five queries per minute per
+  address and bucket — so the second one can take ~15 s. That is the node's
+  anti-abuse limit, not a failed discovery; a node started with
+  `--no-rate-limit` (loopback and tests only) has no such delay.
 
 ## After a network change a device shows "Waiting…"
 

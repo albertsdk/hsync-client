@@ -297,6 +297,20 @@ def _wait_for_file(path: str, timeout: float = 30.0) -> bool:
     return False
 
 
+def _device_id(proc: subprocess.Popen) -> str | None:
+    """The peer's device ID (CID) as logged at startup, or ``None``.
+
+    A test that asserts *which* peer a node discovered needs the CID before it
+    shows up in a ``Discovered new peer`` line; the client logs it once, before
+    any rendezvous traffic.
+    """
+    marker = "Device ID: "
+    for line in _stderr_text(proc).splitlines():
+        if marker in line:
+            return line.split(marker, 1)[1].strip()
+    return None
+
+
 def _wait_for_text_in_stderr(proc: subprocess.Popen, text: str, timeout: float = 30.0) -> bool:
     """Poll until *text* appears in the process's stderr, or return False.
 

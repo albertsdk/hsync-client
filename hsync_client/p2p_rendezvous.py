@@ -131,6 +131,18 @@ class RendezvousPlan(Protocol):
         """Install a callback that yields the live connected-client count."""
         ...
 
+    def request_sample(self) -> None:
+        """Ask the plan to sample its sources now, without waiting the cadence.
+
+        A caller that has just proved a peer exists out of band — the master
+        admitting a slave's WebSocket — must not wait for the next scheduled
+        query: the sample is what puts that peer into the shared peer state, so
+        the peer list would otherwise stay stale for up to the refresh interval.
+        Best-effort and coalescing: the owner of the cadence decides how soon it
+        can afford the round.
+        """
+        ...
+
     def relay_dialer(self, target_cid: str) -> Any:
         """A data-relay tunnel factory towards *target_cid*, or ``None``.
 
@@ -210,6 +222,10 @@ class RendezvousSource(Protocol):
 
     def set_connected_clients_provider(self, provider: Callable[[], int] | None) -> None:
         """Install a callback that yields the live connected-client count."""
+        ...
+
+    def request_sample(self) -> None:
+        """Run one ``query`` round now instead of at the next cadence tick."""
         ...
 
     def set_master_eligibility(self, eligible: bool) -> None:
@@ -311,6 +327,15 @@ class RendezvousPlanState:
     def set_connected_clients_provider(self, provider: Callable[[], int] | None) -> None:
         """Install a callback that yields the live connected-client count."""
         self._connected_clients_provider = provider
+
+    def request_sample(self) -> None:
+        """Advance the peer sample now (default: the plan has no such cadence).
+
+        The mDNS plan learns a peer from its announce burst and has no server to
+        query, so the out-of-band trigger is a no-op there; a signaling plan
+        overrides this to open its query gate.
+        """
+        return
 
     def relay_dialer(self, target_cid: str) -> Any:
         """No data relay: a LAN-only plan has no public rendezvous point."""

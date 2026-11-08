@@ -20,6 +20,11 @@ from hsync_common.protocol.rendezvous import (
     validate_rdv_response,
 )
 
+from hsync_client.constants import (
+    RENDEZVOUS_QUERY_ACTIVE_INTERVAL,
+    RENDEZVOUS_QUERY_BURST_INTERVAL,
+    RENDEZVOUS_UNPUBLISHED_SAMPLE_RETRIES,
+)
 from hsync_client.p2p_peers import Peer, PeerManager
 from hsync_client.p2p_rendezvous_rdv import (
     _TEST_ADVERTISED_ENDPOINTS_ENV,
@@ -594,6 +599,116 @@ class TestAdvertisement:
 
 
 class TestQueryBudget:
+    def test_group_incomplete_keeps_the_sustainable_cadence(self):
+        """A known master is not proof the group is complete.
+
+        The serving peer relays how many clients it holds, so the group has at
+        least ``1 + connected`` members: seeing fewer peers than that means the
+        node's random sample missed someone, and only another query finds them —
+        the refresh cadence would keep that peer invisible for up to 30 s.
+        """
+        plan, _ = make_plan()
+        manager = PeerManager(local_cid=CID, bucket="shared", group="home")
+        plan._peer_manager = manager
+        plan._burst_left = 0
+        master = plan._peer_from_wire(
+            relayed_peer(OTHER, ip="203.0.113.10", port=8443, server_ready=True, connected=2)
+        )
+        assert master is not None
+        manager.add_peer(master)
+        assert manager.get_master_cid() == OTHER
+        assert plan._query_interval() == RENDEZVOUS_QUERY_ACTIVE_INTERVAL
+
+    def test_complete_group_uses_the_refresh_cadence(self):
+        """A two-node group is complete, so the extra query traffic stops."""
+        plan, _ = make_plan()
+        manager = PeerManager(local_cid=CID, bucket="shared", group="home")
+        plan._peer_manager = manager
+        plan._burst_left = 0
+        master = plan._peer_from_wire(
+            relayed_peer(OTHER, ip="203.0.113.10", port=8443, server_ready=True, connected=1)
+        )
+        assert master is not None
+        manager.add_peer(master)
+        assert plan._query_interval() == plan._refresh_interval
+
+    def test_request_sample_reopens_the_query_gate(self):
+        """A WebSocket admission must not wait for the cadence to be listed."""
+        plan, _ = make_plan()
+        plan._peer_manager = PeerManager(local_cid=CID, bucket="shared", group="home")
+        plan._next_query_at = time.monotonic() + 30.0
+        plan.request_sample()
+        assert plan._next_query_at == 0.0
+        assert plan._wake.is_set()
+        plan._query_peers()
+        assert [call for call in plan._client.calls if call[0] == "query"]
+
+    def test_a_drawn_peer_without_endpoints_is_re_sampled_soon(self):
+        """A peer that exists but is not dialable yet must not wait a cadence.
+
+        Its first ``register`` carries no ``endpoints[]`` (the STUN echo comes
+        first and the publication is the next lease tick), which is exactly the
+        state a master draws right after admitting the peer's WebSocket.
+        """
+        plan, _ = make_plan()
+        manager = PeerManager(local_cid=CID, bucket="shared", group="home")
+        plan._peer_manager = manager
+        plan._burst_left = 0
+        plan._client.query = lambda frame: validate_rdv_response(
+            {
+                "protocol_version": "rdv/1",
+                "type": "response",
+                "peers": [
+                    relayed_peer(OTHER, ip="203.0.113.10", port=8443, reachable=False),
+                ],
+                "count": 1,
+                "ttl": 60,
+            }
+        )
+        plan._query_peers()
+        assert manager.get_alive_peers() == []
+        assert plan._unpublished_peer is True
+        assert plan._next_query_at - time.monotonic() <= RENDEZVOUS_QUERY_BURST_INTERVAL
+        # Bounded: a peer that never publishes stops earning retries and leaves
+        # the plan on the sustainable cadence instead of the refresh one.
+        for _ in range(RENDEZVOUS_UNPUBLISHED_SAMPLE_RETRIES + 2):
+            plan._next_query_at = 0.0
+            plan._query_peers()
+        assert plan._unpublished_retries == RENDEZVOUS_UNPUBLISHED_SAMPLE_RETRIES
+        assert plan._query_interval() == RENDEZVOUS_QUERY_ACTIVE_INTERVAL
+        # The retries stop as soon as a sample draws no unpublished peer.
+        plan._client.query = lambda frame: validate_rdv_response(
+            {
+                "protocol_version": "rdv/1",
+                "type": "response",
+                "peers": [relayed_peer(OTHER, ip="203.0.113.10", port=8443)],
+                "count": 1,
+                "ttl": 60,
+            }
+        )
+        plan._next_query_at = 0.0
+        plan._query_peers()
+        assert plan._unpublished_retries == 0
+
+    def test_the_lease_loop_wakes_when_a_sample_is_due(self):
+        """An early scheduled sample must not wait the whole cadence.
+
+        The loop re-checks the gate itself, so it has to sleep until the gate
+        opens: a node-supplied ``retry_after`` and an unpublished-peer re-sample
+        both schedule a sample sooner than the lease cadence.
+        """
+        plan, _ = make_plan()
+        manager = PeerManager(local_cid=CID, bucket="shared", group="home")
+        plan._peer_manager = manager
+        plan._burst_left = 0
+        plan._next_query_at = time.monotonic() + 1.0
+        assert plan._next_wake_delay() <= 1.05
+        # A backoff is a floor, never a ceiling.
+        assert plan._next_wake_delay(backoff=5.0) >= 5.0
+        # The cadence applies once the gate is already open.
+        plan._next_query_at = 0.0
+        assert plan._next_wake_delay() == plan._query_interval()
+
     def test_queries_respect_the_cadence(self):
         """Steady-state queries are spaced by the refresh interval, not per tick."""
         plan, _ = make_plan()

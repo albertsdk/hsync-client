@@ -960,13 +960,21 @@ def _run_as_master(
     # Wire the WebSocket-authoritative liveness signal on every master start: a
     # re-election may install a fresh PeerManager, so the callback must never
     # stay bound to a stale one.
-    p2p_ws_server.set_peer_connection_callback(
-        lambda cid, connected: (
-            peer_manager.mark_peer_connected(cid)
-            if connected
-            else peer_manager.mark_peer_disconnected(cid)
-        )
-    )
+    def _on_peer_connection(cid: str, connected: bool) -> None:
+        """Feed the shared liveness signal; pull a sample on admission.
+
+        The admission is proof the peer exists, but the shared peer state is fed
+        by rendezvous *samples*: without the pull the new peer stays invisible
+        (absent from the group view, the election and the peer list) until the
+        lease cadence's next query, i.e. up to the refresh interval.
+        """
+        if not connected:
+            peer_manager.mark_peer_disconnected(cid)
+            return
+        peer_manager.mark_peer_connected(cid)
+        p2p_sync.request_sample()
+
+    p2p_ws_server.set_peer_connection_callback(_on_peer_connection)
     # The receiver owns the truth about an upload: publish the bytes this master
     # stored on the uploader's own session, so the sender's row shows the
     # delivery instead of its own transport counter.

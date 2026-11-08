@@ -50,6 +50,7 @@ from hsync_client.constants import (
     RENDEZVOUS_REFRESH_INTERVAL,
     RENDEZVOUS_REFRESH_INTERVAL_MIN,
     RENDEZVOUS_SOURCE_LEASE_S,
+    RENDEZVOUS_UNPUBLISHED_SAMPLE_RETRIES,
 )
 from hsync_client.events import emit_warning, emit_warning_cleared
 from hsync_client.nat_traversal import CandidateEndpoint, candidate_endpoints
@@ -294,6 +295,11 @@ class RdvRendezvous(RendezvousPlanState):
         # Master-claim gate state: whether a query round has been answered, and
         # when the plan started (see ``discovery_settled``).
         self._observed_sample = False
+        # A drawn peer whose endpoints are not published yet (its record exists
+        # but cannot be dialed) keeps the fast cadence and earns a bounded burst
+        # of immediate re-samples — see ``_track_unpublished_peer``.
+        self._unpublished_peer = False
+        self._unpublished_retries = 0
         self._started_at = 0.0
         self._network_monitor: NetworkChangeMonitor | None = None
 
@@ -529,6 +535,19 @@ class RdvRendezvous(RendezvousPlanState):
         self._connected_clients = count
         self._wake.set()
 
+    def request_sample(self) -> None:
+        """Open the query gate and wake the lease loop for one sample.
+
+        Called from the master's WebSocket admission callback, i.e. from the
+        listener loop thread: a float store plus ``Event.set`` is all it does,
+        and the lease loop coalesces — it runs at most one ``query`` per
+        iteration and re-arms the gate — so a burst of connections costs one
+        sample per tick instead of one per peer (the node's per-(IP, bucket)
+        budget stays intact).
+        """
+        self._next_query_at = 0.0
+        self._wake.set()
+
     def refresh_election_advertisement(self) -> None:
         """Re-publish the election flags (``prefer_master``/``never_master``).
 
@@ -688,7 +707,7 @@ class RdvRendezvous(RendezvousPlanState):
                 # reported no longer holds, so the warning is retracted (a no-op
                 # when nothing was standing).
                 emit_warning_cleared("rendezvous")
-            self._wake.wait(timeout=max(self._query_interval(), backoff))
+            self._wake.wait(timeout=self._next_wake_delay(backoff))
             self._wake.clear()
 
     def _query_interval(self) -> float:
@@ -699,15 +718,57 @@ class RdvRendezvous(RendezvousPlanState):
         ``RENDEZVOUS_QUERY_BURST_INTERVAL`` for ``RENDEZVOUS_QUERY_BURST_COUNT``
         cycles (inside the spec's burst budget) and, while no master is known,
         the fastest sustainable cadence (``RENDEZVOUS_QUERY_ACTIVE_INTERVAL``,
-        one query per ``60 s / 5``). Once the group is complete the lease cadence
+        one query per ``60 s / 5``). A known master is *not* proof the group is
+        complete: a peer that joined after our last sample is only found by
+        another query, so the same cadence holds while the peers we see report
+        more members than we know. Once the group is complete the lease cadence
         applies, which is what keeps the client inside the query budget.
         """
         if self._burst_left > 0:
             return RENDEZVOUS_QUERY_BURST_INTERVAL
         manager = self._peer_manager
-        if manager is not None and manager.get_master_cid() is None:
+        if manager is None:
+            return self._refresh_interval
+        peers = manager.get_alive_peers()
+        if (
+            manager.get_master_cid() is None
+            or self._unpublished_peer
+            or self._group_looks_incomplete(peers)
+        ):
             return RENDEZVOUS_QUERY_ACTIVE_INTERVAL
         return self._refresh_interval
+
+    def _next_wake_delay(self, backoff: float = 0.0) -> float:
+        """How long the lease loop may sleep before its next iteration.
+
+        The iteration re-checks the query gate itself, so sleeping only the lease
+        cadence would make an *earlier* scheduled sample wait a whole cadence: a
+        node-imposed ``retry_after`` after a refusal, and the out-of-band pull
+        that keeps an unpublished peer from going stale. ``backoff`` is a floor
+        (two sources can refuse independently), never a ceiling.
+        """
+        wait = self._query_interval()
+        gate = self._next_query_at - time.monotonic()
+        if gate > 0:
+            wait = min(wait, gate)
+        return max(wait, backoff)
+
+    @staticmethod
+    def _group_looks_incomplete(peers: Sequence[Peer]) -> bool:
+        """Whether a peer this node has not drawn yet can still exist.
+
+        A serving peer relays how many clients it holds (``connected``), so the
+        group has at least ``1 + max(connected)`` members; seeing fewer peers
+        than that means the node's random sample missed someone, and only
+        another query finds them. The claim is unauthenticated, but it can only
+        make this node *query more often* — bounded by
+        ``RENDEZVOUS_QUERY_ACTIVE_INTERVAL`` and by the node's own rate limit —
+        never change which peer is adopted.
+        """
+        if not peers:
+            return False
+        expected = max((peer.connected or 0) for peer in peers) + 1
+        return len(peers) + 1 < expected
 
     def _republish_advert(self) -> None:
         """Re-``register`` with the current advertisement (role changed).
@@ -917,10 +978,16 @@ class RdvRendezvous(RendezvousPlanState):
         # stamped with the new generation. A peer missing from `window` answered
         # samples (``RENDEZVOUS_MISSED_SAMPLES``) is the one that expires.
         self._peer_manager.advance_source(self._source_name)
+        unpublished = 0
         for wire_peer in response["peers"]:
             peer = self._peer_from_wire(wire_peer)
-            if peer is not None and peer.cid != self._cid:
+            if peer is None:
+                if wire_peer.get("cid") != self._cid:
+                    unpublished += 1
+                continue
+            if peer.cid != self._cid:
                 self._peer_manager.add_peer(peer, source=self._source_name)
+        self._track_unpublished_peer(unpublished, now)
         master = self._peer_manager.get_master_cid()
         if master is not None and master != self._cid and master not in sampled:
             # The elected master was not drawn: forensics for the election, since
@@ -929,6 +996,26 @@ class RdvRendezvous(RendezvousPlanState):
                 f"Rendezvous {authority} sample without the elected master "
                 f"{master} ({len(sampled)} peer(s) drawn)"
             )
+
+    def _track_unpublished_peer(self, unpublished: int, now: float) -> None:
+        """Re-sample soon while a drawn peer is not dialable yet.
+
+        A peer's first ``register`` carries no ``endpoints[]`` (the client learns
+        its public address from the STUN echo and publishes them one lease tick
+        later), so a sample can draw a peer that exists but cannot be dialed —
+        exactly the state the master is in right after admitting that peer's
+        WebSocket. Waiting a full cadence would leave the peer invisible, so
+        retry at the burst spacing instead, bounded: a peer that never publishes
+        (block serving disabled) must not spend the node's query budget.
+        """
+        self._unpublished_peer = unpublished > 0
+        if not self._unpublished_peer:
+            self._unpublished_retries = 0
+            return
+        if self._unpublished_retries >= RENDEZVOUS_UNPUBLISHED_SAMPLE_RETRIES:
+            return
+        self._unpublished_retries += 1
+        self._next_query_at = min(self._next_query_at, now + RENDEZVOUS_QUERY_BURST_INTERVAL)
 
     def _peer_from_wire(self, wire: RdvPeer) -> Peer | None:
         """Map a relayed peer to the shared :class:`Peer`; skip unreachable ones.
@@ -1131,6 +1218,11 @@ class MultiRdvRendezvous(RendezvousPlanState):
         """Publish the connected-client count on every source."""
         for source in self._sources:
             source.set_connected_clients(count)
+
+    def request_sample(self) -> None:
+        """Pull a sample from every source now."""
+        for source in self._sources:
+            source.request_sample()
 
     def set_master_eligibility(self, eligible: bool) -> None:
         """Withdraw or restore this node's master candidacy on every source."""

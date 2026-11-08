@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from .p2p_helpers import (
+    _device_id,
     _p2p_start,
     _rendezvous_start,
     _reserve_udp_port,
@@ -92,6 +93,68 @@ class TestRdvRendezvous:
                     assert (Path(p2p_slave_dir) / "boot.txt").read_bytes() == content
                 finally:
                     _terminate(slave)
+            finally:
+                _terminate(master)
+        finally:
+            _stop_rendezvous(rendezvous)
+
+    def test_master_lists_a_joining_peer_without_waiting_for_the_cadence(
+        self, p2p_master_dir, p2p_slave_dir, p2p_bucket, tmp_path
+    ):
+        """Admitting a WebSocket pulls a sample: the peer list is never 30 s stale.
+
+        ``--no-mdns`` keeps mDNS out, so a peer can only arrive as a rendezvous
+        sample. Once the master serves, its lease cadence is the refresh
+        interval (30 s); the admission-triggered pull is what makes the joiner
+        visible within a second or two instead of up to half a minute.
+
+        The node runs with ``--no-rate-limit``: both peers reach it from the same
+        loopback source IP, so they share the per-``(IP, bucket)`` query budget
+        and the refusal policy (not the pull) would decide the timing. The budget
+        is a node-side anti-abuse bound, not part of the client contract.
+        """
+        rendezvous_port = _reserve_udp_port()
+        ready_file = tmp_path / "rendezvous.ready"
+        try:
+            rendezvous = _rendezvous_start(
+                rendezvous_port, ready_file, extra_args=("--no-rate-limit",)
+            )
+        except FileNotFoundError:
+            pytest.skip("hsync-rendezvous is not built (sibling repo venv missing)")
+        try:
+            assert _wait_for_rendezvous(rendezvous, ready_file), "rendezvous did not become ready"
+            common_args = (
+                "--no-mdns",
+                "--rendezvous-server",
+                f"127.0.0.1:{rendezvous_port}",
+                "--rendezvous-server-trust",
+                "accept-new",
+                "--group",
+                "admission-pull",
+            )
+            master = _p2p_start(
+                p2p_master_dir, p2p_bucket, prefer_master=True, extra_args=common_args
+            )
+            try:
+                assert _wait_for_text_in_stderr(master, "[READY] Master ready", timeout=90), (
+                    "master never became ready"
+                )
+                joiner = _p2p_start(
+                    p2p_slave_dir, p2p_bucket, never_master=True, extra_args=common_args
+                )
+                try:
+                    assert _wait_for_text_in_stderr(
+                        joiner, "WebSocket authenticated with master", timeout=60
+                    ), "the joiner never reached the master"
+                    joiner_cid = _device_id(joiner)
+                    assert joiner_cid, "the joiner never logged its device ID"
+                    # Well inside the 30 s refresh interval: only the
+                    # admission-triggered pull can make the joiner visible here.
+                    assert _wait_for_text_in_stderr(
+                        master, f"Discovered new peer: {joiner_cid}", timeout=10
+                    ), "the master did not list the joiner it had just admitted"
+                finally:
+                    _terminate(joiner)
             finally:
                 _terminate(master)
         finally:

@@ -118,6 +118,10 @@ class TestRendezvousSampleCadence:
         plan._peer_manager = peer_manager
         plan._refresh_interval = refresh
         plan._burst_left = 0
+        # State ``_query_interval`` reads: a partially constructed plan (no
+        # ``__init__``) must carry it too.
+        plan._unpublished_peer = False
+        plan._unpublished_retries = 0
         return plan
 
     def test_the_burst_runs_before_anything_else(self) -> None:

@@ -128,6 +128,10 @@ class HybridRendezvous(RendezvousPlanState):
         self._mdns.set_connected_clients(count)
         self._rendezvous.set_connected_clients(count)
 
+    def request_sample(self) -> None:
+        """Pull the rendezvous sample now (mDNS has no cadence to advance)."""
+        self._rendezvous.request_sample()
+
     def relay_dialer(self, target_cid: str) -> Any:
         """Delegate the data relay to the rendezvous source (mDNS has none)."""
         return self._rendezvous.relay_dialer(target_cid)

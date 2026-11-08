@@ -296,6 +296,13 @@ RENDEZVOUS_QUERY_BURST_INTERVAL = 1.0
 RENDEZVOUS_QUERY_BURST_COUNT = 8
 RENDEZVOUS_QUERY_ACTIVE_INTERVAL = 12.0
 
+# Bounded re-samples while a drawn peer is still not dialable (its endpoint
+# publication lands one lease tick after the first register, and the master is
+# in exactly that state right after admitting the peer's WebSocket). Each retry
+# costs one query from the 5/min per-(IP, bucket) budget, so a peer that never
+# publishes (block serving disabled) cannot spend it indefinitely.
+RENDEZVOUS_UNPUBLISHED_SAMPLE_RETRIES = 3
+
 # Data relay over rdv/1 (peers behind CGNAT). The forwarding chunk is fixed so a
 # session's memory is bounded; it is also the largest payload one multiplexed
 # substream frame carries. The node enforces the session idle timeout
