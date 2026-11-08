@@ -188,9 +188,25 @@ def _timeout_detail(what: str | None) -> str:
     return f"timed out waiting for {article} {what}"
 
 
+# A dial that never completes its handshake is a *connection* failure, not a
+# missing reply: the transport was never up, so no frame was sent. Keeping the
+# two phrases distinct is what lets an operator tell "the traffic does not
+# arrive" (firewall, NAT, wrong address) from "the node got the frame and stayed
+# silent" (invalid frame, rate limit, wrong version) without packet captures.
+_CONNECT_TIMEOUT_DETAIL = "timed out connecting"
+# aioquic raises a bare ``ConnectionError`` (empty text) when the peer never
+# answers the handshake or closes it mid-flight: name the meaning, not the class.
+_CONNECT_CLOSED_DETAIL = "connection closed before any reply"
+
+
 def _unreachable(host: str, port: int, exc: BaseException) -> RendezvousUnreachable:
     """Build the unreachable error; aioquic's ``ConnectionError`` has no text."""
-    detail = str(exc) or type(exc).__name__
+    if isinstance(exc, TimeoutError):
+        detail = _CONNECT_TIMEOUT_DETAIL
+    elif isinstance(exc, ConnectionError) and not str(exc):
+        detail = _CONNECT_CLOSED_DETAIL
+    else:
+        detail = str(exc) or type(exc).__name__
     return RendezvousUnreachable(
         f"rendezvous {format_authority(host, port)}: {detail}", detail=detail
     )
@@ -491,7 +507,7 @@ class RendezvousClient:
                 last_exc = exc
                 failed_port = port
                 continue
-        raise self._connection_failure(last_exc, failed_port, what=what)
+        raise self._connection_failure(last_exc, failed_port)
 
     async def _dial_auto(self, *, what: str) -> _Dial:
         """Dial with the memo-then-race policy of ``auto``."""
@@ -513,21 +529,25 @@ class RendezvousClient:
                 last_exc = exc
                 failed_port = port
                 continue
-        raise self._connection_failure(last_exc, failed_port, what=what)
+        raise self._connection_failure(last_exc, failed_port)
 
-    def _connection_failure(
-        self, exc: BaseException | None, port: int | None, *, what: str
-    ) -> BaseException:
-        """Map the last connection-phase failure to the public error shape."""
+    def _connection_failure(self, exc: BaseException | None, port: int | None) -> BaseException:
+        """Map the last connection-phase failure to the public error shape.
+
+        A timeout here is a **dial** timeout (the handshake never completed), so
+        it is reported as such instead of borrowing the reply-timeout wording: no
+        frame was ever sent, and the operator must look at reachability, not at
+        frame validity.
+        """
         if exc is None:  # defensive: ``candidates`` always holds ``self.port``
             return RendezvousUnreachable(
                 f"rendezvous {format_authority(self.host, self.port)}: no reachable endpoint"
             )
         if isinstance(exc, TimeoutError):
             port = port if port is not None else self.port
-            detail = _timeout_detail(what)
             return RendezvousUnreachable(
-                f"rendezvous {format_authority(self.host, port)}: {detail}", detail=detail
+                f"rendezvous {format_authority(self.host, port)}: {_CONNECT_TIMEOUT_DETAIL}",
+                detail=_CONNECT_TIMEOUT_DETAIL,
             )
         return exc
 

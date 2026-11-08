@@ -143,7 +143,7 @@ class TestFailFast:
 
 class TestUnreachableError:
     def test_textless_connection_error_yields_a_non_empty_message(self, monkeypatch):
-        """aioquic raises ``ConnectionError`` with no text; the message must still identify it."""
+        """aioquic raises ``ConnectionError`` with no text; the message must still say what happened."""
         client = RendezvousClient("rdv.example.net", 443)
 
         async def boom(self, payload, *, expect):
@@ -153,8 +153,8 @@ class TestUnreachableError:
         with pytest.raises(RendezvousUnreachable) as excinfo:
             client.query(build_query_frame(bucket="shared"))
         message = str(excinfo.value)
-        assert "rdv.example.net:443" in message
-        assert message.rstrip().endswith("ConnectionError")
+        assert message == ("rendezvous rdv.example.net:443: connection closed before any reply")
+        assert excinfo.value.detail == "connection closed before any reply"
 
 
 class TestReplyBudget:
@@ -435,6 +435,45 @@ class TestMultiPort:
         with pytest.raises(RendezvousUnreachable) as exc:
             client.query(build_query_frame(bucket="shared"))
         assert ":53:" in str(exc.value)
+
+    def test_handshake_timeout_is_not_reported_as_a_missing_reply(self, monkeypatch):
+        """A dial timeout names the connection, not the reply it never awaited.
+
+        "waiting for an ack" means the transport was up and the node stayed
+        silent; a handshake timeout means no frame was ever sent. Conflating the
+        two sends an operator looking for a frame/admission problem when the
+        traffic never arrives (firewall, NAT, wrong address).
+        """
+
+        def _connect(_host, _port, **_kwargs):
+            raise TimeoutError("handshake timed out")
+
+        monkeypatch.setattr("hsync_client.rdv_client.connect", _connect)
+        client = RendezvousClient("127.0.0.1", 443, policy=TrustPolicy.none, transport="quic")
+        with pytest.raises(RendezvousUnreachable) as exc:
+            client.register(
+                build_register_frame(cid=CID, bucket="shared", cert_fp="aa" * 32, version="1.0.0")
+            )
+        assert str(exc.value) == "rendezvous 127.0.0.1:443: timed out connecting"
+        assert exc.value.detail == "timed out connecting"
+        assert "waiting for" not in str(exc.value)
+
+    def test_a_silent_node_is_still_reported_as_a_missing_reply(self, monkeypatch):
+        """The reply-timeout wording is preserved once the handshake succeeds.
+
+        Together with the dial case this pins the two distinct diagnoses: a live
+        connection with no answer vs a connection that never came up.
+        """
+
+        def _connect(_host, _port, **_kwargs):
+            raise OSError("connection refused")
+
+        monkeypatch.setattr("hsync_client.rdv_client.connect", _connect)
+        client = RendezvousClient("127.0.0.1", 443, policy=TrustPolicy.none, transport="quic")
+        with pytest.raises(RendezvousUnreachable) as exc:
+            client.query(build_query_frame(bucket="shared"))
+        assert "connection refused" in str(exc.value)
+        assert "waiting for" not in str(exc.value)
 
 
 class TestQuicConfiguration:
