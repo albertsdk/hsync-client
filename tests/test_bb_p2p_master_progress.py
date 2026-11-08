@@ -12,18 +12,18 @@ clients over loopback mDNS) and asserts what a GUI would read.
 
 from __future__ import annotations
 
-import json
 import os
-import time
 from pathlib import Path
 
 import pytest
 
 from .p2p_helpers import (
+    _events,
     _p2p_start,
     _terminate,
     _wait_for_file,
     _wait_for_master,
+    _wait_until,
 )
 
 _P2P_ENABLED = os.environ.get("HSYNC_BB_P2P") == "1"
@@ -32,33 +32,6 @@ _P2P_REASON = (
 )
 
 pytestmark = pytest.mark.skipif(not _P2P_ENABLED, reason=_P2P_REASON)
-
-
-def _events(events_path: str) -> list[dict]:
-    """Parse the JSON-Lines event stream the master has written so far."""
-    path = Path(events_path)
-    if not path.exists():
-        return []
-    parsed: list[dict] = []
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            parsed.append(json.loads(line))
-        except ValueError:
-            continue
-    return parsed
-
-
-def _wait_until(predicate, *, timeout: float = 30.0) -> bool:
-    """Poll *predicate* until it is true or the timeout expires."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        time.sleep(0.3)
-    return predicate()
 
 
 class TestMasterProgressEvents:

@@ -100,6 +100,7 @@ from hsync_client.compression import (
 )
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNCKEEP_FILENAME, ActionLabel
+from hsync_client.events import UiEventName, emit_event
 from hsync_client.multipart import (
     _MULTIPART_BOUNDARY_RE,
     _CappedBytesWriter,
@@ -1565,6 +1566,16 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
             Path(full_path).mkdir(parents=True, exist_ok=True)
 
+            # The master runs no sync cycle (the periodic reconcile and
+            # ``ensure_hsynckeep_files`` are slave-only), so nothing else would
+            # ever create the empty-directory sentinel here. Without it
+            # ``empty_dir_states`` — which matches the sentinel identity held by
+            # the peers — reports this folder as ``to_upload`` on every device
+            # for good, and the folder row never settles.
+            from hsync_client.sync import ensure_sentinel
+
+            ensure_sentinel(full_path)
+
             # Apply optional permissions if provided. The directory-specific
             # setter keeps the owner rwx floor so a peer-supplied mode like
             # ``000`` can never lock the master out of its own storage.
@@ -1573,6 +1584,13 @@ class P2PEndpointMixin(_HTTPTransportBase):
                 from hsync_client.utils import set_permissions_on_dir
 
                 set_permissions_on_dir(full_path, permissions)
+
+            # This request path creates the directory directly (there is no
+            # event-driven apply on a master), so it is the only place that can
+            # tell the front-end the folder is now in place here. Emitted after
+            # the permissions step: a failure there must not report the
+            # folder as settled.
+            emit_event(UiEventName.dir_status, path=full_path, state="synced")
 
             self._send_json_response(HTTP_CREATED, {"info": "Directory created successfully"})
 

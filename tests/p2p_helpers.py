@@ -30,6 +30,7 @@ Isolation contract (every helper here honours it):
 """
 
 import contextlib
+import json
 import os
 import socket
 import subprocess
@@ -295,6 +296,40 @@ def _wait_for_file(path: str, timeout: float = 30.0) -> bool:
             return True
         time.sleep(0.3)
     return False
+
+
+def _events(events_path: str) -> list[dict]:
+    """Parse the JSON-Lines structured-event stream a peer wrote so far.
+
+    One dict per ``{"event": ..., ...}`` frame (the ``--events-json-fd``
+    channel): the same data the front-end consumes, so a test can assert what a
+    GUI would have received instead of scraping log lines. A partially written
+    last line (the peer is still running) is skipped, and a malformed line never
+    fails the caller.
+    """
+    path = Path(events_path)
+    if not path.exists():
+        return []
+    parsed: list[dict] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            parsed.append(json.loads(line))
+        except ValueError:
+            continue
+    return parsed
+
+
+def _wait_until(predicate, *, timeout: float = 30.0, interval: float = 0.3) -> bool:
+    """Poll *predicate* until it is true or the timeout expires."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(interval)
+    return predicate()
 
 
 def _device_id(proc: subprocess.Popen) -> str | None:

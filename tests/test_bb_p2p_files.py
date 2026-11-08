@@ -11,8 +11,10 @@ import time
 from pathlib import Path
 
 import pytest
+from hsync_common.constants import HSYNCKEEP_FILENAME
 
 from .p2p_helpers import (
+    _events,
     _p2p_start,
     _stderr_text,
     _terminate,
@@ -20,6 +22,8 @@ from .p2p_helpers import (
     _wait_for_file_gone,
     _wait_for_master,
     _wait_for_slave_events,
+    _wait_for_text_in_stderr,
+    _wait_until,
 )
 
 _P2P_ENABLED = os.environ.get("HSYNC_BB_P2P") == "1"
@@ -434,6 +438,69 @@ class TestP2PSymlink:
                 assert count_after == count_before, (
                     f"Symlink oscillation detected: {count_before} -> {count_after} "
                     "inbound applications without any local change"
+                )
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+
+class TestP2PEmptyDirectoryStatus:
+    """The empty-directory verdict must settle on both peers."""
+
+    def test_a_new_empty_directory_is_reported_synced_by_both_peers(
+        self, p2p_master_dir, p2p_slave_dir, p2p_bucket, tmp_path
+    ):
+        """A folder created on the slave ends up "synced" on the slave *and* the master.
+
+        Regression: the empty-directory verdict is matched on the ``.hsynckeep``
+        identity both sides hold, and neither the master's request path
+        (``POST /dirs``) nor the slave's own creation emitted one — the master
+        never even created the sentinel (it runs no sync cycle). The folder
+        therefore stayed "To sync" on the device that created it and "Local" on
+        the replica, for good.
+        """
+        master_events = str(tmp_path / "master-events.jsonl")
+        slave_events = str(tmp_path / "slave-events.jsonl")
+        master = _p2p_start(
+            p2p_master_dir, p2p_bucket, prefer_master=True, events_path=master_events
+        )
+        try:
+            _wait_for_master(master, p2p_slave_dir, p2p_bucket)
+            slave = _p2p_start(
+                p2p_slave_dir, p2p_bucket, never_master=True, events_path=slave_events
+            )
+            try:
+                assert _wait_for_text_in_stderr(slave, "Initial sync complete", timeout=60)
+                assert _wait_for_slave_events(slave), "slave is not listening for events yet"
+
+                (Path(p2p_slave_dir) / "newdir").mkdir()
+                assert _wait_for_file(str(Path(p2p_master_dir) / "newdir"), timeout=30), (
+                    "the empty directory never reached the master"
+                )
+                # The sentinel is what makes the folder survive and what the
+                # verdicts match: both sides must hold one.
+                for peer_dir in (p2p_master_dir, p2p_slave_dir):
+                    assert _wait_for_file(
+                        str(Path(peer_dir) / "newdir" / HSYNCKEEP_FILENAME), timeout=30
+                    ), f"no empty-dir sentinel on {peer_dir}"
+
+                def _settled(events_path: str) -> bool:
+                    states = [
+                        event["state"]
+                        for event in _events(events_path)
+                        if event.get("event") == "dir_status"
+                        and Path(str(event.get("path", ""))).name == "newdir"
+                    ]
+                    return bool(states) and states[-1] == "synced" and "synced" in states
+
+                assert _wait_until(lambda: _settled(slave_events), timeout=30), (
+                    f"the creating peer never reported the folder as synced: "
+                    f"{_events(slave_events)[-5:]}"
+                )
+                assert _wait_until(lambda: _settled(master_events), timeout=30), (
+                    f"the replica never reported the folder as synced: "
+                    f"{_events(master_events)[-5:]}"
                 )
             finally:
                 _terminate(slave)

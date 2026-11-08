@@ -147,7 +147,16 @@ class TestHandleLanEvent:
         info_lines = [m for m in captured if "INFO" in m and "REMOTE" in m]
         assert info_lines == [], captured
         assert any("[REMOTE CREATE]" in m and "Already converged" in m for m in captured)
-        assert mock_emit is not None and mock_emit.call_count == 0
+        assert mock_emit is not None
+        # No *transfer* event (that would fake an operation that never happened),
+        # but the directory verdict is reported: the peer announced a directory
+        # this node already holds, so the folder row can settle.
+        from hsync_client.events import UiEventName
+
+        emitted = [(call.args[0], call.kwargs) for call in mock_emit.call_args_list]
+        assert emitted == [(UiEventName.dir_status, {"path": str(echo_dir), "state": "synced"})], (
+            emitted
+        )
 
     @pytest.mark.asyncio
     async def test_handle_modified_file_event(self, tmp_path):

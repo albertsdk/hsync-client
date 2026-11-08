@@ -104,6 +104,42 @@ class TestLANRequestHandlerCreateDir:
 
         assert _inbound_origin == {}
 
+    def test_create_empty_dir_materialises_the_sentinel_and_reports_synced(self, server, tmp_path):
+        """The master runs no sync cycle, so it must create the sentinel itself.
+
+        The empty-directory verdict every peer computes matches the sentinel
+        identity (``empty_dir_states``): without it the folder is reported as
+        pending on the device that created it, for good. This request path is
+        also the only apply a master performs, so it is the only place that can
+        report the folder as settled there.
+        """
+        import requests
+
+        from hsync_client import p2p_server as server_module
+        from hsync_client.constants import HSYNCKEEP_FILENAME
+        from hsync_client.events import UiEventName
+
+        emitted: list[tuple[object, dict]] = []
+        srv, port = server
+
+        with (
+            patch("hsync_client.p2p_server.CONFIG", unauth_write_config(str(tmp_path))),
+            patch.object(
+                server_module,
+                "emit_event",
+                lambda name, **kwargs: emitted.append((name, kwargs)),
+            ),
+        ):
+            url = f"http://localhost:{port}/api/v1/buckets/test/dirs"
+            response = requests.post(url, params={"path": "empty", "cid": VALID_CID}, timeout=5)
+            assert response.status_code == 201
+
+        created = tmp_path / "empty"
+        assert (created / HSYNCKEEP_FILENAME).exists(), "the empty-dir sentinel was not created"
+        assert emitted == [
+            (UiEventName.dir_status, {"path": str(created), "state": "synced"}),
+        ], emitted
+
 
 class TestLANRequestHandlerDELETE:
     """Tests for DELETE endpoint."""

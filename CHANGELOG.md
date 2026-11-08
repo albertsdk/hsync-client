@@ -68,6 +68,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A newly created empty folder keeps its final state on both devices: the p2p
+  master now creates the empty-directory sentinel (it runs no sync cycle, so
+  nothing else did) and both creation paths report the folder's verdict, so it no
+  longer stays "to sync" on the device that created it or "local" on the replica.
 - A rendezvous `retry_after` (rate limit or node capacity) is now honoured as a
   wake-up time: the lease loop slept the full refresh interval, so the announced
   retry never happened and a peer stayed undiscovered for up to 30 s longer than

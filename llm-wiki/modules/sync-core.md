@@ -120,10 +120,21 @@ a front-end renders comes from it, never from the text log.
 An empty directory is synchronised as its internal `.hsynckeep` sentinel, which
 stays out of the plan (never user content). The directory itself is user
 content, so `hsync_client/empty_dirs.py::empty_dir_states` derives its own verdict from the
-sentinel identity the peer’s listing holds and the preview emits it through the
+sentinel identity the peer’s listing holds and it is emitted through the
 `UiEventName.dir_status` event (`state` `synced` / `to_upload` / `to_download`,
 `path` the directory): it is what settles the folder row of a directory that is
-in sync on every device, which no transfer ever names.
+in sync on every device, which no transfer ever names. **Both roles must keep a
+sentinel and must report the verdict when they materialise a directory**: a p2p
+master runs no sync cycle, so `hsync_client/p2p_server.py::P2PEndpointMixin._handle_create_dir`
+creates it on the serving side, and the slave's request path
+(`hsync_client/p2p_websocket.py::P2PSlaveFileEventHandler._create_dir_on_master`)
+does the same locally and announces it in the inventory immediately — the peers'
+verdict matches that identity, and the watcher never uploads the sentinel, so
+without the announcement it would only reach the master at the next full sync
+cycle (minutes later), leaving the folder "to upload" in the meantime. The
+converged no-op branch of the inbound apply
+(`hsync_client/event_dispatch.py::_apply_add_or_modify`) reports it too: the peer
+announced a directory this node already holds.
 
 ### Warning channel (`hsync_client/events.py::emit_warning`)
 

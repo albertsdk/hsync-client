@@ -426,6 +426,13 @@ async def _apply_add_or_modify(
                 if ctx.dir_dedup is not None and path_key:
                     ctx.dir_dedup.record(path_key, permissions)
                 log.debug(f'{_tag(label)} Already converged: "{path_key}"')
+                # The peer announced a directory this node already holds, which is
+                # proof the two sides agree on it: report the verdict so a folder
+                # row left at the scan default ("Local") settles. ``update_dir``
+                # cannot emit it (it only reports the mkdir it performs), so the
+                # converged branch is the only apply path that can.
+                if abs_local:
+                    emit_event(UiEventName.dir_status, path=abs_local, state="synced")
                 return
             # Suppress the duplicate added/modified burst a single mkdir
             # produces (the master's watcher emits several IN_ATTRIB-driven

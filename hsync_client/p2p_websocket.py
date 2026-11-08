@@ -1211,6 +1211,29 @@ class P2PMasterFileEventHandler(BaseFileEventHandler):
         super().__init__(watcher=watcher)
         self._ws_server = ws_server
 
+    def on_created(self, event) -> None:
+        """Broadcast a local creation, keeping the empty-dir sentinel in place.
+
+        A master runs no sync cycle, so it is the only place that can create the
+        sentinel for a directory created on the serving share. Without it the
+        empty-directory verdict every peer computes (``empty_dir_states`` matches
+        the sentinel identity) can never report the folder as synced, and the
+        folder row stays pending on the device that created it.
+        """
+        src_path = ensure_str_path(event.src_path)
+        if (
+            event.is_directory
+            and not is_hidden_dir(src_path)
+            and Path(src_path).is_dir()
+            and peek_inbound_origin(src_path) is None
+        ):
+            # Not for a directory a peer asked us to create: ``_handle_create_dir``
+            # already created its sentinel, and its create event is the echo.
+            from hsync_client.sync import ensure_sentinel
+
+            ensure_sentinel(src_path, label=ActionLabel.LOCAL_KEEP)
+        super().on_created(event)
+
     def _origin_cid(self, src_path: str | None = None, dst_path: str | None = None) -> str | None:
         """Return the originator CID for a filesystem event, if known.
 
@@ -2383,6 +2406,17 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
             response = self._call_master(http_post, REST_DIRS_SUFFIX, params)
             if response.status_code not in (200, 201, 204):
                 log.warning(f"Create dir request failed: {response.status_code}")
+                return
+            # The master confirmed it holds the directory: materialise the local
+            # empty-dir sentinel (so the peers' verdict can match it) and settle
+            # the folder row here. This request path emits no apply event, so
+            # without this the row stays at the scan default ("Local") or at the
+            # preview's pending verdict ("To sync") for good.
+            from hsync_client.sync import ensure_sentinel
+
+            ensure_sentinel(dir_path, label=ActionLabel.LOCAL_KEEP)
+            self._publish_sentinel(dir_path)
+            emit_event(UiEventName.dir_status, path=dir_path, state="synced")
         except Exception as e:
             log.error(f"Failed to create dir on master: {e}")
 
@@ -2811,15 +2845,27 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
             self._start_upload(file_obj, from_closed=from_closed)
 
     def _ensure_sentinel(self, dir_path: str) -> None:
-        """Create a .hsynckeep sentinel in *dir_path* if it is empty.
+        """Create a ``.hsynckeep`` sentinel in *dir_path* if it is empty.
 
-        The sentinel guarantees that the directory is picked up by the
-        sync engine and propagated to the master.  The watchdog will
-        detect the new file and trigger an upload automatically.
+        The sentinel is the only record of an empty directory: it is what the
+        peers' verdict matches and what keeps the directory from being pruned.
+        The watcher skips uploading it, so it must be announced in the inventory
+        here — until the next full sync cycle the peers would otherwise have no
+        evidence the directory exists and keep reporting it as pending.
         """
         from hsync_client.sync import ensure_sentinel
 
         ensure_sentinel(dir_path, label=ActionLabel.LOCAL_KEEP)
+        self._publish_sentinel(dir_path)
+
+    def _publish_sentinel(self, dir_path: str) -> None:
+        """Put *dir_path*'s sentinel in the inventory snapshot right away."""
+        sentinel = Path(dir_path) / HSYNCKEEP_FILENAME
+        if not sentinel.exists():
+            return
+        file_obj = File.get(str(sentinel))
+        if file_obj:
+            self._inventory_observer.upsert(file_obj)
 
     def _reset_path_tracking(self, path: str) -> None:
         """Cancel a deferred create-upload and drop cached mode/mtime for *path*.

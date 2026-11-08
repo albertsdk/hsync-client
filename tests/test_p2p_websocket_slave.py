@@ -125,6 +125,66 @@ class TestSlaveFileEventHandler:
             with pytest.raises(ValueError):
                 handler._rel_in_bucket("/etc/passwd")
 
+    def test_create_dir_on_master_reports_the_folder_as_synced(self, handler, tmp_path):
+        """A user-created folder settles once the master confirms it holds it.
+
+        This request path is the only signal for a directory the user just made
+        (no apply event fires for it), and the local empty-dir sentinel is what
+        the peers' verdict matches: both must be in place, or the row stays at
+        the scan default ("Local") or the preview's pending verdict ("To sync").
+        """
+        from unittest.mock import MagicMock
+
+        from hsync_client.constants import HSYNCKEEP_FILENAME
+        from hsync_client.events import UiEventName
+
+        created = tmp_path / "newdir"
+        created.mkdir()
+        emitted: list[tuple[object, dict]] = []
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "REMOTE_BUCKET": "test",
+            "SYNC_DIRECTION": "bidirectional",
+        }
+        response = MagicMock(status_code=201)
+
+        with (
+            patch("hsync_client.p2p_websocket.CONFIG", config),
+            patch("hsync_client.utils.http_post", return_value=response),
+            patch(
+                "hsync_client.p2p_websocket.emit_event",
+                lambda name, **kwargs: emitted.append((name, kwargs)),
+            ),
+        ):
+            handler._create_dir_on_master(str(created))
+
+        assert (created / HSYNCKEEP_FILENAME).exists()
+        assert emitted == [
+            (UiEventName.dir_status, {"path": str(created), "state": "synced"}),
+        ], emitted
+
+    def test_create_dir_on_master_failure_reports_nothing(self, handler, tmp_path):
+        """A refused/failed request must not claim the folder is in sync."""
+        from unittest.mock import MagicMock
+
+        created = tmp_path / "newdir"
+        created.mkdir()
+        emitted: list[tuple[object, dict]] = []
+        config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
+        response = MagicMock(status_code=500)
+
+        with (
+            patch("hsync_client.p2p_websocket.CONFIG", config),
+            patch("hsync_client.utils.http_post", return_value=response),
+            patch(
+                "hsync_client.p2p_websocket.emit_event",
+                lambda name, **kwargs: emitted.append((name, kwargs)),
+            ),
+        ):
+            handler._create_dir_on_master(str(created))
+
+        assert emitted == []
+
     def test_mark_receiving(self, handler):
         """Test marking a file as receiving."""
         handler.mark_receiving("/path/to/file.txt")
