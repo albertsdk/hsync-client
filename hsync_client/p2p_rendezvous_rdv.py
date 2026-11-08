@@ -1150,11 +1150,19 @@ class RdvRendezvous(RendezvousPlanState):
         return wired
 
     def _send_leave(self) -> None:
+        """Tell the node we are leaving; strictly best-effort.
+
+        This runs from ``stop()``, i.e. during shutdown, where nothing may raise:
+        a ``RendezvousError`` is the expected failure (unreachable node), but an
+        unexpected one — notably the event-loop errors a stop signal produces
+        while the client's own loop is being torn down — must not escape either,
+        because it would replace a clean stop with a crash traceback.
+        """
         try:
             self._client.leave(
                 build_leave_frame(cid=self._cid, bucket=self._bucket, bucket_token=self._token)
             )
-        except RendezvousError as exc:
+        except Exception as exc:  # noqa: BLE001 - shutdown must never raise
             log.debug(f"Rendezvous leave failed (best-effort): {exc}")
 
 

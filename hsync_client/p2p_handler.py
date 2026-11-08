@@ -32,6 +32,7 @@ from hsync_common.protocol.tls_trust import (
 from hsync_common.text import safe_json_for_log
 from loguru import logger as module_log
 
+from hsync_client.asyncio_utils import is_event_loop_teardown_error
 from hsync_client.autotune import measure_rtt_tuning
 from hsync_client.config import CONFIG, set_config
 from hsync_client.constants import (
@@ -881,6 +882,16 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
                     break
 
     except KeyboardInterrupt:
+        log.info("Shutting down P2P mode...")
+    except RuntimeError as exc:
+        # An interrupted shutdown: the stop signal (SIGTERM -> KeyboardInterrupt)
+        # lands while asyncio is tearing the loop down, which asyncio reports as
+        # "This event loop is already running" / "Cannot close a running event
+        # loop". That is the tail of a clean stop, not a failure: log the stop
+        # and let the ``finally`` release the servers. Any other RuntimeError is
+        # a real defect and keeps propagating.
+        if not is_event_loop_teardown_error(exc):
+            raise
         log.info("Shutting down P2P mode...")
     finally:
         if master_channel is not None:

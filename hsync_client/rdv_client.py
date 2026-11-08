@@ -25,7 +25,7 @@ import json
 import ssl
 import sys
 import time
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
@@ -66,6 +66,7 @@ from hsync_common.text import compact_json_bytes
 from hsync_common.tls_context import unverified_ssl_context
 from loguru import logger as log
 
+from hsync_client.asyncio_utils import run_on_fresh_loop
 from hsync_client.constants import RDV_REPLY_TIMEOUT_S, RELAY_IDLE_TIMEOUT_S
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.rendezvous_trust import RendezvousTrustStore, default_rendezvous_trust_store
@@ -199,6 +200,23 @@ _CONNECT_TIMEOUT_DETAIL = "timed out connecting"
 _CONNECT_CLOSED_DETAIL = "connection closed before any reply"
 
 
+_T = TypeVar("_T")
+
+
+def _run_on_fresh_loop[T](coro: Coroutine[Any, Any, T]) -> T:
+    """Run *coro* on a private loop, translating the loop-state refusal.
+
+    The shared helper refuses to start inside a running loop (a stop signal can
+    interrupt the client's own loop); that refusal is reported as a
+    :class:`RendezvousError`, because every caller here is a best-effort
+    exchange that must not crash the shutdown with a ``RuntimeError``.
+    """
+    try:
+        return run_on_fresh_loop(coro)
+    except RuntimeError as exc:
+        raise RendezvousError(str(exc)) from exc
+
+
 def _unreachable(host: str, port: int, exc: BaseException) -> RendezvousUnreachable:
     """Build the unreachable error; aioquic's ``ConnectionError`` has no text."""
     if isinstance(exc, TimeoutError):
@@ -210,9 +228,6 @@ def _unreachable(host: str, port: int, exc: BaseException) -> RendezvousUnreacha
     return RendezvousUnreachable(
         f"rendezvous {format_authority(host, port)}: {detail}", detail=detail
     )
-
-
-_T = TypeVar("_T")
 
 
 @dataclass(slots=True)
@@ -454,7 +469,7 @@ class RendezvousClient:
         of band before pinning it.
         """
         try:
-            return asyncio.run(self._fetch_fingerprint_async())
+            return _run_on_fresh_loop(self._fetch_fingerprint_async())
         except RendezvousError:
             raise
         except OSError as exc:
@@ -754,7 +769,7 @@ class RendezvousClient:
             )
         payload = compact_json_bytes(validated)
         try:
-            raw = asyncio.run(self._exchange_async(payload, expect=expect))
+            raw = _run_on_fresh_loop(self._exchange_async(payload, expect=expect))
         except RendezvousError:
             raise
         except OSError as exc:

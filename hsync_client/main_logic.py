@@ -37,6 +37,7 @@ from hsync_common.protocol.tls_trust import (
 )
 from hsync_common.runtime import detect_container, is_tty_interactive, runtime_summary
 
+from hsync_client.asyncio_utils import is_event_loop_teardown_error
 from hsync_client.config import (
     CONFIG,
     HsyncConfig,
@@ -1572,6 +1573,13 @@ def run_sync(options: RunOptions) -> None:
             sys.exit(run_p2p_mode(config, log))
 
         _run_remote_mode(options, config, log, effective_server_url)
+    except RuntimeError as exc:
+        # Same interrupted-shutdown tail as in p2p mode: a stop signal during the
+        # loop teardown is a clean exit, not a failure. Leaving it unhandled would
+        # print a traceback and give the desktop a crash instead of a stop.
+        if not is_event_loop_teardown_error(exc):
+            raise
+        log.info("Shutting down...")
     finally:
         # The async sinks must be drained before the process leaves: this
         # finally runs for every exit inside the run (including the sys.exit

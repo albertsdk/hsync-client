@@ -805,7 +805,26 @@ and the lane is a candidate-only advertisement; a peer that dials it gets a
 refusal from the unified listener and retries.
 
 `leave` has **no response frame** (spec): the client writes it and closes the
-stream without waiting for a reply. A black-box integration test
+stream without waiting for a reply.
+
+**Shutdown is never allowed to fail.** Two guards keep a stop clean
+(`hsync_client/asyncio_utils.py`):
+
+- `run_on_fresh_loop` drives a synchronous exchange on a private loop; when the
+  client's own loop is already running (a stop signal interrupted it) it closes
+  the coroutine and raises the typed error instead of leaking it as "never
+  awaited" and crashing with an unhandled `RuntimeError`. `RendezvousClient`
+  translates that into a `RendezvousError`.
+- `is_event_loop_teardown_error` recognises asyncio's loop-state `RuntimeError`
+  messages ("This event loop is already running", "Cannot close a running event
+  loop", "asyncio.run() cannot be called from a running event loop"):
+  `run_p2p_mode` and `run_sync` treat them as the tail of an interrupted stop, so
+  the process exits **0** instead of reporting a crash.
+
+`RendezvousPlan.stop()` sends its best-effort `leave` under a catch-all: a
+departure frame is a courtesy, and nothing it does may replace a clean stop with
+a traceback (this is what made "Cancel" on a desktop preview show a PyInstaller
+failure). A black-box integration test
 (`tests/test_bb_p2p_rendezvous_client.py`, gated by `HSYNC_BB_P2P=1`, skipped when
 the sibling rendezvous is not built) spawns the real `hsync-rendezvous` on loopback
 and drives register → ack/STUN-echo → query relay → refresh → leave over the

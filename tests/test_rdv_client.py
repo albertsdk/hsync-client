@@ -287,6 +287,61 @@ class TestLeave:
         assert "read" not in calls
 
 
+class TestFreshLoopGuard:
+    """A synchronous exchange must never crash a shutdown or leak a coroutine.
+
+    The p2p teardown calls ``leave`` from ``stop()``, which can run while the
+    client's own event loop is still active (a stop signal interrupts it). There
+    ``asyncio.run`` raises before awaiting, which used to leak the coroutine and
+    replace a clean stop with an ``unhandled exception`` traceback.
+    """
+
+    def test_an_exchange_inside_a_running_loop_raises_a_typed_error(self):
+        import warnings
+
+        from hsync_client.rdv_client import RendezvousError
+
+        client = RendezvousClient("127.0.0.1", 4433, policy=TrustPolicy.none, transport="quic")
+
+        async def scenario() -> None:
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                with pytest.raises(RendezvousError):
+                    client.leave(build_leave_frame(cid=CID, bucket="shared"))
+            # The coroutine was closed, never left to the garbage collector.
+            assert not [item for item in caught if "never awaited" in str(item.message)], [
+                str(item.message) for item in caught
+            ]
+
+        asyncio.run(scenario())
+
+    def test_the_shared_helper_closes_the_coroutine(self):
+        import warnings
+
+        from hsync_client.asyncio_utils import run_on_fresh_loop
+
+        async def answer() -> int:
+            return 1
+
+        async def scenario() -> None:
+            coro = answer()
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                with pytest.raises(RuntimeError):
+                    run_on_fresh_loop(coro)
+            assert not [i for i in caught if "never awaited" in str(i.message)]
+
+        asyncio.run(scenario())
+
+    def test_a_real_loop_error_is_not_mistaken_for_a_teardown(self):
+        from hsync_client.asyncio_utils import is_event_loop_teardown_error
+
+        assert is_event_loop_teardown_error(RuntimeError("This event loop is already running"))
+        assert is_event_loop_teardown_error(RuntimeError("Cannot close a running event loop"))
+        assert not is_event_loop_teardown_error(RuntimeError("something else"))
+        assert not is_event_loop_teardown_error(ValueError("This event loop is already running"))
+
+
 class TestMultiPort:
     def test_candidate_ports_primary_first_deduped(self):
         client = RendezvousClient("127.0.0.1", 443, ports=(53, 443, 80), policy=TrustPolicy.none)
