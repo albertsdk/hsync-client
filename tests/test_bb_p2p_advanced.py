@@ -398,11 +398,11 @@ class TestMasterFailover:
                     # Poll for the post-crash self-election (the liveness window
                     # is HSYNC_PEER_TIMEOUT=5s plus rendezvous, so allow ample
                     # time). The winner is whichever survivor self-elects.
-                    deadline = time.time() + 90
+                    deadline = time.monotonic() + 90
                     while True:
                         a_count = _stderr_text(a).count(elected) - a_before
                         b_count = _stderr_text(b).count(elected) - b_before
-                        if a_count + b_count >= 1 or time.time() >= deadline:
+                        if a_count + b_count >= 1 or time.monotonic() >= deadline:
                             break
                         time.sleep(0.5)
                     assert a_count + b_count >= 1, (

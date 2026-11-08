@@ -321,9 +321,9 @@ class TestP2PConflict:
                         "Restarted slave did not complete its initial sync"
                     )
 
-                    deadline = time.time() + 30
+                    deadline = time.monotonic() + 30
                     conflict_path = None
-                    while time.time() < deadline:
+                    while time.monotonic() < deadline:
                         candidates = [
                             p
                             for p in Path(p2p_slave_dir).iterdir()
@@ -359,8 +359,8 @@ class TestP2PConflict:
                     (Path(p2p_master_dir) / "shared.txt").write_bytes(follow_up)
                     os.utime(str(Path(p2p_master_dir) / "shared.txt"), (shared_ts, shared_ts))
 
-                    deadline = time.time() + 30
-                    while time.time() < deadline:
+                    deadline = time.monotonic() + 30
+                    while time.monotonic() < deadline:
                         if (Path(p2p_slave_dir) / "shared.txt").read_bytes() == follow_up:
                             break
                         time.sleep(0.5)
@@ -434,8 +434,8 @@ class TestP2PConflict:
                         "Restarted slave did not complete its initial sync"
                     )
 
-                    deadline = time.time() + 30
-                    while time.time() < deadline:
+                    deadline = time.monotonic() + 30
+                    while time.monotonic() < deadline:
                         if (Path(p2p_master_dir) / "shared.txt").read_bytes() == slave_bytes:
                             break
                         time.sleep(0.5)
@@ -444,9 +444,9 @@ class TestP2PConflict:
                         f"on the master.\n--- master log ---\n{_stderr_text(master)}"
                     )
 
-                    deadline = time.time() + 30
+                    deadline = time.monotonic() + 30
                     conflict_path = None
-                    while time.time() < deadline:
+                    while time.monotonic() < deadline:
                         candidates = [
                             p
                             for p in Path(p2p_master_dir).iterdir()

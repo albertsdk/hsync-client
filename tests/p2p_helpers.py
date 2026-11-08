@@ -23,6 +23,10 @@ Isolation contract (every helper here honours it):
 * **Environment** — subprocess envs are scrubbed of every pre-existing
   ``HSYNC_*`` variable before test overrides are applied, so the developer's
   shell configuration can never leak into a run.
+* **Timeouts** — every wait below measures its deadline with
+  ``time.monotonic()``. A wall clock is stepped by a suspend/resume cycle or an
+  NTP correction, which would collapse a pending timeout to zero (spurious
+  failure) or push it hours away (hang).
 """
 
 import contextlib
@@ -285,8 +289,8 @@ def _stderr_text(proc: subprocess.Popen) -> str:
 
 def _wait_for_file(path: str, timeout: float = 30.0) -> bool:
     """Poll until *path* exists, or return False on timeout."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         if Path(path).exists():
             return True
         time.sleep(0.3)
@@ -301,8 +305,8 @@ def _wait_for_text_in_stderr(proc: subprocess.Popen, text: str, timeout: float =
     lines drained and matched, instead of being reported as never having
     emitted them.
     """
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         if text in _stderr_text(proc):
             return True
         if proc.poll() is not None:
@@ -385,8 +389,8 @@ def assert_realtime_watcher(proc: subprocess.Popen, role: str) -> None:
 
 def _wait_for_file_gone(path: str, timeout: float = 30.0) -> bool:
     """Poll until *path* no longer exists, or return False on timeout."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         if not Path(path).exists():
             return True
         time.sleep(0.3)
@@ -410,8 +414,8 @@ def _wait_for_p2p_server_ready(master: subprocess.Popen, port: int, timeout: flo
 
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         if master.poll() is not None:
             return False
         try:
@@ -454,8 +458,8 @@ def _wait_for_client_ready(
     Returns ``True`` when the client is confirmed ready, ``False`` on
     timeout or if the subprocess exits prematurely.
     """
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         if proc.poll() is not None:
             return False
         try:

@@ -22,6 +22,7 @@ from .p2p_helpers import (
     _terminate,
     _wait_for_file,
     _wait_for_master,
+    _wait_for_slave_events,
     _wait_for_text_in_stderr,
 )
 
@@ -69,6 +70,11 @@ class TestBlackBoxCorrectedMtimeLan:
                 assert _wait_for_text_in_stderr(slave, "Initial sync complete", timeout=30), (
                     "slave never finished its initial sync"
                 )
+                # The master must have the slave subscribed before the peers are
+                # mutated: a change made between the slave's initial-sync listing
+                # and its event subscription is in the harness blind spot
+                # (see _wait_for_slave_events).
+                assert _wait_for_slave_events(slave), "slave is not listening for events yet"
 
                 # When both peers edit the file with different corrected mtimes
                 newer = b"newer edit (slave side)\n"
@@ -81,8 +87,8 @@ class TestBlackBoxCorrectedMtimeLan:
                 # Then the newer edit converges on every peer…
                 slave_path = Path(p2p_slave_dir) / name
                 master_path = Path(p2p_master_dir) / name
-                deadline = time.time() + 45
-                while time.time() < deadline:
+                deadline = time.monotonic() + 45
+                while time.monotonic() < deadline:
                     if (
                         slave_path.exists()
                         and master_path.exists()
@@ -125,6 +131,10 @@ class TestBlackBoxCorrectedMtimeLan:
                 assert _wait_for_text_in_stderr(slave, "Initial sync complete", timeout=30), (
                     "slave never finished its initial sync"
                 )
+                # Write only once the slave is subscribed (see
+                # _wait_for_slave_events): an event broadcast during the
+                # handshake is dropped, not queued.
+                assert _wait_for_slave_events(slave), "slave is not listening for events yet"
 
                 # When a file is written on the master
                 content = b"still synchronises without NTP\n"

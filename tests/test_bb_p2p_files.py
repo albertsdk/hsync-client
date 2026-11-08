@@ -463,8 +463,8 @@ class TestP2PFileModification:
                 time.sleep(3)
 
                 # Then the update reaches the slave within the watch window
-                deadline = time.time() + 30
-                while time.time() < deadline:
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline:
                     if (Path(p2p_slave_dir) / "mod.txt").read_bytes() == b"v2-updated\n":
                         break
                     time.sleep(0.5)

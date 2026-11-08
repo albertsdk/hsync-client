@@ -424,8 +424,8 @@ class TestP2PInstanceLock:
         first = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             held = False
-            deadline = time.time() + 5
-            while time.time() < deadline:
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
                 if first.poll() is not None:
                     break
                 held = True

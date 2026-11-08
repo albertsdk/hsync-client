@@ -664,9 +664,9 @@ def live_server(tmp_path_factory):
     LIVE_SERVER_BUCKETS_DIRS[base_url] = buckets_dir
 
     try:
-        deadline = time.time() + 30
+        deadline = time.monotonic() + 30
         last_exc = None
-        while time.time() < deadline:
+        while time.monotonic() < deadline:
             if proc.poll() is not None:
                 raise RuntimeError(
                     f"hsync-server subprocess exited early with code {proc.returncode}"
@@ -825,9 +825,9 @@ def _wait_for_server_ready_https(base_url: str, proc, timeout: float = 30.0) -> 
 
     warnings.simplefilter("ignore", InsecureRequestWarning)
 
-    deadline = time.time() + timeout
+    deadline = time.monotonic() + timeout
     last_exc = None
-    while time.time() < deadline:
+    while time.monotonic() < deadline:
         if proc.poll() is not None:
             raise RuntimeError(f"hsync-server subprocess exited early with code {proc.returncode}")
         try:
@@ -981,8 +981,8 @@ def _wait_for(
     """
     import time
 
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         try:
             if predicate():
                 return True

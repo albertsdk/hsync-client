@@ -53,8 +53,8 @@ def _events(events_path: str) -> list[dict]:
 
 def _wait_until(predicate, *, timeout: float = 30.0) -> bool:
     """Poll *predicate* until it is true or the timeout expires."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         if predicate():
             return True
         time.sleep(0.3)

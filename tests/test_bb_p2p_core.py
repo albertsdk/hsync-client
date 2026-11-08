@@ -247,6 +247,8 @@ class TestP2PResilience:
             slave1 = _p2p_start(p2p_slave_dir, p2p_bucket, never_master=True)
             try:
                 assert _wait_for_text_in_stderr(slave1, "Initial sync complete", timeout=30)
+                # Subscribe before mutating the master (see _wait_for_slave_events).
+                assert _wait_for_slave_events(slave1), "slave1 is not listening for events yet"
                 (Path(p2p_master_dir) / "x.jpg").write_bytes(b"rename-me\n")
                 assert _wait_for_file(str(Path(p2p_slave_dir) / "x.jpg"), timeout=30), (
                     "The file did not sync before the slave went offline"

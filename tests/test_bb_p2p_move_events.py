@@ -55,8 +55,8 @@ def _deposit(master_dir: Path, name: str, rel: str, content: bytes) -> None:
 
 
 def _wait_for_file_removed(path: str, timeout: float) -> bool:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         if not Path(path).exists():
             return True
         time.sleep(0.2)
