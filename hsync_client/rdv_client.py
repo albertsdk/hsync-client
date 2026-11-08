@@ -66,7 +66,7 @@ from hsync_common.text import compact_json_bytes
 from hsync_common.tls_context import unverified_ssl_context
 from loguru import logger as log
 
-from hsync_client.constants import RELAY_IDLE_TIMEOUT_S
+from hsync_client.constants import RDV_REPLY_TIMEOUT_S, RELAY_IDLE_TIMEOUT_S
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.rendezvous_trust import RendezvousTrustStore, default_rendezvous_trust_store
 from hsync_client.trust_messages import known_hosts_added_message, mismatch_guidance
@@ -114,7 +114,16 @@ class RendezvousError(Exception):
 
 
 class RendezvousUnreachable(RendezvousError):
-    """The rendezvous could not be reached (DNS, timeout, TLS, connection)."""
+    """The rendezvous could not be reached (DNS, timeout, TLS, connection).
+
+    ``detail`` is the reason *without* the ``rendezvous host:port:`` prefix, so a
+    caller that already names the authority (the lease loop) does not print it
+    twice.
+    """
+
+    def __init__(self, message: str, *, detail: str | None = None) -> None:
+        super().__init__(message)
+        self.detail = detail or message
 
 
 class RendezvousProtocolError(RendezvousError):
@@ -171,10 +180,20 @@ class RendezvousNotTrusted(RendezvousError):
         self.non_interactive = non_interactive
 
 
+def _timeout_detail(what: str | None) -> str:
+    """The reason for an exchange that waited past its reply budget."""
+    if not what:
+        return "timed out waiting for a reply"
+    article = "an" if what[0].lower() in "aeiou" else "a"
+    return f"timed out waiting for {article} {what}"
+
+
 def _unreachable(host: str, port: int, exc: BaseException) -> RendezvousUnreachable:
     """Build the unreachable error; aioquic's ``ConnectionError`` has no text."""
     detail = str(exc) or type(exc).__name__
-    return RendezvousUnreachable(f"rendezvous {format_authority(host, port)}: {detail}")
+    return RendezvousUnreachable(
+        f"rendezvous {format_authority(host, port)}: {detail}", detail=detail
+    )
 
 
 _T = TypeVar("_T")
@@ -245,7 +264,10 @@ class RendezvousClient:
     fingerprints: tuple[str, ...] = ()
     policy: TrustPolicy = TrustPolicy.ask
     prompt: TrustPrompt | None = None
-    timeout: float = 10.0
+    # Reply budget for one exchange (see ``RDV_REPLY_TIMEOUT_S``): long enough
+    # for the transport's own loss recovery, short enough to notice a silent
+    # node. The dial phase has its own bound.
+    timeout: float = RDV_REPLY_TIMEOUT_S
     idle_timeout: float = DEFAULT_QUIC_IDLE_TIMEOUT
     # Ordered additional UDP ports to try for the SAME node (multi-port dial
     # fallback): a client egress firewall may block one UDP port but allow
@@ -503,8 +525,9 @@ class RendezvousClient:
             )
         if isinstance(exc, TimeoutError):
             port = port if port is not None else self.port
+            detail = _timeout_detail(what)
             return RendezvousUnreachable(
-                f"rendezvous {format_authority(self.host, port)}: timed out waiting for a {what}"
+                f"rendezvous {format_authority(self.host, port)}: {detail}", detail=detail
             )
         return exc
 
@@ -578,9 +601,9 @@ class RendezvousClient:
             self.verify_peer_der(dial.peer_cert_der)
             result = await action(dial)
         except TimeoutError as exc:
+            detail = _timeout_detail(what)
             raise RendezvousUnreachable(
-                f"rendezvous {format_authority(self.host, dial.port)}: "
-                f"timed out waiting for a {what}"
+                f"rendezvous {format_authority(self.host, dial.port)}: {detail}", detail=detail
             ) from exc
         finally:
             await dial.close()

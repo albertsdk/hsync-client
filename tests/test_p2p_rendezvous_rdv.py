@@ -21,7 +21,11 @@ from hsync_common.protocol.rendezvous import (
 )
 
 from hsync_client.constants import (
+    RDV_FAILURE_BACKOFF_BASE_S,
+    RDV_FAILURE_BACKOFF_MAX_S,
+    RDV_FAILURE_WARN_AFTER,
     RENDEZVOUS_QUERY_ACTIVE_INTERVAL,
+    RENDEZVOUS_QUERY_BURST_COUNT,
     RENDEZVOUS_QUERY_BURST_INTERVAL,
     RENDEZVOUS_UNPUBLISHED_SAMPLE_RETRIES,
 )
@@ -724,6 +728,86 @@ class TestQueryBudget:
         assert len([c for c in plan._client.calls if c[0] == "query"]) == first + 1
 
 
+class TestLeaseFailurePolicy:
+    """A slow round is not a dead node, and a retry must not hammer one."""
+
+    @staticmethod
+    def _failure() -> RendezvousUnreachable:
+        return RendezvousUnreachable(
+            "rendezvous rdv.example.net:443: timed out waiting for an ack",
+            detail="timed out waiting for an ack",
+        )
+
+    def test_one_failure_does_not_warn_and_cancels_the_burst(self, monkeypatch):
+        """A busy uplink looks exactly like this: INFO, no banner, no burst."""
+        import hsync_client.p2p_rendezvous_rdv as rdv_module
+
+        warned: list[str] = []
+        monkeypatch.setattr(
+            rdv_module, "emit_warning", lambda message, **_kw: warned.append(message)
+        )
+        plan, _ = make_plan()
+        plan._burst_left = RENDEZVOUS_QUERY_BURST_COUNT
+
+        delay = plan._record_lease_failure(self._failure())
+
+        assert warned == []
+        assert plan._burst_left == 0
+        assert plan._consecutive_failures == 1
+        # Each attempt already costs the whole reply budget: the next one waits.
+        assert RDV_FAILURE_BACKOFF_BASE_S * 0.5 <= delay <= RDV_FAILURE_BACKOFF_BASE_S
+
+    def test_a_run_of_failures_warns_once_without_a_duplicated_authority(self, monkeypatch):
+        import hsync_client.p2p_rendezvous_rdv as rdv_module
+
+        warned: list[str] = []
+        monkeypatch.setattr(
+            rdv_module, "emit_warning", lambda message, **_kw: warned.append(message)
+        )
+        plan, _ = make_plan()
+
+        for _ in range(RDV_FAILURE_WARN_AFTER - 1):
+            plan._record_lease_failure(self._failure())
+        assert warned == []
+        plan._record_lease_failure(self._failure())
+
+        assert warned == [
+            "Rendezvous rdv.example.net:443 unreachable: timed out waiting for an ack"
+        ]
+
+    def test_the_backoff_doubles_and_is_capped(self, monkeypatch):
+        """Un-jittered retries would synchronize the peers behind one NAT."""
+        import hsync_client.p2p_rendezvous_rdv as rdv_module
+
+        monkeypatch.setattr(rdv_module, "emit_warning", lambda *_a, **_kw: None)
+        plan, _ = make_plan()
+
+        bounds = []
+        for _ in range(6):
+            delay = plan._record_lease_failure(self._failure())
+            exponent = min(plan._consecutive_failures - 1, 3)
+            nominal = min(RDV_FAILURE_BACKOFF_BASE_S * 2**exponent, RDV_FAILURE_BACKOFF_MAX_S)
+            assert nominal * 0.5 <= delay <= nominal
+            bounds.append(nominal)
+
+        assert bounds[:4] == [5.0, 10.0, 20.0, 30.0]
+        assert bounds[4:] == [RDV_FAILURE_BACKOFF_MAX_S] * 2
+
+    def test_success_resets_the_streak_and_retracts_the_warning(self, monkeypatch):
+        import hsync_client.p2p_rendezvous_rdv as rdv_module
+
+        cleared: list[str] = []
+        monkeypatch.setattr(rdv_module, "emit_warning_cleared", cleared.append)
+        monkeypatch.setattr(rdv_module, "emit_warning", lambda *_a, **_kw: None)
+        plan, _ = make_plan()
+        plan._record_lease_failure(self._failure())
+
+        plan._clear_lease_failure()
+
+        assert plan._consecutive_failures == 0
+        assert cleared == ["rendezvous"]
+
+
 class TestWaitForRendezvous:
     def test_wait_never_queries_the_rendezvous(self):
         """Regression: the wait must not poll ``query`` (1 s poll → refusal storm).
@@ -759,13 +843,22 @@ class TestWaitForRendezvous:
         plan.wait_for_rendezvous(timeout=0.05)
 
     def test_lease_loop_reports_an_unreachable_node_as_a_warning(self, monkeypatch):
-        """A dead node is retried (warning only), never disabled like a refusal."""
+        """A dead node is retried and reported after a run of failures, never disabled.
+
+        The first failed rounds only log: one slow round is what a saturated
+        uplink looks like (``_record_lease_failure``), so the warning — and the UI
+        banner — describe a run of them. The backoff is compressed here so the
+        escalation is reachable inside the test's window.
+        """
         warnings: list[dict] = []
         monkeypatch.setattr(
             "hsync_client.p2p_rendezvous_rdv.emit_warning",
             lambda message, **kwargs: warnings.append({"message": message, **kwargs}),
         )
-        plan, _ = make_plan(refresh_interval=1.0)
+        monkeypatch.setattr("hsync_client.p2p_rendezvous_rdv.RDV_FAILURE_WARN_AFTER", 2)
+        monkeypatch.setattr("hsync_client.p2p_rendezvous_rdv.RDV_FAILURE_BACKOFF_BASE_S", 0.01)
+        monkeypatch.setattr("hsync_client.p2p_rendezvous_rdv.RDV_FAILURE_BACKOFF_MAX_S", 0.01)
+        plan, _ = make_plan(refresh_interval=0.01)
 
         def unreachable(_frame):
             raise RendezvousUnreachable("ConnectionError")
@@ -775,7 +868,7 @@ class TestWaitForRendezvous:
         thread = threading.Thread(target=plan._lease_loop, name="test-lease-dead", daemon=True)
         thread.start()
         try:
-            deadline = time.monotonic() + 5.0
+            deadline = time.monotonic() + 10.0
             while not warnings and time.monotonic() < deadline:
                 time.sleep(0.05)
         finally:
@@ -783,7 +876,9 @@ class TestWaitForRendezvous:
             plan._wake.set()
             thread.join(timeout=5.0)
         assert not thread.is_alive()
-        assert [(w["source"], w["reason"]) for w in warnings] == [("rendezvous", "unreachable")]
+        assert warnings, "a run of failures must reach the warning"
+        assert {(w["source"], w["reason"]) for w in warnings} == {("rendezvous", "unreachable")}
+        assert plan._consecutive_failures >= 2
         # A source that may come back is retried, not disabled.
         assert plan.source_disabled() is False
 

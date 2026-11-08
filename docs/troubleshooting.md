@@ -37,6 +37,15 @@ a rendezvous banner), but the peer list stays empty and no sync happens.
   address and bucket — so the second one can take ~15 s. That is the node's
   anti-abuse limit, not a failed discovery; a node started with
   `--no-rate-limit` (loopback and tests only) has no such delay.
+- The log repeats `Rendezvous … unreachable: timed out waiting for an ack` while
+  a **large upload** runs: the upload fills the uplink, so the discovery reply
+  queues behind it and misses the client's first budget. It is transient — the
+  client retries with a growing backoff (with jitter) and only reports a warning
+  after three consecutive failures, so a banner means the node or the UDP path is
+  really in trouble. Nothing to fix on the device; if it persists with no
+  upload running, check that the discovery server answers with
+  `hsync trust rendezvous-server fingerprint HOST:PORT` and whether the network
+  blocks UDP (see [Sync across networks](p2p-rendezvous.md)).
 
 ## After a network change a device shows "Waiting…"
 

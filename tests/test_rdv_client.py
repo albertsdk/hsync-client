@@ -12,6 +12,7 @@ server-reflexive address extraction from a validated ``ack``.
 from __future__ import annotations
 
 import asyncio
+import json
 import ssl
 
 import pytest
@@ -21,11 +22,13 @@ from hsync_common import ssl_utils
 from hsync_common.protocol.rendezvous import (
     CAPACITY_MAX,
     RDV_ALPN,
+    RDV_IDLE_TIMEOUT,
     validate_rdv_ack,
     validate_rdv_frame,
 )
 from hsync_common.protocol.tls_trust import TrustPolicy
 
+from hsync_client.constants import RDV_REPLY_TIMEOUT_S
 from hsync_client.rdv_client import (
     RendezvousClient,
     RendezvousFingerprintMismatch,
@@ -152,6 +155,88 @@ class TestUnreachableError:
         message = str(excinfo.value)
         assert "rdv.example.net:443" in message
         assert message.rstrip().endswith("ConnectionError")
+
+
+class TestReplyBudget:
+    """The reply budget must outlast the transport's own loss recovery."""
+
+    def test_the_budget_covers_quic_recovery_and_stays_under_the_reaper(self):
+        """A lost ack is retransmitted by QUIC's PTO ladder (~1+2+4+8 s).
+
+        A shorter budget abandoned rounds that would have succeeded — observed as
+        ``timed out waiting for the ack reply`` on every upload that saturated
+        the uplink. Staying under the node's idle reaper keeps a silent peer
+        detectable inside one connection lifetime.
+        """
+        assert RDV_REPLY_TIMEOUT_S > 10.0
+        assert RDV_REPLY_TIMEOUT_S < RDV_IDLE_TIMEOUT
+        assert RendezvousClient("rdv.example.net", 443).timeout == RDV_REPLY_TIMEOUT_S
+
+    @staticmethod
+    def _serve(monkeypatch, reply_after: float):
+        """Fake QUIC session whose ack arrives *reply_after* seconds late."""
+
+        class _Reader:
+            async def readline(self):
+                await asyncio.sleep(reply_after)
+                return (json.dumps(ACK) + "\n").encode("utf-8")
+
+        class _Writer:
+            def write(self, _data):
+                return None
+
+            async def drain(self):
+                return None
+
+            def close(self):
+                return None
+
+        class _Manager:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return False
+
+            async def create_stream(self):
+                return _Reader(), _Writer()
+
+        monkeypatch.setattr("hsync_client.rdv_client.connect", lambda *_a, **_k: _Manager())
+
+    def test_a_slow_ack_inside_the_budget_is_a_success(self, monkeypatch):
+        """A busy link delays the ack: that is a slow round, not a dead node."""
+        self._serve(monkeypatch, reply_after=0.05)
+        client = RendezvousClient(
+            "127.0.0.1", 4433, policy=TrustPolicy.none, timeout=1.0, transport="quic"
+        )
+        ack = client.register(
+            build_register_frame(
+                cid=CID,
+                bucket="shared",
+                cert_fp="aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+                version="1.0.0",
+            )
+        )
+        assert ack is not None
+        assert ack["ttl"] == 60
+
+    def test_a_reply_past_the_budget_names_the_missing_reply(self, monkeypatch):
+        """The timeout message names the frame and carries an unprefixed detail."""
+        self._serve(monkeypatch, reply_after=0.5)
+        client = RendezvousClient(
+            "127.0.0.1", 4433, policy=TrustPolicy.none, timeout=0.1, transport="quic"
+        )
+        with pytest.raises(RendezvousUnreachable) as excinfo:
+            client.register(
+                build_register_frame(
+                    cid=CID,
+                    bucket="shared",
+                    cert_fp="aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+                    version="1.0.0",
+                )
+            )
+        assert str(excinfo.value) == "rendezvous 127.0.0.1:4433: timed out waiting for an ack"
+        assert excinfo.value.detail == "timed out waiting for an ack"
 
 
 class TestLeave:

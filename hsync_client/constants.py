@@ -303,6 +303,27 @@ RENDEZVOUS_QUERY_ACTIVE_INTERVAL = 12.0
 # publishes (block serving disabled) cannot spend it indefinitely.
 RENDEZVOUS_UNPUBLISHED_SAMPLE_RETRIES = 3
 
+# Reply budget for one rendezvous exchange (the ack/response answering a
+# register/refresh/query). It must cover the transport's own loss recovery: a
+# QUIC reply lost on a saturated uplink is retransmitted by its PTO ladder
+# (~1+2+4+8 s), so a shorter wait abandons rounds that would have succeeded —
+# observed as "timed out waiting for an ack" warnings during every large upload.
+# It stays below the node's 30 s idle reaper
+# (hsync_common.protocol.rendezvous.RDV_IDLE_TIMEOUT), so a silent peer is still
+# detected within one connection lifetime. The dial phase keeps its own, shorter
+# bound (RDV_TCP_CONNECT_TIMEOUT_S) so a dead node fails fast.
+RDV_REPLY_TIMEOUT_S = 20.0
+
+# Consecutive failed lease rounds before a slow round is reported as a warning
+# and surfaced to the UI. One failed round is what a busy uplink looks like; a
+# run of them is a node or path problem the operator must see.
+RDV_FAILURE_WARN_AFTER = 3
+# Exponential backoff between failed lease rounds, with jitter: peers behind one
+# public IP share the node's per-(IP, bucket) budget, so un-jittered retries
+# would synchronize into a thundering herd.
+RDV_FAILURE_BACKOFF_BASE_S = 5.0
+RDV_FAILURE_BACKOFF_MAX_S = 30.0
+
 # Data relay over rdv/1 (peers behind CGNAT). The forwarding chunk is fixed so a
 # session's memory is bounded; it is also the largest payload one multiplexed
 # substream frame carries. The node enforces the session idle timeout

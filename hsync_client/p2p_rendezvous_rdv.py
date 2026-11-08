@@ -27,6 +27,7 @@ Consumers: ``hsync-client`` (p2p subcommand), tests.
 from __future__ import annotations
 
 import os
+import random
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -42,6 +43,9 @@ from hsync_client.constants import (
     HSYNC_VERSION,
     MASTER_CLAIM_SETTLE_S,
     PEER_TIMEOUT,
+    RDV_FAILURE_BACKOFF_BASE_S,
+    RDV_FAILURE_BACKOFF_MAX_S,
+    RDV_FAILURE_WARN_AFTER,
     RENDEZVOUS_DEFAULT_PORT,
     RENDEZVOUS_MISSED_SAMPLES,
     RENDEZVOUS_QUERY_ACTIVE_INTERVAL,
@@ -300,6 +304,10 @@ class RdvRendezvous(RendezvousPlanState):
         # of immediate re-samples — see ``_track_unpublished_peer``.
         self._unpublished_peer = False
         self._unpublished_retries = 0
+        # Consecutive failed lease rounds (a timeout is a slow link until proven
+        # otherwise): drives the warning escalation and the retry backoff — see
+        # ``_record_lease_failure``.
+        self._consecutive_failures = 0
         self._started_at = 0.0
         self._network_monitor: NetworkChangeMonitor | None = None
 
@@ -681,17 +689,19 @@ class RdvRendezvous(RendezvousPlanState):
                 # rate-limited or overloaded client waits at least as long as the
                 # node asked, never less.
                 self._log_refusal(exc)
+                self._consecutive_failures = 0
                 backoff = float(exc.retry_after or 0)
             except RendezvousError as exc:
-                message = (
-                    f"Rendezvous {format_authority(self._rendezvous_host, self._rendezvous_port)} "
-                    f"unreachable: {exc}"
-                )
-                log.warning(message)
-                # Structured counterpart: rendezvous keeps retrying, so this is a
-                # warning (the run continues), not an error. Deduplicated, so a
-                # flapping node cannot flood the front-end.
-                emit_warning(message, source="rendezvous", reason="unreachable")
+                # Either a broken link or a slow one. On a saturated uplink the
+                # reply needs the transport's own loss-recovery time (see
+                # ``RDV_REPLY_TIMEOUT_S``), so one failed round says little: it is
+                # logged at INFO and only a run of them becomes a warning. The
+                # burst is cancelled either way — each attempt already cost the
+                # whole reply budget, so retrying at the burst spacing would
+                # hammer a node that cannot answer — and the wait grows
+                # exponentially, with jitter because peers behind one public IP
+                # share the node's query budget.
+                backoff = self._record_lease_failure(exc)
                 first = True  # re-register once the node is reachable again
             except Exception as exc:
                 log.warning(f"Rendezvous lease loop error: {exc}")
@@ -706,7 +716,7 @@ class RdvRendezvous(RendezvousPlanState):
                 # The node answered: whatever refusal or unreachability it
                 # reported no longer holds, so the warning is retracted (a no-op
                 # when nothing was standing).
-                emit_warning_cleared("rendezvous")
+                self._clear_lease_failure()
             self._wake.wait(timeout=self._next_wake_delay(backoff))
             self._wake.clear()
 
@@ -737,6 +747,40 @@ class RdvRendezvous(RendezvousPlanState):
         ):
             return RENDEZVOUS_QUERY_ACTIVE_INTERVAL
         return self._refresh_interval
+
+    def _clear_lease_failure(self) -> None:
+        """A round succeeded: reset the streak and retract the warning."""
+        self._consecutive_failures = 0
+        emit_warning_cleared("rendezvous")
+
+    def _record_lease_failure(self, exc: RendezvousError) -> float:
+        """Count a failed lease round; return the backoff before the next one.
+
+        A failed round is either a broken link or a *slow* one, and one slow round
+        is what a saturating upload looks like on the same uplink (the reply needs
+        the transport's loss-recovery time, see ``RDV_REPLY_TIMEOUT_S``). It is
+        therefore logged at INFO and only reported — WARNING plus the structured
+        UI warning — once ``RDV_FAILURE_WARN_AFTER`` rounds failed in a row, so
+        the banner describes a node or path problem instead of a busy link. The
+        burst is cancelled: every attempt already cost the whole reply budget, so
+        retrying at the burst spacing would hammer a node that cannot answer.
+        The delay doubles per failure with jitter, because peers behind one public
+        IP share the node's per-``(IP, bucket)`` query budget and un-jittered
+        retries would synchronize.
+        """
+        self._consecutive_failures += 1
+        authority = format_authority(self._rendezvous_host, self._rendezvous_port)
+        detail = getattr(exc, "detail", None) or str(exc)
+        message = f"Rendezvous {authority} unreachable: {detail}"
+        if self._consecutive_failures >= RDV_FAILURE_WARN_AFTER:
+            log.warning(message)
+            emit_warning(message, source="rendezvous", reason="unreachable")
+        else:
+            log.info(message)
+        self._burst_left = 0
+        exponent = min(self._consecutive_failures - 1, 3)
+        delay = min(RDV_FAILURE_BACKOFF_BASE_S * (2**exponent), RDV_FAILURE_BACKOFF_MAX_S)
+        return delay * random.uniform(0.5, 1.0)
 
     def _next_wake_delay(self, backoff: float = 0.0) -> float:
         """How long the lease loop may sleep before its next iteration.

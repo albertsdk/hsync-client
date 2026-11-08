@@ -114,6 +114,20 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   advertises readiness without a live event channel. Regression:
   `tests/test_p2p_single_port.py`.
 
+- **A slow lease round is not a dead node, and the lease is not kept on a
+  persistent connection**: the reply budget
+  (`hsync_client/constants.py::RDV_REPLY_TIMEOUT_S`) outlasts the transport's own
+  loss recovery (the QUIC PTO ladder; the node's 30 s idle reaper is the cap), the
+  first failures only log, and a run of them backs off with jitter
+  (`hsync_client/p2p_rendezvous_rdv.py::RdvRendezvous._record_lease_failure`).
+  Reusing one connection for the lease was rejected: the node drops idle
+  connections after `RDV_IDLE_TIMEOUT` and `rdv/1` has no keep-alive frame for
+  lease sessions (only the relay control stream does), so a persistent session
+  would need a protocol addition — and it would not fix the observed failure,
+  which is the *reply* queueing behind a saturating upload, not the handshake.
+  Regression: `tests/test_p2p_rendezvous_rdv.py::TestLeaseFailurePolicy` and
+  `tests/test_rdv_client.py::TestReplyBudget`.
+
 - **Guard abort diagnostics are synchronous**: the loguru sinks are
   `enqueue=True`, so a message written immediately before `raise SystemExit`
   can be lost (the queue drains after the process/stream teardown marks the
