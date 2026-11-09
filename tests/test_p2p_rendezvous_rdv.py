@@ -27,6 +27,7 @@ from hsync_client.constants import (
     RENDEZVOUS_QUERY_ACTIVE_INTERVAL,
     RENDEZVOUS_QUERY_BURST_COUNT,
     RENDEZVOUS_QUERY_BURST_INTERVAL,
+    RENDEZVOUS_QUERY_BURST_JITTER_S,
     RENDEZVOUS_UNPUBLISHED_SAMPLE_RETRIES,
 )
 from hsync_client.p2p_peers import Peer, PeerManager
@@ -641,8 +642,11 @@ class TestQueryBudget:
         plan, _ = make_plan()
         plan._peer_manager = PeerManager(local_cid=CID, bucket="shared", group="home")
         plan._next_query_at = time.monotonic() + 30.0
+        # A start-up jitter must not delay an explicitly requested sample either.
+        plan._burst_gate = time.monotonic() + 2.0
         plan.request_sample()
         assert plan._next_query_at == 0.0
+        assert plan._burst_gate == 0.0
         assert plan._wake.is_set()
         plan._query_peers()
         assert [call for call in plan._client.calls if call[0] == "query"]
@@ -693,6 +697,30 @@ class TestQueryBudget:
         plan._next_query_at = 0.0
         plan._query_peers()
         assert plan._unpublished_retries == 0
+
+    def test_the_start_burst_is_jittered_per_process(self, monkeypatch):
+        """Clients behind one address must not burst in lockstep.
+
+        They share the node's per-IP budgets and are usually started together (a
+        reboot, a rollout, a router coming back), so the burst is armed behind a
+        random offset: without it a whole household would spend its tokens at the
+        same instants and pay a ``retry_after`` before the first sample.
+        """
+        from hsync_client import p2p_rendezvous_rdv as plan_mod
+
+        plan, _ = make_plan()
+        plan._peer_manager = PeerManager(local_cid=CID, bucket="shared", group="home")
+        monkeypatch.setattr(plan_mod.random, "uniform", lambda low, high: high / 2)
+        before = time.monotonic()
+        plan._arm_burst()
+        assert plan._burst_left == RENDEZVOUS_QUERY_BURST_COUNT
+        assert before < plan._burst_gate <= before + RENDEZVOUS_QUERY_BURST_JITTER_S
+        # Inside the jitter window no query is sent and no token is spent.
+        plan._query_peers()
+        assert not [call for call in plan._client.calls if call[0] == "query"]
+        plan._burst_gate = 0.0
+        plan._query_peers()
+        assert [call for call in plan._client.calls if call[0] == "query"]
 
     def test_the_lease_loop_wakes_when_a_sample_is_due(self):
         """An early scheduled sample must not wait the whole cadence.

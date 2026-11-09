@@ -291,11 +291,14 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   range 1–300) to drive the lease loop's register/refresh/query, distinct from the
   mDNS `HEARTBEAT_INTERVAL` (5 s). `RdvRendezvous.wait_for_rendezvous` is
   event-based (`PeerManager.wait_for_change`, like mDNS) and never polls `query`
-  itself; a refused `query` arms a `retry_after` backoff. Rationale: the node
-  rate-limits `query` to 5/min per (IP, bucket) and `register`/`refresh` to
-  10/min (`hsync-rendezvous/python/src/hsync_rendezvous/handler.py::RendezvousHandler`), and this cadence keeps the client inside those
-  limits instead of burning the burst and being `rate_limited` for the rest of
-  the window, which would starve real rendezvous.
+  itself; a refused `query` arms a `retry_after` backoff. Rationale: the node's
+  per-source budgets (§Auth of `protocol-spec/rdv-1.md`, stated with the sizing
+  rules they derive from) admit every cadence in this range, so the cadence is a
+  freshness choice rather than a rate-limit constraint; the value stays at the
+  spec's 30 s refresh, and a refusal still arms a `retry_after` backoff instead of
+  spending the burst. The start-up burst is jittered by
+  `RENDEZVOUS_QUERY_BURST_JITTER_S` so the clients behind one public address do
+  not sample in lockstep.
   `HSYNC_RENDEZVOUS_SERVER_REFRESH_INTERVAL` is documented in
   `docs/configuration-p2p.md` and the man page; it is **not** part of the WD OS5
   web config surface in `hsync-wd-os5` (which never exposed the heartbeat).

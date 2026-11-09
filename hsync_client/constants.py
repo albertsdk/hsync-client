@@ -263,12 +263,12 @@ PEER_TIMEOUT_MIN = 3
 PEER_TIMEOUT_MAX = 600
 
 # rdv/1 lease cadence (spec ``rdv-1.md``: TTL 60 s, client refresh every 30 s).
-# The rendezvous rate-limits ``query`` to 5/min per (IP, bucket) and
-# ``register``/``refresh`` to 10/min, so the client must not poll faster than
-# ~12 s; 30 s matches the spec refresh and stays comfortably inside both.
-# Distinct from ``HEARTBEAT_INTERVAL`` (mDNS liveness, 5 s): the rendezvous cadence
-# has its own rate-limit budget, overridable via
-# ``HSYNC_RENDEZVOUS_SERVER_REFRESH_INTERVAL``.
+# A lease cycle costs one register plus two refreshes and a couple of queries per
+# minute — a small fraction of the node's per-source budgets (§Auth of the spec:
+# the per-(IP, bucket) limits always admit the fastest cadence a client may set),
+# so the cadence is a freshness choice, not a rate-limit limit. Distinct from
+# ``HEARTBEAT_INTERVAL`` (mDNS liveness, 5 s): the rendezvous cadence is its own
+# loop, overridable via ``HSYNC_RENDEZVOUS_SERVER_REFRESH_INTERVAL``.
 RENDEZVOUS_REFRESH_INTERVAL = 30
 RENDEZVOUS_REFRESH_INTERVAL_MIN = 1
 RENDEZVOUS_REFRESH_INTERVAL_MAX = 300
@@ -287,20 +287,23 @@ RENDEZVOUS_MISSED_SAMPLES = 2
 RENDEZVOUS_SOURCE_LEASE_S = 120.0
 
 # Sampling cadence. A node joins (or loses its master) and must find the group
-# quickly, so the first samples run in a burst: the spec's budget allows a burst
-# of ten queries per (IP, bucket) and then five per minute, so the burst stays
-# inside it and the sustainable cadence — one query per minute/limit — is the
-# floor for a node still looking for a master. Once the group is complete the
-# lease cadence applies.
+# quickly, so the first samples run in a burst; the cadence then settles on the
+# fastest sustainable rate while a master is missing, and on the lease cadence
+# once the group is complete. Both stay well inside the node's per-source query
+# budget (§Auth of the spec), so the burst can never be the reason a group forms
+# slowly. The jitter decorrelates the clients behind one public address: they
+# share the node's per-IP budget and are typically started together (a reboot, a
+# rollout, a router that came back), which would otherwise arrive as one spike.
 RENDEZVOUS_QUERY_BURST_INTERVAL = 1.0
 RENDEZVOUS_QUERY_BURST_COUNT = 8
+RENDEZVOUS_QUERY_BURST_JITTER_S = 2.0
 RENDEZVOUS_QUERY_ACTIVE_INTERVAL = 12.0
 
 # Bounded re-samples while a drawn peer is still not dialable (its endpoint
 # publication lands one lease tick after the first register, and the master is
 # in exactly that state right after admitting the peer's WebSocket). Each retry
-# costs one query from the 5/min per-(IP, bucket) budget, so a peer that never
-# publishes (block serving disabled) cannot spend it indefinitely.
+# spends a query token, so a peer that never publishes (block serving disabled)
+# cannot spend the source's budget indefinitely.
 RENDEZVOUS_UNPUBLISHED_SAMPLE_RETRIES = 3
 
 # Reply budget for one rendezvous exchange (the ack/response answering a

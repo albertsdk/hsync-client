@@ -51,6 +51,7 @@ from hsync_client.constants import (
     RENDEZVOUS_QUERY_ACTIVE_INTERVAL,
     RENDEZVOUS_QUERY_BURST_COUNT,
     RENDEZVOUS_QUERY_BURST_INTERVAL,
+    RENDEZVOUS_QUERY_BURST_JITTER_S,
     RENDEZVOUS_REFRESH_INTERVAL,
     RENDEZVOUS_REFRESH_INTERVAL_MIN,
     RENDEZVOUS_SOURCE_LEASE_S,
@@ -96,10 +97,10 @@ from hsync_client.upnp import UpnpMapper
 
 __all__ = ["RdvRendezvous", "MultiRdvRendezvous", "SharedUpnpMapping"]
 
-# How often the lease loop wakes to register/refresh/query. The rendezvous
-# rate-limits ``query`` to 5/min per (IP, bucket) and ``register``/``refresh`` to
-# 10/min (``rdv-1.md``), so the client uses the spec's 30 s refresh window
-# instead of the mDNS heartbeat cadence.
+# How often the lease loop wakes to register/refresh/query: the spec's 30 s
+# refresh window (``rdv-1.md``), not the mDNS heartbeat cadence. A lease cycle
+# is a small fraction of the node's per-source budgets (§Auth of the spec), so
+# the cadence is a freshness choice.
 _DEFAULT_REFRESH_S = RENDEZVOUS_REFRESH_INTERVAL
 
 # Test-only override of the endpoint list a master publishes. Test-only: no CLI
@@ -248,13 +249,14 @@ class RdvRendezvous(RendezvousPlanState):
             peer_timeout=peer_timeout,
         )
         self._refresh_interval = max(float(RENDEZVOUS_REFRESH_INTERVAL_MIN), refresh_interval)
-        # Earliest monotonic time the next ``query`` may run: keeps the client
-        # inside the rendezvous's 5/min per-(IP, bucket) query budget and honours a
+        # Earliest monotonic time the next ``query`` may run: it honours a
         # ``rate_limited`` ``retry_after`` instead of hammering the node.
         self._next_query_at = 0.0
-        # Queries left in the start-up burst (see ``_query_interval``); a network
-        # change restarts it, because a new network is a new chance to be seen.
+        # Queries left in the start-up burst (see ``_query_interval``) and the
+        # earliest time it may begin: a network change re-arms both, because a new
+        # network is a new chance to be seen.
         self._burst_left = 0
+        self._burst_gate = 0.0
         self._upnp_enabled = upnp_enabled
         self._capacity = capacity if peer_download_enabled else 0
         self._local_ip = local_ip
@@ -371,7 +373,7 @@ class RdvRendezvous(RendezvousPlanState):
         self._started_at = time.monotonic()
         # The first samples run in a burst: a node that is joining (or restarting)
         # must find the group in seconds, not in a lease cycle.
-        self._burst_left = RENDEZVOUS_QUERY_BURST_COUNT
+        self._arm_burst()
         self._thread = threading.Thread(
             target=self._lease_loop, name="p2p-rendezvous-lease", daemon=True
         )
@@ -406,11 +408,10 @@ class RdvRendezvous(RendezvousPlanState):
         """Block until at least one live peer is known, or ``timeout`` elapses.
 
         The network cadence (register/refresh/query) belongs to the lease loop,
-        which runs at :data:`RENDEZVOUS_REFRESH_INTERVAL` (spec: 30 s) to stay
-        inside the rendezvous's per-bucket rate limits. This wait therefore only
-        parks on the shared peer-change event; it never polls ``query`` itself,
-        or it would exhaust the 5/min per-(IP, bucket) query budget and the node
-        would answer ``rate_limited`` for the rest of the window.
+        which runs at :data:`RENDEZVOUS_REFRESH_INTERVAL` (spec: 30 s). This wait
+        therefore only parks on the shared peer-change event; it never polls
+        ``query`` itself, so the lease loop stays the one owner of the node's
+        per-source query budget.
         """
         if self._peer_manager is None:
             return
@@ -552,9 +553,11 @@ class RdvRendezvous(RendezvousPlanState):
         and the lease loop coalesces — it runs at most one ``query`` per
         iteration and re-arms the gate — so a burst of connections costs one
         sample per tick instead of one per peer (the node's per-(IP, bucket)
-        budget stays intact).
+        budget stays intact). The start-up jitter is cleared: this sample is
+        explicitly requested to make a joining peer visible in about a second.
         """
         self._next_query_at = 0.0
+        self._burst_gate = 0.0
         self._wake.set()
 
     def refresh_election_advertisement(self) -> None:
@@ -578,7 +581,7 @@ class RdvRendezvous(RendezvousPlanState):
         if not signature.online:
             return
         # A new network is a new chance to be seen: sample in a burst again.
-        self._burst_left = RENDEZVOUS_QUERY_BURST_COUNT
+        self._arm_burst()
         reset = getattr(self._client, "reset_transport_memo", None)
         if reset is not None:
             # A new network is a new reachability landscape: forget a TCP-only
@@ -728,19 +731,31 @@ class RdvRendezvous(RendezvousPlanState):
             self._wake.wait(timeout=self._next_wake_delay(backoff))
             self._wake.clear()
 
+    def _arm_burst(self) -> None:
+        """Arm the start-up sample burst, delayed by a per-process jitter.
+
+        Clients behind one public address share the node's per-IP budgets and are
+        typically started together (a reboot, a rollout, a router that came back),
+        so a random offset spreads their bursts instead of arriving as one spike:
+        the household stays off the refusal path, and no client pays a
+        ``retry_after`` before its first sample.
+        """
+        self._burst_left = RENDEZVOUS_QUERY_BURST_COUNT
+        self._burst_gate = time.monotonic() + random.uniform(0.0, RENDEZVOUS_QUERY_BURST_JITTER_S)
+
     def _query_interval(self) -> float:
         """How soon the next sample may run.
 
         A node that is joining — or that lost its master — must find the group
         quickly, so the first samples run every
         ``RENDEZVOUS_QUERY_BURST_INTERVAL`` for ``RENDEZVOUS_QUERY_BURST_COUNT``
-        cycles (inside the spec's burst budget) and, while no master is known,
-        the fastest sustainable cadence (``RENDEZVOUS_QUERY_ACTIVE_INTERVAL``,
-        one query per ``60 s / 5``). A known master is *not* proof the group is
-        complete: a peer that joined after our last sample is only found by
-        another query, so the same cadence holds while the peers we see report
+        cycles (a fraction of the node's per-source query burst) and, while no
+        master is known, the fastest sustainable cadence
+        (``RENDEZVOUS_QUERY_ACTIVE_INTERVAL``). A known master is *not* proof the
+        group is complete: a peer that joined after our last sample is only found
+        by another query, so the same cadence holds while the peers we see report
         more members than we know. Once the group is complete the lease cadence
-        applies, which is what keeps the client inside the query budget.
+        applies.
         """
         if self._burst_left > 0:
             return RENDEZVOUS_QUERY_BURST_INTERVAL
@@ -987,10 +1002,9 @@ class RdvRendezvous(RendezvousPlanState):
             return
         authority = format_authority(self._rendezvous_host, self._rendezvous_port)
         now = time.monotonic()
-        if now < self._next_query_at:
-            # Still inside the query budget window (or a node-imposed backoff):
-            # skip this tick instead of adding to the 5/min per-(IP, bucket)
-            # budget and getting ``rate_limited``.
+        if now < self._next_query_at or now < self._burst_gate:
+            # Inside a node-imposed backoff, or inside the start-up jitter: skip
+            # this tick rather than spend a query token.
             return
         response = self._client.query(
             build_query_frame(bucket=self._bucket, group=self._group, bucket_token=self._token)

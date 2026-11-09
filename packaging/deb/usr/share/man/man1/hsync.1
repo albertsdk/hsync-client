@@ -1,7 +1,7 @@
 .\" Man page for HSYNC - file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-11-03" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-11-09" "hsync 1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -948,8 +948,8 @@ often the rendezvous loop re-evaluates peer liveness.
 \fBrdv/1\fR lease and query cadence in seconds (default:
 .BR 30 ;
 range: 1\(en300). Governs how often the client registers, refreshes its lease
-and queries the rendezvous for peers. Keep it inside the node's rate limits
-(5 queries/min per IP and bucket; the protocol specifies a 30\(ens refresh).
+and queries the rendezvous for peers. The node's per-source budgets admit any
+value in this range (the protocol specifies a 30\(ens refresh).
 .TP
 .B HSYNC_PEER_TIMEOUT
 Peer timeout in seconds for p2p mode (default:
