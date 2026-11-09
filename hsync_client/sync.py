@@ -13,7 +13,7 @@ import os
 import sys
 import threading
 import time
-from collections.abc import Callable, Coroutine, Iterator, Mapping
+from collections.abc import Callable, Coroutine, Iterable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from errno import EACCES, EBUSY, EIO, ENOENT
@@ -902,6 +902,7 @@ def _finalize_cycle(
     nothing: list,
     conflicts: int,
     guard_tripped: bool,
+    peer_direction_provider: Callable[[], Iterable[tuple[str, str]]] | None = None,
 ) -> SyncCycleResult:
     """Flush the version store, report the outcome and build the cycle result."""
     # Persist refreshed merge bases (in-sync refresh, retain, clear-on-delete,
@@ -922,6 +923,22 @@ def _finalize_cycle(
     else:
         log.info("Sync completed successfully")
     skipped = len(nothing)
+    # An upload-only run can be a plain no-op for the other devices: the file
+    # reaches the master (the hub) and any peer that takes incoming files, while
+    # a peer that is itself upload-only ignores it. Reporting the split is what
+    # stops "sent" from meaning "everyone got it".
+    send_report: dict[str, int] = {}
+    if peer_direction_provider is not None and CONFIG.get("SYNC_DIRECTION") == "upload-only":
+        others = list(peer_direction_provider())
+        ignored = sum(1 for _cid, direction in others if direction == "upload-only")
+        # The master always stores an upload, whatever its own direction.
+        accepted = 1 + sum(1 for _cid, direction in others if direction != "upload-only")
+        send_report = {"send_accepted": accepted, "send_ignored": ignored}
+        if ignored:
+            log.info(
+                f"Upload-only run: {accepted} device(s) receive the files, "
+                f"{ignored} ignore them (upload-only)"
+            )
     emit_event(
         UiEventName.sync_complete,
         downloaded=transfer_counters["downloaded"],
@@ -931,6 +948,7 @@ def _finalize_cycle(
         skipped=skipped,
         failed=failed,
         conflicts=conflicts,
+        **send_report,
     )
     from hsync_client.utils import _write_ready_file as _signal_ready
 
@@ -1000,6 +1018,7 @@ async def sync(
     inventory_observer: InventoryObserver | None = None,
     source_resolver: P2PSourceResolver | None = None,
     reconcile_dirs: bool = False,
+    peer_direction_provider: Callable[[], Iterable[tuple[str, str]]] | None = None,
 ) -> SyncCycleResult:
     """
     Perform a full synchronization between local and remote files.
@@ -1019,6 +1038,11 @@ async def sync(
             directories that exist on only one side (see
             ``reconcile_directories``). Create-only; later changes travel as
             live events.
+        peer_direction_provider: P2P only, upload-only only. Returns the
+            ``(cid, sync_direction)`` of every other device currently in the
+            group; the cycle then reports on ``sync_complete`` how many of them
+            will receive the files and how many ignore them (a device that is
+            itself upload-only takes nothing). ``None`` leaves the report out.
 
     Returns:
         The cycle outcome. Fatal failures (authentication, network, server
@@ -1157,7 +1181,13 @@ async def sync(
             converge_directory_permissions(remote_dirs or [])
 
         return _finalize_cycle(
-            transfer_counters, deleted, renamed, nothing, conflicts, guard_tripped
+            transfer_counters,
+            deleted,
+            renamed,
+            nothing,
+            conflicts,
+            guard_tripped,
+            peer_direction_provider,
         )
 
     except Exception as e:

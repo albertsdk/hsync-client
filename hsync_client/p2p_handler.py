@@ -1775,6 +1775,21 @@ def _run_as_slave(
             # count — only come up afterwards). Cleared again if the sync fails.
             peer_manager.mark_peer_connected(master.cid)
             _emit_slave_presence(peer_manager)
+
+            def _peer_directions() -> list[tuple[str, str]]:
+                """Every other device in the group and the direction it advertises.
+
+                Feeds the upload-only report on ``sync_complete``: the master is
+                the destination and always stores an upload, so it is left out
+                (its acceptance is counted by the caller), while a slave that is
+                itself upload-only will ignore the file.
+                """
+                return [
+                    (peer.cid, peer.sync_direction)
+                    for peer in peer_manager.get_alive_peers()
+                    if peer.cid not in (master.cid, CONFIG.get("CID"))
+                ]
+
             try:
                 log_initial_sync_start()
                 if inventory_publisher is None:
@@ -1783,6 +1798,7 @@ def _run_as_slave(
                             p2p_mode=True,
                             source_resolver=source_resolver,
                             reconcile_dirs=True,
+                            peer_direction_provider=_peer_directions,
                         )
                     )
                 else:
@@ -1792,6 +1808,7 @@ def _run_as_slave(
                             inventory_observer=inventory_publisher,
                             source_resolver=source_resolver,
                             reconcile_dirs=True,
+                            peer_direction_provider=_peer_directions,
                         )
                     )
             except (AuthenticationError, NetworkError, ServerError):

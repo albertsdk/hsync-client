@@ -775,6 +775,10 @@ class TestRunAsSlave:
             )
 
         assert result == (False, 0)
+        # The upload-only report needs the other devices' directions; the callable
+        # is a per-run closure, so assert its presence and shape, not identity.
+        provider = seen.pop("peer_direction_provider", None)
+        assert callable(provider)
         assert seen == {
             "p2p_mode": True,
             "source_resolver": resolver,

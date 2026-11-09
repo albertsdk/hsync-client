@@ -42,6 +42,7 @@ def _run_cycle(tmp_path, policy: str, threshold: int):
         patch("hsync_client.sync.get_files_remote", return_value=[]),
         patch("hsync_client.sync.get_sync_actions", return_value=actions),
         patch("hsync_client.sync.get_tombstones_remote", return_value={}),
+        patch("hsync_client.sync.get_dirs_remote", return_value=None),
         patch("hsync_client.sync.push_tombstones_remote"),
         patch("hsync_client.sync.emit_folder_size"),
         patch("hsync_client.sync._cleanup_partial_files"),
@@ -109,6 +110,7 @@ def _run_with_a_tracked_missing_file(tmp_path, policy: str):
         patch("hsync_client.sync.get_files_remote", return_value=[]),
         patch("hsync_client.sync.get_sync_actions", return_value=[]),
         patch("hsync_client.sync.get_tombstones_remote", return_value={}),
+        patch("hsync_client.sync.get_dirs_remote", return_value=None),
         patch("hsync_client.sync.push_tombstones_remote"),
         patch("hsync_client.sync.emit_folder_size"),
         patch("hsync_client.sync.emit_event"),
@@ -132,3 +134,115 @@ def test_keep_never_mints_a_deletion_marker(tmp_path):
 
 def test_propagate_still_mints_the_marker(tmp_path):
     assert _run_with_a_tracked_missing_file(tmp_path, "propagate") == ["deadbeef"]
+
+
+def _run_upload_only_cycle(tmp_path, peers):
+    """Run one empty upload-only p2p cycle with a peer-direction provider."""
+    events: list[tuple[UiEventName, dict]] = []
+    config = {
+        "LOCAL_BUCKET": str(tmp_path),
+        "SYNC_DIRECTION": "upload-only",
+        "DELETION_POLICY": "keep",
+        "MASS_DELETE_THRESHOLD": 0,
+        "MASS_DELETE_PERCENT": 0,
+    }
+    with (
+        patch("hsync_client.sync.CONFIG", config),
+        patch("hsync_client.sync.get_files_local", return_value=[]),
+        patch("hsync_client.sync.get_files_remote", return_value=[]),
+        patch("hsync_client.sync.get_sync_actions", return_value=[]),
+        patch("hsync_client.sync.get_tombstones_remote", return_value={}),
+        patch("hsync_client.sync.get_dirs_remote", return_value=None),
+        patch("hsync_client.sync.push_tombstones_remote"),
+        patch("hsync_client.sync.emit_folder_size"),
+        patch("hsync_client.sync._cleanup_partial_files"),
+        patch("hsync_client.sync.ensure_hsynckeep_files"),
+        patch("hsync_client.sync.sync_state"),
+        patch(
+            "hsync_client.sync.emit_event",
+            side_effect=lambda name, **kw: events.append((name, kw)),
+        ),
+    ):
+        asyncio.run(sync_module.sync(p2p_mode=True, peer_direction_provider=lambda: list(peers)))
+    return [payload for name, payload in events if name == UiEventName.sync_complete][0]
+
+
+def test_an_upload_only_cycle_reports_who_receives_the_files(tmp_path):
+    """The master always stores an upload; an upload-only peer ignores it."""
+    payload = _run_upload_only_cycle(
+        tmp_path,
+        [("C" * 21, "upload-only"), ("D" * 21, "download-only")],
+    )
+
+    # 1 (the master) + the download-only peer.
+    assert payload["send_accepted"] == 2
+    assert payload["send_ignored"] == 1
+
+
+def test_the_report_is_absent_without_a_provider(tmp_path):
+    """No provider (server mode, or a caller that does not know the peers)."""
+    events: list[tuple[UiEventName, dict]] = []
+    config = {
+        "LOCAL_BUCKET": str(tmp_path),
+        "SYNC_DIRECTION": "upload-only",
+        "DELETION_POLICY": "keep",
+        "MASS_DELETE_THRESHOLD": 0,
+        "MASS_DELETE_PERCENT": 0,
+    }
+    with (
+        patch("hsync_client.sync.CONFIG", config),
+        patch("hsync_client.sync.get_files_local", return_value=[]),
+        patch("hsync_client.sync.get_files_remote", return_value=[]),
+        patch("hsync_client.sync.get_sync_actions", return_value=[]),
+        patch("hsync_client.sync.get_tombstones_remote", return_value={}),
+        patch("hsync_client.sync.get_dirs_remote", return_value=None),
+        patch("hsync_client.sync.push_tombstones_remote"),
+        patch("hsync_client.sync.emit_folder_size"),
+        patch("hsync_client.sync._cleanup_partial_files"),
+        patch("hsync_client.sync.ensure_hsynckeep_files"),
+        patch("hsync_client.sync.sync_state"),
+        patch(
+            "hsync_client.sync.emit_event",
+            side_effect=lambda name, **kw: events.append((name, kw)),
+        ),
+    ):
+        asyncio.run(sync_module.sync(p2p_mode=True))
+    payload = [p for n, p in events if n == UiEventName.sync_complete][0]
+    assert "send_accepted" not in payload
+    assert "send_ignored" not in payload
+
+
+def test_a_bidirectional_cycle_reports_nothing(tmp_path):
+    """The report describes an upload-only run only."""
+    events: list[tuple[UiEventName, dict]] = []
+    config = {
+        "LOCAL_BUCKET": str(tmp_path),
+        "SYNC_DIRECTION": "bidirectional",
+        "DELETION_POLICY": "keep",
+        "MASS_DELETE_THRESHOLD": 0,
+        "MASS_DELETE_PERCENT": 0,
+    }
+    with (
+        patch("hsync_client.sync.CONFIG", config),
+        patch("hsync_client.sync.get_files_local", return_value=[]),
+        patch("hsync_client.sync.get_files_remote", return_value=[]),
+        patch("hsync_client.sync.get_sync_actions", return_value=[]),
+        patch("hsync_client.sync.get_tombstones_remote", return_value={}),
+        patch("hsync_client.sync.get_dirs_remote", return_value=None),
+        patch("hsync_client.sync.push_tombstones_remote"),
+        patch("hsync_client.sync.emit_folder_size"),
+        patch("hsync_client.sync._cleanup_partial_files"),
+        patch("hsync_client.sync.ensure_hsynckeep_files"),
+        patch("hsync_client.sync.sync_state"),
+        patch(
+            "hsync_client.sync.emit_event",
+            side_effect=lambda name, **kw: events.append((name, kw)),
+        ),
+    ):
+        asyncio.run(
+            sync_module.sync(
+                p2p_mode=True, peer_direction_provider=lambda: [("C" * 21, "upload-only")]
+            )
+        )
+    payload = [p for n, p in events if n == UiEventName.sync_complete][0]
+    assert "send_accepted" not in payload

@@ -550,6 +550,18 @@ the lossless path. Covered by `tests/test_p2p_server_progress.py`,
 `tests/test_p2p_delta.py` and the black-box
 `tests/test_bb_p2p_master_progress.py`.
 
+**An upload-only run reports who will actually receive the file.** A device
+that is itself `upload-only` ignores remote-origin events, so its copy never
+arrives; "sent" alone would therefore claim a delivery that does not happen.
+`sync()` takes an optional `peer_direction_provider` (supplied by
+`p2p_handler.run_p2p_mode` from the live `PeerManager`, master and self
+excluded) and, for an upload-only cycle, adds `send_accepted` and `send_ignored`
+to `sync_complete`: the master always counts as accepting (it stores the upload),
+a `download-only`/`bidirectional` peer accepts, an `upload-only` peer ignores.
+The keys are absent on any other direction, so a front-end never sees a fake
+zero. The desktop renders the split as *"Inviato: N · ricevuto su X dispositivi ·
+Y in sola invio non lo ricevono"*.
+
 **The receiver owns the progress of an upload it receives**: a sender knows only
 what it handed to its transport, the master knows what it stored, so the
 receiving side publishes `file_progress` frames on the uploader's own session
