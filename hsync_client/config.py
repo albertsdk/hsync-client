@@ -377,7 +377,7 @@ class EnvSettings(BaseSettings):
         default=None,
         ge=1,
         le=20,
-        description="Maximum number of concurrent file transfers (1-20)",
+        description="Maximum number of concurrent file transfers and inbound events applied at once (1-20)",
     )
 
     # Tombstone Configuration

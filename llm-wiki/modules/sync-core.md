@@ -36,7 +36,7 @@ engine (requests/loguru) and never `zeroconf`/`watchdog` (LAN-only) or
 | `_permanent_download_failures` / `_reset_permanent_failures` / `_is_permanently_failed` | `hsync_client/sync.py::_permanent_download_failures` | H8 per-cycle skip-set of permanently-failed downloads (keyed `filepath\|sha256`); cleared at the start of each cycle |
 | `update_file` / `update_dir` | `hsync_client/sync.py::update_file` / `hsync_client/sync.py::update_dir` | apply inbound metadata; reject unsafe remote paths |
 | `ensure_hsynckeep_files` | `hsync_client/sync.py::ensure_hsynckeep_files` | keep empty dirs via sentinel |
-| `_cleanup_partial_files` | `hsync_client/sync.py::_cleanup_partial_files` | drop stale `.part` files **except the ones a live transfer owns**: inbound downloads run outside the sync cycle that owns this sweep (LAN fan-out, remote event loop), so a sweep that ignored the in-flight registry deleted the `.part` of a stream mid-flight — the transfer then failed at its final atomic rename, logged as "Error saving file" with no retry, and the path stayed unsynced until the next cycle. Writers mark their artifacts via `utils.register_inflight_partial` (`transfer._download_from_source_attempt` for `<final>.part`, `delta_transfer` for `<final>.delta.part` + its parked `.lit` payload) and release them in their `finally`; `utils.is_inflight_partial` is the read side |
+| `_cleanup_partial_files` | `hsync_client/sync.py::_cleanup_partial_files` | drop stale `.part` files **except the ones a live transfer owns**: inbound downloads run outside the sync cycle that owns this sweep (both receive loops), so a sweep that ignored the in-flight registry deleted the `.part` of a stream mid-flight — the transfer then failed at its final atomic rename, logged as "Error saving file" with no retry, and the path stayed unsynced until the next cycle. Writers mark their artifacts via `utils.register_inflight_partial` (`transfer._download_from_source_attempt` for `<final>.part`, `delta_transfer` for `<final>.delta.part` + its parked `.lit` payload) and release them in their `finally`; `utils.is_inflight_partial` is the read side |
 | `incremental_vacuum_if_due` | `hsync_client/state_maintenance.py::incremental_vacuum_if_due` | end-of-cycle compaction of the state DB (ADR-0025), called by `hsync_client/sync.py::_finalize_cycle` after `sync_state.flush()`; throttled to `INCREMENTAL_VACUUM_INTERVAL_S` and bounded to `INCREMENTAL_VACUUM_PAGES` free pages. A full `VACUUM` runs once at process exit via `vacuum_on_shutdown` (`hsync_client/state_maintenance.py::vacuum_on_shutdown`), wired in `main_logic.run_sync`'s `finally` |
 
 Tombstone-vs-local decision: `_tombstone_deletes_local` (`hsync_client/sync.py::_tombstone_deletes_local`,
@@ -444,26 +444,19 @@ from `hsync_client/constants.py::TRANSFER_RETRY_ATTEMPTS_DEFAULT`–`hsync_clien
 `_apply_add_or_modify` (`hsync_client/event_dispatch.py::_apply_add_or_modify`, also receives `event_name` to log `[REMOTE CREATE]` vs
 `[REMOTE MODIFY]` for the directory branch — the log is gated on `update_dir` returning
 non-`None`, so a security-rejected directory is not pre-logged as created), `_apply_rename` (`hsync_client/event_dispatch.py::_apply_rename`), `_apply_delete` (`hsync_client/event_dispatch.py::_apply_delete`,
-locked via `_remove_locked:67`), `_apply_symlink` (`hsync_client/event_dispatch.py::_apply_symlink`). Echo suppression uses
-the `EventDispatchContext` (`hsync_client/event_dispatch.py::EventDispatchContext`) marking (`_mark:218`/`_unmark:223`).
+locked via `_remove_locked` (`hsync_client/event_dispatch.py::_remove_locked`)), `_apply_symlink` (`hsync_client/event_dispatch.py::_apply_symlink`). Echo suppression uses
+the `EventDispatchContext` (`hsync_client/event_dispatch.py::EventDispatchContext`) marking (`_mark` (`hsync_client/event_dispatch.py::_mark`) / `_unmark` (`hsync_client/event_dispatch.py::_unmark`)).
 Path resolution: `_resolve_local_path` (`hsync_client/event_dispatch.py::_resolve_local_path`).
 
 `_apply_rename` emits the `rename` UI event **after** the local rename is applied,
 so consumers that read the destination from the filesystem (e.g. the desktop's
 modified-date column) never observe a transiently missing file.
 
-**Bounded file-download fan-out** (`_spawn_file_download:238` +
-`drain_file_downloads:296`): when the context carries a
-`file_download_semaphore` (set by the p2p slave ctx), the `added`/`modified`
-file branch schedules the `update_file` download as a task instead of
-awaiting it inline. Events for the **same path** are chained after the
-previous task (order preserved; `download_file` also holds `path_lock`), the
-**mark/unmark** echo suppression brackets the write inside the task, and
-distinct paths run concurrently under the semaphore. The receive loop's
-teardown drains the pending tasks before the rendezvous loop's full sync.
-The serial `await` this replaces capped a LAN burst at ~60 files/s while the
-master serves 200+ req/s; remote-mode contexts (no semaphore) keep the
-inline behavior.
+Each event is applied to completion by the dispatcher: the `added`/`modified` file
+branch awaits `update_file` on a worker thread with the **mark/unmark** echo
+suppression bracketing the write. Scheduling, per-path ordering and the
+concurrency bound of the applied events belong to the receive loop, not to the
+dispatcher — see [inbound_queue.py](#inbound_queuepy--scheduling-inbound-mutations).
 
 **Inbound directory dedup** (`_apply_add_or_modify` + `_DirDedup`): the master
 broadcasts a burst of near-identical `added`/`modified` directory events per
@@ -489,8 +482,8 @@ suppression layers, both keyed on the **absolute** local path:
    (`update_dir` → `None`) is never recorded or degraded.
 
 The LAN WebSocket loop builds **one context per connection** via
-`_build_p2p_dispatch_ctx` (`p2p_websocket.py`) and passes it to every
-`_handle_p2p_event` call; the context-scoped `dir_dedup` factory guarantees the
+`_build_p2p_dispatch_ctx` (`hsync_client/p2p_websocket.py::_build_p2p_dispatch_ctx`) and hands it to the connection's
+`InboundEventQueue`; the context-scoped `dir_dedup` factory guarantees the
 cache lives for the whole connection. Remote mode reuses a module-level
 `REMOTE_DISPATCH_CTX` (`hsync_client/remote_websocket.py::REMOTE_DISPATCH_CTX`).
 
@@ -564,6 +557,32 @@ peer-caused, so the prefix is the module constant `INBOUND_PREFIX = "REMOTE "`
 project-local label table, and `EventDispatchContext` carries no `log_prefix`
 field — both inbound contexts share the
 same value).
+
+## inbound_queue.py — scheduling inbound mutations
+
+`InboundEventQueue` (`hsync_client/inbound_queue.py::InboundEventQueue`) is what
+a WebSocket receive loop submits every accepted frame to. `submit`
+(`hsync_client/inbound_queue.py::InboundEventQueue.submit`) schedules the
+mutation and returns, so the loop goes straight back to `recv`: a
+multi-gigabyte download never delays a later event, an instant delete included.
+One queue per connection, built and drained by
+`remote_websocket._process_remote_events`
+(`hsync_client/remote_websocket.py::_process_remote_events`) and
+`p2p_websocket.p2p_websocket_client`
+(`hsync_client/p2p_websocket.py::p2p_websocket_client`).
+
+| Property | Rule |
+| -------- | ---- |
+| Ordering | mutations touching the same path never interleave: each task first awaits the pending task of every path it carries (`event_path_keys`, `hsync_client/event_dispatch.py::event_path_keys`). A **rename** occupies both source and destination — applied before the pending download of its source it would find the source missing, re-download the destination, and then the pending download would re-create the source |
+| Concurrency | `asyncio.Semaphore(MAX_CONCURRENT_TRANSFERS)`, so the live stream and the reconcile share one bandwidth budget. The per-path wait happens **before** a slot is taken, which is what keeps a chained task from deadlocking |
+| Backpressure | `INBOUND_MAX_PENDING_EVENTS_DEFAULT` (`hsync_client/constants.py::INBOUND_MAX_PENDING_EVENTS_DEFAULT`) bounds the outstanding mutations; `submit` waits once it is reached, pushing back on the socket instead of buffering a backlog it could never apply |
+| Isolation | a mutation that raises is logged and the stream continues |
+| Teardown | `drain` (`hsync_client/inbound_queue.py::InboundEventQueue.drain`) awaits everything still outstanding before the connection returns to its outer loop, so the reconnect's full sync never races a half-applied tree |
+
+Ordering is per path only: mutations of **distinct** paths run concurrently, so
+their log and UI events arrive in execution order, not in wire order. The event
+stream stays the causal order for each path, and `periodic_resync` is the safety
+net for anything a burst loses.
 
 ## file_event_handler.py — watchdog adapter
 

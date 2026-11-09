@@ -101,11 +101,7 @@ from hsync_client.constants import (
     WS_PING_TIMEOUT_S,
     ActionLabel,
 )
-from hsync_client.event_dispatch import (
-    EventDispatchContext,
-    apply_inbound_event,
-    drain_file_downloads,
-)
+from hsync_client.event_dispatch import EventDispatchContext
 from hsync_client.events import UiEventName, emit_event, emit_progress
 from hsync_client.file_event_handler import (
     MODIFIED_DEBOUNCE_INTERVAL,
@@ -116,6 +112,7 @@ from hsync_client.file_event_handler import (
     fold_metadata_touch,
     touch_log_line,
 )
+from hsync_client.inbound_queue import InboundEventQueue
 from hsync_client.net_watch import NetworkSignature, get_network_monitor
 from hsync_client.p2p_inventory import (
     NOOP_INVENTORY_OBSERVER,
@@ -1617,9 +1614,10 @@ async def p2p_websocket_client(
 
         ssl_context = create_fingerprint_ssl_context(str(expected_fingerprint or ""))
 
-    # Bound so the teardown path below can drain pending event downloads even
-    # when the connection failed before the dispatch context was built.
+    # Bound so the teardown path below can drain the inbound mutations even when
+    # the connection failed before the dispatch context was built.
     ctx: EventDispatchContext | None = None
+    inbound: InboundEventQueue | None = None
     # Tracks whether the slave→master link was established, so the teardown can
     # report the drop back to the UI (continuous mode reconnects afterwards).
     connected = False
@@ -1796,8 +1794,8 @@ async def p2p_websocket_client(
                 _slave_event_handler,
                 inventory_observer,
                 source_resolver,
-                fan_out=True,
             )
+            inbound = InboundEventQueue(ctx)
 
             # Process incoming events
             async for message in websocket:
@@ -1812,7 +1810,7 @@ async def p2p_websocket_client(
                         continue
                     if _apply_master_progress(event_data):
                         continue
-                    await _handle_p2p_event(event_data, _slave_event_handler, ctx)
+                    await inbound.submit(event_data)
                 except json.JSONDecodeError as e:
                     log.warning(f"Invalid JSON from master: {e}")
                 except Exception as e:
@@ -1845,11 +1843,10 @@ async def p2p_websocket_client(
                 await resync_task
         if inventory_publisher is not None:
             await inventory_publisher.stop()
-        # Drain pending event-driven downloads before returning to the
-        # rendezvous loop: the reconnect's full sync must not race writes that
-        # are still in flight (fan-out path).
-        if ctx is not None:
-            await drain_file_downloads(ctx)
+        # Drain the pending inbound mutations before returning to the rendezvous
+        # loop: the reconnect's full sync must not race writes still in flight.
+        if inbound is not None:
+            await inbound.drain()
         # Wait for pending client→master operations to complete before
         # returning to the rendezvous loop (which triggers a full sync).
         # This prevents race conditions where a rename/upload/delete is
@@ -1890,8 +1887,6 @@ def _build_p2p_dispatch_ctx(
     slave_handler: P2PSlaveFileEventHandler | None,
     inventory_observer: InventoryObserver = NOOP_INVENTORY_OBSERVER,
     source_resolver: P2PSourceResolver | None = None,
-    *,
-    fan_out: bool = False,
 ) -> EventDispatchContext:
     """Build the P2P slave's inbound event dispatch context.
 
@@ -1901,11 +1896,9 @@ def _build_p2p_dispatch_ctx(
     per WebSocket connection: the ``dir_dedup`` cache (default factory)
     must survive across events, otherwise every event starts with an empty
     cache and the duplicate added/modified burst a single directory
-    broadcast produces is re-logged as a fresh change.
-
-    ``fan_out=True`` (the WSS receive loop) additionally arms the bounded
-    per-path file-download fan-out; the default keeps the inline
-    behavior for one-off callers (``_handle_p2p_event`` without a context).
+    broadcast produces is re-logged as a fresh change. Scheduling and
+    concurrency of the applied events belong to the connection's
+    :class:`InboundEventQueue`, not to this context.
     """
     return EventDispatchContext(
         mark_receiving=slave_handler.mark_receiving if slave_handler else None,
@@ -1915,38 +1908,7 @@ def _build_p2p_dispatch_ctx(
         recover_on_missing_rename_src=False,
         inventory_observer=inventory_observer,
         source_resolver=source_resolver,
-        # Fan out inbound file downloads: the WSS receive loop must never
-        # serialize on them (measured ~60 files/s ceiling during bursts,
-        # vs 200+ files/s the master serves). Bounded by the same knob as
-        # the reconcile transfers; per-path ordering is preserved.
-        file_download_semaphore=(
-            asyncio.Semaphore(int(CONFIG.get("MAX_CONCURRENT_TRANSFERS", 5))) if fan_out else None
-        ),
     )
-
-
-async def _handle_p2p_event(
-    event_data: dict,
-    slave_handler: P2PSlaveFileEventHandler | None = None,
-    ctx: EventDispatchContext | None = None,
-) -> None:
-    """Apply an event received from the P2P master to the local file system.
-
-    Delegates to the unified :func:`apply_inbound_event` dispatcher with a
-    P2P-specific :class:`EventDispatchContext`.
-
-    Args:
-        event_data: Event dictionary from the master.
-        slave_handler: Optional client event handler for marking files
-            as receiving (suppresses the slave's own watchdog echo).
-        ctx: Optional per-connection dispatch context. The WebSocket loop
-            passes the connection-scoped context so the inbound directory
-            dedup cache persists across events; when omitted (one-off
-            callers, tests) a fresh context is built.
-    """
-    if ctx is None:
-        ctx = _build_p2p_dispatch_ctx(slave_handler)
-    await apply_inbound_event(event_data, ctx)
 
 
 # =============================================================================

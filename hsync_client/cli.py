@@ -757,7 +757,7 @@ MaxConcurrentTransfersOpt = Annotated[
     int | None,
     typer.Option(
         "--max-concurrent-transfers",
-        help="Maximum number of concurrent file transfers (1-20).",
+        help="Maximum number of concurrent file transfers and inbound events applied at once (1-20).",
         metavar="N",
         rich_help_panel="Sync",
     ),

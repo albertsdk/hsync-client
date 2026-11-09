@@ -1,7 +1,7 @@
 .\" Man page for HSYNC - file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-11-09" "hsync 1.0" "User Commands"
+.TH HSYNC 1 "2026-11-09" "hsync 1.1.0" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -297,7 +297,8 @@ Percentage of local files whose deletion trips the mass-deletion guard
 set to 0 to disable the percentage threshold).
 .TP
 .BR \-\-max\-concurrent\-transfers =\fIN\fP
-Maximum number of concurrent file transfers (default:
+Maximum number of concurrent file transfers, and of inbound events applied
+at once (default:
 .BR 5 ;
 range: 1\(en20).
 .TP
@@ -763,7 +764,8 @@ carry a port override (
 .IR host:port ).
 .TP
 .B HSYNC_MAX_CONCURRENT_TRANSFERS
-Maximum number of concurrent file transfers (default:
+Maximum number of concurrent file transfers, and of inbound events applied
+at once (default:
 .BR 5 ;
 range: 1\(en20).
 When auto-tuning is enabled, this value is derived from storage type,

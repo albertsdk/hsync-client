@@ -131,13 +131,19 @@ UPLOAD_MAX_RESCHEDULES_DEFAULT = 5
 # Parallel Transfer Settings
 # =============================================================================
 
-# Maximum number of concurrent file transfers (downloads/uploads)
-# Higher values increase throughput but also server load.
+# Maximum number of concurrent file transfers (downloads/uploads), which is
+# also the concurrency bound of the inbound event stream: both draw on one
+# bandwidth budget.
 # Can be overridden via HSYNC_MAX_CONCURRENT_TRANSFERS environment variable
 # or --max-concurrent-transfers CLI option.
 MAX_CONCURRENT_TRANSFERS_DEFAULT = _defaults.MAX_CONCURRENT_TRANSFERS_DEFAULT
 MAX_CONCURRENT_TRANSFERS_MIN = _defaults.MAX_CONCURRENT_TRANSFERS_MIN
 MAX_CONCURRENT_TRANSFERS_MAX = _defaults.MAX_CONCURRENT_TRANSFERS_MAX
+
+# Hard cap on inbound mutation events queued by a WebSocket receive loop. The
+# stream is peer-driven, so beyond this bound the loop waits for capacity
+# instead of buffering an unbounded backlog it could never catch up with.
+INBOUND_MAX_PENDING_EVENTS_DEFAULT = 256
 
 # Concurrency bound while the data plane rides the rendezvous relay. The tunnel
 # multiplexes every loopback connection over one relay session, so the fan-out no

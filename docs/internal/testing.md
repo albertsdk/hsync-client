@@ -97,6 +97,8 @@ tests/
 ├── test_event_dispatch_delete.py       # Inbound delete event dispatch
 ├── test_event_dispatch_rename.py       # Inbound rename event dispatch
 ├── test_event_dispatch_symlink.py      # Inbound symlink event dispatch
+├── test_inbound_event_queue.py         # Inbound mutation scheduling (order/concurrency)
+├── test_remote_inbound_concurrency.py  # Remote loop never waits for a transfer
 ├── test_file_event_handler_base.py     # Base file event handler logic
 ├── test_p2p_peer.py                    # p2p peer model and logic
 ├── test_p2p_peer_manager.py            # p2p peer manager
@@ -577,11 +579,13 @@ with 0 mismatches (burst ≈ 67 file/s, mutation wave ≈ 147 file/s).
 `scripts/benchmark_p2p_transfers.py` + a throwaway HTTPS micro-bench showed
 the p2p master serves 200–600 req/s, so the burst ceiling was client-side:
 
-- *The slave's WSS receive loop serialized downloads.* Every inbound file
-  event was `await`ed inline (~10–26 ms each), capping a burst at ~60
-  files/s. Inbound file downloads are now fanned out per-path-chained,
-  bounded by `MAX_CONCURRENT_TRANSFERS` (`event_dispatch._spawn_file_download`).
-  Regression: `tests/test_event_dispatch_file_fanout.py`.
+- *The slave's WSS receive loop never waits for a transfer.* Every inbound
+  event is scheduled on the connection's `InboundEventQueue`
+  (`hsync_client/inbound_queue.py::InboundEventQueue`), per-path chained and
+  bounded by `MAX_CONCURRENT_TRANSFERS`, so a burst runs at the transfers'
+  pace instead of one inline `await` per event (~10–26 ms each).
+  Regressions: `tests/test_inbound_event_queue.py`,
+  `tests/test_remote_inbound_concurrency.py`.
 - *Every sync cycle re-hashed the whole local tree.* The SHA-256 cache is now
   keyed on the nanosecond stat identity (mtime/ctime/size) in `hsync-common`
   and is no longer cleared per cycle: continuous-mode resyncs are
@@ -712,10 +716,11 @@ is why it does not scale with bytes.
 - *The per-cycle leftover sweep deleted `.part` files of live transfers.*
   `sync._cleanup_partial_files` walks the whole bucket at the start of every
   cycle to clear what a *previous* process left behind, but inbound downloads
-  run **outside** the cycle that owns the sweep (LAN fan-out, remote event
-  loop), so a RESYNC / reconnect landing mid-transfer removed the artifact a
-  stream was still writing. The writer keeps a valid descriptor, so the failure
-  surfaced only at the final atomic rename — logged as "Error saving file",
+  run **outside** the cycle that owns the sweep (the remote and p2p-slave
+  receive loops), so a RESYNC / reconnect landing mid-transfer removed the
+  artifact a stream was still writing. The writer keeps a valid descriptor, so
+  the failure surfaced only at the final atomic rename — logged as "Error
+  saving file",
   with no retry and no transfer-failure counted, leaving the path unsynced until
   the next cycle (up to `RESYNC`, default 300 s). Writers now register their
   artifacts in a lock-guarded registry (`utils.register_inflight_partial`) and
@@ -798,9 +803,9 @@ A later round measured the field path directly instead of the pool knob:
 - **Thread CPU during the burst** (sampled from `/proc/<pid>/task/*/stat`): the
   slave burns **1.15-1.16 cores** and the master ~0.9, with the CPU spread over
   the 7 `asyncio_*` threads that `asyncio.to_thread` creates for the inbound
-  fan-out — *not* the dedicated `hsync-transfer_*` pool used by the reconcile.
-  Two executors serve the same work. Earlier "both peers idle" readings were
-  mis-aligned samples taken outside the burst window; the burst is CPU-bound.
+  mutations — *not* the dedicated `hsync-transfer_*` pool used by the
+  reconcile. Earlier "both peers idle" readings were mis-aligned samples taken
+  outside the burst window; the burst is CPU-bound.
 - **Per-file cost**: `usage` accounting gives **14.2-15.3 ms CPU/file** on the
   event path (81 files/s) versus ~9.4 ms on the reconcile path (145 files/s,
   observed concurrency peak 5 / time-weighted mean 2.9).

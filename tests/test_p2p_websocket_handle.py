@@ -6,11 +6,12 @@ from unittest.mock import patch
 
 import pytest
 
-from hsync_client.p2p_websocket import P2PSlaveFileEventHandler, _handle_p2p_event
+from hsync_client.event_dispatch import apply_inbound_event
+from hsync_client.p2p_websocket import P2PSlaveFileEventHandler, _build_p2p_dispatch_ctx
 
 
 class TestHandleLanEvent:
-    """Tests for _handle_p2p_event function."""
+    """Tests for inbound P2P event dispatch."""
 
     @pytest.mark.asyncio
     async def test_handle_added_file_event(self, tmp_path):
@@ -36,7 +37,7 @@ class TestHandleLanEvent:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.event_dispatch.update_file") as mock_update,
         ):
-            await _handle_p2p_event(event_data)
+            await apply_inbound_event(event_data, _build_p2p_dispatch_ctx(None))
 
             mock_update.assert_called_once()
 
@@ -60,7 +61,7 @@ class TestHandleLanEvent:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.event_dispatch.update_dir") as mock_update,
         ):
-            await _handle_p2p_event(event_data)
+            await apply_inbound_event(event_data, _build_p2p_dispatch_ctx(None))
 
             mock_update.assert_called_once()
 
@@ -94,10 +95,10 @@ class TestHandleLanEvent:
                 patch("hsync_client.sync.CONFIG", config),
             ):
                 event = {"name": "added", "src": {"path": "d", "permissions": "755"}}
-                await _handle_p2p_event(event, ctx=ctx)  # first: applied + logged
-                await _handle_p2p_event(event, ctx=ctx)  # duplicate burst: suppressed
+                await apply_inbound_event(event, ctx)  # first: applied + logged
+                await apply_inbound_event(event, ctx)  # duplicate burst: suppressed
                 changed = {"name": "added", "src": {"path": "d", "permissions": "700"}}
-                await _handle_p2p_event(changed, ctx=ctx)  # real permission change
+                await apply_inbound_event(changed, ctx)  # real permission change
         finally:
             logger.remove(handler_id)
 
@@ -140,7 +141,7 @@ class TestHandleLanEvent:
                 echo_dir.mkdir()
                 actual = mode_to_octal(echo_dir.stat().st_mode)
                 event = {"name": "added", "src": {"path": "echo", "permissions": actual}}
-                await _handle_p2p_event(event, ctx=ctx)
+                await apply_inbound_event(event, ctx)
         finally:
             logger.remove(handler_id)
 
@@ -182,7 +183,7 @@ class TestHandleLanEvent:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.event_dispatch.update_file") as mock_update,
         ):
-            await _handle_p2p_event(event_data)
+            await apply_inbound_event(event_data, _build_p2p_dispatch_ctx(None))
 
             mock_update.assert_called_once()
 
@@ -219,7 +220,7 @@ class TestHandleLanEvent:
         }
 
         with patch("hsync_client.event_dispatch.CONFIG", config):
-            await _handle_p2p_event(event_data)
+            await apply_inbound_event(event_data, _build_p2p_dispatch_ctx(None))
 
         # File should be renamed
         assert not src_file.exists()
@@ -251,7 +252,7 @@ class TestHandleLanEvent:
         }
 
         with patch("hsync_client.event_dispatch.CONFIG", config):
-            await _handle_p2p_event(event_data)
+            await apply_inbound_event(event_data, _build_p2p_dispatch_ctx(None))
 
         # File should be deleted
         assert not test_file.exists()
@@ -282,7 +283,7 @@ class TestHandleLanEvent:
         }
 
         with patch("hsync_client.event_dispatch.CONFIG", config):
-            await _handle_p2p_event(event_data)
+            await apply_inbound_event(event_data, _build_p2p_dispatch_ctx(None))
 
         # File should still exist
         assert test_file.exists()
@@ -311,7 +312,7 @@ class TestHandleLanEvent:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.event_dispatch.update_file") as mock_update,
         ):
-            await _handle_p2p_event(event_data)
+            await apply_inbound_event(event_data, _build_p2p_dispatch_ctx(None))
 
             # Should not update in upload-only mode
             mock_update.assert_not_called()
@@ -333,7 +334,7 @@ class TestHandleLanEvent:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.event_dispatch.update_file") as mock_update,
         ):
-            await _handle_p2p_event(event_data)
+            await apply_inbound_event(event_data, _build_p2p_dispatch_ctx(None))
 
             # Should not process event
             mock_update.assert_not_called()
@@ -359,7 +360,7 @@ class TestHandleLanEvent:
         }
 
         with patch("hsync_client.event_dispatch.CONFIG", config):
-            await _handle_p2p_event(event_data)
+            await apply_inbound_event(event_data, _build_p2p_dispatch_ctx(None))
 
         link = tmp_path / "link.txt"
         assert link.is_symlink()
@@ -383,7 +384,7 @@ class TestHandleLanEvent:
         }
 
         with patch("hsync_client.event_dispatch.CONFIG", config):
-            await _handle_p2p_event(event_data)
+            await apply_inbound_event(event_data, _build_p2p_dispatch_ctx(None))
 
         assert not src_dir.exists()
         assert (tmp_path / "newdir").exists()
@@ -410,7 +411,7 @@ class TestHandleLanEvent:
         }
 
         with patch("hsync_client.event_dispatch.CONFIG", config):
-            await _handle_p2p_event(event_data)
+            await apply_inbound_event(event_data, _build_p2p_dispatch_ctx(None))
         # Should not crash – just logs a warning
 
     @pytest.mark.asyncio
@@ -442,7 +443,7 @@ class TestHandleLanEvent:
         }
 
         with patch("hsync_client.event_dispatch.CONFIG", config):
-            await _handle_p2p_event(event_data)
+            await apply_inbound_event(event_data, _build_p2p_dispatch_ctx(None))
 
         # Neither file exists – no crash
         assert not (tmp_path / "new.txt").exists()
@@ -466,7 +467,7 @@ class TestHandleLanEvent:
         }
 
         with patch("hsync_client.event_dispatch.CONFIG", config):
-            await _handle_p2p_event(event_data)
+            await apply_inbound_event(event_data, _build_p2p_dispatch_ctx(None))
 
         assert not target.exists()
 
@@ -497,7 +498,7 @@ class TestHandleLanEvent:
         }
 
         with patch("hsync_client.event_dispatch.CONFIG", config):
-            await _handle_p2p_event(event_data)
+            await apply_inbound_event(event_data, _build_p2p_dispatch_ctx(None))
 
         assert not sentinel.exists()
         assert not parent.exists()  # empty dir cleaned up
@@ -528,7 +529,7 @@ class TestHandleLanEvent:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.event_dispatch.update_file"),
         ):
-            await _handle_p2p_event(event_data, slave_handler=handler)
+            await apply_inbound_event(event_data, _build_p2p_dispatch_ctx(handler))
 
         # File should have been unmarked after processing
         assert not handler.is_receiving(str(tmp_path / "test.txt"))
@@ -548,7 +549,7 @@ class TestHandleLanEvent:
         }
 
         with patch("hsync_client.event_dispatch.CONFIG", config):
-            await _handle_p2p_event(event_data)
+            await apply_inbound_event(event_data, _build_p2p_dispatch_ctx(None))
         # Should not crash
 
     @pytest.mark.asyncio
@@ -565,7 +566,7 @@ class TestHandleLanEvent:
         config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"}
         handler = P2PSlaveFileEventHandler("host", 9753, use_https=False)
         with patch("hsync_client.event_dispatch.CONFIG", config):
-            await _handle_p2p_event(event_data, slave_handler=handler)
+            await apply_inbound_event(event_data, _build_p2p_dispatch_ctx(handler))
         src_abs = str(tmp_path / "old.txt")
         dst_abs = str(tmp_path / "new.txt")
         assert handler.is_inbound_rename_echo(src_abs, dst_abs)
@@ -593,7 +594,7 @@ class TestHandleLanEvent:
         }
         handler = P2PSlaveFileEventHandler("host", 9753, use_https=False)
         with patch("hsync_client.event_dispatch.CONFIG", config):
-            await _handle_p2p_event(event_data, slave_handler=handler)
+            await apply_inbound_event(event_data, _build_p2p_dispatch_ctx(handler))
 
         root_abs = str(tmp_path / "deldir")
         assert handler.is_inbound_delete_echo(root_abs)
@@ -620,7 +621,7 @@ class TestHandleLanEvent:
         }
 
         with patch("hsync_client.event_dispatch.CONFIG", config):
-            await _handle_p2p_event(event_data)
+            await apply_inbound_event(event_data, _build_p2p_dispatch_ctx(None))
         # Should not crash
 
     @pytest.mark.asyncio
@@ -649,7 +650,7 @@ class TestHandleLanEvent:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.event_dispatch.update_file") as mock_update,
         ):
-            await _handle_p2p_event(event_data)
+            await apply_inbound_event(event_data, _build_p2p_dispatch_ctx(None))
             mock_update.assert_not_called()
 
     @pytest.mark.asyncio
@@ -678,7 +679,7 @@ class TestHandleLanEvent:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.event_dispatch.update_file") as mock_update,
         ):
-            await _handle_p2p_event(event_data)
+            await apply_inbound_event(event_data, _build_p2p_dispatch_ctx(None))
             mock_update.assert_called_once()
 
 
@@ -851,7 +852,7 @@ class TestEventLoopRemainsResponsive:
     """Regression test for the cascade where a multi-GB download blocked
     the asyncio loop and caused WebSocket keep-alive pings to time out.
 
-    ``_handle_p2p_event`` must dispatch the blocking ``update_file`` call
+    ``apply_inbound_event`` must dispatch the blocking ``update_file`` call
     to a worker thread (via ``asyncio.to_thread``) so the event loop is
     free to handle other coroutines while the download runs.
     """
@@ -892,7 +893,9 @@ class TestEventLoopRemainsResponsive:
             patch("hsync_client.event_dispatch.CONFIG", config),
             patch("hsync_client.event_dispatch.update_file", side_effect=slow_update),
         ):
-            await asyncio.gather(_handle_p2p_event(event_data), ticker())
+            await asyncio.gather(
+                apply_inbound_event(event_data, _build_p2p_dispatch_ctx(None)), ticker()
+            )
 
         # The ticker must have produced multiple ticks during the slow
         # update — proving the event loop was never blocked.

@@ -49,11 +49,12 @@ from hsync_client.constants import (
     WS_MAX_MESSAGE_BYTES,
     ActionLabel,
 )
-from hsync_client.event_dispatch import EventDispatchContext, apply_inbound_event
+from hsync_client.event_dispatch import EventDispatchContext
 from hsync_client.event_queue import EventQueue
 from hsync_client.events import UiEventName, emit_event, set_event_channel_ready, set_link_status
 from hsync_client.exceptions import WatcherStartError, WebSocketHandshakeError
 from hsync_client.file_event_handler import BaseFileEventHandler
+from hsync_client.inbound_queue import InboundEventQueue
 from hsync_client.net_watch import (
     NetworkChangeMonitor,
     NetworkSignature,
@@ -317,13 +318,41 @@ REMOTE_DISPATCH_CTX = EventDispatchContext(
 )
 
 
-async def _process_remote_events(websocket, bucket: str) -> None:
+async def _process_remote_events(
+    websocket, bucket: str, ctx: EventDispatchContext | None = None
+) -> None:
     """
     Process incoming WebSocket events in the main loop.
+
+    Each accepted frame is scheduled on the connection's
+    :class:`InboundEventQueue` and the loop returns to ``recv`` immediately, so
+    a large download never delays a later event (an instant delete included).
+    The queue keeps the per-path order, runs the mutations under
+    ``MAX_CONCURRENT_TRANSFERS`` and is drained before the loop returns: the
+    reconnect's full sync must not race writes still in flight.
 
     Args:
         websocket: Active WebSocket connection.
         bucket: Remote bucket name for filtering events.
+        ctx: Dispatch context for the applied events; defaults to the Remote
+            one. The queue is built per call, so its caches and its concurrency
+            budget live exactly as long as this connection.
+    """
+    inbound = InboundEventQueue(ctx or REMOTE_DISPATCH_CTX)
+    try:
+        await _read_remote_events(websocket, bucket, inbound)
+    finally:
+        await inbound.drain()
+
+
+async def _read_remote_events(websocket, bucket: str, inbound: InboundEventQueue) -> None:
+    """
+    Read inbound frames and hand each one to *inbound*.
+
+    Args:
+        websocket: Active WebSocket connection.
+        bucket: Remote bucket name for filtering events.
+        inbound: Queue executing the accepted events.
     """
     while True:
         data = await websocket.recv()
@@ -377,14 +406,15 @@ async def _process_remote_events(websocket, bucket: str) -> None:
             log.debug("Different bucket, dropped.")
             continue
 
-        # Echo suppression, upload-only filter, and the per-event apply
-        # logic are delegated to the unified dispatcher. One malformed event
-        # must not kill the connection loop (the P2P client loop isolates
-        # per-message failures the same way).
+        # Echo suppression, the upload-only filter and the per-event apply all
+        # run inside the scheduled mutation, so the loop never waits for the
+        # transfer an event triggers. One malformed event must not kill the
+        # connection loop (the P2P client loop isolates per-message failures
+        # the same way).
         try:
-            await apply_inbound_event(message, REMOTE_DISPATCH_CTX)
+            await inbound.submit(message)
         except Exception as e:
-            log.error(f"Failed to apply inbound event {message.get('name')!r}: {e}")
+            log.error(f"Failed to schedule inbound event {message.get('name')!r}: {e}")
 
 
 # =============================================================================

@@ -74,8 +74,10 @@ WatcherManager (hsync_client/watcher.py::WatcherManager) ──> BaseFileEventHa
          │    one in-flight upload per path, watcher bursts coalesced to the newest
          │    request; upload_file self-records the local edit before advertising
         │
- inbound WS event ──> event_dispatch.apply_inbound_event (hsync_client/event_dispatch.py::apply_inbound_event)
-        │                         └─> download/delete/rename/symlink locally
+ inbound WS event ──> inbound_queue.InboundEventQueue (hsync_client/inbound_queue.py::InboundEventQueue)
+        │                    one task per event: per-path order, bounded concurrency
+        │                    └─> event_dispatch.apply_inbound_event (hsync_client/event_dispatch.py::apply_inbound_event)
+        │                              └─> download/delete/rename/symlink locally
         ▼
  sync.sync (hsync_client/sync.py::sync): list local/remote, diff (hsync_client/sync.py::get_sync_actions),
                           execute in parallel (hsync_client/sync.py::_execute_parallel_transfers)

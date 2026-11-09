@@ -41,6 +41,11 @@ Remote WS event (server)
   └── "renamed" → rename local file/dir
 ```
 
+Each remote event is scheduled on the connection's inbound queue and applied
+under `--max-concurrent-transfers`: events for the same path keep their order,
+distinct paths are applied in parallel, so a large download never delays an
+event that arrives after it (an instant delete included).
+
 ### Renames never re-upload the file
 
 A move is propagated as a move, never as "delete the old path and send the file

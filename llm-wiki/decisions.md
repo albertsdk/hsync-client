@@ -395,3 +395,15 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   The residual limit is stated instead of hidden: clients whose reachable sets
   are disjoint (asymmetric egress filtering) still cannot meet, and closing that
   needs node-to-node federation, which the wire protocol does not have.
+- **Inbound mutations are scheduled, never awaited by the receive loop**: every
+  accepted remote frame goes to the connection's `InboundEventQueue`
+  (`hsync_client/inbound_queue.py::InboundEventQueue`), which keeps the per-path
+  order (`event_path_keys`, `hsync_client/event_dispatch.py::event_path_keys`, a
+  rename occupying both its source and destination), runs the mutations under
+  `MAX_CONCURRENT_TRANSFERS`, bounds the outstanding backlog
+  (`INBOUND_MAX_PENDING_EVENTS_DEFAULT`) and drains before the reconnect's full
+  sync. Awaiting a transfer inside the loop would make one large file the latency
+  of every event behind it — an instant delete included — and the retry ladder of
+  a failed download would hold the whole stream. Ordering is per path on purpose:
+  distinct paths are independent, so the causal matrix and `periodic_resync` own
+  what a burst can still lose.

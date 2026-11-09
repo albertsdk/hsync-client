@@ -179,7 +179,7 @@ When file logging is enabled with `-o/--log-file`:
 | `HSYNC_AUTOTUNE` | Enable auto-tuning of timeout, retry, and concurrency | `true` |
 | `HSYNC_HTTP_TIMEOUT` | HTTP request timeout in seconds (1-300); CLI `--http-timeout` | auto |
 | `HSYNC_RECONNECT_DELAY` | Base of the full-jitter exponential reconnect backoff in seconds (1-60); CLI `--retry-delay` | auto (`5`) |
-| `HSYNC_MAX_CONCURRENT_TRANSFERS` | Max parallel file transfers (1-20) | auto (`5`-`20`) |
+| `HSYNC_MAX_CONCURRENT_TRANSFERS` | Max parallel file transfers, and max inbound events applied at once (1-20) | auto (`5`-`20`) |
 | `HSYNC_TRANSFER_RETRY_MIN_WAIT` | Per-file retry min wait in seconds | auto |
 | `HSYNC_TRANSFER_RETRY_MAX_WAIT` | Per-file retry max wait in seconds | auto |
 | `HSYNC_CONNECTIVITY_RETRY_ATTEMPTS` | Startup connectivity check retry attempts for **one-shot (`--once`) runs** (1–20); continuous mode retries forever instead | `7` |

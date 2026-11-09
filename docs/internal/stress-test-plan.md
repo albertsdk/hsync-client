@@ -40,9 +40,9 @@
 > iterations** (511 s, was 1 failing iteration after an 8-minute convergence
 > timeout) and measured the throughput work: the initial 6000-file burst
 > converges in a median **80.7 s** (74.3 files/s; best 69.2 s / 86.7 files/s)
-> and the mutation wave in a median **13.2 s** (454.7 files/s), against ~10 min
-> at ~50 files/s before the receive-loop fan-out, the nanosecond SHA-256 cache,
-> the asynchronous log sinks and the inotify event-filter trim. A follow-up
+> and the mutation wave in a median **13.2 s** (454.7 files/s), against a
+> ~10 min / ~50 files/s serial baseline with the nanosecond SHA-256 cache, the
+> asynchronous log sinks and the inotify event-filter trim in place. A follow-up
 > investigation of the residual ~90 files/s ceiling eliminated every
 > single-component candidate (master HTTP capacity, event origination, checksum
 > cache, watchdog echo, inventory publisher, per-event CPU) and found **negative

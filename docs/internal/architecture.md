@@ -177,19 +177,37 @@ flowchart TD
         R5[symlink]
     end
 
-    subgraph "⑥ Local Actions"
+    subgraph "⑥ Inbound Queue"
+        IQ["per-path order · MAX_CONCURRENT_TRANSFERS · bounded backlog"]
+    end
+
+    subgraph "⑦ Local Actions"
         A1[Download File]
         A2[Delete File]
         A3[Rename File]
         A4[Create Symlink]
     end
 
-    R1 -->|"⑤→⑥"| A1
-    R2 -->|"⑤→⑥"| A1
-    R3 -->|"⑤→⑥"| A2
-    R4 -->|"⑤→⑥"| A3
-    R5 -->|"⑤→⑥"| A4
+    R1 -->|"⑤"| IQ
+    R2 -->|"⑤"| IQ
+    R3 -->|"⑤"| IQ
+    R4 -->|"⑤"| IQ
+    R5 -->|"⑤"| IQ
+    IQ -->|"⑥→⑦"| A1
+    IQ -->|"⑥→⑦"| A2
+    IQ -->|"⑥→⑦"| A3
+    IQ -->|"⑥→⑦"| A4
 ```
+
+**Remote events are scheduled, never executed by the receive loop:** the loop
+hands each accepted frame to the connection's inbound queue, which keeps the
+per-path order (a rename occupying both its paths), runs the mutations under
+`MAX_CONCURRENT_TRANSFERS` and pushes back on the socket once the backlog is
+full. One large download therefore costs the events behind it nothing — an
+instant delete included — and the queue is drained before the connection returns
+to its outer loop. Distinct paths are genuinely concurrent: their log/UI events
+arrive in execution order, while the causal matrix and `periodic_resync` own
+convergence.
 
 **Sync direction filtering in continuous mode:**
 

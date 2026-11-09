@@ -76,7 +76,8 @@ Known scaling characteristics:
   practical ceiling is `1 core / CPU-per-file` ≈ 90-150 files/s on this class
   of host — the observed burst (~113 files/s) sits inside it — and **raising
   `--max-concurrent-transfers` does not increase it** (measured flat between 5
-  and 20).
+  and 20). The same knob caps how many inbound events apply at once, so
+  lowering it (to `1`) serializes the event stream.
 - **The listing-driven reconcile does benefit from concurrency** (see the probe
   row above and the server sweep), so a full first sync drains faster than a
   same-size realtime wave suggests from event-path numbers alone.
@@ -105,7 +106,7 @@ per-file Python work and, in p2p mode, by the single-core GIL ceiling.
 | --- | --- |
 | GIL (CPython build) | per-file Python work serialises on ~1 core; dominates the LAN event path |
 | Per-file validation & hashing | ~55 lstat/stat calls + lexical validation per file (security semantics, not removable as-is) |
-| `--max-concurrent-transfers` | helps reconcile/listing transfers (156 → 255 files/s in the 1-8 sweep); no effect on the LAN event burst |
+| `--max-concurrent-transfers` | helps reconcile/listing transfers (156 → 255 files/s in the 1-8 sweep) and caps how many inbound events apply at once; it does not raise the LAN event burst above the per-file CPU limit |
 | Peer offloading on the burst path | costs ~44 % of burst throughput when enabled (188 vs 130 files/s, same-session A/B) |
 | TLS/hashing | release the GIL partially; contribute but are not the bottleneck |
 
