@@ -521,7 +521,7 @@ terminal `transfer_failed` is published once the retries are exhausted
 **The serving role reports its own transfers** on the structured UI-event
 channel, so a client that starts first (and is therefore the master) shows the
 same activity the syncing side always showed: `progress` samples while it
-streams a file to a peer (`hsync_client/p2p_server.py::_write_served_chunk`, wire size) or a
+streams a file to a peer (`hsync_client/p2p_server.py::_write_served_chunk`) or a
 parked delta payload (`hsync_client/p2p_delta.py::handle_delta_data`), samples while it
 receives a peer's upload or delta-apply (`hsync_client/progress.py::ProgressWriter`), and one
 terminal `transfer` per committed file (`hsync_client/progress.py::emit_completed_transfer`,
@@ -530,7 +530,20 @@ push received from a peer is a `download`. A serve that aborts mid-stream (the
 peer goes away, the file changes under the reader, a socket error) emits the
 terminal counterpart `transfer_failed` (`hsync_client/progress.py::emit_failed_transfer`) with
 `op="upload"`, so the Desktop resets the row instead of leaving a bar frozen at
-its last sample. Samples use the best-effort
+its last sample.
+
+**A compressed serve reports an unknown total**, never a wire-based percentage.
+When the response is zstd-encoded the sender moves the compressed bytes while
+the receiver counts the decompressed file; zstd emits most of its output early,
+so the two scales diverge badly (a sender reading ~55% while the receiver is
+already at 98%). The compressed branch therefore emits `progress` with a
+**negative** total, which the front-end renders as an indeterminate bar; a total
+of `0` would mean "keep the row's own size" (the delta-payload contract) and
+still produce a wrong figure. The identity branch keeps reporting the file size,
+which is the same quantity the receiver measures. The terminal `transfer` event
+always carries the file size, so the row closes correctly in both cases.
+
+Samples use the best-effort
 non-blocking emitter path (`hsync_client/events.py::EventEmitter.emit_progress`), so a slow
 consumer can never stall the server's worker threads; the terminal events keep
 the lossless path. Covered by `tests/test_p2p_server_progress.py`,

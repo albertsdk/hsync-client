@@ -131,10 +131,16 @@ class TestServeProgress:
         assert transfers[0]["size"] == len(_PAYLOAD)
         assert transfers[0]["file"].endswith("served.bin")
 
-    def test_compressed_serve_reports_the_wire_total_and_the_file_size(
+    def test_compressed_serve_reports_an_unknown_total_and_the_file_size(
         self, server, tmp_path, events
     ):
-        """Progress counts the zstd bytes; the terminal event the file size."""
+        """A compressed serve has no honest percentage: it reports an unknown total.
+
+        The wire bytes are not the file the receiver counts (zstd emits most of
+        its output early), so a wire-based percentage read ~55% against the
+        receiver's 98%. The terminal event still carries the file size, which is
+        what closes the row.
+        """
         _, port = server
         (tmp_path / "compressible.txt").write_bytes(_PAYLOAD)
 
@@ -150,8 +156,8 @@ class TestServeProgress:
         assert decompress_data(body) == _PAYLOAD
         progress = [e for e in events if e["event"] == "progress"]
         assert progress and progress[-1]["op"] == "upload"
-        assert progress[-1]["total"] == int(headers["content-length"])
-        assert progress[-1]["transferred"] == int(headers["content-length"])
+        # Negative total: the front-end renders an indeterminate bar.
+        assert all(e["total"] < 0 for e in progress)
         transfers = [e for e in events if e["event"] == "transfer"]
         assert [e["size"] for e in transfers] == [len(_PAYLOAD)]
 

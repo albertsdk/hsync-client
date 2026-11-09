@@ -2022,9 +2022,17 @@ class P2PEndpointMixin(_HTTPTransportBase):
                             self.end_headers()
                             response_started = True
                             remaining = compressed_size
-                            compressed_reporter = progress_reporter(
-                                display_path, compressed_size, "upload"
-                            )
+                            # No percentage while serving compressed: the wire
+                            # bytes are not the file the receiver measures. zstd
+                            # emits most of the output early, so the sender would
+                            # read ~55% while the receiver is already at 98% —
+                            # two incompatible scales for one row. A negative
+                            # total marks the figure as unknown (the front-end
+                            # renders an indeterminate bar), while zero would mean
+                            # "keep the row's own size" and still produce a wrong
+                            # percentage. The terminal ``transfer`` event still
+                            # carries the file size, so the row closes correctly.
+                            compressed_reporter = progress_reporter(display_path, -1, "upload")
                             sent = 0
                             while remaining:
                                 chunk = compressed_body.read(min(_P2P_UPLOAD_CHUNK_SIZE, remaining))
