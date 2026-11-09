@@ -406,7 +406,7 @@ async def _run_stdin_wait(
     source_resolver: P2PSourceResolver | None = None,
     on_sync_start: Callable[[], None] | None = None,
     on_sync_error: Callable[[], None] | None = None,
-) -> None:
+) -> bool:
     """Block reading stdin commands until EOF or SYNC.
 
     Used in continuous dry-run mode (P2P or server) where there is no
@@ -414,14 +414,22 @@ async def _run_stdin_wait(
     handler performs the full sync, then stops the reader so the caller
     can proceed to the next phase (e.g. WebSocket connection).
 
+    Returns whether a plan was applied. ``False`` means the command channel
+    ended without one (EOF, a stdin that is not a pipe or terminal, or a
+    refused direction): the caller must **not** promote a preview to a live
+    session, because a dry run never applied anything and the live event path
+    is not gated on ``DRYRUN``.
+
     ``on_sync_start`` / ``on_sync_error`` let the P2P caller credit the master
     for presence (and clear it on failure) on this preview-confirm transition,
     which is the real initial sync of the desktop flow.
     """
     handler = StdinCommandHandler(log)
     _install_stdin_commands(handler, log)
+    applied = False
 
     async def _handle_sync(**_kw: object) -> None:
+        nonlocal applied
         if not _p2p_write_allowed(CONFIG.get("SYNC_DIRECTION", "bidirectional"), log):
             return
         CONFIG["DRYRUN"] = False
@@ -442,7 +450,9 @@ async def _run_stdin_wait(
             if on_sync_error is not None:
                 on_sync_error()
             raise
+        applied = True
         handler.stop()
 
     handler.register("SYNC", _handle_sync)
     await handler.run()
+    return applied

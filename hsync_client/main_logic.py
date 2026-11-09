@@ -1498,7 +1498,13 @@ def _run_remote_mode(
         # Dry-run + continuous: show preview, wait for SYNC command,
         # then switch to continuous sync.
         _run_preview(log)
-        run(_run_stdin_wait(log))
+        if not run(_run_stdin_wait(log)):
+            # Nothing applied and no way to command this process any more: the
+            # live loop is not gated on DRYRUN, so starting it here would make a
+            # "preview only" run write files. Exit instead, exactly like the p2p
+            # dry-run park.
+            log.info("Dry-run finished without applying a plan; exiting.")
+            return
         # After SYNC command: DRYRUN is now False, run continuous sync
         run(_run_with_stdin_commands(log))
     elif not config["DRYRUN"] and continuous:

@@ -60,6 +60,7 @@ from hsync_client.events import emit_warning, emit_warning_cleared
 from hsync_client.nat_traversal import CandidateEndpoint, candidate_endpoints
 from hsync_client.net_utils import get_local_ip, get_local_ips
 from hsync_client.net_watch import (
+    OFFLINE_SOURCE_IP,
     NetworkChangeMonitor,
     NetworkSignature,
     get_network_monitor,
@@ -604,7 +605,14 @@ class RdvRendezvous(RendezvousPlanState):
             return False
         if self._published_local_ip is None:
             return False
+        # Offline: ``get_local_ip`` falls back to loopback, which is not an
+        # address any peer could use. Treating it as a change republished the
+        # node with a loopback candidate and dropped the previously valid
+        # endpoint, during an outage nobody could dial anyway: wait for the link
+        # instead. The monitor wakes this loop once the address is real again.
         current = self._local_ip or get_local_ip()
+        if current == OFFLINE_SOURCE_IP:
+            return False
         address_changed = current != self._published_local_ip
         candidates_changed = (
             self._published_endpoints_sig is not None

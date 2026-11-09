@@ -1755,7 +1755,7 @@ def _run_as_slave(
                 def _clear_master_credit() -> None:
                     peer_manager.mark_peer_disconnected(master.cid)
 
-                run(
+                applied = run(
                     _run_stdin_wait(
                         log,
                         inventory_observer=inventory_publisher,
@@ -1767,6 +1767,22 @@ def _run_as_slave(
             finally:
                 if plan is not None:
                     plan.set_master_eligibility(True)
+            if not applied:
+                # The command channel ended without applying the plan (stdin
+                # closed, or it was never a pipe/terminal). Falling through
+                # would open the live session with DRYRUN still set, and the
+                # event path is not gated on it, so a "preview only" run could
+                # write files. Stop instead: nothing can command this process.
+                log.info("Dry-run finished without applying a plan; stopping.")
+                peer_manager.mark_peer_disconnected(master.cid)
+                return False, int(ExitCode.OK)
+            # The plan was applied: this process is a live engine now. The SYNC
+            # handler cleared DRYRUN on the global CONFIG only, while the
+            # rendezvous loop re-reads this local ``config`` on every iteration
+            # (it is a copy, not the same object), so after a network drop the
+            # reconnected run fell back into the preview branch and parked
+            # without reopening the WebSocket or the watcher.
+            config["DRYRUN"] = False
         else:
             # Perform initial sync (the master is the transport coordinator).
             # The HTTPS data plane itself proves the master is reachable: credit

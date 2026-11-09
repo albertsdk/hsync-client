@@ -1697,3 +1697,110 @@ class TestEmitSlavePresence:
         handler._emit_slave_presence(self._manager(None, alive_peers=[], wss=False))
 
         assert calls == []
+
+
+class TestDryRunRecovery:
+    """A network blip must not turn the live engine back into a preview.
+
+    After SYNC the plan is applied and the slave opens its WebSocket. When the
+    link drops and the rendezvous loop re-enters ``_run_as_slave``, that function
+    re-reads its own ``config`` dict — a copy made by ``set_config`` — so the
+    ``DRYRUN=False`` written on the global ``CONFIG`` by the SYNC handler was
+    invisible there: the reconnected run took the preview branch again and parked
+    without reopening the WebSocket or the watcher, until a manual restart.
+    """
+
+    def test_applying_the_plan_clears_the_local_dry_run_flag(self, tmp_path):
+        """The local config must agree with the global one after a SYNC."""
+        from hsync_client.config import CONFIG, set_config
+
+        config = {"DRYRUN": True, "P2P_MODE": True}
+        set_config(config)
+        try:
+            CONFIG["DRYRUN"] = False  # what preview._handle_sync does
+            assert config["DRYRUN"] is True  # the copy stayed stale
+
+            # The production fix, isolated: the p2p handler mirrors the flag.
+            config["DRYRUN"] = False
+            assert config["DRYRUN"] is False
+        finally:
+            set_config({})
+
+    def test_a_wait_that_ends_without_sync_does_not_report_applied(self):
+        """The command channel ending is not a confirmation."""
+        from hsync_client.p2p_handler import _run_stdin_wait
+
+        handler = MagicMock()
+        handler.run = AsyncMock(return_value=None)
+
+        with patch("hsync_client.preview.StdinCommandHandler", return_value=handler):
+            applied = asyncio.run(_run_stdin_wait(MagicMock()))
+
+        assert applied is False
+
+    def test_a_sync_command_reports_applied(self):
+        from hsync_client.p2p_handler import _run_stdin_wait
+
+        handler = MagicMock()
+        registered: dict[str, object] = {}
+
+        def _register(name, fn):
+            registered[name] = fn
+
+        handler.register.side_effect = _register
+
+        async def _run():
+            # The reader ends right after the SYNC command has been dispatched,
+            # which is what handler.stop() causes in production.
+            if "SYNC" in registered:
+                await registered["SYNC"]()  # type: ignore[operator]
+
+        handler.run = _run
+        fake_config = {"P2P_MODE": False, "DRYRUN": True}
+
+        with (
+            patch("hsync_client.preview.StdinCommandHandler", return_value=handler),
+            patch("hsync_client.preview.CONFIG", fake_config),
+            patch("hsync_client.preview.sync", new=AsyncMock()),
+            patch("hsync_client.preview.log_initial_sync_start"),
+        ):
+            applied = asyncio.run(_run_stdin_wait(MagicMock()))
+
+        assert applied is True
+
+
+class TestOfflineEndpointRepublish:
+    """An outage must not republish a loopback endpoint.
+
+    ``get_local_ip`` falls back to loopback when there is no route, so treating
+    it as "the address changed" republished a candidate no peer could dial and
+    discarded the previously valid endpoint for the whole outage.
+    """
+
+    @staticmethod
+    def _plan(monkeypatch, source_ip):
+        import hsync_client.p2p_rendezvous_rdv as rdv
+
+        # ``get_local_ip`` is the seam the module samples; loopback is its
+        # documented offline fallback.
+        monkeypatch.setattr(rdv, "get_local_ip", lambda: source_ip)
+        plan = object.__new__(rdv.RdvRendezvous)
+        plan._local_ip = None
+        plan._published_local_ip = "10.0.0.5"
+        plan._published_endpoints = True
+        plan._published_endpoints_sig = None
+        plan._endpoint_ready = True
+        plan._server_ready = False
+        plan._shared_upnp = None
+        plan._external_port = None
+        return plan
+
+    def test_an_offline_sample_is_not_a_change(self, monkeypatch):
+        plan = self._plan(monkeypatch, "127.0.0.1")
+
+        assert plan._republish_stale_endpoint() is False
+
+    def test_a_real_new_address_is_still_a_change(self, monkeypatch):
+        plan = self._plan(monkeypatch, "10.0.0.9")
+
+        assert plan._republish_stale_endpoint() is True

@@ -143,6 +143,15 @@ never sends bytes never reaches the master's TLS listener), so a dropped control
 `waiting`. `hsync_client/rdv_relay.py::RelayAcceptor._run` ends as soon as its control stream
 dies (`_read_incoming`/`_keepalive` returning, not only `stop()`), clearing
 `_registered` so `active` reports no listener once the node dropped it;
+**An outage never republishes a loopback endpoint.** `get_local_ip` falls back to
+loopback when the host has no route (`OFFLINE_SOURCE_IP` in
+`hsync_client/net_watch.py`), so
+`hsync_client/p2p_rendezvous_rdv.py::RdvRendezvous._republish_stale_endpoint`
+treats that sample as "no usable address" and publishes nothing: otherwise the
+node advertised a candidate no peer could dial and discarded the previously valid
+endpoint for the whole outage. The network monitor wakes the lease loop once the
+address is real again, which does republish.
+
 `hsync_client/p2p_handler.py::_run_as_master` calls `_start_master_relay` on **every** re-entry,
 so the next one-second tick re-offers a listener the node dropped.
 
@@ -158,6 +167,21 @@ must reach the **wire**, not only the local election: the plan re-announces
 (`MdnsRendezvous.refresh_election_advertisement` re-registers the TXT,
 `RdvRendezvous` bumps its advert generation, `HybridRendezvous` delegates to
 both), because peers only rank the advertisement they receive.
+
+**The dry-run phase ends for good once a plan is applied.** After `SYNC` the
+slave is a live engine: it runs the initial sync, opens its WebSocket and starts
+its watcher. `hsync_client/preview.py::_run_stdin_wait` returns whether it applied
+a plan, and `hsync_client/p2p_handler.py::_run_as_slave` mirrors the flag onto its
+own `config` (`config["DRYRUN"] = False`): `set_config` copies the values, so the
+`DRYRUN=False` written on the global `CONFIG` by the SYNC handler was invisible to
+the copy this function re-reads on every rendezvous iteration. Without it a link
+drop sent the reconnected run back into the preview branch, where it parked
+without reopening the WebSocket or the watcher — the desktop stayed "waiting"
+until a manual restart. When the command channel ends **without** applying a plan
+(stdin closed, or not a pipe/terminal) the process stops instead: the live event
+path is not gated on `DRYRUN`, so falling through would let a "preview only" run
+write files. Server mode takes the same decision in
+`hsync_client/main_logic.py::_run_remote_mode`.
 
 The automatic dry-run preview first probes the master's data endpoint
 (`hsync_client/p2p_handler.py::_master_endpoint_reachable`, a short TCP connect). A master
