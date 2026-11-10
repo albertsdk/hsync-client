@@ -341,7 +341,7 @@ def _kill_orphan_hsync_processes() -> Generator[None]:
 # =============================================================================
 
 BB_ADMIN_SECRET = "bb0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd"
-BB_API_KEY = f"hs_HsyncAdminRendezvous01_{BB_ADMIN_SECRET}"
+BB_API_KEY = f"hs_HsyncAdminBuiltinId01_{BB_ADMIN_SECRET}"
 BB_CLIENT_CID = "TestClientX1234567890"  # exactly 21 alphanumeric chars per CID_PATTERN
 
 # Base-url -> buckets-dir registry for the module-scoped live servers. Consumed

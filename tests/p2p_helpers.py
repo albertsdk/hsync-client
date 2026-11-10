@@ -48,7 +48,7 @@ _P2P_REASON = (
 )
 
 BB_ADMIN_SECRET = "bb0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd"
-BB_API_KEY = f"hs_HsyncAdminRendezvous01_{BB_ADMIN_SECRET}"
+BB_API_KEY = f"hs_HsyncAdminBuiltinId01_{BB_ADMIN_SECRET}"
 # The shared LAN key the P2P black-box pairs use. It must satisfy the client's
 # raw-key floor (``hsync_common.protocol.rdv_tokens::MIN_GROUP_KEY_CHARS``):
 # a shorter value is rejected at startup, so the pair would never connect.
