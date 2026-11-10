@@ -399,7 +399,7 @@ happen once regardless of which option wins.
 | A7 | Tests | `tests/test_p2p_rendezvous_relay.py` with a fake local relay (deterministic), signature/replay/namespace cases; `test_bb_*` only against the local fake relay — never against `ntfy.sh` in CI |
 | A8 | Desktop | `hsync_desktop/engine/endpoints.py::normalize_rendezvous_endpoint` + settings/wizard + **12 locales** |
 | A9 | Android | Only if the backend must be reachable from the app: a mirror in the style of `data/api/RendezvousProtocol.kt` + parity test + shared fixtures. Otherwise document the asymmetry explicitly |
-| A10 | Packaging/docs | Man page `packaging/deb/usr/share/man/man1/hsync.1`; `hsync-wd-os5` (`packaging/Apkg/start.sh`, `config_get.php`, `config_set.php`, `app.js`, `index.html`, every i18n dictionary); `docs/p2p-rendezvous.md` (or a new `docs/p2p-relay.md`), `docs/configuration-p2p.md`, `docs/faq-p2p.md`, `docs/troubleshooting.md`, `llm-wiki/modules/p2p-mode.md`, ADR |
+| A10 | Packaging/docs | Man page `packaging/deb/usr/share/man/man1/hsync.1`; `hsync-wd-os5` (`packaging/Apkg/start.sh`, `config_get.php`, `config_set.php`, `app.js`, `index.html`, every i18n dictionary); `docs/p2p-rendezvous.md` (or a new `docs/p2p-relay.md`), `docs/configuration-p2p.md`, `docs/faq-p2p.md`, `docs/troubleshooting.md`, ADR |
 
 Security obligation: record signing, namespace derivation and replay handling
 are a protocol contract — independent review plus fixtures, not only unit tests.
@@ -412,7 +412,7 @@ are a protocol contract — independent review plus fixtures, not only unit test
 | C2 | `build_rendezvous_plan` + §8.1.1 | Use the seeds when the user configured none; fall back across seeds so one dead node does not disable cross-network rendezvous |
 | C3 | Trust UX | Default nodes are still pinned/TOFU (ADR-0034/0035); decide whether a shipped seed may be `accept-new` by default (recommendation: keep `ask`, document the non-interactive path) |
 | C4 | Ops | Two tiny nodes (Oracle Always Free ARM, or Cloudflare Tunnel + a home host); fingerprints published out of band |
-| C5 | Docs | `docs/p2p-rendezvous.md` (zero-config section), `docs/faq-p2p.md`, `llm-wiki/modules/p2p-mode.md`, man page if a new env/flag appears, ADR |
+| C5 | Docs | `docs/p2p-rendezvous.md` (zero-config section), `docs/faq-p2p.md`, man page if a new env/flag appears, ADR |
 | C6 | Optional | SRV seed rendezvous (`_hsync-rdv._udp.<domain>`); needs a DNS-SRV library decision (`dnspython` is **not** a dependency today) |
 
 ### 8.4 Option D — `rdv/1` over HTTPS/WSS (only if C is too expensive to host)

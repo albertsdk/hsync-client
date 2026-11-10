@@ -9,7 +9,7 @@ meaningful question is which local content the connected devices already hold.
 That answer is mirrored in ``P2PInventoryStore``, where every device publishes
 its snapshot.
 
-Cost model (see ``llm-wiki/benchmarks.md``): a local scan whose SHA-256 values
+Cost model (measured): a local scan whose SHA-256 values
 come from the shared content cache (a repeat pass is stat-only) plus **one**
 bulk read of the published inventories (``P2PInventoryStore.compare_share``:
 the union, the per-identity holder count and the per-device tallies in a single

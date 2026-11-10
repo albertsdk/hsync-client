@@ -691,8 +691,8 @@ behaviour.
 - [ ] Workspace-root `Makefile` target `test-stress` (§11), **not** wired into
       `test`/`ci`.
 - [ ] Docs: this plan stays as-is; implementation notes go to
-      `docs/internal/testing.md` (client) and `llm-wiki` only if behaviour
-      changes are discovered.
+      `docs/internal/testing.md` (client) only if behaviour changes are
+      discovered.
 - [ ] Gates before commit (English, Conventional Commits):
       `ruff check . && ruff format --check .` and `mypy hsync_client` in
       `hsync-client`; BB suites unaffected; cite env-gate reason in the message.

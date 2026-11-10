@@ -1,6 +1,6 @@
 # Auto-Tuning — Developer Guide
 
-> **Source**: `hsync_client/autotune.py` · **Wiki**: `llm-wiki/modules/autotune.md`
+> **Source**: `hsync_client/autotune.py`
 
 ## Overview
 
