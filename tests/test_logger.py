@@ -492,6 +492,19 @@ class TestFormatRecordColored:
         result = _format_record_colored(record)
         assert "\\<fp>" in result
 
+    def test_an_already_escaped_angle_bracket_is_not_double_escaped(self):
+        """InterceptHandler escapes stdlib records; the formatter must not re-escape.
+
+        Regression: tenacity logs ``get_files_remote.<locals>._attempt`` through the
+        stdlib InterceptHandler, so the record message already carries ``\\<locals>``.
+        Escaping it again produced ``\\\\<locals>``, which loguru parsed as a literal
+        backslash followed by the ``<locals>`` color tag (ValueError in Handler #1).
+        """
+        record = self._make_record("Retrying get_files_remote.\\<locals>._attempt")
+        result = _format_record_colored(record)
+        assert "\\<locals>" in result
+        assert "\\\\<locals>" not in result
+
 
 class TestFormatRecordPlain:
     """Tests for _format_record_plain function."""

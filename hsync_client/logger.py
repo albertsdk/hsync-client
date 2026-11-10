@@ -27,6 +27,7 @@ Log format: 2024-01-15T10:30:45.123Z - [12345] [<cid>] INFO: message
 """
 
 import logging
+import re
 import sys
 from contextvars import ContextVar
 from typing import TYPE_CHECKING
@@ -149,15 +150,33 @@ def _append_json_data(record: "Record", message: str) -> str:
     return message
 
 
+# A '<' that is not already backslash-escaped. ``BaseInterceptHandler`` escapes
+# stdlib records before loguru sees them, so escaping an already-escaped '<'
+# again would turn ``\<locals>`` into ``\\<locals>`` (a literal backslash then
+# the invalid ``<locals>`` tag).
+_UNESCAPED_OPEN_ANGLE = re.compile(r"(?<!\\)<")
+
+
+def _escape_unparsed_angle_brackets(message: str) -> str:
+    """Backslash-escape ``<`` in *message*, leaving an already-escaped one alone."""
+    return _UNESCAPED_OPEN_ANGLE.sub(r"\\<", message)
+
+
 def _transform_colored(record: "Record", message: str) -> str:
     r"""Colorize action labels then append any json_data payload.
 
     ``<`` is escaped for loguru (``\<`` renders a literal ``<``): the colored
     console handler parses the formatted line for color tags, so a ``<fp>``-style
     placeholder in any message (paths, recovery guidance) would otherwise make
-    the colorizer raise and drop the record.
+    the colorizer raise and drop the record. Only an *unescaped* ``<`` is
+    escaped: ``BaseInterceptHandler`` already neutralizes markup in stdlib
+    records, and escaping the ``<`` of an already-escaped ``\<locals>`` again
+    would produce ``\\<locals>``, which loguru reads as a literal backslash
+    followed by the ``<locals>`` color tag (the tenacity retry ValueError).
     """
-    return _append_json_data(record, colorize_labels(message.replace("<", "\\<"), use_colors=True))
+    return _append_json_data(
+        record, colorize_labels(_escape_unparsed_angle_brackets(message), use_colors=True)
+    )
 
 
 def _transform_plain(record: "Record", message: str) -> str:
