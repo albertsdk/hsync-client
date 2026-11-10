@@ -16,7 +16,7 @@ from typing import Any, Literal, NoReturn
 from urllib.parse import urlsplit
 
 from hsync_common.disk import check_free_space
-from hsync_common.endpoint import format_authority
+from hsync_common.endpoint import format_authority, server_fallback_url
 from hsync_common.format import format_bytes
 from hsync_common.ignore import IgnoreMatcher, set_active_matcher
 from hsync_common.listing import folder_has_user_content
@@ -831,6 +831,47 @@ def _init_runtime(options: RunOptions) -> "Any":
     return log
 
 
+_SERVER_PORT_PROBE_TIMEOUT_S = 3.0
+
+
+def _probe_server_health(base_url: str, *, verify_ssl: bool, timeout: float) -> bool:
+    """One-shot reachability probe (no retries) used to pick between ports."""
+    from requests import RequestException
+    from requests import get as http_get
+
+    try:
+        response = http_get(
+            f"{base_url.rstrip('/')}/api/v1/health", timeout=timeout, verify=verify_ssl
+        )
+        return response.status_code < 500
+    except RequestException:
+        return False
+
+
+def _resolve_server_port(server_url: str, *, verify_ssl: bool, log) -> str:
+    """Fall back to 443 when a server left on the default port does not answer.
+
+    A bare address normalizes to ``https://host:9753`` (``SERVER_DEFAULT_PORT``),
+    but a deployment often terminates TLS on 443 behind a reverse proxy. Keep the
+    configured URL when it answers, otherwise try the shared 443 fallback and use
+    the first that does; an explicit non-default port is never second-guessed, and
+    the scheme stays HTTPS (the endpoint grammar refuses anything else).
+    """
+    fallback = server_fallback_url(server_url)
+    if fallback is None:
+        return server_url
+    if _probe_server_health(
+        server_url, verify_ssl=verify_ssl, timeout=_SERVER_PORT_PROBE_TIMEOUT_S
+    ):
+        return server_url
+    if not _probe_server_health(
+        fallback, verify_ssl=verify_ssl, timeout=_SERVER_PORT_PROBE_TIMEOUT_S
+    ):
+        return server_url
+    log.info(f"Server did not answer on the default port; using {fallback} (443)")
+    return fallback
+
+
 def _resolve_endpoints(options: RunOptions, log) -> tuple[str, str, bool]:
     """Resolve the sync-server URL (or the P2P placeholder) and the WS URL.
 
@@ -857,6 +898,9 @@ def _resolve_endpoints(options: RunOptions, log) -> tuple[str, str, bool]:
     # (either from args, env, or P2P mode placeholder)
     assert effective_server_url is not None
     if not using_p2p_placeholder:
+        effective_server_url = _resolve_server_port(
+            effective_server_url, verify_ssl=options.safety.verify_ssl, log=log
+        )
         emit_event(UiEventName.server, url=effective_server_url)
 
     # Convert HTTP URL to WebSocket URL for events endpoint

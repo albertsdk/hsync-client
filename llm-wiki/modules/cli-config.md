@@ -171,8 +171,12 @@ write opt-in is `CLI-opt-in OR environment-opt-in` and defaults false.
 - `hsync_client/constants.py::SERVER_DEFAULT_PORT` — a re-export of
   `hsync-common/hsync_common/constants.py::SERVER_DEFAULT_PORT`: the port `hsync server
   HOSTNAME` uses when the endpoint carries no port (the same default the server binds),
-  so the omitted-port form targets a default server install directly;
-  reverse-proxy deployments pass `--server-url https://host` (or `host:443`).
+  so the omitted-port form targets a default server install directly. A reverse-proxy
+  deployment needs no explicit port either: at startup
+  (`hsync_client/main_logic.py::_resolve_server_port`) an address left on the default
+  port probes it first and then `SERVER_FALLBACK_PORT` (443,
+  `hsync_common/endpoint.py::server_fallback_url`), keeping the first that answers; an
+  explicit non-default port is never second-guessed.
 - Shared CLI/GUI defaults and their accepted bounds (HTTP timeout, retry/stability
   delays, sync direction, bandwidth bounds, mass-delete guard, free-space/inbound
   limits, max-wait timeout, peer-download caps) live in `hsync-common/hsync_common/defaults.py`;
