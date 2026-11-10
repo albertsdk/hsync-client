@@ -47,8 +47,8 @@ hsync trust server list
 hsync trust server remove server.example.com
 ```
 
-`hsync-server admin tls fingerprint` prints the server's own fingerprint for the
-out-of-band step.
+`sudo hsync-server admin tls fingerprint` on the server host prints its own
+fingerprint for the out-of-band step.
 
 ## Environment Variables — Server Mode
 

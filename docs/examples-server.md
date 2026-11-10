@@ -32,7 +32,8 @@ hsync server --server-url server.example.com:443 -b documents -p "$HOME/Document
 `HSYNC_API_KEY`, …). `HSYNC_BUCKET` and `HSYNC_PATH` are not settings keys.
 
 > **Buckets must exist before the first sync.** Create them on the server
-> (once) with `hsync-server admin bucket create --bucket <name>` — see the
+> (once) with `sudo hsync-server admin bucket create --bucket BUCKET` on the
+> server host — see the
 > server [Getting Started](https://github.com/albertsdk/hsync-server/blob/main/docs/getting-started.md)
 > guide. The examples below assume the referenced bucket already exists.
 

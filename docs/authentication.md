@@ -198,6 +198,12 @@ Slave                                Master
 | `HSYNC_P2P_PASSPHRASE` | p2p | Shared password typed by users (**at least 12 characters**); the client derives the 64-hex group key with scrypt. Mutually exclusive with `HSYNC_P2P_KEY` |
 | `HSYNC_P2P_KEY` | p2p | Full raw group key (**at least 32 characters**), used as-is. With a rendezvous it is also the group key: the client derives the `bucket_token` from it for protected buckets and private nodes |
 
+`HSYNC_API_KEY` carries the complete token, `hs_` prefix and both parts
+included. When the server operator rotates the account's key, the previous token
+stops authenticating — immediately, or at the end of the `--grace` window if the
+rotation asked for one — so update `HSYNC_API_KEY` on every device using that
+account with the token the rotation prints.
+
 The `cid` carried in the p2p auth frames is derived from the local **device
 identity** — it is not configurable via environment.
 
