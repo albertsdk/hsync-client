@@ -129,17 +129,15 @@ class TestP2PWebsocketClientReadiness:
     async def test_status_connected_then_waiting(self, tmp_path):
         """The slave reports the link up (connected) and the drop (waiting)."""
         import hsync_client.p2p_websocket as ws
-        from hsync_client.events import UiEventName
 
         socket = self._make_socket(json.dumps({"type": "hello"}))
         mock_log = MagicMock()
-        events: list = []
+        statuses: list[str] = []
 
         with (
             self._client_patches(tmp_path, mock_log, socket),
-            patch.object(ws, "emit_event", lambda name, **kw: events.append((name, kw))),
+            patch.object(ws, "set_link_status", statuses.append),
         ):
             await ws.p2p_websocket_client("master.local", 9000)
 
-        statuses = [kw.get("status") for name, kw in events if name == UiEventName.status]
         assert statuses == ["connected", "waiting"]

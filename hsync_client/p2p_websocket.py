@@ -102,7 +102,7 @@ from hsync_client.constants import (
     ActionLabel,
 )
 from hsync_client.event_dispatch import EventDispatchContext
-from hsync_client.events import UiEventName, emit_event, emit_progress
+from hsync_client.events import UiEventName, emit_event, emit_progress, set_link_status
 from hsync_client.file_event_handler import (
     MODIFIED_DEBOUNCE_INTERVAL,
     SUPPORTS_ON_CLOSED,
@@ -1799,9 +1799,9 @@ async def p2p_websocket_client(
                 f"'{CONFIG['LOCAL_BUCKET']}', master at {format_authority(host, port)}"
             )
 
-            # The slave is linked to the master and reacting to events: flip the
-            # desktop status from "connecting" to "connected".
-            emit_event(UiEventName.status, status="connected")
+            # The slave is linked to the master and reacting to events: the link
+            # status leaves "connecting".
+            set_link_status("connected")
             connected = True
 
             # Re-establish the link the moment the local network changes: the
@@ -1899,9 +1899,9 @@ async def p2p_websocket_client(
             # The link dropped: report the same "waiting" state server mode uses
             # for a lost link (not "connecting", which is the pre-connection
             # state), so the front-end clears the stale presence and reports the
-            # loss. Continuous mode re-enters rendezvous and emits "connected"
+            # loss. Continuous mode re-enters rendezvous and reports "connected"
             # again once a master is reached.
-            emit_event(UiEventName.status, status="waiting")
+            set_link_status("waiting")
 
 
 async def _p2p_periodic_resync(

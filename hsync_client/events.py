@@ -6,8 +6,8 @@ Structured UI-event emitter for hsync-client.
 
 A parent process (e.g. the Desktop GUI) passes a writable file descriptor via
 ``--events-json-fd``; the client then writes one JSON object per line to it
-(see :mod:`hsync_common.protocol.events` for the schema). This replaces the
-GUI's fragile log-regex parsing with a stable, versioned channel.
+(see :mod:`hsync_common.protocol.events` for the schema): a stable, versioned
+channel, so a front-end never parses log wording for state.
 
 The emitter is a process-wide singleton, mirroring the global client-id pattern
 in :mod:`hsync_client.logger`, so any module can publish an event through the
@@ -28,16 +28,21 @@ from hsync_common.protocol.events import UiEventName, build_event, serialize_eve
 __all__ = [
     "EventEmitter",
     "UiEventName",
+    "begin_activity",
     "emit_event",
     "emit_progress",
     "emit_warning",
     "emit_warning_cleared",
+    "end_activity",
     "event_channel_ready",
-    "note_condition_standing",
+    "get_activity",
     "get_emitter",
+    "get_link_status",
     "init_emitter",
+    "note_condition_standing",
     "reset_warning_dedup",
     "set_event_channel_ready",
+    "set_link_status",
 ]
 
 # Atomicity unit of a pipe write (POSIX ``PIPE_BUF``): a line no longer than
@@ -160,6 +165,13 @@ _emitter: EventEmitter | None = None
 # first report), so only transitions reach the consumer.
 _link_status: str | None = None
 
+# Data-movement phase, derived from the number of sync cycles in flight: a p2p
+# master can serve several devices at once and the periodic resync can overlap a
+# running cycle, so ``idle`` is published only when the last one ends.
+_activity: str | None = None
+_activity_depth: int = 0
+_activity_lock = threading.Lock()
+
 # Whether the realtime event channel is usable. In server mode a successful REST
 # round reports ``connected`` (the data plane works) and must never override a
 # refused event channel: the status a front-end reads means the channel is live,
@@ -169,12 +181,13 @@ _event_channel_ready: bool = True
 
 def init_emitter(fd: int | None) -> EventEmitter:
     """Install the process-wide emitter bound to *fd* (replacing any prior one)."""
-    global _emitter, _link_status, _event_channel_ready
+    global _emitter, _link_status, _event_channel_ready, _activity
     if _emitter is not None:
         _emitter.close()
     _emitter = EventEmitter(fd)
     # A fresh channel starts from "nothing published yet".
     _link_status = None
+    _activity = None
     _event_channel_ready = True
     return _emitter
 
@@ -294,17 +307,54 @@ def get_link_status() -> str | None:
 def set_link_status(status: str) -> None:
     """Publish a *transition* of the link status (``connected``/``waiting``…).
 
-    The status describes the link itself, not the sync activity, and several
-    paths can establish the same fact: the event-channel handshake, and a
-    successful REST round inside a sync cycle that runs before the event channel
-    is up. Consumers act on ``connected`` (the desktop starts a preview), so a
-    repeat of the current status is dropped instead of re-publishing it.
+    The status describes the link itself, never the sync activity (that is
+    :func:`begin_activity` / :func:`end_activity`), and this is the only
+    publisher of ``status`` events: a publisher that bypassed it would move the
+    front-end without moving :data:`_link_status`, and the next real transition
+    would then be dropped as a repeat.
     """
     global _link_status
     if status == _link_status:
         return
     _link_status = status
     emit_event(UiEventName.status, status=status)
+
+
+def get_activity() -> str | None:
+    """Return the last published activity phase (``None`` before the first one)."""
+    return _activity
+
+
+def begin_activity() -> None:
+    """Mark one sync cycle as moving data; publishes ``syncing`` on the first.
+
+    Consumers: hsync-desktop (activity indicator of the file-set bar). Every
+    caller pairs it with :func:`end_activity` in the cycle's ``finally``, so a
+    failed, aborted or cancelled cycle can never leave the front-end claiming
+    work that is not running.
+    """
+    global _activity, _activity_depth
+    with _activity_lock:
+        _activity_depth += 1
+        publish = _activity_depth == 1 and _activity != "syncing"
+        if publish:
+            _activity = "syncing"
+    if publish:
+        emit_event(UiEventName.activity, activity="syncing")
+
+
+def end_activity() -> None:
+    """Release a cycle taken by :func:`begin_activity`; publishes ``idle`` at zero."""
+    global _activity, _activity_depth
+    with _activity_lock:
+        if _activity_depth == 0:
+            return
+        _activity_depth -= 1
+        publish = _activity_depth == 0 and _activity != "idle"
+        if publish:
+            _activity = "idle"
+    if publish:
+        emit_event(UiEventName.activity, activity="idle")
 
 
 def event_channel_ready() -> bool:

@@ -195,6 +195,23 @@ write opt-in is `CLI-opt-in OR environment-opt-in` and defaults false.
 `hsync_common.protocol.events`) to a desktop-provided fd. `init_emitter` (`hsync_client/events.py::init_emitter`),
 `get_emitter` (`hsync_client/events.py::get_emitter`), `emit_event` (`hsync_client/events.py::emit_event`). Consumed by `hsync-desktop`.
 
+Two axes have exactly **one** publisher each, because both keep module state
+that a bypassing publisher would desynchronize (the front-end then keeps a state
+the engine already left):
+
+| Axis | Publisher | Values |
+| ---- | --------- | ------ |
+| link state | `set_link_status` (`hsync_client/events.py::set_link_status`) | `disconnected`, `connecting`, `connected`, `waiting`, `error` |
+| data movement | `begin_activity` / `end_activity` (`hsync_client/events.py::begin_activity` / `hsync_client/events.py::end_activity`) | `syncing`, `idle` |
+
+`sync()` brackets every cycle with the activity phase (counter-based, so
+overlapping cycles — a master serving several devices, a resync joining a running
+cycle — publish `syncing` once and `idle` only when the last one ends), and the
+link state is published by whoever establishes the link: the remote handshake,
+the REST round that proves the data plane, or the p2p master/slave transitions.
+`tests/test_events.py` pins the invariant (`status`/`activity` are referenced only
+in `events.py`).
+
 > **Domain-critical**: any change to `HSYNC_*` flags / defaults requires a
 > synchronized update of the WD OS5 package (`hsync-wd-os5`,
 > `packaging/Apkg/start.sh`) — see `AGENTS.md`.

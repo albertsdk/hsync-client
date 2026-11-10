@@ -54,6 +54,7 @@ from hsync_client.events import (
     emit_warning,
     emit_warning_cleared,
     note_condition_standing,
+    set_link_status,
 )
 from hsync_client.exceptions import (
     AuthenticationError,
@@ -771,7 +772,7 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
                         _emit_master_presence(count, manager)
                     # "connected" means an active peer link: a lone serving
                     # master is "waiting" for a device to connect.
-                    emit_event(UiEventName.status, status=_p2p_status(count))
+                    set_link_status(_p2p_status(count))
 
                 p2p_sync.set_connected_clients_provider(ws_connected_count)
                 p2p_ws_server.set_clients_changed_callback(on_clients_changed)
@@ -813,9 +814,9 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
                         f"the deterministic election picked "
                         f"{peer_manager.get_master_cid() or 'no eligible peer'}."
                     )
-                    # Back to the rendezvous loop: the desktop status drops to
+                    # Back to the rendezvous loop: the link status drops to
                     # "connecting" until the new master link is established.
-                    emit_event(UiEventName.status, status="connecting")
+                    set_link_status("connecting")
                 # NOTE: the master role is inherently continuous: it must
                 # stay available to serve peers regardless of the one-shot
                 # flag (which only applies to slaves). The loop only exits
@@ -1027,10 +1028,7 @@ def _run_as_master(
 
         # Serving with no connected slave is "waiting for devices", not a live
         # link: "connected" means at least one active peer connection.
-        emit_event(
-            UiEventName.status,
-            status=_p2p_status(p2p_ws_server.connected_clients),
-        )
+        set_link_status(_p2p_status(p2p_ws_server.connected_clients))
 
         if config["P2P_KEY"]:
             log.info("Authentication enabled (shared secret)")

@@ -70,9 +70,11 @@ from hsync_client.constants import (
 )
 from hsync_client.events import (
     UiEventName,
+    begin_activity,
     emit_event,
     emit_warning,
     emit_warning_cleared,
+    end_activity,
     event_channel_ready,
     set_link_status,
 )
@@ -455,18 +457,14 @@ class SyncCycleResult:
 def log_initial_sync_start() -> None:
     """Emit the colored ``[INITIAL SYNC]`` phase marker for a run's first sync.
 
-    Called by the three initial-sync entry points (P2P slave handler, remote
-    reconnect loop, one-shot CLI run) immediately before the first ``sync()``,
-    so the log marks the "initial reconciliation" phase explicitly ahead of the
-    per-file ``[DOWNLOAD]``/``[UPLOAD]`` lines and before the trailing
-    "Initial sync complete" message.
+    Called by the initial-sync entry points (P2P slave handler, remote reconnect
+    loop, preview-confirm transition, one-shot CLI run) immediately before the
+    first ``sync()``, so the log marks the "initial reconciliation" phase
+    explicitly ahead of the per-file ``[DOWNLOAD]``/``[UPLOAD]`` lines and before
+    the trailing "Initial sync complete" message. The structured channel carries
+    the phase itself (``activity``, published by ``sync()``).
     """
     log.info(f"{ActionLabel.INITIAL_SYNC} Initial sync started")
-    # The status bar must not keep saying "Connecting…" while the first full
-    # reconcile is already transferring data: the realtime channel only opens
-    # afterwards. "syncing" is replaced by "connected" when the WebSocket is up
-    # (or by the server link status in remote mode).
-    emit_event(UiEventName.status, status="syncing")
 
 
 _last_folder_size: tuple[int, int] | None = None
@@ -1081,6 +1079,7 @@ async def sync(
     with _cycle_bookkeeping_lock:
         _sync_cycle_started_at = monotonic()
     _sync_cycle_active.set()
+    begin_activity()
     try:
         offset_store.begin_epoch()
         _cycle_preflight()
@@ -1199,6 +1198,7 @@ async def sync(
             _last_cycle_ended_at = monotonic()
             _sync_cycle_started_at = None
         _sync_cycle_active.clear()
+        end_activity()
 
 
 def _refresh_concurrency_from_queue(downloads: list[File], uploads: list[File]) -> None:

@@ -129,7 +129,6 @@ class TestRunAsMaster:
 
     def test_run_as_master_reports_connected_with_a_client(self, tmp_path):
         """Serving as master with a connected slave reports "connected"."""
-        from hsync_client.events import UiEventName
         from hsync_client.p2p_handler import _run_as_master
 
         config = _make_p2p_config(tmp_path)
@@ -140,7 +139,7 @@ class TestRunAsMaster:
 
         with (
             patch("time.sleep"),
-            patch("hsync_client.p2p_handler.emit_event") as emit,
+            patch("hsync_client.p2p_handler.set_link_status") as link,
         ):
             _run_as_master(
                 config=config,
@@ -150,14 +149,10 @@ class TestRunAsMaster:
                 p2p_ws_server=ws,
             )
 
-        assert any(
-            c.args and c.args[0] is UiEventName.status and c.kwargs.get("status") == "connected"
-            for c in emit.call_args_list
-        )
+        link.assert_any_call("connected")
 
     def test_run_as_master_waits_when_alone(self, tmp_path):
         """A lone serving master reports "waiting" — no peer link is up."""
-        from hsync_client.events import UiEventName
         from hsync_client.p2p_handler import _run_as_master
 
         config = _make_p2p_config(tmp_path)
@@ -168,7 +163,7 @@ class TestRunAsMaster:
 
         with (
             patch("time.sleep"),
-            patch("hsync_client.p2p_handler.emit_event") as emit,
+            patch("hsync_client.p2p_handler.set_link_status") as link,
         ):
             _run_as_master(
                 config=config,
@@ -178,11 +173,7 @@ class TestRunAsMaster:
                 p2p_ws_server=ws,
             )
 
-        statuses = [
-            c.kwargs.get("status")
-            for c in emit.call_args_list
-            if c.args and c.args[0] is UiEventName.status
-        ]
+        statuses = [c.args[0] for c in link.call_args_list]
         assert "waiting" in statuses
         assert "connected" not in statuses
 

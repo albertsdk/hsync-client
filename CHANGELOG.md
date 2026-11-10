@@ -68,6 +68,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The status channel no longer reports the sync phase as a link state: a cycle
+  on a live link publishes `activity=syncing`/`idle` and leaves the link
+  `connected`, so the desktop no longer keeps showing "Syncing…" with every
+  synced row unverified once a run ends.
 - A newly created empty folder keeps its final state on both devices: the p2p
   master now creates the empty-directory sentinel (it runs no sync cycle, so
   nothing else did) and both creation paths report the folder's verdict, so it no

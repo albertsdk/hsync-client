@@ -21,10 +21,13 @@ from hsync_common.protocol.events import (
 from hsync_client import events
 from hsync_client.events import (
     EventEmitter,
+    begin_activity,
     emit_event,
     emit_progress,
     emit_warning,
     emit_warning_cleared,
+    end_activity,
+    get_activity,
     get_emitter,
     get_link_status,
     init_emitter,
@@ -407,3 +410,98 @@ class TestLinkStatus:
         set_link_status("connected")
 
         assert self._statuses(read_fd) == ["connected"]
+
+
+class TestActivity:
+    """``activity`` publishes the data-movement phase on its own axis."""
+
+    def teardown_method(self):
+        init_emitter(None)
+
+    @staticmethod
+    def _capture() -> int:
+        read_fd, write_fd = os.pipe()
+        init_emitter(write_fd)
+        return read_fd
+
+    @staticmethod
+    def _published(read_fd: int) -> list[tuple[str, str]]:
+        get_emitter().close()  # flush
+        lines = _read_lines(read_fd)
+        os.close(read_fd)
+        out: list[tuple[str, str]] = []
+        for line in lines:
+            parsed = parse_event_line(line)
+            if parsed is None:
+                continue
+            name = str(parsed["event"])
+            if name == "activity":
+                out.append((name, str(parsed.get("activity", ""))))
+            elif name == "status":
+                out.append((name, str(parsed.get("status", ""))))
+        return out
+
+    def test_brackets_the_phase_once_for_overlapping_cycles(self):
+        read_fd = self._capture()
+
+        begin_activity()
+        begin_activity()  # a cycle joining a running one keeps the phase published
+        end_activity()
+        end_activity()  # the last cycle ends the phase
+
+        assert self._published(read_fd) == [("activity", "syncing"), ("activity", "idle")]
+        assert get_activity() == "idle"
+
+    def test_the_phase_never_moves_the_link_status(self):
+        read_fd = self._capture()
+
+        set_link_status("connected")
+        begin_activity()
+        end_activity()
+        set_link_status("waiting")
+        set_link_status("connected")
+
+        assert self._published(read_fd) == [
+            ("status", "connected"),
+            ("activity", "syncing"),
+            ("activity", "idle"),
+            ("status", "waiting"),
+            ("status", "connected"),
+        ]
+        assert get_link_status() == "connected"
+
+    def test_a_new_channel_resets_the_published_phase(self):
+        read_fd = self._capture()
+        begin_activity()
+        end_activity()
+        assert self._published(read_fd) == [("activity", "syncing"), ("activity", "idle")]
+
+        read_fd = self._capture()  # init_emitter installs a fresh channel
+        assert get_activity() is None
+        begin_activity()
+        end_activity()
+
+        assert self._published(read_fd) == [("activity", "syncing"), ("activity", "idle")]
+
+
+def test_status_and_activity_have_exactly_one_publisher():
+    """No module may publish the two axes itself: the funnel owns their state.
+
+    A publisher that reaches the channel directly moves the front-end without
+    moving the module state, so the next real transition is dropped as a repeat
+    and the front-end keeps a state the engine already left.
+    """
+    import re
+    from pathlib import Path
+
+    import hsync_client
+
+    fence = re.compile(r"UiEventName\.(?:status|activity)(?![A-Za-z0-9_])")
+    package = Path(hsync_client.__file__).parent
+    offenders = []
+    for path in sorted(package.rglob("*.py")):
+        if path.name == "events.py":
+            continue
+        if fence.search(path.read_text(encoding="utf-8")):
+            offenders.append(str(path.relative_to(package)))
+    assert offenders == []
