@@ -965,14 +965,14 @@ files = [
 
 [[package]]
 name = "fastapi"
-version = "0.162.0"
+version = "0.162.3"
 description = "FastAPI framework, high performance, easy to learn, fast to code, ready for production"
 optional = false
 python-versions = ">=3.10"
 groups = ["blackbox"]
 files = [
-    {file = "fastapi-0.162.0-py3-none-any.whl", hash = "sha256:3785963de305dd09912426cb81f2d230fce98ab3521cdfe97265c8d14983128c"},
-    {file = "fastapi-0.162.0.tar.gz", hash = "sha256:6a22c1e2e6e32e0633ee7e170f00009a29b8228b16feb219ee42f32fd8d88a8f"},
+    {file = "fastapi-0.162.3-py3-none-any.whl", hash = "sha256:2db4a90df7bce3814a0b1003e8cf3f4f0b3d2937cffb04f623672b14a45ef750"},
+    {file = "fastapi-0.162.3.tar.gz", hash = "sha256:3efb8dfa3ca546d0b4da484cd19ff97e3ca0a67d34a6fefb05a45faabcb141ed"},
 ]
 
 [package.dependencies]
@@ -1155,7 +1155,7 @@ files = [
 
 [[package]]
 name = "hsync-common"
-version = "1.1.0rc1"
+version = "1.1.0rc2"
 description = "HSYNC Common - shared models, constants, and compression utilities"
 optional = false
 python-versions = ">=3.12,<3.15"
@@ -1177,7 +1177,7 @@ url = "../hsync-common"
 
 [[package]]
 name = "hsync-server"
-version = "1.1.0rc1"
+version = "1.1.0rc2"
 description = "HSYNC File Server"
 optional = false
 python-versions = ">=3.12,<3.15"
@@ -1188,12 +1188,12 @@ develop = true
 [package.dependencies]
 aiofiles = ">=25.1.0,<26.0.0"
 cryptography = ">=50.0.2,<51.0.0"
-fastapi = ">=0.162.0,<0.163.0"
-hsync-common = "1.1.0rc1"
+fastapi = ">=0.162.2,<0.163.0"
+hsync-common = "1.1.0rc2"
 loguru = ">=0.7.3,<0.8.0"
 prometheus-fastapi-instrumentator = ">=8.1.0,<9.0.0"
 pydantic-settings = ">=2.12.0,<3.0.0"
-python-multipart = ">=0.0.32,<0.0.33"
+python-multipart = ">=0.0.33,<0.0.34"
 slowapi = ">=0.1.10,<0.2.0"
 typer = ">=0.26.0,<0.28.0"
 uvicorn = ">=0.54.0,<0.55.0"
@@ -2481,14 +2481,14 @@ cli = ["click (>=5.0)"]
 
 [[package]]
 name = "python-multipart"
-version = "0.0.32"
+version = "0.0.33"
 description = "A streaming multipart parser for Python"
 optional = false
-python-versions = ">=3.10"
+python-versions = ">=3.11"
 groups = ["blackbox"]
 files = [
-    {file = "python_multipart-0.0.32-py3-none-any.whl", hash = "sha256:ff6d3f776f16878c894e52e107296ffc890e913c611b1a4ec6c44e2821fe2e23"},
-    {file = "python_multipart-0.0.32.tar.gz", hash = "sha256:be54b7f3fa167bb83e4fcd936b887b708f4e57fe75911c02aebf53efaf8d938e"},
+    {file = "python_multipart-0.0.33-py3-none-any.whl", hash = "sha256:8f16c07b36add9da6b2ee87d3efcaf0a45a6de9c3d0a5dd94e9ccf7675a7bc45"},
+    {file = "python_multipart-0.0.33.tar.gz", hash = "sha256:b8112424a6abd162ec08d390565dd113ad699f2fe6fef3c987b8bbcbfe9e390d"},
 ]
 
 [[package]]
@@ -3549,4 +3549,4 @@ cffi = ["cffi (>=1.17,<2.0) ; platform_python_implementation != \"PyPy\" and pyt
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.15"
-content-hash = "cfae848eff7f959b1572914d58db6a2cf0e5f6dea4c2d8210730dbba09633bb9"
+content-hash = "31ec7e6e4b3e100fc2d3f9e854d1215d77af36822a29480bce09dedad2e79b7e"
