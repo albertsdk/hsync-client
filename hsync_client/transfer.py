@@ -35,6 +35,7 @@ from hsync_common.disk import check_free_space
 from hsync_common.format import format_bytes, format_duration
 from hsync_common.hashing import adaptive_chunk_size, compute_sha256, is_sha256_hex
 from hsync_common.models.file import File
+from hsync_common.models.sentinel import is_sentinel_file
 from hsync_common.models.symlink import Symlink
 from hsync_common.models.tombstone import relpath_in_bucket
 from hsync_common.path_validation import (
@@ -472,6 +473,35 @@ class _CountingReader:
 def _normalized_download_path(file: File) -> str | None:
     """Return the canonical bucket-relative path used on P2P source requests."""
     return normalize_bucket_relpath(str(file.filepath), CONFIG["LOCAL_BUCKET"])
+
+
+def _download_delivery_echo(
+    inventory_observer: InventoryObserver,
+    file: File,
+    full_save_path: str,
+    write_cap: int,
+    source: P2PPeerSource | None,
+) -> Callable[[int], None] | None:
+    """Delivery echo for a master-served download, or ``None``.
+
+    The receiver (this node) reports the bytes it stored, so the serving master's
+    row shows the delivered scale instead of its own transport counter. Only a
+    canonical-master download echoes (``source is None``): a seeder-served
+    download carries the same session, but the master is not the one serving it,
+    so its frames would be pure noise (and, keyed by path, could land on an
+    unrelated concurrent serve). The no-op observer (central server) sends
+    nothing, and engine sentinels are skipped like every other progress emitter.
+    """
+    if source is not None:
+        return None
+    rel = _normalized_download_path(file)
+    if rel is None or is_sentinel_file(full_save_path):
+        return None
+
+    def report(transferred: int) -> None:
+        inventory_observer.report_received(rel, transferred, write_cap)
+
+    return report
 
 
 def _valid_content_range(value: str | None, *, start: int, total: int) -> bool:
@@ -1173,7 +1203,17 @@ def _stream_download_body(
         # exact zero-byte file. MAX_INBOUND_SIZE is enforced above as a policy
         # ceiling; it must never turn size=0 into an "unknown" multi-GB cap.
         write_cap = file.size
-        reporter = ProgressReporter(full_save_path, write_cap, "download")
+        # The serving master shows the bytes *this* node stored, not the wire
+        # bytes it handed to its transport: forward the delivery progress up the
+        # session when one exists (a no-op observer sends nothing).
+        reporter = ProgressReporter(
+            full_save_path,
+            write_cap,
+            "download",
+            echo=_download_delivery_echo(
+                inventory_observer, file, full_save_path, write_cap, source
+            ),
+        )
         with _open_partial_no_follow(partial_file_path, write_mode) as output:
             if is_compressed:
                 response.raw.decode_content = False
@@ -2559,7 +2599,16 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
             ul_bw_limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
 
             boundary = uuid4().hex
-            reporter = ProgressReporter(file.filepath, file.size or 0, "upload")
+            # In p2p the master echoes the bytes it stored (``file_progress``), so
+            # the local transport counter stays silent and the row keeps one
+            # scale. The central server has no delivery channel: its counter
+            # remains the only signal.
+            reporter = ProgressReporter(
+                file.filepath,
+                file.size or 0,
+                "upload",
+                delivery_only=bool(CONFIG.get("P2P_MODE")),
+            )
             if offset > 0:
                 # Anchor the resumed position BEFORE the first chunk: the
                 # Desktop's short rate window reads a first sample that jumps

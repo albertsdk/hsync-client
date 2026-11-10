@@ -47,6 +47,10 @@ from hsync_common.protocol.peer_download import (
     validate_p2p_inventory_ack,
     validate_p2p_inventory_frame,
 )
+from hsync_common.protocol.transfer_progress import (
+    P2PFileProgressFrame,
+    build_p2p_file_progress,
+)
 from hsync_common.text import compact_json_bytes
 from loguru import logger as log
 
@@ -135,6 +139,15 @@ class InventoryObserver(Protocol):
 
     def rename_prefix(self, src_directory: str, dst_directory: str) -> None: ...
 
+    def report_received(self, rel_path: str, transferred: int, total: int) -> None:
+        """Publish the bytes stored for a peer-served file (delivery progress).
+
+        The sender's own counter measures what it handed to its transport; only
+        the receiver knows what it stored. A no-op observer (transports with no
+        master WebSocket session) sends nothing.
+        """
+        ...
+
 
 class _NoopInventoryObserver:
     """Null object used by transports that do not publish P2P inventory."""
@@ -155,6 +168,9 @@ class _NoopInventoryObserver:
         return
 
     def rename_prefix(self, src_directory: str, dst_directory: str) -> None:
+        return
+
+    def report_received(self, rel_path: str, transferred: int, total: int) -> None:
         return
 
 
@@ -1046,6 +1062,12 @@ class P2PInventoryPublisher:
         self._task: asyncio.Task[None] | None = None
         self._websocket: _PublisherWebSocket | None = None
         self._disabled = False
+        # Delivery-progress uplink: the latest sample per file plus a set of
+        # files with a send in flight, so a stalled socket coalesces superseded
+        # samples instead of piling one coroutine per tick.
+        self._progress_pending: dict[str, P2PFileProgressFrame] = {}
+        self._progress_inflight: set[str] = set()
+        self._progress_lock = threading.Lock()
 
     def _normalize_path(self, value: object) -> str | None:
         if not isinstance(value, str):
@@ -1199,6 +1221,60 @@ class P2PInventoryPublisher:
         self._ack_queue = None
         self._wake = None
         self._loop = None
+
+    def report_received(self, rel_path: str, transferred: int, total: int) -> None:
+        """Publish the bytes stored for a peer-served file (best-effort).
+
+        Driven from the download thread that moves the bytes, so the send is
+        marshalled onto the session's loop; a detached or closing session drops
+        it. One drain coroutine per file keeps at most one frame in flight and
+        coalesces superseded samples, so a stalled socket cannot pile up a
+        coroutine per tick. The frame mirrors the master's ``file_progress``, so
+        the serving side renders the receiver's scale instead of its own
+        transport counter.
+        """
+        loop = self._loop
+        if loop is None or not loop.is_running():
+            return
+        try:
+            frame = build_p2p_file_progress(file=rel_path, transferred=transferred, total=total)
+        except ValueError:
+            # An out-of-range sample (e.g. a body that outgrew its declared size)
+            # must never break the download that carries it.
+            return
+        with self._progress_lock:
+            self._progress_pending[rel_path] = frame
+            if rel_path in self._progress_inflight:
+                return  # the in-flight drain will pick up the latest sample
+            self._progress_inflight.add(rel_path)
+        try:
+            asyncio.run_coroutine_threadsafe(self._drain_progress(rel_path), loop)
+        except RuntimeError:
+            # The loop is already shutting down: nothing left to send.
+            with self._progress_lock:
+                self._progress_inflight.discard(rel_path)
+
+    async def _drain_progress(self, rel_path: str) -> None:
+        """Send the newest pending sample for *rel_path* until none remains."""
+        while True:
+            with self._progress_lock:
+                frame = self._progress_pending.pop(rel_path, None)
+                if frame is None:
+                    self._progress_inflight.discard(rel_path)
+                    return
+            websocket = self._websocket
+            if websocket is None:
+                # Session gone: drop the pending sample and clear the flag.
+                with self._progress_lock:
+                    self._progress_pending.pop(rel_path, None)
+                    self._progress_inflight.discard(rel_path)
+                return
+            try:
+                await websocket.send(self._serialize(frame))
+            except Exception:
+                # A delivery hint is never worth failing on: swallow so the
+                # scheduled coroutine does not surface as an unretrieved error.
+                continue
 
     def handle_ack(self, payload: object) -> bool:
         """Demultiplex one validated ACK from the transport's sole receiver."""

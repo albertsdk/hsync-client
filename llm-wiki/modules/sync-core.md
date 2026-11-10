@@ -214,9 +214,10 @@ final update at completion) from **both roles**:
   (`hsync_client/transfer.py::_build_multipart_streaming`, throttled via
   `hsync_client/utils/throttle.py::get_throttle_delay`);
 - the P2P server: serving a full file (`hsync_client/p2p_server.py::_write_served_chunk`,
-  against the wire size — the zstd frame when compressed), serving a parked
-  delta payload (`hsync_client/p2p_delta.py::handle_delta_data`) and receiving a peer's
-  upload or delta-apply (`hsync_client/progress.py::ProgressWriter`).
+  against the wire size — the zstd frame when compressed, until the receiver's
+  echo supersedes it), serving a parked delta payload
+  (`hsync_client/p2p_delta.py::handle_delta_data`) and receiving a peer's upload or
+  delta-apply (`hsync_client/progress.py::ProgressWriter`).
 
 `op` is the *local* direction: bytes that arrived are a `download` (a received
 file has no local row yet, so the desktop needs the direction to create one),
@@ -248,21 +249,35 @@ goes through `hsync_client/progress.py::emit_completed_transfer`, not a bare `em
 it also clears the path's delivery mark (`hsync_client/progress.py::forget_delivery_progress`)
 and its next upload reports progress again.
 
-An upload's progress belongs to the receiver: the master publishes the bytes it
-stored for a peer's upload as a unicast ``file_progress`` frame on that peer's
-session (``hsync_client/p2p_server.py::P2PServer._upload_progress_echo``, wired to
-``hsync_client/p2p_websocket.py::P2PWebSocketServer.send_to_sync`` by the serving role); the
-uploading slave turns it into a local ``progress`` sample
-(``hsync_client/p2p_websocket.py::_apply_master_progress``) and marks the path, so its own
+An upload's progress belongs to the receiver, and so does a serve's: the
+**upload** is reported by the master — the bytes it stored for a peer's upload,
+unicast as a ``file_progress`` frame on that peer's session
+(``hsync_client/p2p_server.py::P2PServer._upload_progress_echo``, wired to
+``hsync_client/p2p_websocket.py::P2PWebSocketServer.send_to_sync`` by the serving role) — and
+the uploading slave turns it into a local ``progress`` sample
+(``hsync_client/p2p_websocket.py::_apply_master_progress``). The **serve** is reported by the
+receiving slave — the bytes it stored, sent up its session
+(``hsync_client/transfer.py::_download_delivery_echo`` →
+``hsync_client/p2p_inventory.py::P2PInventoryPublisher.report_received``; only a
+canonical-master download echoes, a seeder-served one has nothing the master
+serves) — and the serving master turns it into a local ``progress`` sample
+(``hsync_client/p2p_websocket.py::_apply_slave_progress``), but only for the serve
+*that peer* requested: the registry is keyed by ``(rel, cid)``
+(``hsync_client/progress.py::note_serving`` / ``mark_delivery_if_serving`` /
+``stop_serving``), so a concurrent serve of the same file, another peer's frame,
+or a stale one cannot drive the row. Either way the sender marks the path so its own
 transport counter — a different total — stops feeding the same row
 (``hsync_client/progress.py::note_delivery_progress`` /
-``hsync_client/progress.py::delivery_progress_active``, cleared by the terminal event). The
-frame's ``total`` is the file size the sender declared, which is the scale the
-row switches to. A **compressed** upload never shows the local counter at all in
-p2p mode (its reporter is built with ``delivery_only``): the payload it counts is
-not the file the master stores, so the row keeps one scale from the first sample
-instead of dropping when the echo takes over. A central server publishes no such
-samples, so there the local counter remains the signal.
+``hsync_client/progress.py::delivery_progress_active``); a serve owns its mark
+until the last serve of that path ends (the terminal event's
+``hsync_client/progress.py::forget_delivery_progress`` defers while one is in
+flight, and ``stop_serving`` clears it). The
+frame's ``total`` is the file size the receiver declared, which is the scale the
+row switches to. A **compressed** transfer never shows the local counter at all
+in p2p mode (its reporter is built with ``delivery_only``): the payload it counts
+is not the file the receiver stores, so the row keeps one scale from the first
+sample instead of dropping when the echo takes over. A central server publishes
+no such samples, so there the local counter remains the signal.
 
 The upload request itself is bounded by an **inactivity window** derived from
 the body size (`hsync_client/utils/http.py::upload_timeout` →

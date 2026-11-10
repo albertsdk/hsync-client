@@ -76,6 +76,100 @@ class TestMasterProgressEcho:
         assert captured == []
 
 
+class TestServeProgressEcho:
+    """The slave's ``file_progress`` frame drives the serving master's own row.
+
+    The mirror of :class:`TestMasterProgressEcho`: the receiver (the slave) counts
+    the bytes it stored, so the master renders them instead of the bytes its own
+    serve loop handed to the socket. Only a path the master is serving now is
+    accepted.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clean_registries(self):
+        from hsync_client import progress as progress_mod
+
+        progress_mod._delivery_paths.clear()
+        progress_mod._serving.clear()
+        yield
+        progress_mod._delivery_paths.clear()
+        progress_mod._serving.clear()
+
+    @pytest.fixture
+    def captured(self, monkeypatch):
+        from hsync_client import p2p_websocket as ws
+
+        calls: list[tuple[str, dict]] = []
+        monkeypatch.setattr(ws, "emit_progress", lambda name, **kw: calls.append((name, kw)))
+        return calls
+
+    def test_a_served_path_becomes_a_local_upload_sample(self, captured):
+        from hsync_client import p2p_websocket as ws
+        from hsync_client import progress as progress_mod
+
+        progress_mod.note_serving("sub/f.bin", "/share/sub/f.bin", "peer-a")
+
+        handled = ws._apply_slave_progress(
+            {"type": "file_progress", "file": "sub/f.bin", "transferred": 40, "total": 100},
+            "peer-a",
+        )
+
+        assert handled is True
+        assert captured == [
+            (
+                ws.UiEventName.progress,
+                {"file": "sub/f.bin", "transferred": 40, "total": 100, "op": "upload"},
+            )
+        ]
+        # Marked in both forms so the serve reporter (absolute path) stands down.
+        assert progress_mod.delivery_progress_active("/share/sub/f.bin") is True
+        assert progress_mod.delivery_progress_active("sub/f.bin") is True
+
+    def test_an_unserved_path_is_ignored(self, captured):
+        """A seeder served it, or the frame outlived its serve: drop it."""
+        from hsync_client import p2p_websocket as ws
+        from hsync_client import progress as progress_mod
+
+        handled = ws._apply_slave_progress(
+            {"type": "file_progress", "file": "sub/f.bin", "transferred": 40, "total": 100},
+            "peer-a",
+        )
+
+        assert handled is True
+        assert captured == []
+        assert progress_mod.delivery_progress_active("sub/f.bin") is False
+
+    def test_another_peers_frame_is_ignored(self, captured):
+        """A concurrent serve of the same path by another peer is not driven."""
+        from hsync_client import p2p_websocket as ws
+        from hsync_client import progress as progress_mod
+
+        progress_mod.note_serving("sub/f.bin", "/share/sub/f.bin", "peer-a")
+
+        handled = ws._apply_slave_progress(
+            {"type": "file_progress", "file": "sub/f.bin", "transferred": 40, "total": 100},
+            "peer-b",
+        )
+
+        assert handled is True
+        assert captured == []
+        assert progress_mod.delivery_progress_active("/share/sub/f.bin") is False
+
+    def test_a_malformed_frame_is_dropped(self, captured):
+        from hsync_client import p2p_websocket as ws
+
+        assert (
+            ws._apply_slave_progress({"type": "file_progress", "file": "a.bin"}, "peer-a") is True
+        )
+        assert captured == []
+
+    def test_another_frame_is_not_handled(self, captured):
+        from hsync_client import p2p_websocket as ws
+
+        assert ws._apply_slave_progress({"type": "file_event", "name": "added"}, "peer-a") is False
+        assert captured == []
+
+
 class TestSlaveFileEventHandler:
     """Tests for P2PSlaveFileEventHandler class."""
 

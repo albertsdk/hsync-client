@@ -68,9 +68,79 @@ def delivery_progress_active(path: str) -> bool:
 
 
 def forget_delivery_progress(path: str) -> None:
-    """Forget the delivery mark of *path* (the transfer ended)."""
+    """Forget the delivery mark of *path*, unless a serve of it is in flight.
+
+    A serve owns its row's mark until it ends: the terminal ``transfer`` event is
+    emitted before ``stop_serving``, so clearing the mark there would re-arm the
+    wire reporter of a second concurrent serve of the same file and mix scales.
+    The mark is discarded by ``stop_serving`` when the last serve ends instead.
+    """
+    norm = path.replace("\\", "/")
+    with _serving_lock:
+        for (rel, _cid), (abs_path, _count) in _serving.items():
+            if path in (abs_path, rel) or norm in (abs_path.replace("\\", "/"), rel):
+                return
     with _delivery_lock:
         _delivery_paths.discard(path)
+
+
+# Paths the master is serving right now, keyed by ``(rel, cid)`` — the validated
+# bucket-relative path and the requesting peer — so an echo is only applied to
+# the serve it belongs to (two peers can download the same file concurrently, and
+# a seeder-served peer's frame must never land on the master's own serve). The
+# value is ``(absolute path the serve reporter uses, active-serve count)``.
+_serving: dict[tuple[str, str], tuple[str, int]] = {}
+_serving_lock = threading.Lock()
+
+
+def note_serving(rel: str, abs_path: str, cid: str) -> None:
+    """Record one serve of *rel* for *cid* from *abs_path*."""
+    key = (rel, cid)
+    with _serving_lock:
+        path, count = _serving.get(key, (abs_path, 0))
+        _serving[key] = (path, count + 1)
+
+
+def mark_delivery_if_serving(rel: str, cid: str) -> bool:
+    """Mark a serve's delivery for the receiver, atomically with the gate.
+
+    Done under ``_serving_lock`` so an echo cannot pass the "is it served" check
+    and then re-mark a path whose serve has already torn down (a stale mark that
+    would silence a later serve). Returns ``False`` when no such serve is active.
+    """
+    key = (rel, cid)
+    with _serving_lock:
+        entry = _serving.get(key)
+        if entry is None:
+            return False
+        abs_path = entry[0]
+        with _delivery_lock:
+            _delivery_paths.add(abs_path)
+            _delivery_paths.add(rel)
+    return True
+
+
+def stop_serving(rel: str, cid: str) -> None:
+    """End one serve of *rel* for *cid*; clear its marks when the last one ends.
+
+    The delivery marks are path-keyed and shared by every concurrent serve of the
+    same file, so they are discarded only when no serve of *rel* remains.
+    """
+    key = (rel, cid)
+    with _serving_lock:
+        entry = _serving.get(key)
+        if entry is None:
+            return
+        abs_path, count = entry
+        if count > 1:
+            _serving[key] = (abs_path, count - 1)
+            return
+        del _serving[key]
+        if any(other[0] == rel for other in _serving):
+            return
+        with _delivery_lock:
+            _delivery_paths.discard(abs_path)
+            _delivery_paths.discard(rel)
 
 
 class ProgressReporter:

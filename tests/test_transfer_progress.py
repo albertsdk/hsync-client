@@ -6,9 +6,22 @@
 from __future__ import annotations
 
 import pytest
+from hsync_common.models.file import File
 
 from hsync_client import progress, transfer
 from hsync_client.events import UiEventName
+from hsync_client.p2p_inventory import NOOP_INVENTORY_OBSERVER
+from hsync_client.p2p_sources import P2PPeerSource
+
+
+class _RecordingObserver:
+    """Minimal ``InventoryObserver`` capturing the delivery reports."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, int, int]] = []
+
+    def report_received(self, rel_path: str, transferred: int, total: int) -> None:
+        self.calls.append((rel_path, transferred, total))
 
 
 class TestProgressReporter:
@@ -161,6 +174,164 @@ class TestDeliveryProgress:
         progress.emit_failed_transfer("upload", "/bucket/f.bin", "boom")
 
         assert progress.delivery_progress_active("/bucket/f.bin") is False
+
+
+class TestServeRegistry:
+    """The master applies a peer echo only to the serve that peer requested.
+
+    The registry is keyed by ``(rel, cid)`` so a seeder-served peer's frame, a
+    concurrent serve of the same file by another peer, or a stale frame cannot
+    drive the row; the per-key refcount keeps two concurrent serves of the same
+    file from one finishing the other early.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clean_registries(self):
+        progress._serving.clear()
+        progress._delivery_paths.clear()
+        yield
+        progress._serving.clear()
+        progress._delivery_paths.clear()
+
+    def test_an_idle_path_is_not_serving(self):
+        assert progress.mark_delivery_if_serving("sub/f.bin", "peer-a") is False
+
+    def test_a_served_path_marks_both_forms(self):
+        progress.note_serving("sub/f.bin", "/share/sub/f.bin", "peer-a")
+
+        assert progress.mark_delivery_if_serving("sub/f.bin", "peer-a") is True
+        assert progress.delivery_progress_active("/share/sub/f.bin") is True
+        assert progress.delivery_progress_active("sub/f.bin") is True
+
+    def test_another_peers_frame_does_not_mark(self):
+        """A concurrent serve by another peer must not be driven by this CID."""
+        progress.note_serving("sub/f.bin", "/share/sub/f.bin", "peer-a")
+
+        assert progress.mark_delivery_if_serving("sub/f.bin", "peer-b") is False
+        assert progress.delivery_progress_active("/share/sub/f.bin") is False
+
+    def test_an_unserved_path_is_not_marked(self):
+        assert progress.mark_delivery_if_serving("sub/f.bin", "peer-a") is False
+        assert progress.delivery_progress_active("sub/f.bin") is False
+
+    def test_the_last_serve_clears_the_delivery_marks(self):
+        progress.note_serving("sub/f.bin", "/share/sub/f.bin", "peer-a")
+        progress.mark_delivery_if_serving("sub/f.bin", "peer-a")
+
+        progress.stop_serving("sub/f.bin", "peer-a")
+
+        assert progress.mark_delivery_if_serving("sub/f.bin", "peer-a") is False
+        assert progress.delivery_progress_active("/share/sub/f.bin") is False
+        assert progress.delivery_progress_active("sub/f.bin") is False
+
+    def test_a_second_serve_of_the_same_key_keeps_the_marks(self):
+        progress.note_serving("sub/f.bin", "/share/sub/f.bin", "peer-a")
+        progress.note_serving("sub/f.bin", "/share/sub/f.bin", "peer-a")
+        progress.mark_delivery_if_serving("sub/f.bin", "peer-a")
+
+        progress.stop_serving("sub/f.bin", "peer-a")
+
+        # Still in flight: the delivery mark must survive the first serve's end.
+        assert progress.mark_delivery_if_serving("sub/f.bin", "peer-a") is True
+        assert progress.delivery_progress_active("/share/sub/f.bin") is True
+
+        progress.stop_serving("sub/f.bin", "peer-a")
+
+        assert progress.delivery_progress_active("/share/sub/f.bin") is False
+
+    def test_a_second_peer_serving_the_same_file_keeps_the_marks(self):
+        progress.note_serving("sub/f.bin", "/share/sub/f.bin", "peer-a")
+        progress.note_serving("sub/f.bin", "/share/sub/f.bin", "peer-b")
+        progress.mark_delivery_if_serving("sub/f.bin", "peer-a")
+
+        progress.stop_serving("sub/f.bin", "peer-a")
+
+        # The other peer's serve still owns the shared, path-keyed mark.
+        assert progress.delivery_progress_active("/share/sub/f.bin") is True
+
+        progress.stop_serving("sub/f.bin", "peer-b")
+
+        assert progress.delivery_progress_active("/share/sub/f.bin") is False
+
+    def test_forget_is_deferred_while_a_serve_is_active(self):
+        """The terminal event fires before ``stop_serving``: it must not re-arm
+        the wire reporter of a still-active serve."""
+        progress.note_serving("sub/f.bin", "/share/sub/f.bin", "peer-a")
+        progress.mark_delivery_if_serving("sub/f.bin", "peer-a")
+
+        progress.forget_delivery_progress("/share/sub/f.bin")
+
+        assert progress.delivery_progress_active("/share/sub/f.bin") is True
+
+        progress.stop_serving("sub/f.bin", "peer-a")
+        assert progress.delivery_progress_active("/share/sub/f.bin") is False
+
+    def test_stopping_an_unknown_serve_is_a_noop(self):
+        progress.stop_serving("sub/f.bin", "peer-a")
+
+        assert progress.delivery_progress_active("sub/f.bin") is False
+
+
+class TestDownloadDeliveryEcho:
+    """A peer-served download forwards the stored bytes to the serving master."""
+
+    def _file(self, filepath: str, size: int) -> File:
+        return File(
+            filepath=filepath, sha256sum="x", size=size, mtime=0, ctime=0, permissions="644"
+        )
+
+    def test_the_echo_reports_the_stored_bytes(self, monkeypatch):
+        monkeypatch.setattr(transfer, "CONFIG", {"LOCAL_BUCKET": "/share"})
+        observer = _RecordingObserver()
+
+        echo = transfer._download_delivery_echo(
+            observer, self._file("sub/f.bin", 100), "/share/sub/f.bin", 100, None
+        )
+
+        assert echo is not None
+        echo(40)
+        assert observer.calls == [("sub/f.bin", 40, 100)]
+
+    def test_a_seeder_served_download_has_no_echo(self, monkeypatch):
+        """Only a canonical-master download reports to the master."""
+        monkeypatch.setattr(transfer, "CONFIG", {"LOCAL_BUCKET": "/share"})
+        source = P2PPeerSource(
+            cid="peer-a",
+            download_url="https://10.0.0.2:1234/api/v1/buckets/b/files/download",
+            cert_fingerprint="fp",
+            compression=False,
+            serve_slots=1,
+        )
+
+        echo = transfer._download_delivery_echo(
+            _RecordingObserver(), self._file("sub/f.bin", 100), "/share/sub/f.bin", 100, source
+        )
+
+        assert echo is None
+
+    def test_a_sentinel_has_no_echo(self, monkeypatch):
+        monkeypatch.setattr(transfer, "CONFIG", {"LOCAL_BUCKET": "/share"})
+
+        echo = transfer._download_delivery_echo(
+            _RecordingObserver(),
+            self._file("docs/.hsynckeep", 0),
+            "/share/docs/.hsynckeep",
+            0,
+            None,
+        )
+
+        assert echo is None
+
+    def test_the_noop_observer_drops_the_sample(self, monkeypatch):
+        """A transport with no master session reports nothing, without raising."""
+        monkeypatch.setattr(transfer, "CONFIG", {"LOCAL_BUCKET": "/share"})
+
+        echo = transfer._download_delivery_echo(
+            NOOP_INVENTORY_OBSERVER, self._file("sub/f.bin", 100), "/share/sub/f.bin", 100, None
+        )
+
+        assert echo is not None
+        echo(40)  # must not raise
 
 
 class TestStreamingBodyProgress:

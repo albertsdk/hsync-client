@@ -453,3 +453,54 @@ async def test_master_wss_configures_bounded_message_size() -> None:
         await server.handle(request)
 
     assert factory.call_args.kwargs["max_msg_size"] == WS_MAX_MESSAGE_BYTES
+
+
+class TestReportReceived:
+    """A download's delivery progress is forwarded to the serving master."""
+
+    @pytest.mark.asyncio
+    async def test_it_sends_a_file_progress_frame(self, tmp_path: Path) -> None:
+        publisher = P2PInventoryPublisher(tmp_path)
+        websocket = SilentWebSocket()
+        publisher._loop = asyncio.get_running_loop()
+        publisher._websocket = websocket
+
+        publisher.report_received("sub/f.bin", 40, 100)
+        async with asyncio.timeout(1):
+            while not websocket.frames:
+                await asyncio.sleep(0)
+
+        assert websocket.frames == [
+            {"type": "file_progress", "file": "sub/f.bin", "transferred": 40, "total": 100}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_an_out_of_range_sample_sends_nothing(self, tmp_path: Path) -> None:
+        publisher = P2PInventoryPublisher(tmp_path)
+        websocket = SilentWebSocket()
+        publisher._loop = asyncio.get_running_loop()
+        publisher._websocket = websocket
+
+        publisher.report_received("sub/f.bin", 500, 100)  # over the declared total
+        await asyncio.sleep(0.01)
+
+        assert websocket.frames == []
+
+    def test_a_detached_publisher_drops_the_sample(self, tmp_path: Path) -> None:
+        publisher = P2PInventoryPublisher(tmp_path)
+
+        # No session loop: a best-effort hint is simply dropped.
+        publisher.report_received("sub/f.bin", 40, 100)
+
+    @pytest.mark.asyncio
+    async def test_a_failing_send_is_swallowed(self, tmp_path: Path) -> None:
+        class _BoomWebSocket(SilentWebSocket):
+            async def send(self, message: str) -> None:
+                raise ConnectionError("transport gone")
+
+        publisher = P2PInventoryPublisher(tmp_path)
+        publisher._loop = asyncio.get_running_loop()
+        publisher._websocket = _BoomWebSocket()
+
+        publisher.report_received("sub/f.bin", 40, 100)
+        await asyncio.sleep(0.01)  # a delivery hint must never surface an error

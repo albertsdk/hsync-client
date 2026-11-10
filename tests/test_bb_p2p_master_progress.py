@@ -82,9 +82,13 @@ class TestMasterProgressEvents:
             served = [e for e in progress if e.get("file", "").endswith("served.bin")]
             assert served, "the master must report progress for a file it serves"
             assert all(e["op"] == "upload" for e in served)
-            # A compressed serve reports the wire size as its total; either way
-            # the final sample must be the complete payload.
-            assert served[-1]["transferred"] == served[-1]["total"] > 0
+            # Two honest scales are possible for the last sample: the receiver's
+            # echo (file size) when it lands before the row closes, or the
+            # master's own wire counter for a compressed serve, which reports an
+            # unknown total (a negative value, rendered as an indeterminate bar).
+            # The terminal ``transfer`` event below is what closes the row.
+            last = served[-1]
+            assert last["total"] < 0 or last["transferred"] == last["total"] == len(content)
 
             served_terminal = [
                 e

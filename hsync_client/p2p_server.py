@@ -111,7 +111,9 @@ from hsync_client.progress import (
     ProgressWriter,
     emit_completed_transfer,
     emit_failed_transfer,
+    note_serving,
     progress_reporter,
+    stop_serving,
 )
 from hsync_client.utils import (
     cid_suffix,
@@ -1922,6 +1924,12 @@ class P2PEndpointMixin(_HTTPTransportBase):
             self._send_error_response(HTTP_FORBIDDEN, "Access denied")
             return
 
+        # Register the serve so the peer's delivery echo (``file_progress``) for
+        # this path is accepted while it is in flight: the receiver measures the
+        # bytes it stored, the serve reporter only the bytes it handed to its
+        # transport. Keyed by the requesting CID so only its own echo applies.
+        serve_cid = origin_cid or ""
+        note_serving(normalized, display_path, serve_cid)
         response_started = False
         try:
             with _open_regular_beneath(local_bucket, normalized) as (stream, opened):
@@ -2096,6 +2104,11 @@ class P2PEndpointMixin(_HTTPTransportBase):
                 emit_failed_transfer("upload", display_path, f"serving failed: {exc}")
             else:
                 self._send_error_response(HTTP_INTERNAL_ERROR, "Error reading file")
+        finally:
+            # The serve is over on every path (completion, abort, error): stop
+            # accepting echoes for it and drop the delivery marks so a later
+            # serve of the same file reports again.
+            stop_serving(normalized, serve_cid)
 
     def _handle_upload_status(self, query: dict) -> None:
         """Handle GET /api/v1/buckets/{bucket}/files/upload-status.

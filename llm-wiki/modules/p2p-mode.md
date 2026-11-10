@@ -568,7 +568,10 @@ already at 98%). The compressed branch therefore emits `progress` with a
 of `0` would mean "keep the row's own size" (the delta-payload contract) and
 still produce a wrong figure. The identity branch keeps reporting the file size,
 which is the same quantity the receiver measures. The terminal `transfer` event
-always carries the file size, so the row closes correctly in both cases.
+always carries the file size, so the row closes correctly in both cases. The
+receiving slave's echo supersedes it once it lands (the slave measures the
+decompressed file), restoring a determinate percentage for the rest of the
+serve.
 
 Samples use the best-effort
 non-blocking emitter path (`hsync_client/events.py::EventEmitter.emit_progress`), so a slow
@@ -589,15 +592,30 @@ The keys are absent on any other direction, so a front-end never sees a fake
 zero. The desktop renders the split as *"Inviato: N · ricevuto su X dispositivi ·
 Y in sola invio non lo ricevono"*.
 
-**The receiver owns the progress of an upload it receives**: a sender knows only
-what it handed to its transport, the master knows what it stored, so the
-receiving side publishes `file_progress` frames on the uploader's own session
-(`hsync_client/p2p_server.py::P2PServer._upload_progress_echo` →
-`hsync_client/p2p_websocket.py::P2PWebSocketServer.send_to_sync`) and the uploading slave
-renders them as its own `progress` samples
-(`hsync_client/p2p_websocket.py::_apply_master_progress`), standing its local counter down
-for that path (`hsync_client/progress.py::note_delivery_progress`). The frame is defined once
-in `hsync-common` (`hsync-common/hsync_common/protocol/transfer_progress.py`, schema
+**The receiver owns the progress of a transfer crossing the peer link**: a
+sender knows only what it handed to its transport, the receiving side knows what
+it stored, so each direction publishes `file_progress` frames and the sender
+renders them, standing its local counter down for that path
+(`hsync_client/progress.py::note_delivery_progress`,
+`hsync_client/progress.py::ProgressReporter.delivery_only`):
+
+- a peer's **upload** is reported by the master on the uploader's own session
+  (`hsync_client/p2p_server.py::P2PServer._upload_progress_echo` →
+  `hsync_client/p2p_websocket.py::P2PWebSocketServer.send_to_sync`), and the uploading
+  slave applies it (`hsync_client/p2p_websocket.py::_apply_master_progress`);
+- a master's **serve** is reported by the receiving slave, which forwards the
+  bytes it stored up its session (`hsync_client/transfer.py::_download_delivery_echo`
+  → `hsync_client/p2p_inventory.py::P2PInventoryPublisher.report_received`; only a
+  canonical-master download echoes — a seeder-served one has nothing the master
+  serves), and the serving master applies it
+  (`hsync_client/p2p_websocket.py::_apply_slave_progress`) only for the serve *that
+  peer* requested: the registry is keyed by `(rel, cid)`
+  (`hsync_client/progress.py::note_serving` / `mark_delivery_if_serving` /
+  `stop_serving`), so a concurrent serve of the same file, another peer's frame, or
+  a stale one cannot drive the row.
+
+The frame is defined once in `hsync-common`
+(`hsync-common/hsync_common/protocol/transfer_progress.py`, schema
 `protocol/p2p/wss-schema.json`, fixture `p2p-wss-file-progress`).
 
 **The relayed data plane is addressed by a loopback endpoint** the dialer binds

@@ -123,7 +123,7 @@ from hsync_client.p2p_inventory import (
 )
 from hsync_client.p2p_sources import P2PSourceResolver
 from hsync_client.pools import log_future_error
-from hsync_client.progress import note_delivery_progress
+from hsync_client.progress import mark_delivery_if_serving, note_delivery_progress
 from hsync_client.upload_scheduler import PerPathUploadScheduler
 from hsync_client.utils import (
     cid_suffix,
@@ -942,6 +942,10 @@ class P2PWebSocketServer:
                         ack = _inventory_rejection(payload, inventory_rejection or "unsupported")
                     await websocket.send_str(compact_json_str(ack))
                     continue
+                if isinstance(payload, Mapping) and _apply_slave_progress(
+                    dict(payload), client_cid
+                ):
+                    continue
                 log.debug(
                     f"Received from {client_addr} (CID: {client_cid}): "
                     f"{escape_loguru_markup(str(message))}"
@@ -1429,6 +1433,37 @@ def _apply_master_progress(event_data: dict) -> bool:
         # The local counter knows the file by its absolute path.
         note_delivery_progress(os.path.normpath(os.path.join(bucket, rel)))
     note_delivery_progress(rel)
+    emit_progress(
+        UiEventName.progress,
+        file=rel,
+        transferred=frame["transferred"],
+        total=frame["total"],
+        op="upload",
+    )
+    return True
+
+
+def _apply_slave_progress(event_data: dict, cid: str) -> bool:
+    """Render a slave's delivery progress for a file this master is serving.
+
+    The mirror of :func:`_apply_master_progress` for the opposite direction: the
+    slave reports the bytes it stored (``file_progress``) — the only honest
+    measure of a serve, since the master's own counter measures what it handed to
+    its transport. The frame is applied only to the serve *this* peer requested
+    (the serve registry is keyed by path and CID), so a concurrent serve of the
+    same file, a seeder-served peer, or a stale frame cannot drive the row. The
+    path is marked so the serve reporter stops feeding the same row with wire
+    bytes.
+    """
+    if event_data.get("type") != P2P_FILE_PROGRESS_TYPE:
+        return False
+    frame = validate_p2p_file_progress(event_data)
+    if frame is None:
+        log.warning("Invalid file_progress frame from slave")
+        return True
+    rel = frame["file"]
+    if not mark_delivery_if_serving(rel, cid):
+        return True
     emit_progress(
         UiEventName.progress,
         file=rel,

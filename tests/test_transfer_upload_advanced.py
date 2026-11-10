@@ -119,6 +119,63 @@ class TestUploadCompressed:
         assert seen[0]["total"] < 300_000
         assert seen[0]["delivery_only"] is True
 
+    def test_the_uncompressed_branch_defers_to_the_receiver_in_p2p_mode(self, tmp_path):
+        """In p2p the master echoes the stored bytes; the local counter stays silent.
+
+        The transport counter measures the socket, not the peer's disk, so in p2p
+        the row is driven by the master's ``file_progress`` frame alone — one
+        scale, no startup burst.
+        """
+        test_file = tmp_path / "file.txt"
+        test_file.write_bytes(b"A" * 300_000)
+        file = File(
+            filepath=str(test_file),
+            sha256sum="abc123",
+            size=300_000,
+            mtime=1000,
+            ctime=1000,
+            permissions="644",
+        )
+        seen: list[dict] = []
+
+        class _Reporter:
+            def __init__(self, path, total, op, **kwargs):
+                seen.append({"path": path, "total": total, "op": op, **kwargs})
+
+            def update(self, transferred):  # pragma: no cover - never called here
+                pass
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+
+        with (
+            patch(
+                "hsync_client.transfer.CONFIG",
+                {
+                    "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+                    "REMOTE_BUCKET": "test",
+                    "LOCAL_BUCKET": str(tmp_path),
+                    "REQUEST_HEADERS": {"X-API-Key": "test"},
+                    "CID": "test-client",
+                    "COMPRESSION_ENABLED": False,
+                    "SERVER_COMPRESSION_ENABLED": False,
+                    "P2P_MODE": True,
+                },
+            ),
+            patch("hsync_client.transfer.ProgressReporter", _Reporter),
+            patch("hsync_client.transfer.post", return_value=mock_response),
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer.is_file_stable", return_value=True),
+            patch("hsync_client.transfer.compute_sha256", return_value="abc123"),
+        ):
+            upload_file(file, check_size=False)
+
+        assert seen and seen[0]["op"] == "upload"
+        # The identity branch ran (its total is the file) and defers to the
+        # receiver's samples just like the compressed one.
+        assert seen[0]["total"] == 300_000
+        assert seen[0]["delivery_only"] is True
+
     def test_compressed_branch_signals_via_form_field_not_header(self, tmp_path):
         """The compressed branch must NOT set ``Content-Encoding``.
 
