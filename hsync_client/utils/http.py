@@ -7,6 +7,8 @@ import threading
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
+from hsync_common.protocol.events import ConnectionErrorCode
+
 from hsync_client.config import CONFIG
 from hsync_client.constants import (
     HTTP_TIMEOUT_DEFAULT,
@@ -317,6 +319,78 @@ def diagnose_connection_error(exc: BaseException, server_url: str) -> str | None
             "server CA with --ca-cert, or use --insecure for a self-signed certificate."
         )
     return None
+
+
+def classify_connection_error(exc: BaseException) -> str:
+    """Map a transport failure to a ``ConnectionErrorCode`` value.
+
+    The sync cycle wraps the underlying ``requests`` exception in a
+    ``NetworkError`` whose message already embeds it (and may not chain it), so
+    this inspects the exception chain when present and otherwise the message
+    text. One stable code lets the front-end show a localized reason instead of
+    the raw exception.
+    """
+    from socket import gaierror
+
+    from requests.exceptions import ProxyError, SSLError, Timeout
+
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        chain.append(current)
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+
+    for item in chain:
+        if isinstance(item, SSLError):
+            return ConnectionErrorCode.tls.value
+        if isinstance(item, ProxyError):
+            return ConnectionErrorCode.proxy.value
+        if isinstance(item, Timeout):
+            return ConnectionErrorCode.timeout.value
+        if isinstance(item, gaierror):
+            return ConnectionErrorCode.dns.value
+        if isinstance(item, TimeoutError):
+            return ConnectionErrorCode.timeout.value
+
+    detail = " ".join(str(item) for item in chain).lower()
+    if any(
+        sig in detail
+        for sig in (
+            "name or service not known",
+            "nodename nor servname",
+            "getaddrinfo failed",
+            "temporary failure in name resolution",
+        )
+    ):
+        return ConnectionErrorCode.dns.value
+    if "connection refused" in detail:
+        return ConnectionErrorCode.refused.value
+    if "timed out" in detail or "timeout" in detail:
+        return ConnectionErrorCode.timeout.value
+    if "no route to host" in detail or "network is unreachable" in detail:
+        return ConnectionErrorCode.unreachable.value
+    # TLS-specific tokens only: a bare "ssl"/"tls" substring would also match a
+    # host name (``ssl.example.com``) and misreport a refused/timeout failure.
+    if any(
+        sig in detail
+        for sig in (
+            "certificate verify failed",
+            "ssl error",
+            "sslerror",
+            "ssl: ",
+            "tls handshake",
+            "wrong version number",
+            "unsupported protocol",
+            "record layer failure",
+            "eof occurred in violation of protocol",
+        )
+    ):
+        return ConnectionErrorCode.tls.value
+    if "proxy" in detail:
+        return ConnectionErrorCode.proxy.value
+    return ConnectionErrorCode.unknown.value
 
 
 def http_patch(

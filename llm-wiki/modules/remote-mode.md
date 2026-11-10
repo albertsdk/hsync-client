@@ -31,6 +31,7 @@ All REST calls go through a single pinned/configured `requests.Session`:
 | `http_get/post/delete/patch` | `hsync_client/utils/http.py::http_get`–`hsync_client/utils/http.py::http_patch` | thin verbs over the session |
 | `get_ssl_verify` | `hsync_client/utils/http.py::get_ssl_verify` | TLS verification policy |
 | `diagnose_connection_error` | `hsync_client/utils/http.py::diagnose_connection_error` | classify TLS/plaintext mismatches for clear errors |
+| `classify_connection_error` | `hsync_client/utils/http.py::classify_connection_error` | stable `ConnectionErrorCode` for a transport failure (chained cause or message text), attached to the connectivity `error` event |
 
 REST requests carry `X-Protocol-Version` (`PROTOCOL_VERSION_REST`); the server
 hard-fails 426 on mismatch (server `middleware.py`). Endpoints mirror the

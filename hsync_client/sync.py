@@ -90,6 +90,7 @@ from hsync_client.p2p_sources import P2PCandidateMap, P2PSourceResolver
 from hsync_client.retry import retry_on_network_error
 from hsync_client.state_backend import local_cid
 from hsync_client.utils import (
+    classify_connection_error,
     get_ssl_verify,
     is_inflight_partial,
     set_permissions,
@@ -996,12 +997,18 @@ def _report_sync_failure(e: Exception) -> None:
         emit_event(UiEventName.auth_error, message=f"Sync failed: {e}")
     elif isinstance(e, (NetworkError, ServerError)):
         log.error(f"Sync failed: {e}")
-        # Tag a connection-level failure so the GUI can say "could not reach
-        # the server" instead of a generic error.
-        reason = (
-            "connection" if isinstance(e, NetworkError) and not isinstance(e, ServerError) else ""
-        )
-        emit_event(UiEventName.error, message=f"Sync failed: {e}", reason=reason)
+        # Tag a connection-level failure so the GUI can say "could not reach the
+        # server" instead of a generic error, and attach the stable cause so it
+        # can show a localized reason instead of the raw exception.
+        if isinstance(e, NetworkError) and not isinstance(e, ServerError):
+            emit_event(
+                UiEventName.error,
+                message=f"Sync failed: {e}",
+                reason="connection",
+                code=classify_connection_error(e),
+            )
+        else:
+            emit_event(UiEventName.error, message=f"Sync failed: {e}", reason="")
     else:
         log.error(f"Unexpected error during sync: {e}")
         emit_event(UiEventName.error, message=f"Unexpected error during sync: {e}")
@@ -1732,14 +1739,14 @@ def get_files_remote() -> list[dict]:
             raise NetworkError(
                 message=f"Error downloading files list: {e}",
                 details={"url": uri},
-            )
+            ) from e
         except ValueError as e:
             # A truncated stream (mid-walk failure) or a non-JSON body: never a
             # silently partial listing acted upon as if it were complete.
             raise NetworkError(
                 message=f"Invalid files list response: {e}",
                 details={"url": uri},
-            )
+            ) from e
 
     attempt = retry_on_network_error(max_attempts, min_wait, max_wait)(_attempt)
     return attempt()
@@ -1798,7 +1805,7 @@ def get_tombstones_remote() -> dict[str, dict]:
             raise NetworkError(
                 message=f"Error downloading tombstones: {e}",
                 details={"url": uri},
-            )
+            ) from e
 
     attempt = retry_on_network_error(max_attempts, min_wait, max_wait)(_attempt)
     return attempt()
