@@ -28,6 +28,7 @@ import json
 import os
 import sys
 import threading
+from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from functools import partial
@@ -320,11 +321,21 @@ class SlaveCidRegistry:
     CID — would corrupt the causal vector-clock and tombstone authorship, so
     every admission and write point consults this registry.
 
-    Same-address reconnects are admitted with **replacement** semantics (the
-    superseded connection is evicted, mirroring the central server's
-    ``_register_client`` behaviour): a slave that reconnects after a network
-    blip must not be locked out while its old half-open socket lingers.
+    **Same-CID reconnects always replace the superseded binding**, whatever the
+    source address, mirroring the central server's ``_register_client``: the
+    device identity is stable across a network change, so a new source IP is a
+    legitimate reconnect, not a clone. Keeping at most one live session per CID
+    is what protects the causal authorship; an actual cloned ``HSYNC_DEVICE_DIR``
+    manifests as repeated different-address takeovers, which
+    :meth:`consume_suspicion` reports once per burst instead of locking the
+    legitimate device out.
     """
+
+    # A genuine network change is one different-address takeover; two cloned
+    # devices flip the binding back and forth. This many takeovers by one CID
+    # within the window is a clone, not a reconnect.
+    TAKEOVER_WINDOW_S = 120.0
+    TAKEOVER_THRESHOLD = 3
 
     def __init__(self, master_cid: str | None = None) -> None:
         self._master_cid = master_cid
@@ -334,6 +345,10 @@ class SlaveCidRegistry:
         # Dedup'd (cid, source IP) rejection signatures: mDNS heartbeats and
         # slave retries re-deliver the same conflict, the error is logged once.
         self._reported: set[str] = set()
+        # cid -> timestamps of recent different-address takeovers; a burst (a
+        # clone fighting the legitimate device) marks the cid as suspected.
+        self._takeovers: dict[str, deque[float]] = {}
+        self._suspected: set[str] = set()
 
     @staticmethod
     def normalize_ip(ip: str | None) -> str:
@@ -348,20 +363,36 @@ class SlaveCidRegistry:
         """Atomically reserve *cid* for *websocket* arriving from *peer_ip*.
 
         Returns ``(allowed, stale_websocket)``. On success *stale_websocket* is
-        the superseded connection of a same-address reconnect (the caller must
-        close it) or ``None``. A claim from a different address for an
-        already-bound CID is a duplicated device identity and is refused.
+        the superseded connection of any same-CID reconnect (the caller must
+        close it) or ``None``; only the master's own CID is refused. A different
+        source address is a legitimate network change, not a clone, so the
+        binding is replaced and the eviction recorded for thrash detection.
         """
         if self._master_cid and cid == self._master_cid:
             return False, None
         normalized = self.normalize_ip(peer_ip)
+        now = monotonic()
         with self._lock:
             bound = self._entries.get(cid)
-            if bound is not None and bound[0] != normalized:
-                return False, None
             stale = bound[1] if bound is not None else None
+            if bound is not None and bound[0] != normalized:
+                recent = self._takeovers.setdefault(cid, deque())
+                recent.append(now)
+                while recent and now - recent[0] > self.TAKEOVER_WINDOW_S:
+                    recent.popleft()
+                if len(recent) >= self.TAKEOVER_THRESHOLD:
+                    self._suspected.add(cid)
+                    recent.clear()
             self._entries[cid] = (normalized, websocket)
             return True, stale
+
+    def consume_suspicion(self, cid: str) -> bool:
+        """Return True once when *cid* showed clone-like takeover thrash."""
+        with self._lock:
+            if cid in self._suspected:
+                self._suspected.discard(cid)
+                return True
+            return False
 
     def websocket_for(self, cid: str) -> Any | None:
         """The live WebSocket bound to *cid*, or ``None`` when it is not connected."""
@@ -387,6 +418,8 @@ class SlaveCidRegistry:
             bound = self._entries.get(cid)
             if bound is not None and bound[1] is websocket:
                 del self._entries[cid]
+                self._takeovers.pop(cid, None)
+                self._suspected.discard(cid)
                 return True
             return False
 
@@ -416,6 +449,8 @@ class SlaveCidRegistry:
         """Drop every binding (called when the WSS server stops)."""
         with self._lock:
             self._entries.clear()
+            self._takeovers.clear()
+            self._suspected.clear()
 
     def connected_cids(self) -> set[str]:
         """Snapshot of the currently-bound CIDs (for teardown notifications)."""
@@ -615,12 +650,15 @@ class P2PWebSocketServer:
     ) -> tuple[bool, str | None, str | None]:
         """Reserve the slave's CID and admit the connection, or reject it.
 
-        A duplicated device identity — the master's own CID, or a CID already
-        bound to a *different* source address — is refused (with an
+        A duplicated device identity — the master's own CID — is refused (with an
         ``auth_failed`` frame on the authenticated path) and the connection is
-        closed. A same-address reconnect replaces the superseded binding and
-        the stale connection is closed, mirroring the central server's
-        ``_register_client`` eviction.
+        closed. A same-CID reconnect from **any** source address replaces the
+        superseded binding and the stale connection is closed, mirroring the
+        central server's ``_register_client`` eviction: the device identity is
+        stable across a network change, so a new address is a legitimate
+        reconnect, not a clone. Repeated different-address takeovers are reported
+        as a duplicate identity (a cloned ``HSYNC_DEVICE_DIR``) while the device
+        is still admitted.
 
         ``publishes_index`` opens an inventory session regardless of whether the
         slave serves blocks, so the master can classify its share against every
@@ -644,6 +682,12 @@ class P2PWebSocketServer:
                     )
             await websocket.close()
             return False, None, None
+
+        if self._cid_registry.consume_suspicion(client_cid):
+            # A cloned identity flips the binding between addresses: surface the
+            # duplicate on the master, but still admit this session (at most one
+            # live per CID is kept, so causality is not corrupted).
+            self._log_duplicate_identity(client_addr, client_cid)
 
         inventory_token: str | None = None
         inventory_rejection: str | None = None

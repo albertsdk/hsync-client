@@ -269,3 +269,71 @@ class TestBroadcast:
     async def test_broadcast_sync_without_loop_is_noop(self):
         ws = P2PWebSocketServer(port=9999)
         ws.broadcast_sync({"name": "test"})
+
+
+class TestSlaveCidRegistry:
+    """A same-CID reconnect is last-connection-wins, whatever the address."""
+
+    def _registry(self) -> SlaveCidRegistry:
+        return SlaveCidRegistry(master_cid=MASTER_CID)
+
+    def test_a_reconnect_from_a_new_address_replaces_the_binding(self):
+        """A network change keeps the stable device identity: admit the device."""
+        registry = self._registry()
+        first = object()
+        allowed, stale = registry.try_reserve(SLAVE_CID, "192.168.1.10", first)
+        assert allowed is True and stale is None
+
+        second = object()
+        allowed, stale = registry.try_reserve(SLAVE_CID, "10.0.0.5", second)
+
+        assert allowed is True
+        assert stale is first
+        assert registry.websocket_for(SLAVE_CID) is second
+
+    def test_a_same_address_reconnect_replaces_the_binding(self):
+        registry = self._registry()
+        first = object()
+        registry.try_reserve(SLAVE_CID, "192.168.1.10", first)
+
+        second = object()
+        allowed, stale = registry.try_reserve(SLAVE_CID, "192.168.1.10", second)
+
+        assert allowed is True and stale is first
+        assert registry.websocket_for(SLAVE_CID) is second
+
+    def test_the_masters_own_cid_is_still_refused(self):
+        registry = self._registry()
+
+        allowed, stale = registry.try_reserve(MASTER_CID, "192.168.1.10", object())
+
+        assert allowed is False and stale is None
+
+    def test_a_single_network_change_is_not_reported_as_a_clone(self):
+        registry = self._registry()
+        registry.try_reserve(SLAVE_CID, "192.168.1.10", object())
+        registry.try_reserve(SLAVE_CID, "10.0.0.5", object())
+
+        assert registry.consume_suspicion(SLAVE_CID) is False
+
+    def test_repeated_address_takeovers_report_a_clone_once(self):
+        registry = self._registry()
+        registry.try_reserve(SLAVE_CID, "192.168.1.10", object())
+        registry.try_reserve(SLAVE_CID, "10.0.0.5", object())
+        registry.try_reserve(SLAVE_CID, "10.0.0.6", object())
+        assert registry.consume_suspicion(SLAVE_CID) is False
+
+        registry.try_reserve(SLAVE_CID, "10.0.0.7", object())
+        assert registry.consume_suspicion(SLAVE_CID) is True
+        assert registry.consume_suspicion(SLAVE_CID) is False
+
+    def test_releasing_the_last_binding_clears_the_thrash_state(self):
+        registry = self._registry()
+        registry.try_reserve(SLAVE_CID, "192.168.1.10", object())
+        registry.try_reserve(SLAVE_CID, "10.0.0.5", object())
+        registry.try_reserve(SLAVE_CID, "10.0.0.6", object())
+        registry.try_reserve(SLAVE_CID, "10.0.0.7", object())
+
+        current = registry.websocket_for(SLAVE_CID)
+        assert registry.release(SLAVE_CID, current) is True
+        assert registry.consume_suspicion(SLAVE_CID) is False
