@@ -86,11 +86,15 @@ hsync server --server-url server.example.com -b team -p ~/Team
 hsync server --server-url server.example.com -b team -p ~/Team
 ```
 
+Both runs need the **same bucket name** and an account that is the server
+`admin` or a member of that bucket; the same account on both devices works, and
+one account per device keeps revocation and key rotation per device (see the
+server [Roles and Permissions → Sharing one bucket between
+devices](https://github.com/albertsdk/hsync-server/blob/main/docs/roles-and-permissions.md#sharing-one-bucket-between-devices)).
+
 Changes made on one device propagate through the server to all others, so a
 shared bucket doubles as a team **drop box**: anyone with write access can drop
-a file and every member receives it. Give each person their own account with
-bucket membership — see the server
-[Roles and Permissions](https://github.com/albertsdk/hsync-server/blob/main/docs/roles-and-permissions.md).
+a file and every member receives it.
 
 ## 1.7 Bandwidth-limited sync over a slow connection
 
