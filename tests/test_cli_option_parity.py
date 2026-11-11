@@ -117,7 +117,7 @@ def _shape(param: typer.core.TyperOption | typer.core.TyperArgument) -> tuple[ob
     """Everything that must match for a *shared* flag (help may legitimately differ)."""
     return (
         param.param_type_name,
-        str(param.type),
+        param.bare_type(),
         repr(param.default),
         param.required,
         param.hidden,

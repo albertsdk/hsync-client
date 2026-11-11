@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-11
+
 ### Added
 
 - The discovery server can be reached over **TLS/TCP** as well as QUIC/UDP:
@@ -29,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Dependency refresh: `typer` 0.29, `watchdog` 7.1, `zeroconf` 0.154.
 - The p2p slave reconnects at once on a local network change: the WebSocket is
   closed the moment the interface changes and re-opened on the new one, instead
   of blackholing until the keepalive ping times out (tens of seconds).
