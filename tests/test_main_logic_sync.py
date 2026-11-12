@@ -1073,7 +1073,7 @@ class TestEvaluateServerTrust:
     def test_chain_returns_no_pin_without_probing(self, monkeypatch):
         from hsync_common.protocol.tls_trust import TrustPolicy
 
-        import hsync_client.main_logic as ml
+        import hsync_client.server_trust_resolution as ml
 
         monkeypatch.setattr(
             ml, "fetch_server_fingerprint", lambda *a, **k: pytest.fail("must not probe")
@@ -1084,7 +1084,7 @@ class TestEvaluateServerTrust:
         )
 
     def test_accept_new_pins_the_first_sighting(self, tmp_path, monkeypatch):
-        import hsync_client.main_logic as ml
+        import hsync_client.server_trust_resolution as ml
         from hsync_client.server_trust import ServerTrustStore
 
         store = ServerTrustStore(tmp_path / "servers.json")
@@ -1099,7 +1099,7 @@ class TestEvaluateServerTrust:
         assert store.get("h", 443) == "a" * 64
 
     def test_matched_pin_proceeds(self, tmp_path, monkeypatch):
-        import hsync_client.main_logic as ml
+        import hsync_client.server_trust_resolution as ml
         from hsync_client.server_trust import ServerTrustStore
 
         store = ServerTrustStore(tmp_path / "servers.json")
@@ -1114,7 +1114,7 @@ class TestEvaluateServerTrust:
         )
 
     def test_changed_pin_is_refused_and_emits_fingerprint_changed(self, tmp_path, monkeypatch):
-        import hsync_client.main_logic as ml
+        import hsync_client.server_trust_resolution as ml
         from hsync_client.server_trust import ServerTrustStore
 
         store = ServerTrustStore(tmp_path / "servers.json")
@@ -1133,7 +1133,7 @@ class TestEvaluateServerTrust:
         assert emitted[0]["name"] == "fingerprint_changed"
 
     def test_strict_unknown_is_refused_and_emits_pairing_needed(self, tmp_path, monkeypatch):
-        import hsync_client.main_logic as ml
+        import hsync_client.server_trust_resolution as ml
         from hsync_client.server_trust import ServerTrustStore
 
         monkeypatch.setattr(
@@ -1151,7 +1151,7 @@ class TestEvaluateServerTrust:
         assert emitted[0]["name"] == "pairing_needed"
 
     def test_ask_without_a_terminal_fails_closed(self, tmp_path, monkeypatch):
-        import hsync_client.main_logic as ml
+        import hsync_client.server_trust_resolution as ml
         from hsync_client.server_trust import ServerTrustStore
 
         monkeypatch.setattr(
@@ -1165,7 +1165,7 @@ class TestEvaluateServerTrust:
             ml._evaluate_server_trust(self._config(TrustPolicy.ask), MagicMock(), "h", 443)
 
     def test_ask_prompt_acceptance_pins(self, tmp_path, monkeypatch):
-        import hsync_client.main_logic as ml
+        import hsync_client.server_trust_resolution as ml
         from hsync_client.server_trust import ServerTrustStore
 
         store = ServerTrustStore(tmp_path / "servers.json")
@@ -1181,7 +1181,7 @@ class TestEvaluateServerTrust:
         assert store.entries()[0]["source"] == "prompt"
 
     def test_explicit_pin_match_is_recorded(self, tmp_path, monkeypatch):
-        import hsync_client.main_logic as ml
+        import hsync_client.server_trust_resolution as ml
         from hsync_client.server_trust import ServerTrustStore
 
         store = ServerTrustStore(tmp_path / "servers.json")
@@ -1198,7 +1198,7 @@ class TestEvaluateServerTrust:
         assert store.get("h", 443) == "a" * 64
 
     def test_explicit_pin_mismatch_is_refused(self, tmp_path, monkeypatch):
-        import hsync_client.main_logic as ml
+        import hsync_client.server_trust_resolution as ml
         from hsync_client.server_trust import ServerTrustStore
 
         monkeypatch.setattr(

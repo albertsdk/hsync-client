@@ -127,15 +127,15 @@ class TestTrustPolicyResolutionParity:
     def test_transports_agree(
         self, monkeypatch, policy, fingerprints, tofu, verify_ssl, env_default
     ):
-        from hsync_client import main_logic
+        from hsync_client import server_trust_resolution as trust_mod
 
-        monkeypatch.setattr(main_logic, "get_rendezvous_server_trust", lambda: env_default)
-        monkeypatch.setattr(main_logic, "get_server_trust", lambda: env_default)
+        monkeypatch.setattr(trust_mod, "get_rendezvous_server_trust", lambda: env_default)
+        monkeypatch.setattr(trust_mod, "get_server_trust", lambda: env_default)
 
-        rendezvous = main_logic._resolve_rendezvous_server_trust(
+        rendezvous = trust_mod._resolve_rendezvous_server_trust(
             policy, fingerprints, tofu, verify_ssl
         )
-        server = main_logic._resolve_server_trust(policy, fingerprints, tofu, verify_ssl)
+        server = trust_mod._resolve_server_trust(policy, fingerprints, tofu, verify_ssl)
 
         if env_default is None and policy is None and not fingerprints and not tofu:
             # No signal at all: only the documented default differs.
