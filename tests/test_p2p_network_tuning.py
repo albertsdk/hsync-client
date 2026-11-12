@@ -527,7 +527,7 @@ class TestSelectMasterEndpoint:
     def test_a_candidate_needing_longer_than_the_short_round_is_still_found(self):
         """The full budget applies to whatever the short round could not answer."""
         from hsync_client.constants import MASTER_PROBE_FAST_TIMEOUT_S
-        from hsync_client.p2p_handler import (
+        from hsync_client.p2p_master_connect import (
             MASTER_CANDIDATE_PROBE_TIMEOUT_S,
             _select_master_endpoint,
         )
@@ -569,7 +569,7 @@ class TestRelayTransferConcurrencyRestore:
 
     @pytest.fixture(autouse=True)
     def _reset_saved(self):
-        import hsync_client.p2p_handler as handler
+        import hsync_client.p2p_serving as handler
 
         handler._relay_saved_max_concurrent_transfers = None
         yield

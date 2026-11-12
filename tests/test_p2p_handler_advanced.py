@@ -1325,10 +1325,10 @@ class TestSlaveInventoryLifecycle:
         publisher = MagicMock()
         with (
             patch(
-                "hsync_client.p2p_handler.P2PInventoryPublisher",
+                "hsync_client.p2p_serving.P2PInventoryPublisher",
                 return_value=publisher,
             ) as publisher_cls,
-            patch("hsync_client.p2p_handler.set_active_inventory_publisher") as set_active,
+            patch("hsync_client.p2p_serving.set_active_inventory_publisher") as set_active,
         ):
             result = _start_slave_inventory(config, p2p_sync, MagicMock(), server)
 
@@ -1355,8 +1355,8 @@ class TestSlaveInventoryLifecycle:
         server = MagicMock()
         publisher = MagicMock()
         with (
-            patch("hsync_client.p2p_handler.P2PInventoryPublisher", return_value=publisher),
-            patch("hsync_client.p2p_handler.set_active_inventory_publisher") as set_active,
+            patch("hsync_client.p2p_serving.P2PInventoryPublisher", return_value=publisher),
+            patch("hsync_client.p2p_serving.set_active_inventory_publisher") as set_active,
         ):
             assert _start_slave_inventory(config, p2p_sync, MagicMock(), server) is publisher
 
@@ -1376,8 +1376,8 @@ class TestSlaveInventoryLifecycle:
             server = MagicMock()
             publisher = MagicMock()
             with (
-                patch("hsync_client.p2p_handler.P2PInventoryPublisher", return_value=publisher),
-                patch("hsync_client.p2p_handler.set_active_inventory_publisher"),
+                patch("hsync_client.p2p_serving.P2PInventoryPublisher", return_value=publisher),
+                patch("hsync_client.p2p_serving.set_active_inventory_publisher"),
             ):
                 assert _start_slave_inventory(config, p2p_sync, MagicMock(), server) is publisher
             server.configure_role.assert_called_once()
@@ -1407,7 +1407,7 @@ class TestSlaveInventoryLifecycle:
         publisher = MagicMock()
         p2p_sync.update_endpoint_ready.side_effect = RuntimeError("mdns unavailable")
 
-        with patch("hsync_client.p2p_handler.set_active_inventory_publisher") as set_active:
+        with patch("hsync_client.p2p_serving.set_active_inventory_publisher") as set_active:
             _stop_slave_inventory(p2p_sync, publisher, serving=True)
 
         p2p_sync.update_endpoint_ready.assert_called_once_with(False)
@@ -1418,7 +1418,7 @@ class TestSlaveInventoryLifecycle:
         from hsync_client.p2p_handler import _stop_slave_inventory
 
         p2p_sync = MagicMock()
-        with patch("hsync_client.p2p_handler.set_active_inventory_publisher") as set_active:
+        with patch("hsync_client.p2p_serving.set_active_inventory_publisher") as set_active:
             _stop_slave_inventory(p2p_sync, MagicMock(), serving=False)
 
         p2p_sync.update_endpoint_ready.assert_not_called()
@@ -1430,7 +1430,7 @@ class TestSlaveInventoryLifecycle:
         from hsync_client.p2p_handler import _stop_slave_inventory
 
         p2p_sync = MagicMock()
-        with patch("hsync_client.p2p_handler.set_active_inventory_publisher") as set_active:
+        with patch("hsync_client.p2p_serving.set_active_inventory_publisher") as set_active:
             _stop_slave_inventory(p2p_sync, None)
 
         p2p_sync.update_endpoint_ready.assert_not_called()
