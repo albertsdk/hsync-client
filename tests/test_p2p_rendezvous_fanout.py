@@ -13,7 +13,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from hsync_client.p2p_rendezvous_rdv import MultiRdvRendezvous, SharedUpnpMapping
+from hsync_client.p2p_rendezvous_multi import MultiRdvRendezvous
+from hsync_client.p2p_rendezvous_rdv import SharedUpnpMapping
 from hsync_client.rdv_relay import FailoverRelayDialer, GroupRelayAcceptor
 
 

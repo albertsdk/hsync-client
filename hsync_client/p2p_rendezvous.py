@@ -420,8 +420,8 @@ def build_rendezvous_plan(
     one (no probe/release race).
     """
     from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
+    from hsync_client.p2p_rendezvous_multi import MultiRdvRendezvous
     from hsync_client.p2p_rendezvous_rdv import (
-        MultiRdvRendezvous,
         RdvRendezvous,
         SharedUpnpMapping,
     )
