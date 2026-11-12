@@ -7,8 +7,8 @@ import time
 from unittest.mock import patch
 
 from hsync_client.constants import PEER_TIMEOUT, RENDEZVOUS_SOURCE_LEASE_S
+from hsync_client.p2p_mdns_listener import HsyncServiceListener
 from hsync_client.p2p_peers import HEARTBEAT_SOURCE, Peer, PeerManager
-from hsync_client.p2p_rendezvous_mdns import HsyncServiceListener
 
 
 def _age_heartbeat(peer: Peer, seconds: float) -> None:
