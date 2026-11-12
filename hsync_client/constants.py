@@ -81,20 +81,6 @@ SYNC_DIRECTION_DEFAULT = _defaults.SYNC_DIRECTION_DEFAULT
 
 
 # =============================================================================
-# Hostname Validation
-# =============================================================================
-
-# Bare-hostname charset shared by the CLI host parser (``cli.py``), the
-# ``HSYNC_SERVER_URL`` URL validator (``config.py``) and the shared endpoint parser
-# (``hsync_common.endpoint``). SSOT lives in ``hsync_common.constants``; the
-# name is re-exported from the import block above.
-
-
-# =============================================================================
-# Client ID Generation
-# =============================================================================
-
-# =============================================================================
 # File Stability Check
 # =============================================================================
 

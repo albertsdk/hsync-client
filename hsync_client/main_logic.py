@@ -1191,7 +1191,6 @@ def _build_config(
     quiet = options.logging.quiet
     logfile = options.logging.logfile
     p2p_trust = options.p2p.p2p_trust
-    allow_deletions = options.safety.allow_deletions
     min_free_disk_space = options.transfers.min_free_disk_space
     max_inbound_size = options.transfers.max_inbound_size
     ignore_patterns = options.transfers.ignore_patterns

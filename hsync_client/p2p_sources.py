@@ -218,23 +218,6 @@ class P2PSourceService:
         return [*same, *other]
 
     @staticmethod
-    def _session_is_announced(owner_address: str, peer: PeerSourceSnapshot) -> bool:
-        """True when the peer's session came from an address it announced.
-
-        A multi-homed peer is discovered on one interface and opens its master
-        session from the interface that routes to the master, so the session
-        address is matched against every endpoint the peer advertised
-        (``endpoints``), not only the primary one. A session from an address the
-        peer never announced is dropped: the peer would be handed a URL it does
-        not own.
-        """
-        try:
-            owner = ip_address(owner_address)
-        except ValueError:
-            return False
-        return owner in _announced_ip_set(peer)
-
-    @staticmethod
     def _compact_size(value: object) -> int:
         return len(compact_json_bytes(value))
 

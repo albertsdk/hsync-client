@@ -41,10 +41,6 @@ from hsync_client.constants import (
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.net_utils import same_subnet
 
-# mDNS service type for hsync (used for the TXT-flag helpers shared with the
-# mDNS plan); the rendezvous plan does not use it.
-HSYNC_SERVICE_TYPE = "_hsync._tcp.local."
-
 # Default port for the embedded HTTP server (when acting as master).
 # 0 means "use a random available port".
 HSYNC_P2P_LISTEN_PORT = 0
