@@ -982,7 +982,6 @@ class TestRunAsSlave:
 
     def test_continuous_connect_refreshes_presence(self, tmp_path, monkeypatch):
         """A connecting slave re-emits its own presence: it must read 2/2."""
-        import hsync_client.p2p_handler as handler
         from hsync_client.p2p_handler import _run_as_slave
 
         config = _make_p2p_config(tmp_path, ONE_SHOT=False)
@@ -993,7 +992,9 @@ class TestRunAsSlave:
         peer_mgr.is_wss_connected.return_value = True
 
         presence: list[tuple[int, int]] = []
-        monkeypatch.setattr(handler, "record_presence", lambda c, t: presence.append((c, t)))
+        monkeypatch.setattr(
+            "hsync_client.p2p_master_channel.record_presence", lambda c, t: presence.append((c, t))
+        )
 
         with (
             patch("hsync_client.p2p_handler.set_config"),
@@ -1617,7 +1618,9 @@ class TestEmitMasterPresence:
         import hsync_client.p2p_handler as handler
 
         calls: list[tuple[int, int]] = []
-        monkeypatch.setattr(handler, "record_presence", lambda c, t: calls.append((c, t)))
+        monkeypatch.setattr(
+            "hsync_client.p2p_master_channel.record_presence", lambda c, t: calls.append((c, t))
+        )
 
         handler._emit_master_presence(1, self._manager(["peer"]))
 
@@ -1627,7 +1630,9 @@ class TestEmitMasterPresence:
         import hsync_client.p2p_handler as handler
 
         calls: list[tuple[int, int]] = []
-        monkeypatch.setattr(handler, "record_presence", lambda c, t: calls.append((c, t)))
+        monkeypatch.setattr(
+            "hsync_client.p2p_master_channel.record_presence", lambda c, t: calls.append((c, t))
+        )
 
         handler._emit_master_presence(0, self._manager(["peer"]))
 
@@ -1637,7 +1642,9 @@ class TestEmitMasterPresence:
         import hsync_client.p2p_handler as handler
 
         calls: list[tuple[int, int]] = []
-        monkeypatch.setattr(handler, "record_presence", lambda c, t: calls.append((c, t)))
+        monkeypatch.setattr(
+            "hsync_client.p2p_master_channel.record_presence", lambda c, t: calls.append((c, t))
+        )
 
         # The WS join can precede the mDNS peer entry: count still yields 2/2.
         handler._emit_master_presence(1, self._manager([]))
@@ -1660,7 +1667,9 @@ class TestEmitSlavePresence:
         import hsync_client.p2p_handler as handler
 
         calls: list[tuple[int, int]] = []
-        monkeypatch.setattr(handler, "record_presence", lambda c, t: calls.append((c, t)))
+        monkeypatch.setattr(
+            "hsync_client.p2p_master_channel.record_presence", lambda c, t: calls.append((c, t))
+        )
 
         master = MagicMock(connected=1, cid="master")
         handler._emit_slave_presence(self._manager(master, alive_peers=["master"], wss=True))
@@ -1672,7 +1681,9 @@ class TestEmitSlavePresence:
         import hsync_client.p2p_handler as handler
 
         calls: list[tuple[int, int]] = []
-        monkeypatch.setattr(handler, "record_presence", lambda c, t: calls.append((c, t)))
+        monkeypatch.setattr(
+            "hsync_client.p2p_master_channel.record_presence", lambda c, t: calls.append((c, t))
+        )
 
         master = MagicMock(connected=0, cid="master")
         handler._emit_slave_presence(self._manager(master, alive_peers=["master"], wss=True))
@@ -1683,7 +1694,9 @@ class TestEmitSlavePresence:
         import hsync_client.p2p_handler as handler
 
         calls: list[tuple[int, int]] = []
-        monkeypatch.setattr(handler, "record_presence", lambda c, t: calls.append((c, t)))
+        monkeypatch.setattr(
+            "hsync_client.p2p_master_channel.record_presence", lambda c, t: calls.append((c, t))
+        )
 
         handler._emit_slave_presence(self._manager(None, alive_peers=[], wss=False))
 

@@ -63,7 +63,9 @@ def _patch_plumbing(monkeypatch, sync_impl, records) -> None:
     monkeypatch.setattr(handler, "emit_event", lambda *a, **k: None)
     monkeypatch.setattr(handler, "log_initial_sync_start", lambda *a, **k: None)
     monkeypatch.setattr(handler, "P2PSourceResolver", lambda *a, **k: object())
-    monkeypatch.setattr(handler, "record_presence", lambda c, t: records.append((c, t)))
+    monkeypatch.setattr(
+        "hsync_client.p2p_master_channel.record_presence", lambda c, t: records.append((c, t))
+    )
     monkeypatch.setattr(handler, "sync", sync_impl)
 
 
