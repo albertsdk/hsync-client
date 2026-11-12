@@ -4,7 +4,7 @@
 """Unit tests for the p2p data relay (client side).
 
 Covers the two pieces that decide *whether* traffic is relayed — the
-``_select_master_endpoint`` fallback in ``p2p_handler`` and the loopback bridge in
+``_select_master_endpoint`` fallback in ``p2p_master_connect`` and the loopback bridge in
 ``rdv_relay`` — without a live node: the end-to-end path is exercised by
 ``tests/test_bb_p2p_rendezvous_relay.py``.
 """
@@ -18,25 +18,25 @@ import time
 import pytest
 from loguru import logger as log
 
-import hsync_client.p2p_handler as p2p_handler
+import hsync_client.p2p_master_connect as p2p_master_connect
 
 
 @pytest.fixture(autouse=True)
 def _reset_relay_state() -> None:
     """Every test starts with no tunnel, no listener and no backoff deadline."""
-    p2p_handler._close_relay_dialer()
-    p2p_handler._relay_retry_at = 0.0
-    p2p_handler._relay_hint_masters.clear()
+    p2p_master_connect._close_relay_dialer()
+    p2p_master_connect._relay_retry_at = 0.0
+    p2p_master_connect._relay_hint_masters.clear()
     _PEERS.relay.clear()
     yield
-    p2p_handler._close_relay_dialer()
-    p2p_handler._relay_retry_at = 0.0
-    p2p_handler._relay_hint_masters.clear()
+    p2p_master_connect._close_relay_dialer()
+    p2p_master_connect._relay_retry_at = 0.0
+    p2p_master_connect._relay_hint_masters.clear()
     _PEERS.relay.clear()
 
 
 from hsync_client.constants import RELAY_SESSION_WAIT_S
-from hsync_client.p2p_handler import _close_relay_dialer, _relay_master_endpoint
+from hsync_client.p2p_master_connect import _close_relay_dialer, _relay_master_endpoint
 from hsync_client.p2p_rendezvous import RendezvousPlanState
 from hsync_client.rdv_client import RendezvousProtocolError, frame_line
 from hsync_client.rdv_relay import (
@@ -129,7 +129,7 @@ def _capture_warnings(monkeypatch) -> list[dict]:
     """Capture the structured warnings the handler publishes, in order."""
     warnings: list[dict] = []
     monkeypatch.setattr(
-        p2p_handler,
+        p2p_master_connect,
         "emit_warning",
         lambda message, **kwargs: warnings.append({"message": message, **kwargs}),
     )
@@ -139,7 +139,9 @@ def _capture_warnings(monkeypatch) -> list[dict]:
 def _capture_cleared(monkeypatch) -> list[str]:
     """Capture the warning retractions the handler publishes, in order."""
     cleared: list[str] = []
-    monkeypatch.setattr(p2p_handler, "emit_warning_cleared", lambda source: cleared.append(source))
+    monkeypatch.setattr(
+        p2p_master_connect, "emit_warning_cleared", lambda source: cleared.append(source)
+    )
     return cleared
 
 
@@ -169,7 +171,7 @@ def test_the_tunnel_is_opened_only_after_the_direct_candidates_failed() -> None:
         assert _relay_master_endpoint(plan, _Master(), log, _PEERS) == ("127.0.0.1", 41234)
         assert plan.asked == [_Master.cid]
         assert dialer.opened is True
-        assert p2p_handler._active_relay_dialer is dialer
+        assert p2p_master_connect._active_relay_dialer is dialer
     finally:
         _close_relay_dialer()
     assert dialer.closed is True
@@ -184,7 +186,7 @@ def test_a_live_tunnel_to_the_same_master_is_reused(monkeypatch) -> None:
     """
     live = _Dialer(("127.0.0.1", 41234))
     plan = _Plan(_Dialer(("127.0.0.1", 55555)))
-    monkeypatch.setattr(p2p_handler, "_active_relay_dialer", live)
+    monkeypatch.setattr(p2p_master_connect, "_active_relay_dialer", live)
     try:
         assert _relay_master_endpoint(plan, _Master(), log, _PEERS) == ("127.0.0.1", 41234)
     finally:
@@ -203,7 +205,7 @@ def test_a_repairing_tunnel_is_waited_for_not_replaced(monkeypatch) -> None:
     """
     repairing = _Dialer(("127.0.0.1", 41234), session_up=False)
     plan = _Plan(_Dialer(("127.0.0.1", 55555)))
-    monkeypatch.setattr(p2p_handler, "_active_relay_dialer", repairing)
+    monkeypatch.setattr(p2p_master_connect, "_active_relay_dialer", repairing)
     try:
         assert _relay_master_endpoint(plan, _Master(), log, _PEERS) is None
     finally:
@@ -222,7 +224,7 @@ def test_a_refused_tunnel_is_not_waited_for(monkeypatch) -> None:
     refused = _Dialer(("127.0.0.1", 41234), session_up=False)
     refused.refusal = "relay_unavailable"
     plan = _Plan(_Dialer(("127.0.0.1", 55555)))
-    monkeypatch.setattr(p2p_handler, "_active_relay_dialer", refused)
+    monkeypatch.setattr(p2p_master_connect, "_active_relay_dialer", refused)
     try:
         assert _relay_master_endpoint(plan, _Master(), log, _PEERS) is None
     finally:
@@ -235,7 +237,7 @@ def test_a_dead_tunnel_is_replaced(monkeypatch) -> None:
     """A tunnel whose session died is re-paired (its endpoint no longer serves)."""
     dead = _Dialer(("127.0.0.1", 41234), alive=False)
     plan = _Plan(_Dialer(("127.0.0.1", 55555)))
-    monkeypatch.setattr(p2p_handler, "_active_relay_dialer", dead)
+    monkeypatch.setattr(p2p_master_connect, "_active_relay_dialer", dead)
     try:
         assert _relay_master_endpoint(plan, _Master(), log, _PEERS) == ("127.0.0.1", 55555)
     finally:
@@ -248,7 +250,7 @@ def test_a_tunnel_to_another_master_is_replaced(monkeypatch) -> None:
     """A tunnel only ever reaches one peer: a new master needs its own."""
     other = _Dialer(("127.0.0.1", 41234), target_cid="Zz9Yy8Xx7Ww6Vv5Uu4Tt3")
     plan = _Plan(_Dialer(("127.0.0.1", 55555)))
-    monkeypatch.setattr(p2p_handler, "_active_relay_dialer", other)
+    monkeypatch.setattr(p2p_master_connect, "_active_relay_dialer", other)
     try:
         assert _relay_master_endpoint(plan, _Master(), log, _PEERS) == ("127.0.0.1", 55555)
     finally:
@@ -263,7 +265,7 @@ def test_a_refused_session_keeps_the_retry_loop() -> None:
     plan = _Plan(dialer)
     assert _relay_master_endpoint(plan, _Master(), log, _PEERS) is None
     assert dialer.opened is True
-    assert p2p_handler._active_relay_dialer is None
+    assert p2p_master_connect._active_relay_dialer is None
 
 
 def test_a_refused_relay_is_not_retried_on_every_tick() -> None:
@@ -289,7 +291,7 @@ def test_a_node_without_the_relay_surfaces_an_actionable_hint(monkeypatch) -> No
 
     assert [(w["source"], w["reason"]) for w in warnings] == [("relay", "relay_unavailable")]
     assert "--relay" in warnings[0]["message"]
-    assert _Master.cid in p2p_handler._relay_hint_masters
+    assert _Master.cid in p2p_master_connect._relay_hint_masters
 
 
 def test_the_actionable_hint_is_emitted_once_per_master(monkeypatch) -> None:
@@ -298,7 +300,7 @@ def test_the_actionable_hint_is_emitted_once_per_master(monkeypatch) -> None:
     plan = _Plan(_RefusingDialer("relay_unavailable"))
 
     assert _relay_master_endpoint(plan, _Master(), log, _PEERS) is None
-    p2p_handler._relay_retry_at = 0.0  # next attempt as the loop would
+    p2p_master_connect._relay_retry_at = 0.0  # next attempt as the loop would
     assert _relay_master_endpoint(plan, _Master(), log, _PEERS) is None
 
     assert len(warnings) == 1
@@ -312,11 +314,11 @@ def test_a_non_relay_refusal_never_claims_the_relay_is_disabled(monkeypatch) -> 
         _relay_master_endpoint(_Plan(_RefusingDialer("rate_limited")), _Master(), log, _PEERS)
         is None
     )
-    p2p_handler._relay_retry_at = 0.0
+    p2p_master_connect._relay_retry_at = 0.0
     assert _relay_master_endpoint(_Plan(_Dialer(None)), _Master(), log, _PEERS) is None
 
     assert warnings == []
-    assert p2p_handler._relay_hint_masters == set()
+    assert p2p_master_connect._relay_hint_masters == set()
 
 
 def test_pairing_the_relay_retracts_the_hint(monkeypatch) -> None:

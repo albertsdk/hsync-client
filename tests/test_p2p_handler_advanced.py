@@ -1568,7 +1568,7 @@ class TestMasterPinMessaging:
         log = MagicMock()
         notified: dict[tuple[str, str], str] = {}
 
-        with patch("hsync_client.p2p_handler.emit_event") as emit:
+        with patch("hsync_client.p2p_master_connect.emit_event") as emit:
             assert _evaluate_master_pin(self._config(tmp_path), master, log, notified) is False
             assert _evaluate_master_pin(self._config(tmp_path), master, log, notified) is False
 
@@ -1583,7 +1583,7 @@ class TestMasterPinMessaging:
 
         # A later flip re-notifies.
         PinStore(pin_file).set("master-1", "test-bucket", "b" * 64)
-        with patch("hsync_client.p2p_handler.emit_event") as emit2:
+        with patch("hsync_client.p2p_master_connect.emit_event") as emit2:
             assert _evaluate_master_pin(self._config(tmp_path), master, log, notified) is False
         assert emit2.call_count == 1
         assert len(log.error.call_args_list) == 2

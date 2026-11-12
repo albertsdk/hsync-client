@@ -452,9 +452,9 @@ class TestSelectMasterEndpoint:
         master = _master_with_endpoints([("10.145.201.139", 9000), ("192.168.1.42", 9000)])
         with (
             # No /24 match with either candidate: the advertised order is kept.
-            patch("hsync_client.p2p_handler.get_local_ips", return_value=["10.99.0.1"]),
+            patch("hsync_client.p2p_master_connect.get_local_ips", return_value=["10.99.0.1"]),
             patch(
-                "hsync_client.p2p_handler._probe_master_endpoint",
+                "hsync_client.p2p_master_connect._probe_master_endpoint",
                 side_effect=lambda host, port, fingerprint, timeout: host == "192.168.1.42",
             ),
         ):
@@ -467,8 +467,8 @@ class TestSelectMasterEndpoint:
 
         master = _master_with_endpoints([])  # mDNS: no advertised candidates
         with (
-            patch("hsync_client.p2p_handler.get_local_ips", return_value=["10.0.0.5"]),
-            patch("hsync_client.p2p_handler._probe_master_endpoint") as probe,
+            patch("hsync_client.p2p_master_connect.get_local_ips", return_value=["10.0.0.5"]),
+            patch("hsync_client.p2p_master_connect._probe_master_endpoint") as probe,
         ):
             assert _select_master_endpoint(master, MagicMock()) == ("192.168.1.1", 9000)
         probe.assert_not_called()
@@ -481,8 +481,8 @@ class TestSelectMasterEndpoint:
 
         master = _master_with_endpoints([("192.168.1.1", 9000)])
         with (
-            patch("hsync_client.p2p_handler.get_local_ips", return_value=["10.0.0.5"]),
-            patch("hsync_client.p2p_handler._probe_master_endpoint", return_value=False),
+            patch("hsync_client.p2p_master_connect.get_local_ips", return_value=["10.0.0.5"]),
+            patch("hsync_client.p2p_master_connect._probe_master_endpoint", return_value=False),
         ):
             assert _select_master_endpoint(master, MagicMock()) is None
 
@@ -498,8 +498,8 @@ class TestSelectMasterEndpoint:
             return True
 
         with (
-            patch("hsync_client.p2p_handler.get_local_ips", return_value=["192.168.1.50"]),
-            patch("hsync_client.p2p_handler._probe_master_endpoint", side_effect=reachable),
+            patch("hsync_client.p2p_master_connect.get_local_ips", return_value=["192.168.1.50"]),
+            patch("hsync_client.p2p_master_connect._probe_master_endpoint", side_effect=reachable),
         ):
             assert _select_master_endpoint(master, MagicMock()) == ("192.168.1.42", 9000)
         # Every candidate of the round is probed; the *order* is the preference,
@@ -510,14 +510,14 @@ class TestSelectMasterEndpoint:
         """The CGNAT case: several silent candidates must not add up."""
         import time
 
-        from hsync_client.p2p_handler import _probe_round
+        from hsync_client.p2p_master_connect import _probe_round
 
         def probe(host, port, fingerprint, timeout):
             time.sleep(0.3 if host == "10.0.0.1" else 0.6)
             return host == "203.0.113.7"
 
         started = time.monotonic()
-        with patch("hsync_client.p2p_handler._probe_master_endpoint", side_effect=probe):
+        with patch("hsync_client.p2p_master_connect._probe_master_endpoint", side_effect=probe):
             selected = _probe_round((("10.0.0.1", 9000), ("203.0.113.7", 9000)), "aa", 3.0)
         elapsed = time.monotonic() - started
 
@@ -540,8 +540,8 @@ class TestSelectMasterEndpoint:
             return timeout > MASTER_PROBE_FAST_TIMEOUT_S
 
         with (
-            patch("hsync_client.p2p_handler.get_local_ips", return_value=["192.168.1.50"]),
-            patch("hsync_client.p2p_handler._probe_master_endpoint", side_effect=slow),
+            patch("hsync_client.p2p_master_connect.get_local_ips", return_value=["192.168.1.50"]),
+            patch("hsync_client.p2p_master_connect._probe_master_endpoint", side_effect=slow),
         ):
             assert _select_master_endpoint(master, MagicMock()) == ("192.168.1.42", 9000)
 
@@ -552,8 +552,8 @@ class TestSelectMasterEndpoint:
 
         master = _master_with_endpoints([("203.0.113.10", 9000), ("192.168.1.42", 9000)])
         with (
-            patch("hsync_client.p2p_handler.get_local_ips", return_value=["192.168.1.50"]),
-            patch("hsync_client.p2p_handler._probe_master_endpoint", return_value=False),
+            patch("hsync_client.p2p_master_connect.get_local_ips", return_value=["192.168.1.50"]),
+            patch("hsync_client.p2p_master_connect._probe_master_endpoint", return_value=False),
         ):
             assert _select_master_endpoint(master, MagicMock()) is None
 
