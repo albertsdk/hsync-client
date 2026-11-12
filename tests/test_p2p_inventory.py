@@ -22,7 +22,8 @@ from hsync_common.protocol.peer_download import (
     build_p2p_inventory_frame,
 )
 
-from hsync_client.p2p_inventory import P2PInventoryPublisher, P2PInventoryStore
+from hsync_client.p2p_inventory import P2PInventoryStore
+from hsync_client.p2p_inventory_publisher import P2PInventoryPublisher
 from hsync_client.p2p_server import P2PServer
 from hsync_client.p2p_websocket import P2PWebSocketServer
 
@@ -262,10 +263,10 @@ async def test_ack_timeout_retries_without_closing_channel(
     and a fresh snapshot is retried after a backoff, leaving the master with this
     peer's inventory rather than none.
     """
-    import hsync_client.p2p_inventory as inventory_module
+    import hsync_client.p2p_inventory_publisher as publisher_module
 
-    monkeypatch.setattr(inventory_module, "P2P_INVENTORY_ACK_RETRY_MIN_S", 0.05)
-    monkeypatch.setattr(inventory_module, "P2P_INVENTORY_ACK_RETRY_MAX_S", 0.05)
+    monkeypatch.setattr(publisher_module, "P2P_INVENTORY_ACK_RETRY_MIN_S", 0.05)
+    monkeypatch.setattr(publisher_module, "P2P_INVENTORY_ACK_RETRY_MAX_S", 0.05)
     (tmp_path / "file.txt").write_text("content")
     publisher = P2PInventoryPublisher(tmp_path, ack_timeout_s=0.05)
     websocket = SilentWebSocket()
@@ -288,9 +289,9 @@ async def test_ack_timeout_retries_without_closing_channel(
 async def test_publisher_uses_contiguous_sequences_across_multi_frame_delta(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import hsync_client.p2p_inventory as inventory_module
+    import hsync_client.p2p_inventory_publisher as publisher_module
 
-    monkeypatch.setattr(inventory_module, "P2P_INVENTORY_MAX_ENTRIES", 2)
+    monkeypatch.setattr(publisher_module, "P2P_INVENTORY_MAX_ENTRIES", 2)
     publisher = P2PInventoryPublisher(tmp_path)
     publisher.replace_snapshot([])
     websocket = AckingWebSocket(publisher)

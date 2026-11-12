@@ -549,7 +549,7 @@ def _start_hsyncignore_watcher(bucket_root: str, matcher: "IgnoreMatcher") -> "A
                 if Path(event.src_path).name == HSYNCIGNORE_FILENAME:
                     _log.debug(".hsyncignore changed — reloading ignore matcher")
                     matcher.reload()
-                    from hsync_client.p2p_inventory import refresh_active_inventory
+                    from hsync_client.p2p_inventory_publisher import refresh_active_inventory
 
                     refresh_active_inventory()
 

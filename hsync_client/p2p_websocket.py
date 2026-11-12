@@ -119,9 +119,9 @@ from hsync_client.p2p_inventory import (
     NOOP_INVENTORY_OBSERVER,
     InventoryObserver,
     InventorySessionLimitError,
-    P2PInventoryPublisher,
     P2PInventoryStore,
 )
+from hsync_client.p2p_inventory_publisher import P2PInventoryPublisher
 from hsync_client.p2p_sources import P2PSourceResolver
 from hsync_client.pools import log_future_error
 from hsync_client.progress import mark_delivery_if_serving, note_delivery_progress

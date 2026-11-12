@@ -14,7 +14,10 @@ from requests import RequestException
 
 from hsync_client.config import CONFIG
 from hsync_client.event_dispatch import EventDispatchContext, apply_inbound_event
-from hsync_client.p2p_inventory import refresh_active_inventory, set_active_inventory_publisher
+from hsync_client.p2p_inventory_publisher import (
+    refresh_active_inventory,
+    set_active_inventory_publisher,
+)
 from hsync_client.sync import sync
 from hsync_client.transfer import download_file, upload_file
 

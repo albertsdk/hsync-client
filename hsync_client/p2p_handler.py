@@ -65,9 +65,9 @@ from hsync_client.exceptions import (
 from hsync_client.exitcodes import ExitCode, exit_code_for_result
 from hsync_client.master_status import NO_DEVICE_MESSAGE, MasterSyncStatus
 from hsync_client.net_utils import get_local_ips
-from hsync_client.p2p_inventory import (
+from hsync_client.p2p_inventory import P2PInventoryStore
+from hsync_client.p2p_inventory_publisher import (
     P2PInventoryPublisher,
-    P2PInventoryStore,
     set_active_inventory_publisher,
 )
 from hsync_client.p2p_peers import dial_candidates, server_url
