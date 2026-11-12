@@ -286,7 +286,7 @@ class TestRunSyncLanPlaceholder:
             patch("hsync_client.p2p_handler.run_p2p_mode") as mock_p2p,
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
-            patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
+            patch("hsync_client.startup_checks.is_tty_interactive", return_value=True),
             patch("hsync_client.main_logic.emit_event") as mock_emit,
             patch("hsync_client.autotune.measure_rtt") as mock_rtt,
         ):

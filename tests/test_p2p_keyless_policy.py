@@ -8,13 +8,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from hsync_common.protocol.tls_trust import TrustPolicy
 
-from hsync_client.main_logic import _check_p2p_keyless_policy
 from hsync_client.security_warnings import BYPASS_WARNINGS, log_active_bypasses
+from hsync_client.startup_checks import _check_p2p_keyless_policy
 
 
 @pytest.fixture(autouse=True)
 def _interactive_tty():
-    with patch("hsync_client.main_logic.is_tty_interactive", return_value=True):
+    with patch("hsync_client.startup_checks.is_tty_interactive", return_value=True):
         yield
 
 
@@ -93,7 +93,7 @@ class TestCheckKeylessPolicy:
     def test_non_interactive_fails_closed(self):
         mock_logger = MagicMock()
         with (
-            patch("hsync_client.main_logic.is_tty_interactive", return_value=False),
+            patch("hsync_client.startup_checks.is_tty_interactive", return_value=False),
             pytest.raises(SystemExit) as exc_info,
         ):
             _check_p2p_keyless_policy(

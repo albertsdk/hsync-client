@@ -8,11 +8,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from hsync_client.main_logic import (
+from hsync_client.main_logic import _run_stdin_wait, _with_stdin_commands
+from hsync_client.startup_checks import (
     _check_deletion_risk,
     _check_p2p_write_policy,
-    _run_stdin_wait,
-    _with_stdin_commands,
 )
 
 
@@ -24,7 +23,7 @@ def _interactive_tty():
     (prompt shown, operator present); the non-interactive container paths
     re-patch ``is_tty_interactive`` to False locally.
     """
-    with patch("hsync_client.main_logic.is_tty_interactive", return_value=True):
+    with patch("hsync_client.startup_checks.is_tty_interactive", return_value=True):
         yield
 
 
@@ -51,8 +50,8 @@ class TestCheckDeletionRisk:
         (tmp_path / "file.txt").write_text("content")
         mock_logger = MagicMock()
         with (
-            patch("hsync_client.main_logic.CONFIG", {"DELETION_POLICY": "keep"}),
-            patch("hsync_client.main_logic.is_tty_interactive", return_value=False),
+            patch("hsync_client.startup_checks.CONFIG", {"DELETION_POLICY": "keep"}),
+            patch("hsync_client.startup_checks.is_tty_interactive", return_value=False),
         ):
             _check_deletion_risk(
                 local_path=str(tmp_path),
@@ -69,8 +68,8 @@ class TestCheckDeletionRisk:
         (tmp_path / "file.txt").write_text("content")
         mock_logger = MagicMock()
         with (
-            patch("hsync_client.main_logic.CONFIG", {"DELETION_POLICY": "propagate"}),
-            patch("hsync_client.main_logic.is_tty_interactive", return_value=False),
+            patch("hsync_client.startup_checks.CONFIG", {"DELETION_POLICY": "propagate"}),
+            patch("hsync_client.startup_checks.is_tty_interactive", return_value=False),
             pytest.raises(SystemExit),
         ):
             _check_deletion_risk(
@@ -93,9 +92,9 @@ class TestCheckDeletionRisk:
         """
         (tmp_path / "file.txt").write_text("content")
         with (
-            patch("hsync_client.main_logic.CONFIG", {"DELETION_POLICY": "propagate"}),
-            patch("hsync_client.main_logic.is_tty_interactive", return_value=False),
-            patch("hsync_client.main_logic.flush_logs") as flush_logs,
+            patch("hsync_client.startup_checks.CONFIG", {"DELETION_POLICY": "propagate"}),
+            patch("hsync_client.startup_checks.is_tty_interactive", return_value=False),
+            patch("hsync_client.startup_checks.flush_logs") as flush_logs,
             pytest.raises(SystemExit),
         ):
             _check_deletion_risk(
@@ -112,9 +111,9 @@ class TestCheckDeletionRisk:
         """Declining the prompt is a fatal exit too: drain before leaving."""
         (tmp_path / "file.txt").write_text("content")
         with (
-            patch("hsync_client.main_logic.CONFIG", {"DELETION_POLICY": "propagate"}),
+            patch("hsync_client.startup_checks.CONFIG", {"DELETION_POLICY": "propagate"}),
             patch("builtins.input", return_value="n"),
-            patch("hsync_client.main_logic.flush_logs") as flush_logs,
+            patch("hsync_client.startup_checks.flush_logs") as flush_logs,
             pytest.raises(SystemExit),
         ):
             _check_deletion_risk(
@@ -441,7 +440,7 @@ class TestCheckDeletionRisk:
         mock_logger = MagicMock()
 
         with (
-            patch("hsync_client.main_logic.is_tty_interactive", return_value=False),
+            patch("hsync_client.startup_checks.is_tty_interactive", return_value=False),
             patch("builtins.input", side_effect=AssertionError("should not prompt")),
             pytest.raises(SystemExit) as exc_info,
         ):

@@ -30,7 +30,6 @@ from hsync_client.main_logic import (
     _get_resync_value,
     _get_stability_delay_value,
     _safe_config_for_log,
-    _warn_if_p2p_in_container,
     run_sync,
 )
 from hsync_client.run_options import (
@@ -43,6 +42,7 @@ from hsync_client.run_options import (
     SyncOptions,
     TransferOptions,
 )
+from hsync_client.startup_checks import _warn_if_p2p_in_container
 from hsync_client.sync import SyncCycleResult
 
 
@@ -608,7 +608,7 @@ class TestRunSync:
             patch("hsync_client.p2p_handler.run_p2p_mode") as mock_p2p,
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
-            patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
+            patch("hsync_client.startup_checks.is_tty_interactive", return_value=True),
         ):
             mock_p2p.return_value = 0
             mock_logger = MagicMock()
@@ -637,7 +637,7 @@ class TestRunSync:
             patch("hsync_client.p2p_handler.run_p2p_mode") as mock_p2p,
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
-            patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
+            patch("hsync_client.startup_checks.is_tty_interactive", return_value=True),
         ):
             mock_p2p.return_value = 0
             mock_log_setup.return_value = MagicMock()
@@ -665,7 +665,7 @@ class TestRunSync:
                 patch("hsync_client.p2p_handler.run_p2p_mode") as mock_p2p,
                 patch("hsync_client.main_logic.set_config"),
                 patch("hsync_client.main_logic.set_debug"),
-                patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
+                patch("hsync_client.startup_checks.is_tty_interactive", return_value=True),
             ):
                 mock_p2p.return_value = 0
                 mock_log_setup.return_value = MagicMock()
@@ -692,7 +692,7 @@ class TestRunSync:
             patch("hsync_client.p2p_handler.run_p2p_mode") as mock_p2p,
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
-            patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
+            patch("hsync_client.startup_checks.is_tty_interactive", return_value=True),
         ):
             mock_p2p.return_value = 0
             mock_log_setup.return_value = MagicMock()
@@ -985,7 +985,7 @@ class TestWarnIfLanInContainer:
         """On bare metal no container warning is emitted."""
         mock_logger = MagicMock()
         with patch(
-            "hsync_client.main_logic.detect_container",
+            "hsync_client.startup_checks.detect_container",
             return_value=ContainerInfo(False),
         ):
             _warn_if_p2p_in_container(mock_logger)
@@ -995,7 +995,7 @@ class TestWarnIfLanInContainer:
         """Inside a container the mDNS/bridge warning suggests host networking."""
         mock_logger = MagicMock()
         with patch(
-            "hsync_client.main_logic.detect_container",
+            "hsync_client.startup_checks.detect_container",
             return_value=ContainerInfo(True, "docker", "/.dockerenv"),
         ):
             _warn_if_p2p_in_container(mock_logger)
@@ -1312,7 +1312,7 @@ class TestStartupErrorVisibility:
                 patch("hsync_client.p2p_handler.run_p2p_mode") as mock_p2p,
                 patch("hsync_client.main_logic.set_config"),
                 patch("hsync_client.main_logic.set_debug"),
-                patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
+                patch("hsync_client.startup_checks.is_tty_interactive", return_value=True),
             ):
                 mock_p2p.return_value = 0
                 mock_log_setup.return_value = MagicMock()
@@ -1358,7 +1358,7 @@ class TestStartupErrorVisibility:
                 patch("hsync_client.main_logic.get_peer_rendezvous_timeout", return_value=None),
                 patch("hsync_client.main_logic.set_config"),
                 patch("hsync_client.main_logic.set_debug"),
-                patch("hsync_client.main_logic.is_tty_interactive", return_value=True),
+                patch("hsync_client.startup_checks.is_tty_interactive", return_value=True),
                 patch(
                     "hsync_client.identity.InstanceLock.acquire",
                     side_effect=InstanceLockError(refusal),
