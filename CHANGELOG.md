@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-12
+
+### Added
+
+- A bucket that does not exist is reported as its own error: the message names
+  the bucket and the remedy instead of a bare `404`, the sync never retries it,
+  and the failure carries `reason="share_missing"` so a front-end can localize
+  the remedy.
+
+### Fixed
+
+- A failed preview keeps the missing-bucket reason (`reason="share_missing"`)
+  instead of degrading to a generic error.
+
 ## [1.1.0] - 2026-11-11
 
 ### Added
