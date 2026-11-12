@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from hsync_client import main_logic
+from hsync_client import runtime_resolvers as resolvers
 
 
 def _log() -> MagicMock:
@@ -23,9 +23,9 @@ class TestResolveServerPort:
             calls.append(url)
             return True
 
-        monkeypatch.setattr(main_logic, "_probe_server_health", probe)
+        monkeypatch.setattr(resolvers, "_probe_server_health", probe)
 
-        resolved = main_logic._resolve_server_port(
+        resolved = resolvers._resolve_server_port(
             "https://h.example.com:9753", verify_ssl=True, log=_log()
         )
 
@@ -39,10 +39,10 @@ class TestResolveServerPort:
             calls.append(url)
             return url.endswith(":443")
 
-        monkeypatch.setattr(main_logic, "_probe_server_health", probe)
+        monkeypatch.setattr(resolvers, "_probe_server_health", probe)
         log = _log()
 
-        resolved = main_logic._resolve_server_port(
+        resolved = resolvers._resolve_server_port(
             "https://h.example.com:9753", verify_ssl=True, log=log
         )
 
@@ -51,9 +51,9 @@ class TestResolveServerPort:
         log.info.assert_called_once()
 
     def test_keeps_the_default_port_when_neither_answers(self, monkeypatch):
-        monkeypatch.setattr(main_logic, "_probe_server_health", lambda *_a, **_k: False)
+        monkeypatch.setattr(resolvers, "_probe_server_health", lambda *_a, **_k: False)
 
-        resolved = main_logic._resolve_server_port(
+        resolved = resolvers._resolve_server_port(
             "https://h.example.com:9753", verify_ssl=True, log=_log()
         )
 
@@ -61,12 +61,12 @@ class TestResolveServerPort:
 
     def test_an_explicit_non_default_port_is_never_second_guessed(self, monkeypatch):
         monkeypatch.setattr(
-            main_logic,
+            resolvers,
             "_probe_server_health",
             lambda *_a, **_k: pytest.fail("an explicit port must not be probed"),
         )
 
-        resolved = main_logic._resolve_server_port(
+        resolved = resolvers._resolve_server_port(
             "https://h.example.com:9000", verify_ssl=True, log=_log()
         )
 

@@ -549,7 +549,7 @@ class TestRunSync:
 
         with (
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
-            patch("hsync_client.main_logic.get_server_url", return_value=None),
+            patch("hsync_client.runtime_resolvers.get_server_url", return_value=None),
         ):
             mock_logger = MagicMock()
             mock_log_setup.return_value = mock_logger
@@ -584,7 +584,7 @@ class TestRunSync:
             kwargs = _default_run_sync_kwargs(tmp_path, server_url=None)
             with (
                 patch("hsync_client.main_logic.setup_logging", return_value=logger),
-                patch("hsync_client.main_logic.get_server_url", return_value=None),
+                patch("hsync_client.runtime_resolvers.get_server_url", return_value=None),
             ):
                 with pytest.raises(SystemExit) as exc_info:
                     run_sync(kwargs)
@@ -606,7 +606,7 @@ class TestRunSync:
 
         with (
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
-            patch("hsync_client.main_logic.get_server_url", return_value=None),
+            patch("hsync_client.runtime_resolvers.get_server_url", return_value=None),
             patch("hsync_client.p2p_handler.run_p2p_mode") as mock_p2p,
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
@@ -634,7 +634,7 @@ class TestRunSync:
 
         with (
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
-            patch("hsync_client.main_logic.get_server_url", return_value=None),
+            patch("hsync_client.runtime_resolvers.get_server_url", return_value=None),
             patch("hsync_client.config_build.get_peer_rendezvous_timeout", return_value=None),
             patch("hsync_client.p2p_handler.run_p2p_mode") as mock_p2p,
             patch("hsync_client.main_logic.set_config"),
@@ -663,7 +663,7 @@ class TestRunSync:
             )
             with (
                 patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
-                patch("hsync_client.main_logic.get_server_url", return_value=None),
+                patch("hsync_client.runtime_resolvers.get_server_url", return_value=None),
                 patch("hsync_client.p2p_handler.run_p2p_mode") as mock_p2p,
                 patch("hsync_client.main_logic.set_config"),
                 patch("hsync_client.main_logic.set_debug"),
@@ -690,7 +690,7 @@ class TestRunSync:
 
         with (
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
-            patch("hsync_client.main_logic.get_server_url", return_value=None),
+            patch("hsync_client.runtime_resolvers.get_server_url", return_value=None),
             patch("hsync_client.p2p_handler.run_p2p_mode") as mock_p2p,
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
@@ -724,7 +724,7 @@ class TestRunSync:
 
         with (
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
-            patch("hsync_client.main_logic.get_api_key", return_value="test-key"),
+            patch("hsync_client.runtime_resolvers.get_api_key", return_value="test-key"),
             patch("hsync_client.main_logic._check_server_connectivity", return_value=False),
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
@@ -744,7 +744,7 @@ class TestRunSync:
 
         with (
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
-            patch("hsync_client.main_logic.get_api_key", return_value="test-key"),
+            patch("hsync_client.runtime_resolvers.get_api_key", return_value="test-key"),
             patch("hsync_client.main_logic._check_server_connectivity", return_value=False),
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
@@ -767,7 +767,7 @@ class TestRunSync:
 
         with (
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
-            patch("hsync_client.main_logic.get_api_key", return_value="test-key"),
+            patch("hsync_client.runtime_resolvers.get_api_key", return_value="test-key"),
             patch("hsync_client.main_logic._check_server_connectivity", return_value=True),
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
@@ -852,7 +852,7 @@ class TestRunSync:
 
         with (
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
-            patch("hsync_client.main_logic.get_api_key", return_value=""),
+            patch("hsync_client.runtime_resolvers.get_api_key", return_value=""),
             patch("hsync_client.main_logic._check_server_connectivity") as mock_check,
             patch("hsync_client.main_logic.set_config") as mock_set_cfg,
             patch("hsync_client.main_logic.set_debug"),
@@ -873,8 +873,8 @@ class TestRunSync:
 
         with (
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
-            patch("hsync_client.main_logic.get_api_key", return_value="api-key"),
-            patch("hsync_client.main_logic.get_p2p_key", return_value="tooshort"),
+            patch("hsync_client.runtime_resolvers.get_api_key", return_value="api-key"),
+            patch("hsync_client.runtime_resolvers.get_p2p_key", return_value="tooshort"),
             patch("hsync_client.main_logic._check_server_connectivity") as mock_check,
             patch("hsync_client.main_logic.set_config") as mock_set_cfg,
             patch("hsync_client.main_logic.set_debug"),
@@ -898,9 +898,9 @@ class TestRunSync:
 
         with (
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
-            patch("hsync_client.main_logic.get_api_key", return_value="api-key"),
-            patch("hsync_client.main_logic.get_p2p_key", return_value=None),
-            patch("hsync_client.main_logic.get_p2p_passphrase", return_value="short"),
+            patch("hsync_client.runtime_resolvers.get_api_key", return_value="api-key"),
+            patch("hsync_client.runtime_resolvers.get_p2p_key", return_value=None),
+            patch("hsync_client.runtime_resolvers.get_p2p_passphrase", return_value="short"),
             patch("hsync_client.main_logic._check_server_connectivity") as mock_check,
             patch("hsync_client.main_logic.set_config") as mock_set_cfg,
             patch("hsync_client.main_logic.set_debug"),
@@ -923,10 +923,10 @@ class TestRunSync:
 
         with (
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
-            patch("hsync_client.main_logic.get_api_key", return_value="api-key"),
-            patch("hsync_client.main_logic.get_p2p_key", return_value="k" * 32),
+            patch("hsync_client.runtime_resolvers.get_api_key", return_value="api-key"),
+            patch("hsync_client.runtime_resolvers.get_p2p_key", return_value="k" * 32),
             patch(
-                "hsync_client.main_logic.get_p2p_passphrase",
+                "hsync_client.runtime_resolvers.get_p2p_passphrase",
                 return_value="abcdwxyz1234",
             ),
             patch("hsync_client.main_logic._check_server_connectivity") as mock_check,
@@ -950,10 +950,10 @@ class TestRunSync:
 
         with (
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
-            patch("hsync_client.main_logic.get_api_key", return_value="api-key"),
-            patch("hsync_client.main_logic.get_p2p_key", return_value=None),
+            patch("hsync_client.runtime_resolvers.get_api_key", return_value="api-key"),
+            patch("hsync_client.runtime_resolvers.get_p2p_key", return_value=None),
             patch(
-                "hsync_client.main_logic.get_p2p_passphrase",
+                "hsync_client.runtime_resolvers.get_p2p_passphrase",
                 return_value="abcdwxyz1234",
             ),
             patch("hsync_client.main_logic._check_server_connectivity", return_value=True),
@@ -1254,7 +1254,7 @@ class TestStartupErrorVisibility:
         try:
             with (
                 patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
-                patch("hsync_client.main_logic.get_server_url", return_value=None),
+                patch("hsync_client.runtime_resolvers.get_server_url", return_value=None),
             ):
                 mock_log_setup.return_value = MagicMock()
                 with pytest.raises(SystemExit) as exc_info:
@@ -1279,7 +1279,7 @@ class TestStartupErrorVisibility:
         try:
             with (
                 patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
-                patch("hsync_client.main_logic.get_api_key", return_value=""),
+                patch("hsync_client.runtime_resolvers.get_api_key", return_value=""),
             ):
                 mock_log_setup.return_value = MagicMock()
                 with pytest.raises(SystemExit) as exc_info:
@@ -1309,7 +1309,7 @@ class TestStartupErrorVisibility:
         try:
             with (
                 patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
-                patch("hsync_client.main_logic.get_server_url", return_value=None),
+                patch("hsync_client.runtime_resolvers.get_server_url", return_value=None),
                 patch("hsync_client.config_build.get_peer_rendezvous_timeout", return_value=None),
                 patch("hsync_client.p2p_handler.run_p2p_mode") as mock_p2p,
                 patch("hsync_client.main_logic.set_config"),
@@ -1356,7 +1356,7 @@ class TestStartupErrorVisibility:
         try:
             with (
                 patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
-                patch("hsync_client.main_logic.get_server_url", return_value=None),
+                patch("hsync_client.runtime_resolvers.get_server_url", return_value=None),
                 patch("hsync_client.config_build.get_peer_rendezvous_timeout", return_value=None),
                 patch("hsync_client.main_logic.set_config"),
                 patch("hsync_client.main_logic.set_debug"),

@@ -281,13 +281,15 @@ class TestRunSyncLanPlaceholder:
         # run must reach run_p2p_mode, so acknowledge the posture explicitly.
         kwargs_overrides.setdefault("p2p_allow_unauthenticated", True)
         kwargs = _default_run_sync_kwargs(tmp_path, **kwargs_overrides)
+        mock_emit = MagicMock()
         with (
             patch("hsync_client.main_logic.setup_logging", return_value=MagicMock()),
             patch("hsync_client.p2p_handler.run_p2p_mode") as mock_p2p,
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
             patch("hsync_client.startup_checks.is_tty_interactive", return_value=True),
-            patch("hsync_client.main_logic.emit_event") as mock_emit,
+            patch("hsync_client.main_logic.emit_event", mock_emit),
+            patch("hsync_client.runtime_resolvers.emit_event", mock_emit),
             patch("hsync_client.autotune.measure_rtt") as mock_rtt,
         ):
             mock_p2p.return_value = 0
@@ -298,7 +300,7 @@ class TestRunSyncLanPlaceholder:
 
     def test_placeholder_skips_rtt_probe_and_server_event(self, tmp_path):
         """No server URL: probe deferred, no placeholder URL leaks to the UI."""
-        with patch("hsync_client.main_logic.get_server_url", return_value=None):
+        with patch("hsync_client.runtime_resolvers.get_server_url", return_value=None):
             mock_p2p, mock_emit, mock_rtt = self._run_p2p(tmp_path, server_url=None, p2p_mode=True)
 
         mock_p2p.assert_called_once()
@@ -323,7 +325,7 @@ class TestRunSyncLanPlaceholder:
 
     def test_config_carries_autotune_managed_keys(self, tmp_path):
         """The P2P config handed to run_p2p_mode records autotune-managed keys."""
-        with patch("hsync_client.main_logic.get_server_url", return_value=None):
+        with patch("hsync_client.runtime_resolvers.get_server_url", return_value=None):
             mock_p2p, _, _ = self._run_p2p(
                 tmp_path,
                 server_url=None,
@@ -342,7 +344,7 @@ class TestRunSyncLanPlaceholder:
         admission control separate them even for requests without a ``cid``
         query parameter.
         """
-        with patch("hsync_client.main_logic.get_server_url", return_value=None):
+        with patch("hsync_client.runtime_resolvers.get_server_url", return_value=None):
             mock_p2p, _, _ = self._run_p2p(tmp_path, server_url=None, p2p_mode=True)
 
         config_arg = mock_p2p.call_args.args[0]
@@ -353,11 +355,11 @@ class TestRunSyncLanPlaceholder:
         itself has no size threshold, so eligibility is a runtime, capacity-driven
         decision (ADR-0030)."""
         with (
-            patch("hsync_client.main_logic.get_server_url", return_value=None),
+            patch("hsync_client.runtime_resolvers.get_server_url", return_value=None),
             patch("hsync_client.config_build.get_p2p_peer_download", return_value=True),
             patch("hsync_client.config_build.get_p2p_peer_read_cap", return_value=7),
             patch(
-                "hsync_client.main_logic.get_p2p_allow_unauthenticated_writes",
+                "hsync_client.runtime_resolvers.get_p2p_allow_unauthenticated_writes",
                 return_value=True,
             ),
         ):
@@ -376,7 +378,7 @@ class TestRunSyncLanPlaceholder:
     def test_cli_peer_download_opt_out_wins_over_environment(self, tmp_path):
         """--no-peer-download remains final even when the environment enables peers."""
         with (
-            patch("hsync_client.main_logic.get_server_url", return_value=None),
+            patch("hsync_client.runtime_resolvers.get_server_url", return_value=None),
             patch("hsync_client.config_build.get_p2p_peer_download", return_value=True),
         ):
             mock_p2p, _, _ = self._run_p2p(
@@ -390,7 +392,7 @@ class TestRunSyncLanPlaceholder:
 
     def test_cli_override_excluded_from_managed_keys(self, tmp_path):
         """--http-timeout 30 must survive the P2P refresh: not autotune-managed."""
-        with patch("hsync_client.main_logic.get_server_url", return_value=None):
+        with patch("hsync_client.runtime_resolvers.get_server_url", return_value=None):
             mock_p2p, _, _ = self._run_p2p(
                 tmp_path,
                 server_url=None,
@@ -406,7 +408,7 @@ class TestRunSyncLanPlaceholder:
     def test_env_override_excluded_from_managed_keys(self, tmp_path):
         """HSYNC_HTTP_TIMEOUT must survive the P2P refresh: not autotune-managed."""
         with (
-            patch("hsync_client.main_logic.get_server_url", return_value=None),
+            patch("hsync_client.runtime_resolvers.get_server_url", return_value=None),
             patch("hsync_client.config.get_http_timeout", return_value=45),
         ):
             mock_p2p, _, _ = self._run_p2p(

@@ -132,7 +132,7 @@ class TestOneShotExitCodeMapping:
         kwargs = self._kwargs(tmp_path)
         with (
             patch("hsync_client.main_logic.setup_logging", return_value=MagicMock()),
-            patch("hsync_client.main_logic.get_api_key", return_value="test-key"),
+            patch("hsync_client.runtime_resolvers.get_api_key", return_value="test-key"),
             patch("hsync_client.main_logic._check_server_connectivity", return_value=True),
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
@@ -184,7 +184,7 @@ class TestSyncFatalMapsToExitOne:
         kwargs = _default_run_sync_kwargs(tmp_path, server_url="https://localhost:8000")
         with (
             patch("hsync_client.main_logic.setup_logging", return_value=MagicMock()),
-            patch("hsync_client.main_logic.get_api_key", return_value="test-key"),
+            patch("hsync_client.runtime_resolvers.get_api_key", return_value="test-key"),
             patch("hsync_client.main_logic._check_server_connectivity", return_value=True),
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),

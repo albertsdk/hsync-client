@@ -11,13 +11,30 @@ so they stay separate from ``hsync_client.main_logic`` orchestration.
 from __future__ import annotations
 
 import sys
-from typing import Any
+from typing import Any, NoReturn
 
 from hsync_common.listing import folder_has_user_content
 from hsync_common.runtime import detect_container, is_tty_interactive
 
 from hsync_client.config import CONFIG, deletions_are_kept
+from hsync_client.events import UiEventName, emit_event
 from hsync_client.logger import flush_logs
+
+
+def _fatal_startup(message: str, *, log: Any | None = None) -> NoReturn:
+    """Report a fatal startup error on the events channel, then exit.
+
+    The Desktop GUI consumes structured events, not log text: without this a
+    startup failure looks like the engine "silently stopped" (a normal exit with
+    a non-zero code is not a crash). *log* is optional because the environment
+    file failure happens before logging is configured.
+    """
+    if log is not None:
+        log.error(message)
+    else:
+        print(f"Error: {message}", file=sys.stderr)
+    emit_event(UiEventName.error, message=message, reason="startup")
+    sys.exit(1)
 
 
 def _check_deletion_risk(
