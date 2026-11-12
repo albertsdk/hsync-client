@@ -131,6 +131,34 @@ class TestGetFilesRemote:
         ):
             get_files_remote()
 
+    def test_get_files_remote_404_raises_bucket_missing(self):
+        """A 404 names the bucket and the fix instead of a bare status code."""
+        from hsync_client.exceptions import BucketMissingError
+        from hsync_client.sync import get_files_remote
+
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+
+        config = {
+            "API": {"buckets": "http://localhost:8000/api/v1/buckets"},
+            "REMOTE_BUCKET": "barbara",
+            "REQUEST_HEADERS": {"X-API-Key": "test"},
+            "NO_VERIFY_SSL": True,
+        }
+
+        with (
+            patch("hsync_client.sync.CONFIG", config),
+            patch("hsync_client.sync.get", return_value=mock_response),
+            patch("hsync_client.sync.get_ssl_verify", return_value=False),
+        ):
+            with pytest.raises(BucketMissingError) as excinfo:
+                get_files_remote()
+
+        message = str(excinfo.value)
+        assert "barbara" in message
+        assert "hsync-server admin bucket create --bucket barbara" in message
+        assert excinfo.value.details["bucket"] == "barbara"
+
     def test_get_files_remote_network_error(self):
         """get_files_remote raises NetworkError on connection failure."""
         from requests.exceptions import RequestException
@@ -186,6 +214,24 @@ class TestGetFilesRemoteRetry:
             patch("hsync_client.sync.get_ssl_verify", return_value=False),
         ):
             with pytest.raises(AuthenticationError):
+                get_files_remote()
+
+        assert mock_get.call_count == 1
+
+    def test_does_not_retry_on_404(self):
+        """A missing bucket is permanent: exactly one attempt, no retry storm."""
+        from hsync_client.exceptions import BucketMissingError
+        from hsync_client.sync import get_files_remote
+
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+
+        with (
+            patch("hsync_client.sync.CONFIG", self._CONFIG),
+            patch("hsync_client.sync.get", return_value=mock_response) as mock_get,
+            patch("hsync_client.sync.get_ssl_verify", return_value=False),
+        ):
+            with pytest.raises(BucketMissingError):
                 get_files_remote()
 
         assert mock_get.call_count == 1
@@ -384,9 +430,9 @@ class TestGetFilesRemoteErrorPropagation:
         ):
             get_files_remote()
 
-    def test_404_raises_server_error(self):
-        """404 Not Found raises ServerError (real server contract)."""
-        from hsync_client.exceptions import ServerError
+    def test_404_raises_bucket_missing(self):
+        """404 Not Found is the missing-bucket contract, not a generic error."""
+        from hsync_client.exceptions import BucketMissingError
         from hsync_client.sync import get_files_remote
 
         mock_response = MagicMock()
@@ -404,7 +450,7 @@ class TestGetFilesRemoteErrorPropagation:
             patch("hsync_client.sync.CONFIG", config),
             patch("hsync_client.sync.get", return_value=mock_response),
             patch("hsync_client.sync.get_ssl_verify", return_value=False),
-            pytest.raises(ServerError, match="Server returned status 404"),
+            pytest.raises(BucketMissingError, match="nonexistent"),
         ):
             get_files_remote()
 

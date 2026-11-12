@@ -80,6 +80,7 @@ from hsync_client.events import (
 )
 from hsync_client.exceptions import (
     AuthenticationError,
+    BucketMissingError,
     DeclaredSizeMismatchError,
     NetworkError,
     PermanentDownloadError,
@@ -990,7 +991,12 @@ def _cycle_preflight() -> None:
 
 def _report_sync_failure(e: Exception) -> None:
     """Log and surface a failed sync cycle (auth vs connection vs generic)."""
-    if isinstance(e, AuthenticationError):
+    if isinstance(e, BucketMissingError):
+        # The bucket is missing (or unreachable for this account) and the cycle
+        # cannot start: the GUI localizes this reason and offers to create it.
+        log.error(f"Sync failed: {e}")
+        emit_event(UiEventName.error, message=f"Sync failed: {e}", reason="share_missing")
+    elif isinstance(e, AuthenticationError):
         # Authentication failures get a dedicated event so the GUI prompts
         # for the shared password instead of only logging a generic error.
         log.error(f"Sync failed: {e}")
@@ -1722,6 +1728,20 @@ def get_files_remote() -> list[dict]:
             )
 
             _check_auth_status(response.status_code)
+            if response.status_code == 404:
+                # The server answers 404 both for a missing bucket and for one
+                # the account cannot reach, and the listing is the first call of
+                # a cycle: the upload that would create the bucket never runs.
+                # Name the bucket and the fix instead of a bare status code.
+                bucket = str(CONFIG["REMOTE_BUCKET"])
+                raise BucketMissingError(
+                    message=(
+                        f"Bucket '{bucket}' does not exist on the server or the account "
+                        f"has no access to it; create it with "
+                        f"'hsync-server admin bucket create --bucket {bucket}'"
+                    ),
+                    details={"bucket": bucket, "status_code": 404},
+                )
             if response.status_code != 200:
                 raise ServerError(
                     message=f"Server returned status {response.status_code}",

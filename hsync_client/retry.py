@@ -28,7 +28,12 @@ from hsync_client.constants import (
     TRANSFER_RETRY_MAX_WAIT_DEFAULT,
     TRANSFER_RETRY_MIN_WAIT_DEFAULT,
 )
-from hsync_client.exceptions import AuthenticationError, NetworkError, ServerError
+from hsync_client.exceptions import (
+    AuthenticationError,
+    BucketMissingError,
+    NetworkError,
+    ServerError,
+)
 
 # =============================================================================
 # Retry Configuration
@@ -52,7 +57,7 @@ def _retry_on(
     min_wait: float,
     max_wait: float,
     *,
-    exclude: type[BaseException] | None = None,
+    exclude: type[BaseException] | tuple[type[BaseException], ...] | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Build a tenacity retry decorator for *exc_types* with exponential backoff.
 
@@ -83,7 +88,8 @@ def retry_on_network_error(
 
     Retries on ``RequestException`` and ``NetworkError`` with exponential
     backoff, but never on ``AuthenticationError``: an auth failure (401/403)
-    is permanent and would not be resolved by retrying.
+    is permanent and would not be resolved by retrying. ``BucketMissingError``
+    (404) is excluded for the same reason: retrying cannot create the bucket.
 
     Args:
         max_attempts: Maximum number of retry attempts.
@@ -104,7 +110,7 @@ def retry_on_network_error(
         max_attempts,
         min_wait,
         max_wait,
-        exclude=AuthenticationError,
+        exclude=(AuthenticationError, BucketMissingError),
     )
 
 

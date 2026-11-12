@@ -56,6 +56,19 @@ class ServerError(NetworkError):
     default_message = "Server error"
 
 
+class BucketMissingError(ServerError):
+    """The server has no such bucket, or the account has no access to it.
+
+    The server answers 404 for both cases on purpose (it never reveals whether a
+    bucket exists), so the client cannot tell them apart either. Permanent: the
+    retry decorators exclude it, and the first upload never runs, so the bucket
+    is not created implicitly.
+    """
+
+    error_code = "HSYNC-C2005"
+    default_message = "The bucket does not exist on the server, or the account has no access to it"
+
+
 class WebSocketHandshakeError(NetworkError):
     """The server refused the WebSocket handshake.
 

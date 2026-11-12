@@ -36,6 +36,11 @@ hsync server --server-url server.example.com:443 -b documents -p "$HOME/Document
 > server host — see the
 > server [Getting Started](https://github.com/albertsdk/hsync-server/blob/main/docs/getting-started.md)
 > guide. The examples below assume the referenced bucket already exists.
+>
+> The client never creates a bucket implicitly: a sync starts by listing the
+> remote files, and a missing bucket answers `404` before any upload could run.
+> The desktop app offers to create it from **Settings → Share** (and from the
+> setup wizard's connection test) when the server reports it missing.
 
 ## 1.1 Sync a personal folder (one-time)
 

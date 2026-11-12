@@ -85,3 +85,15 @@ class TestReportSyncFailure:
         assert event == "error"
         assert payload["reason"] == ""
         assert "code" not in payload
+
+    def test_a_missing_bucket_carries_the_share_missing_reason(self, monkeypatch):
+        """The GUI localizes this reason and offers to create the share."""
+        from hsync_client.exceptions import BucketMissingError
+
+        events = self._capture(monkeypatch)
+
+        sync_mod._report_sync_failure(BucketMissingError(message="Bucket 'barbara' does not exist"))
+
+        event, payload = events[0]
+        assert event == "error"
+        assert payload["reason"] == "share_missing"
