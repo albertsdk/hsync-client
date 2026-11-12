@@ -79,7 +79,7 @@ def get_local_ips() -> list[str]:
     ]
     # Stable sort: LAN/reserved addresses first, so the most likely shareable
     # address survives a caller's endpoint cap.
-    rest.sort(key=lambda address: ip_address(address).is_global)
+    rest.sort(key=lambda address: _parse_ip(address).is_global)
     found.extend(rest)
     return found or [primary]
 
@@ -87,7 +87,7 @@ def get_local_ips() -> list[str]:
 def _is_usable_ipv4(address: str) -> bool:
     """Whether *address* is a routable IPv4 (not loopback or link-local)."""
     try:
-        parsed = ip_address(address)
+        parsed = _parse_ip(address)
     except ValueError:
         return False
     if parsed.version != 4:

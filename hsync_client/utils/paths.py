@@ -86,8 +86,11 @@ def path_present(filepath: str) -> bool:
     ``hsync_client.file_event_handler`` (stale-delete guard in the coalesced
     delete flush).
     """
-    path = Path(filepath)
-    return path.is_symlink() or path.exists()
+    # ``lexists`` is a single lstat and, like the previous explicit
+    # ``is_symlink() or exists()`` check, reports a dangling symlink as present
+    # (``exists`` alone would follow it and say False). It avoids allocating a
+    # ``Path`` and the second stat in the common case.
+    return os.path.lexists(filepath)
 
 
 def is_same_paths(path1: str, path2: str) -> bool:

@@ -445,11 +445,23 @@ class PeerManager:
 
             # Re-run the election on a first rendezvous or a relevant field
             # change. The expired-peer check also covers the original
-            # behaviour where a stale peer (whose heartbeat stop arriving)
-            # was excluded from the candidate list at the next update.
-            stale_peer = any(not self._is_peer_alive(p) for p in self._peers.values())
-            if election_changed or stale_peer:
+            # behaviour where a stale peer (whose heartbeat stopped arriving)
+            # was excluded from the candidate list at the next update; it is
+            # skipped when the change already forces an election, because
+            # ``_elect_master`` excludes stale peers anyway.
+            stale_peer = False
+            if election_changed:
                 self._elect_master()
+            else:
+                now = time.monotonic()
+                sources = tuple(self._sources.values())
+                live_cids = self._live_cids_snapshot()
+                stale_peer = any(
+                    not self._is_peer_alive_at(p, now, sources, live_cids)
+                    for p in self._peers.values()
+                )
+                if stale_peer:
+                    self._elect_master()
             if rendezvous_changed or stale_peer:
                 self._signal_change()
 
@@ -527,7 +539,13 @@ class PeerManager:
         """
         with self._lock:
             now = time.monotonic()
-            stale = [cid for cid, p in self._peers.items() if not self._is_peer_alive(p)]
+            sources = tuple(self._sources.values())
+            live_cids = self._live_cids_snapshot()
+            stale = [
+                cid
+                for cid, p in self._peers.items()
+                if not self._is_peer_alive_at(p, now, sources, live_cids)
+            ]
             if not stale:
                 return False
             for cid in stale:
@@ -672,6 +690,43 @@ class PeerManager:
             self._sources[source] = entry
         return entry.generation if entry.unit == "samples" else time.monotonic()
 
+    def _live_cids_snapshot(self) -> frozenset[str]:
+        """Snapshot the out-of-band liveness sets for one peer scan.
+
+        ``_connected_lock`` is separate from ``_lock``, so this can be taken
+        while the caller holds ``_lock`` (the same nesting the old per-peer
+        check used). One snapshot per scan replaces one lock acquisition per
+        peer.
+        """
+        with self._connected_lock:
+            return frozenset(self._connected_cids | self._relay_cids)
+
+    def _is_peer_alive_at(
+        self,
+        peer: Peer,
+        now: float,
+        sources: tuple[LivenessSource, ...],
+        live_cids: frozenset[str],
+    ) -> bool:
+        """Aliveness predicate evaluated against a caller-provided snapshot.
+
+        Identical to :meth:`_is_peer_alive`; the clock, the source list and the
+        connected/relay set are passed in so a whole-peer scan computes them
+        once instead of once per peer.
+        """
+        for source in sources:
+            stamp = peer.evidence.get(source.name)
+            if stamp is None:
+                continue
+            if source.unit == "samples":
+                if source.lease and now - source.last_answer > source.lease:
+                    continue
+                if source.generation - stamp < source.window:
+                    return True
+            elif now - stamp < source.window:
+                return True
+        return peer.cid in live_cids
+
     def _is_peer_alive(self, peer: Peer) -> bool:
         """Return whether *peer* is alive by any source of evidence.
 
@@ -687,20 +742,12 @@ class PeerManager:
         this reads a snapshot instead of taking the lock again: ``Lock`` is not
         reentrant and the sweep already holds it.
         """
-        now = time.monotonic()
-        for source in tuple(self._sources.values()):
-            stamp = peer.evidence.get(source.name)
-            if stamp is None:
-                continue
-            if source.unit == "samples":
-                if source.lease and now - source.last_answer > source.lease:
-                    continue
-                if source.generation - stamp < source.window:
-                    return True
-            elif now - stamp < source.window:
-                return True
-        with self._connected_lock:
-            return peer.cid in self._connected_cids or peer.cid in self._relay_cids
+        return self._is_peer_alive_at(
+            peer,
+            time.monotonic(),
+            tuple(self._sources.values()),
+            self._live_cids_snapshot(),
+        )
 
     def _liveness_detail(self, peer: Peer, now: float) -> str:
         """Why *peer* expired, source by source (forensics for a churn)."""
@@ -725,11 +772,21 @@ class PeerManager:
     def get_alive_peers(self) -> list[Peer]:
         """Get all peers that are still alive."""
         with self._lock:
-            return [p for p in self._peers.values() if self._is_peer_alive(p)]
+            now = time.monotonic()
+            sources = tuple(self._sources.values())
+            live_cids = self._live_cids_snapshot()
+            return [
+                p
+                for p in self._peers.values()
+                if self._is_peer_alive_at(p, now, sources, live_cids)
+            ]
 
     def get_alive_peer_snapshots(self) -> tuple[PeerSnapshot, ...]:
         """Return immutable endpoint snapshots for all currently alive peers."""
         with self._lock:
+            now = time.monotonic()
+            sources = tuple(self._sources.values())
+            live_cids = self._live_cids_snapshot()
             return tuple(
                 PeerSnapshot(
                     cid=peer.cid,
@@ -742,7 +799,7 @@ class PeerManager:
                     endpoints=peer.endpoints,
                 )
                 for peer in self._peers.values()
-                if self._is_peer_alive(peer)
+                if self._is_peer_alive_at(peer, now, sources, live_cids)
             )
 
     def _signal_change(self) -> None:
@@ -818,6 +875,9 @@ class PeerManager:
         # carried through and filtered by the shared ranking helper, which also
         # yields the full ranked list needed for the prefer_master conflict report
         # below.
+        now = time.monotonic()
+        sources = tuple(self._sources.values())
+        live_cids = self._live_cids_snapshot()
         candidates: list[ElectionCandidate] = [
             ElectionCandidate(
                 cid=self._local_cid,
@@ -840,7 +900,7 @@ class PeerManager:
                 inbound=peer.inbound,
             )
             for peer in self._peers.values()
-            if self._is_peer_alive(peer)
+            if self._is_peer_alive_at(peer, now, sources, live_cids)
         )
 
         ranked = rank_election_candidates(candidates)

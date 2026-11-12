@@ -597,20 +597,21 @@ class P2PInventoryStore:
         )
 
     def _counts_locked(self, cid: str, token: str) -> tuple[int, int, int]:
-        committed = int(
-            self._conn.execute(
-                "SELECT COUNT(*) FROM inventory_holders WHERE cid = ?", (cid,)
-            ).fetchone()[0]
-        )
-        staged = int(
-            self._conn.execute(
-                "SELECT COUNT(*) FROM inventory_staging WHERE token = ?", (token,)
-            ).fetchone()[0]
-        )
-        global_count = int(
-            self._conn.execute("SELECT COUNT(*) FROM inventory_holders").fetchone()[0]
-        ) + int(self._conn.execute("SELECT COUNT(*) FROM inventory_staging").fetchone()[0])
-        return committed, staged, global_count
+        # One statement (one Python->SQLite round-trip) for the three quotas;
+        # COUNT(*) is already SQLite's cheapest row count (smallest index, no
+        # column dereference), so COUNT(column) would add no speed and could
+        # change semantics if the column were nullable.
+        committed, staged, global_count = self._conn.execute(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM inventory_holders WHERE cid = ?),
+                (SELECT COUNT(*) FROM inventory_staging WHERE token = ?),
+                (SELECT COUNT(*) FROM inventory_holders)
+                    + (SELECT COUNT(*) FROM inventory_staging)
+            """,
+            (cid, token),
+        ).fetchone()
+        return int(committed), int(staged), int(global_count)
 
     def _quota_allows_locked(self, cid: str, token: str, added: int) -> bool:
         committed, staged, global_count = self._counts_locked(cid, token)
@@ -773,6 +774,8 @@ class P2PInventoryStore:
         deletes = [entry for entry in frame["entries"] if "deleted" in entry]
         added = sum(1 for entry in upserts if entry["path"] not in existing)
         removed = sum(1 for entry in deletes if entry["path"] in existing)
+        upsert_paths = {entry["path"] for entry in upserts}
+        delete_paths = {entry["path"] for entry in deletes}
         committed, staged, global_count = self._counts_locked(cid, token)
         if (
             committed + staged + added - removed > self._per_cid_quota
@@ -780,22 +783,47 @@ class P2PInventoryStore:
         ):
             return self._reject_locked(cid, token, gen=gen, seq=seq, reason="quota")
 
-        for entry in frame["entries"]:
-            if "sha256" in entry:
-                self._conn.execute(
+        # Batch the writes when no path appears as both an upsert and a delete
+        # in this frame (the invariant the delta producer keeps). Batching keeps
+        # the final row state identical while paying one round-trip per group
+        # instead of one per entry; the interleaved fallback preserves the exact
+        # order for an (unexpected) mixed-path frame.
+        if upsert_paths.isdisjoint(delete_paths):
+            if upserts:
+                self._conn.executemany(
                     """
                     INSERT INTO inventory_holders(bucket, cid, path, sha256, size)
                     VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT(bucket, cid, path) DO UPDATE SET
                         sha256 = excluded.sha256, size = excluded.size
                     """,
-                    (self._bucket, cid, entry["path"], entry["sha256"], entry["size"]),
+                    [
+                        (self._bucket, cid, entry["path"], entry["sha256"], entry["size"])
+                        for entry in upserts
+                    ],
                 )
-            else:
-                self._conn.execute(
+            if deletes:
+                self._conn.executemany(
                     "DELETE FROM inventory_holders WHERE bucket = ? AND cid = ? AND path = ?",
-                    (self._bucket, cid, entry["path"]),
+                    [(self._bucket, cid, entry["path"]) for entry in deletes],
                 )
+        else:
+            for entry in frame["entries"]:
+                if "sha256" in entry:
+                    self._conn.execute(
+                        """
+                        INSERT INTO inventory_holders(bucket, cid, path, sha256, size)
+                        VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(bucket, cid, path) DO UPDATE SET
+                            sha256 = excluded.sha256, size = excluded.size
+                        """,
+                        (self._bucket, cid, entry["path"], entry["sha256"], entry["size"]),
+                    )
+                else:
+                    self._conn.execute(
+                        "DELETE FROM inventory_holders WHERE bucket = ? AND cid = ? AND path = ?",
+                        (self._bucket, cid, entry["path"]),
+                    )
         self._conn.execute(
             """
             UPDATE inventory_sessions

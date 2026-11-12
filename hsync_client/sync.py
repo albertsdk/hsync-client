@@ -13,6 +13,7 @@ import os
 import sys
 import threading
 import time
+from collections import deque
 from collections.abc import Callable, Coroutine, Iterable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -1477,7 +1478,7 @@ def _get_single_file_metadata(file_path: str) -> dict | None:
         File or Symlink metadata dictionary or None if file cannot be read.
     """
     # Symlink first: emit a symlink entry without computing a content hash.
-    if Path(file_path).is_symlink():
+    if os.path.islink(file_path):
         link = Symlink.get(file_path)
         if link is not None:
             return link.to_dict()
@@ -1642,41 +1643,47 @@ def get_files_local() -> list[dict]:
         _warn_missing_bucket(CONFIG["LOCAL_BUCKET"])
         return []
 
-    # First pass: collect all file paths (no checksum computation)
-    file_paths = [abs_path for abs_path, _link in iter_bucket_entries(CONFIG["LOCAL_BUCKET"])]
-
-    # ``--subdir`` scopes the scan to a subdirectory. Without this the filter
-    # would only trim the *remote* listing, so an upload/bidirectional run
-    # would still push local files outside the requested subtree.
+    # The walk already classifies every entry as a safe symlink (it yields the
+    # Symlink) or a regular file (None). Reuse that classification: symlinks
+    # need no second lstat/readlink and no worker task; only regular files go
+    # through the metadata pool.
     filter_path = CONFIG.get("FILTER_PATH")
-    if filter_path:
-        file_paths = [p for p in file_paths if _in_subdir(p, filter_path)]
+    symlink_entries: list[dict] = []
+    regular_paths: list[str] = []
+    for abs_path, link in iter_bucket_entries(CONFIG["LOCAL_BUCKET"]):
+        if filter_path and not _in_subdir(abs_path, filter_path):
+            continue
+        if link is not None:
+            symlink_entries.append(link.to_dict())
+        else:
+            regular_paths.append(abs_path)
 
     # Early return if no files
-    if not file_paths:
+    if not regular_paths and not symlink_entries:
         return []
 
     # Determine optimal number of workers based on file count and CPU cores
-    max_workers = _get_optimal_workers(len(file_paths))
-    log.debug(f"Using {max_workers} workers for {len(file_paths)} files")
+    max_workers = _get_optimal_workers(len(regular_paths))
+    log.debug(f"Using {max_workers} workers for {len(regular_paths)} files")
 
-    file_list = []
+    file_list = list(symlink_entries)
 
     with _unreadable_lock:
         unreadable_before = _unreadable_total
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all file metadata fetches in parallel
-        futures = [executor.submit(_get_single_file_metadata, fp) for fp in file_paths]
+    if regular_paths:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all file metadata fetches in parallel
+            futures = [executor.submit(_get_single_file_metadata, fp) for fp in regular_paths]
 
-        # Collect results as they complete: as_completed avoids head-of-line
-        # blocking on the first submitted (and potentially slowest) hash and
-        # keeps every worker busy for the whole batch. The dict key in the old
-        # future->path mapping was never read.
-        for future in as_completed(futures):
-            result = future.result()
-            if result:
-                file_list.append(result)
+            # Collect results as they complete: as_completed avoids head-of-line
+            # blocking on the first submitted (and potentially slowest) hash and
+            # keeps every worker busy for the whole batch. The dict key in the old
+            # future->path mapping was never read.
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    file_list.append(result)
 
     # Sort by mtime ascending (oldest first) to prioritize updating older files
     file_list.sort(key=lambda x: x.get("mtime", 0))
@@ -1949,11 +1956,11 @@ def split_rename_pairs(
     # Zero-byte files are never paired: every empty file shares the same SHA-256,
     # so two unrelated empty paths would be indistinguishable (and moving an
     # empty file saves nothing over recreating it).
-    by_content: dict[tuple[str, int], list[File]] = {}
+    by_content: dict[tuple[str, int], deque[File]] = {}
     for file in new_entries:
         if not file.sha256sum or int(file.size or 0) <= 0:
             continue
-        by_content.setdefault((file.sha256sum, int(file.size or 0)), []).append(file)
+        by_content.setdefault((file.sha256sum, int(file.size or 0)), deque()).append(file)
 
     pairs: list[tuple[File, File]] = []
     paired: set[int] = set()
@@ -1963,7 +1970,7 @@ def split_rename_pairs(
         if not old_file.sha256sum or int(old_file.size or 0) <= 0 or not candidates:
             remaining_old.append(old_file)
             continue
-        new_file = candidates.pop(0)
+        new_file = candidates.popleft()
         paired.add(id(new_file))
         pairs.append((old_file, new_file))
 
