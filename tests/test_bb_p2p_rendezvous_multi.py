@@ -24,8 +24,8 @@ import os
 import pytest
 from hsync_common.protocol.tls_trust import TrustPolicy
 
-from hsync_client.rdv_client import (
-    RendezvousClient,
+from hsync_client.rdv_client import RendezvousClient
+from hsync_client.rdv_frames import (
     build_leave_frame,
     build_query_frame,
     build_register_frame,

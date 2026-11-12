@@ -58,11 +58,13 @@ from hsync_client.constants import (
 from hsync_client.rdv_client import (
     RendezvousClient,
     RendezvousProtocolError,
+    frame_line,
+)
+from hsync_client.rdv_frames import (
     build_relay_attach_frame,
     build_relay_connect_frame,
     build_relay_listen_frame,
     build_relay_ping_frame,
-    frame_line,
 )
 
 __all__ = [

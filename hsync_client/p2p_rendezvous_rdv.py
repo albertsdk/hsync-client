@@ -81,6 +81,8 @@ from hsync_client.rdv_client import (
     RendezvousNotTrusted,
     RendezvousRefused,
     TrustPrompt,
+)
+from hsync_client.rdv_frames import (
     build_leave_frame,
     build_query_frame,
     build_refresh_frame,
