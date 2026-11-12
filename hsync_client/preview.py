@@ -21,7 +21,12 @@ from hsync_client.config import CONFIG, deletions_are_kept
 from hsync_client.constants import SYNC_DIRECTIONS, ActionLabel
 from hsync_client.empty_dirs import empty_dir_states, sentinel_identities
 from hsync_client.events import UiEventName, emit_event
-from hsync_client.exceptions import AuthenticationError, NetworkError, ServerError
+from hsync_client.exceptions import (
+    AuthenticationError,
+    BucketMissingError,
+    NetworkError,
+    ServerError,
+)
 from hsync_client.p2p_inventory import InventoryObserver
 from hsync_client.p2p_sources import P2PSourceResolver
 from hsync_client.presence import reemit_presence
@@ -309,12 +314,14 @@ def _run_preview(log) -> None:
         else:
             # A connection-level failure (not a server 5xx, not auth) is tagged
             # so the GUI can say "could not reach the server" instead of a
-            # generic error.
-            reason = (
-                "connection"
-                if isinstance(e, NetworkError) and not isinstance(e, ServerError)
-                else ""
-            )
+            # generic error. A missing bucket keeps its own reason: the GUI
+            # localizes it and offers to create the share.
+            if isinstance(e, BucketMissingError):
+                reason = "share_missing"
+            elif isinstance(e, NetworkError) and not isinstance(e, ServerError):
+                reason = "connection"
+            else:
+                reason = ""
             emit_event(UiEventName.error, message=f"Preview failed: {e}", reason=reason)
     log.info("--- End Preview ---")
     emit_event(UiEventName.preview_end)

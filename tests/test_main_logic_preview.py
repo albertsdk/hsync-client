@@ -450,6 +450,16 @@ class TestRunPreviewAuthErrors:
 
         assert error_kw["reason"] == ""
 
+    def test_a_missing_bucket_keeps_its_own_reason(self):
+        """The preview fails first on a missing share: the GUI must localize it."""
+        from hsync_client.events import UiEventName
+        from hsync_client.exceptions import BucketMissingError
+
+        emitted = self._emitted(BucketMissingError("Bucket 'barbara' does not exist"))
+        error_kw = next(kw for name, kw in emitted if name == UiEventName.error)
+
+        assert error_kw["reason"] == "share_missing"
+
 
 class TestPreviewFailureLogging:
     """The comparison is retried: one failure must not repeat at ERROR level.
