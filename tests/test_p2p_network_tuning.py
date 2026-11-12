@@ -354,8 +354,8 @@ class TestRunSyncLanPlaceholder:
         decision (ADR-0030)."""
         with (
             patch("hsync_client.main_logic.get_server_url", return_value=None),
-            patch("hsync_client.main_logic.get_p2p_peer_download", return_value=True),
-            patch("hsync_client.main_logic.get_p2p_peer_read_cap", return_value=7),
+            patch("hsync_client.config_build.get_p2p_peer_download", return_value=True),
+            patch("hsync_client.config_build.get_p2p_peer_read_cap", return_value=7),
             patch(
                 "hsync_client.main_logic.get_p2p_allow_unauthenticated_writes",
                 return_value=True,
@@ -377,7 +377,7 @@ class TestRunSyncLanPlaceholder:
         """--no-peer-download remains final even when the environment enables peers."""
         with (
             patch("hsync_client.main_logic.get_server_url", return_value=None),
-            patch("hsync_client.main_logic.get_p2p_peer_download", return_value=True),
+            patch("hsync_client.config_build.get_p2p_peer_download", return_value=True),
         ):
             mock_p2p, _, _ = self._run_p2p(
                 tmp_path,

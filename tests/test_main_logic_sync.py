@@ -13,6 +13,11 @@ from hsync_common.protocol.events import parse_event_line
 from hsync_common.runtime import ColorMode, ContainerInfo
 
 from hsync_client.config import CONFIG, HsyncConfig, get_env_settings
+from hsync_client.config_build import (
+    _get_peer_rendezvous_timeout_value,
+    _get_resync_value,
+    _get_stability_delay_value,
+)
 from hsync_client.constants import (
     CLIENT_NAME,
     FILE_STABILITY_INTERVAL_DEFAULT,
@@ -26,9 +31,6 @@ from hsync_client.events import get_emitter, init_emitter
 from hsync_client.identity import InstanceLockError
 from hsync_client.main_logic import (
     _check_server_connectivity,
-    _get_peer_rendezvous_timeout_value,
-    _get_resync_value,
-    _get_stability_delay_value,
     _safe_config_for_log,
     run_sync,
 )
@@ -633,7 +635,7 @@ class TestRunSync:
         with (
             patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
             patch("hsync_client.main_logic.get_server_url", return_value=None),
-            patch("hsync_client.main_logic.get_peer_rendezvous_timeout", return_value=None),
+            patch("hsync_client.config_build.get_peer_rendezvous_timeout", return_value=None),
             patch("hsync_client.p2p_handler.run_p2p_mode") as mock_p2p,
             patch("hsync_client.main_logic.set_config"),
             patch("hsync_client.main_logic.set_debug"),
@@ -1308,7 +1310,7 @@ class TestStartupErrorVisibility:
             with (
                 patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
                 patch("hsync_client.main_logic.get_server_url", return_value=None),
-                patch("hsync_client.main_logic.get_peer_rendezvous_timeout", return_value=None),
+                patch("hsync_client.config_build.get_peer_rendezvous_timeout", return_value=None),
                 patch("hsync_client.p2p_handler.run_p2p_mode") as mock_p2p,
                 patch("hsync_client.main_logic.set_config"),
                 patch("hsync_client.main_logic.set_debug"),
@@ -1355,7 +1357,7 @@ class TestStartupErrorVisibility:
             with (
                 patch("hsync_client.main_logic.setup_logging") as mock_log_setup,
                 patch("hsync_client.main_logic.get_server_url", return_value=None),
-                patch("hsync_client.main_logic.get_peer_rendezvous_timeout", return_value=None),
+                patch("hsync_client.config_build.get_peer_rendezvous_timeout", return_value=None),
                 patch("hsync_client.main_logic.set_config"),
                 patch("hsync_client.main_logic.set_debug"),
                 patch("hsync_client.startup_checks.is_tty_interactive", return_value=True),
