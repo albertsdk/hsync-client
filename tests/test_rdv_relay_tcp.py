@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 
-from hsync_client.rdv_relay import _relay_transport, _TcpRelaySession
+from hsync_client.rdv_relay_transport import _relay_transport, _TcpRelaySession
 
 CID = "A1b2C3d4E5f6G7h8I9j0K"
 

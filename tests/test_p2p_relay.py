@@ -43,8 +43,8 @@ from hsync_client.rdv_relay import (
     FailoverRelayDialer,
     GroupRelayAcceptor,
     RelayDialer,
-    refusal_code,
 )
+from hsync_client.rdv_relay_transport import refusal_code
 
 
 class _Peers:
@@ -426,7 +426,7 @@ async def test_the_relay_acceptor_stops_when_its_control_stream_dies(monkeypatch
     async def _fake_quic_session(client):
         yield _FakeQuic(reader, _FakeWriter())
 
-    monkeypatch.setattr("hsync_client.rdv_relay._quic_session", _fake_quic_session)
+    monkeypatch.setattr("hsync_client.rdv_relay_transport._quic_session", _fake_quic_session)
     client = type("_Client", (), {"timeout": 5.0})()
 
     acceptor = RelayAcceptor(client, cid="A1b2C3d4E5f6G7h8I9j0K", bucket="b", local_port=9000)
@@ -470,6 +470,7 @@ def test_a_dropped_session_is_re_paired_on_the_same_endpoint(monkeypatch) -> Non
     import contextlib
 
     import hsync_client.rdv_relay as relay_mod
+    import hsync_client.rdv_relay_transport as relay_transport_mod
     from hsync_client.rdv_relay import RelayDialer
 
     ok = (
@@ -498,7 +499,7 @@ def test_a_dropped_session_is_re_paired_on_the_same_endpoint(monkeypatch) -> Non
         writers.append(writer)
         yield _FakeQuic(_FakeReader([ok]), writer)
 
-    monkeypatch.setattr(relay_mod, "_quic_session", _fake_quic_session)
+    monkeypatch.setattr(relay_transport_mod, "_quic_session", _fake_quic_session)
     monkeypatch.setattr(relay_mod, "RELAY_KEEPALIVE_INTERVAL", 0.0)
 
     async def scenario() -> tuple[tuple[str, int] | None, tuple[str, int] | None, bool]:
@@ -705,7 +706,7 @@ def test_the_acceptor_reports_success_when_any_server_registers() -> None:
 def test_a_refusal_carries_the_wait_the_node_asked_for() -> None:
     """``rate_limited`` names the wait, and it is the only signal that the
     ``relay_connect`` budget is spent: the tunnel must honour it."""
-    from hsync_client.rdv_relay import refusal_retry_after
+    from hsync_client.rdv_relay_transport import refusal_retry_after
 
     raw = json.dumps(
         {
@@ -752,7 +753,7 @@ class _FrameReader:
 
 
 def test_the_substream_framing_round_trips() -> None:
-    from hsync_client.rdv_relay import (
+    from hsync_client.rdv_relay_transport import (
         _RELAY_SUBSTREAM_DATA,
         _encode_substream,
         _read_substream,
@@ -775,7 +776,7 @@ def test_a_loopback_connection_is_multiplexed_on_the_tunnel_session() -> None:
     loopback connection is framed with its own stream id, so the HTTP client's
     several connections cost no extra ``relay_connect`` token.
     """
-    from hsync_client.rdv_relay import (
+    from hsync_client.rdv_relay_transport import (
         _RELAY_SUBSTREAM_CLOSE,
         _RELAY_SUBSTREAM_DATA,
         _RELAY_SUBSTREAM_HEADER,
@@ -824,10 +825,10 @@ def test_a_closed_relay_stream_is_not_reopened_by_a_late_data_frame() -> None:
     master's TLS listener sees the handshake bytes as garbage
     (``WRONG_VERSION_NUMBER``); the acceptor must drop the frame instead.
     """
-    from hsync_client.rdv_relay import (
+    from hsync_client.rdv_relay import RelayAcceptor
+    from hsync_client.rdv_relay_transport import (
         _RELAY_SUBSTREAM_CLOSE,
         _RELAY_SUBSTREAM_DATA,
-        RelayAcceptor,
         _encode_substream,
     )
 
@@ -880,11 +881,11 @@ def test_a_stream_whose_local_open_fails_is_closed_back() -> None:
     """
     import socket
 
-    from hsync_client.rdv_relay import (
+    from hsync_client.rdv_relay import RelayAcceptor
+    from hsync_client.rdv_relay_transport import (
         _RELAY_SUBSTREAM_CLOSE,
         _RELAY_SUBSTREAM_DATA,
         _RELAY_SUBSTREAM_HEADER,
-        RelayAcceptor,
         _encode_substream,
     )
 
