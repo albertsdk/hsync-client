@@ -20,10 +20,10 @@ from hsync_common import defaults
 from typer.testing import CliRunner
 
 from hsync_client import constants
-from hsync_client.cli import (
+from hsync_client.cli import app
+from hsync_client.cli_options import (
     _SHARED_VALIDATION_KEYS,
     _validate_shared_options,
-    app,
 )
 
 COMMON_OPTIONS = frozenset(

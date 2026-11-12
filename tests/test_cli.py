@@ -1094,14 +1094,14 @@ class TestBuildRendezvousServers:
     """The rendezvous-server resolution rules: one option, one grammar."""
 
     def test_no_server_selects_the_mdns_plan(self):
-        from hsync_client.cli import _build_rendezvous_servers
+        from hsync_client.cli_options import _build_rendezvous_servers
 
         assert _build_rendezvous_servers(None) == ()
 
     def test_default_port_is_the_channel_default(self):
         from hsync_common.endpoint import HostPort
 
-        from hsync_client.cli import _build_rendezvous_servers
+        from hsync_client.cli_options import _build_rendezvous_servers
 
         assert _build_rendezvous_servers(["rdv.example.net"]) == (
             HostPort("rdv.example.net", RENDEZVOUS_DEFAULT_PORT),
@@ -1110,7 +1110,7 @@ class TestBuildRendezvousServers:
     def test_endpoint_port_is_preserved(self):
         from hsync_common.endpoint import HostPort
 
-        from hsync_client.cli import _build_rendezvous_servers
+        from hsync_client.cli_options import _build_rendezvous_servers
 
         assert _build_rendezvous_servers(["rdv.example.net:8443"]) == (
             HostPort("rdv.example.net", 8443),
@@ -1119,7 +1119,7 @@ class TestBuildRendezvousServers:
     def test_repeatable_option_lists_every_server_in_order(self):
         from hsync_common.endpoint import HostPort
 
-        from hsync_client.cli import _build_rendezvous_servers
+        from hsync_client.cli_options import _build_rendezvous_servers
 
         assert _build_rendezvous_servers(["a.example", "b.example:8443"]) == (
             HostPort("a.example", RENDEZVOUS_DEFAULT_PORT),
@@ -1129,7 +1129,7 @@ class TestBuildRendezvousServers:
     def test_a_value_may_carry_the_env_comma_list(self):
         from hsync_common.endpoint import HostPort
 
-        from hsync_client.cli import _build_rendezvous_servers
+        from hsync_client.cli_options import _build_rendezvous_servers
 
         assert _build_rendezvous_servers(["a.example,b.example:53"]) == (
             HostPort("a.example", RENDEZVOUS_DEFAULT_PORT),
@@ -1138,13 +1138,13 @@ class TestBuildRendezvousServers:
 
     def test_listing_the_same_endpoint_twice_is_refused(self):
         """One destination listed twice is a config error, not two leases."""
-        from hsync_client.cli import _build_rendezvous_servers
+        from hsync_client.cli_options import _build_rendezvous_servers
 
         with pytest.raises(typer.BadParameter):
             _build_rendezvous_servers(["a.example", "a.example:443"])
 
     def test_blank_value_is_ignored(self):
-        from hsync_client.cli import _build_rendezvous_servers
+        from hsync_client.cli_options import _build_rendezvous_servers
 
         assert _build_rendezvous_servers(["   "]) == ()
 
@@ -1158,7 +1158,7 @@ class TestBuildRendezvousServers:
         ],
     )
     def test_invalid_input_is_refused(self, bad):
-        from hsync_client.cli import _build_rendezvous_servers
+        from hsync_client.cli_options import _build_rendezvous_servers
 
         with pytest.raises(typer.BadParameter):
             _build_rendezvous_servers([bad])
@@ -1166,14 +1166,14 @@ class TestBuildRendezvousServers:
     def test_ipv6_bracketed_is_returned_unbracketed(self):
         from hsync_common.endpoint import HostPort
 
-        from hsync_client.cli import _build_rendezvous_servers
+        from hsync_client.cli_options import _build_rendezvous_servers
 
         assert _build_rendezvous_servers(["[::1]"]) == (HostPort("::1", RENDEZVOUS_DEFAULT_PORT),)
 
     def test_env_is_resolved_when_use_env(self, monkeypatch):
         from hsync_common.endpoint import HostPort
 
-        from hsync_client.cli import _build_rendezvous_servers
+        from hsync_client.cli_options import _build_rendezvous_servers
         from hsync_client.config import get_env_settings
 
         monkeypatch.setenv("HSYNC_RENDEZVOUS_SERVER_ENDPOINTS", "a.example,b.example:8443")
@@ -1187,7 +1187,7 @@ class TestBuildRendezvousServers:
             get_env_settings.cache_clear()
 
     def test_env_is_not_used_without_use_env(self, monkeypatch):
-        from hsync_client.cli import _build_rendezvous_servers
+        from hsync_client.cli_options import _build_rendezvous_servers
         from hsync_client.config import get_env_settings
 
         monkeypatch.setenv(
