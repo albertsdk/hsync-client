@@ -56,7 +56,7 @@ from hsync_client.p2p_master_connect import (
     _select_master_endpoint,
     _start_master_relay,
 )
-from hsync_client.p2p_peers import server_url
+from hsync_client.p2p_peer_models import server_url
 from hsync_client.p2p_rendezvous import (
     RendezvousPlan,
     build_rendezvous_plan,
