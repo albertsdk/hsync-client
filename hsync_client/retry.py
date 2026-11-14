@@ -9,11 +9,13 @@ handling transient network failures gracefully.
 """
 
 import logging
+import math
 from collections.abc import Callable
 from typing import Any
 
 from requests import RequestException
 from tenacity import (
+    RetryCallState,
     before_sleep_log,
     retry,
     retry_base,
@@ -22,6 +24,7 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
 )
+from tenacity.wait import wait_base
 
 from hsync_client.constants import (
     TRANSFER_RETRY_ATTEMPTS_DEFAULT,
@@ -51,6 +54,30 @@ DEFAULT_MAX_WAIT = TRANSFER_RETRY_MAX_WAIT_DEFAULT
 _retry_log = logging.getLogger("hsync_client.retry")
 
 
+class _RetryAfterWait(wait_base):
+    """Exponential backoff that honours a server ``Retry-After`` when offered.
+
+    A 429 carries ``retry_after_s`` (``RateLimitedError``): the window the server
+    wants respected. The blind exponential would retry inside that window and be
+    refused again, so the server value wins. It is capped at *max_wait* so a
+    single file's retry budget stays bounded — a file that still cannot pass
+    defers to the next cycle (or the RESYNC) instead of stalling a worker for a
+    whole minute.
+    """
+
+    def __init__(self, *, min_wait: float, max_wait: float) -> None:
+        self._max_wait = max_wait
+        self._exponential = wait_exponential(multiplier=1, min=min_wait, max=max_wait)
+
+    def __call__(self, retry_state: RetryCallState) -> float:
+        outcome = retry_state.outcome
+        exc = outcome.exception() if outcome is not None else None
+        retry_after = getattr(exc, "retry_after_s", None)
+        if retry_after and math.isfinite(retry_after):
+            return min(float(retry_after), self._max_wait)
+        return self._exponential(retry_state)
+
+
 def _retry_on(
     exc_types: tuple[type[BaseException], ...] | type[BaseException],
     max_attempts: int,
@@ -72,7 +99,7 @@ def _retry_on(
     return retry(
         retry=predicate,
         stop=stop_after_attempt(max_attempts),
-        wait=wait_exponential(multiplier=1, min=min_wait, max=max_wait),
+        wait=_RetryAfterWait(min_wait=min_wait, max_wait=max_wait),
         before_sleep=before_sleep_log(_retry_log, logging.WARNING),
         reraise=True,
     )

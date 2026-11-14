@@ -826,6 +826,31 @@ class TestSlaveFileEventHandler:
 
         assert seen == [str(p)]
 
+    def test_on_attrib_dispatched_propagates_touch(self, handler, tmp_path, monkeypatch):
+        """watchdog >= 7 delivers a touch as ``attrib``; dispatch must propagate it.
+
+        Regression: ``dispatch`` calls ``on_attrib`` for a dedicated
+        ``FileAttribEvent``, so without the route the slave lost every chmod and
+        touch until the periodic master RESYNC.
+        """
+        from hsync_common.models.file import File
+        from watchdog.events import FileAttribEvent
+
+        from hsync_client import sync_state
+
+        p = tmp_path / "f.txt"
+        p.write_bytes(b"content")
+        handler._last_mode[str(p)] = p.stat().st_mode & 0o7777
+        handler._last_mtime[str(p)] = 1
+        base = File.get(str(p)).sha256sum
+        monkeypatch.setattr(sync_state, "get_base_hash", lambda _p: base)
+        seen: list[str] = []
+        monkeypatch.setattr(handler, "_propagate_metadata_change", seen.append)
+
+        handler.dispatch(FileAttribEvent(str(p)))
+
+        assert seen == [str(p)]
+
     def test_on_modified_mid_write_touch_does_not_propagate(self, handler, tmp_path, monkeypatch):
         """A touch on content the peers do not hold yet is not a metadata change."""
         from hsync_common.models.file import File

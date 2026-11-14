@@ -638,6 +638,18 @@ class BaseFileEventHandler(FileSystemEventHandler):
         elif self._uses_polling_backend() and not is_hidden_file(src_path):
             self._process_file_ready(src_path)
 
+    def on_attrib(self, event) -> None:
+        """Handle a metadata-only event (watchdog >= 7 ``attrib``).
+
+        A chmod or a touch raises ``IN_ATTRIB``, which watchdog 7 reports as a
+        dedicated ``FileAttribEvent``/``DirAttribEvent`` instead of a
+        ``FileModifiedEvent``. The metadata handling is exactly what
+        ``on_modified`` already implements (permission/touch classification on
+        the inotify backend, the mode-split content path on the others), so
+        route it there rather than duplicating the branch.
+        """
+        self.on_modified(event)
+
     def on_modified(self, event) -> None:
         src_path = ensure_str_path(event.src_path)
 

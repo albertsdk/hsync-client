@@ -273,6 +273,76 @@ class TestFileEventHandler:
         mock_perm.assert_called_once()
         mock_ready.assert_not_called()
 
+    def test_on_attrib_dispatched_reaches_file_permission_path(self):
+        """watchdog >= 7 reports IN_ATTRIB as ``attrib``; dispatch reaches the chmod path.
+
+        Regression: watchdog 7 emits a dedicated ``FileAttribEvent`` for a chmod
+        or a touch and ``dispatch`` calls ``on_attrib`` (never ``on_modified``),
+        so without the ``on_attrib`` route the metadata change was silently lost
+        until the periodic RESYNC (observed as a p2p divergence).
+        """
+        from watchdog.events import FileAttribEvent
+
+        event = FileAttribEvent("/bucket/changed.txt")
+
+        with (
+            patch("hsync_client.file_event_handler.SUPPORTS_ON_CLOSED", True),
+            patch("hsync_client.file_event_handler.is_hidden_file", return_value=False),
+            patch.object(self.handler, "_process_permission_only") as mock_perm,
+        ):
+            self.handler.dispatch(event)
+
+        mock_perm.assert_called_once_with("/bucket/changed.txt")
+
+    def test_on_attrib_directory_chmod_logs_permission(self):
+        """A directory ``attrib`` event (watchdog >= 7) is handled as a chmod.
+
+        The directory branch must observe ``on_attrib`` exactly like the old
+        ``on_modified`` delivery: the mode change is labelled [PERMISSION] and
+        the directory is still broadcast.
+        """
+        from watchdog.events import DirAttribEvent
+
+        path = "/bucket/subdir"
+        event = DirAttribEvent(path)
+
+        config = {
+            "CID": "testcid",
+            "LOCAL_BUCKET": "/bucket",
+            "REMOTE_BUCKET": "mybucket",
+        }
+
+        stat1 = MagicMock()
+        stat1.st_mtime_ns = 100
+        stat1.st_size = 4096
+        stat1.st_mode = 0o40755
+        stat2 = MagicMock()
+        stat2.st_mtime_ns = 100
+        stat2.st_size = 4096
+        stat2.st_mode = 0o40700
+
+        with (
+            patch("hsync_client.file_event_handler.CONFIG", config),
+            patch("hsync_client.file_event_handler.is_hidden_dir", return_value=False),
+            patch("hsync_client.file_event_handler.is_same_paths", return_value=False),
+            patch("hsync_client.file_event_handler.Dir.get", return_value=MagicMock()),
+            patch("hsync_client.file_event_handler.Path") as mock_path_cls,
+            patch("hsync_client.file_event_handler.log") as mock_log,
+            patch.object(self.handler, "_broadcast_event") as mock_broadcast,
+            patch("hsync_client.remote_websocket.run_coroutine_threadsafe"),
+            patch(
+                "hsync_client.file_event_handler.monotonic",
+                side_effect=[0.0, 0.0, 0.01, 0.01],
+            ),
+        ):
+            mock_path_cls.return_value.stat.side_effect = [stat1, stat2]
+            self.handler.dispatch(event)
+            self.handler.dispatch(event)
+
+            msgs = [str(c.args[0]) if c.args else str(c) for c in mock_log.info.call_args_list]
+            assert any("[PERMISSION]" in m and "(dir)" in m for m in msgs), msgs
+            assert mock_broadcast.call_count == 2
+
     def test_on_moved_hidden_to_hidden_ignored(self):
         """on_moved ignores moves from hidden to hidden directory."""
         event = MagicMock()

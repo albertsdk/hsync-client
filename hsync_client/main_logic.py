@@ -130,6 +130,9 @@ def _start_hsyncignore_watcher(bucket_root: str, matcher: "IgnoreMatcher") -> "A
             def on_created(self, event) -> None:  # type: ignore[override]
                 self.on_modified(event)
 
+            def on_attrib(self, event) -> None:  # type: ignore[override]
+                self.on_modified(event)
+
         if not Path(bucket_root).exists():
             return None
 

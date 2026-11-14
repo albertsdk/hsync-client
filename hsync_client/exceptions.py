@@ -14,6 +14,8 @@ Error Code Format: HSYNC-CXXXX (C = Client)
 - C4XXX: File operation errors
 """
 
+from typing import Any
+
 from hsync_common.exceptions import HSyncError
 
 
@@ -54,6 +56,30 @@ class ServerError(NetworkError):
 
     error_code = "HSYNC-C2004"
     default_message = "Server error"
+
+
+class RateLimitedError(ServerError):
+    """The server rate-limited this request (HTTP 429).
+
+    Transient by definition — the limit window refills — so the transfer retry
+    policy retries it instead of treating the file as permanently rejected.
+    ``retry_after_s`` carries the server's ``Retry-After`` delay when present, so
+    the retry wait can honour the window the server asked for instead of hammering
+    it on the blind exponential backoff.
+    """
+
+    error_code = "HSYNC-C2007"
+    default_message = "Server rate limit exceeded"
+
+    def __init__(
+        self,
+        message: str | None = None,
+        details: dict[str, Any] | None = None,
+        *,
+        retry_after_s: float | None = None,
+    ) -> None:
+        super().__init__(message, details)
+        self.retry_after_s = retry_after_s
 
 
 class BucketMissingError(ServerError):

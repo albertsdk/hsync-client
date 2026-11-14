@@ -302,6 +302,7 @@ class P2PServerHarness:
         self._fingerprint = ""
         self._server: P2PServer | None = None
         self._patcher: Any = None
+        self._rate_patcher: Any = None
 
     @property
     def bucket_dir(self) -> Path:
@@ -365,6 +366,15 @@ class P2PServerHarness:
         }
         self._patcher = patch("hsync_client.p2p_server.CONFIG", server_config)
         self._patcher.start()
+        # The L2 matrix drives thousands of requests per minute over loopback;
+        # the production per-IP admission bucket would answer 429 mid-measurement
+        # and fail the run on an unrelated limit rather than a transport defect.
+        self._rate_patcher = patch.multiple(
+            "hsync_client.p2p_server",
+            P2P_REQ_RATE_CAPACITY=10**9,
+            P2P_REQ_RATE_REFILL=10**9,
+        )
+        self._rate_patcher.start()
         self._server = P2PServer(
             port=self._port,
             use_https=True,
@@ -380,6 +390,8 @@ class P2PServerHarness:
         except BaseException:
             self._patcher.stop()
             self._patcher = None
+            self._rate_patcher.stop()
+            self._rate_patcher = None
             raise
         return self
 
@@ -391,6 +403,9 @@ class P2PServerHarness:
         if self._patcher is not None:
             self._patcher.stop()
             self._patcher = None
+        if self._rate_patcher is not None:
+            self._rate_patcher.stop()
+            self._rate_patcher = None
 
     def __enter__(self) -> P2PServerHarness:
         return self.start()
@@ -714,9 +729,9 @@ def install_failure_recorder(recorder: DownloadOutcomeRecorder) -> Any:
 
     original = P2PSourceResolver.record_failure
 
-    def recording_failure(self: Any, source: Any, kind: Any) -> None:
+    def recording_failure(self: Any, source: Any, kind: Any, **kwargs: Any) -> None:
         recorder.note_peer_result(failed_kind=str(kind))
-        original(self, source, kind)
+        original(self, source, kind, **kwargs)
 
     patcher = patch.object(P2PSourceResolver, "record_failure", recording_failure)
     patcher.start()

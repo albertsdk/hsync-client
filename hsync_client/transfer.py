@@ -10,6 +10,7 @@ synchronizing files with the remote server.
 
 import hashlib
 import hmac
+import math
 import re
 import threading
 from collections.abc import Callable, Iterator, Sized
@@ -81,6 +82,7 @@ from hsync_client.exceptions import (
     DeclaredSizeMismatchError,
     PermanentDownloadError,
     PermanentUploadError,
+    RateLimitedError,
     ServerError,
 )
 from hsync_client.p2p_inventory import NOOP_INVENTORY_OBSERVER, InventoryObserver
@@ -391,8 +393,11 @@ def _parse_retry_after(value: str | None) -> float | None:
     """Parse a ``Retry-After`` delay in seconds, or ``None`` when unusable.
 
     Only the delay-seconds form is honoured (HTTP-date is not used by the P2P
-    seeder); unparseable or negative values fall back to the local default so a
-    malformed header can never stall the requester.
+    seeder); unparseable, negative or non-finite values fall back to the local
+    default so a malformed header can never stall the requester. ``nan`` must be
+    rejected here: it parses as a float and survives every ``< 0`` comparison, so
+    a later ``sleep()`` on it raises ``ValueError`` instead of the transfer being
+    retried.
     """
     if not value:
         return None
@@ -400,7 +405,7 @@ def _parse_retry_after(value: str | None) -> float | None:
         seconds = float(value.strip())
     except ValueError:
         return None
-    if seconds < 0:
+    if not math.isfinite(seconds) or seconds < 0:
         return None
     return seconds
 
@@ -885,7 +890,9 @@ def _accept_download_response(
             kind = PeerFailureKind.not_found
         elif status == 409:
             kind = PeerFailureKind.conflict
-        elif status == 503:
+        elif status in (429, 503):
+            # 503 (busy) and 429 (rate limit) both mean "come back later": the
+            # source is deferred for Retry-After rather than counted unhealthy.
             kind = PeerFailureKind.busy
         elif 400 <= status < 500:
             kind = PeerFailureKind.malformed
@@ -914,6 +921,16 @@ def _accept_download_response(
             raise _RestartMasterDownload
         log.error(f'Unexpected range response downloading "{file.filepath}"')
         return None
+    if status == 429:
+        # Transient: the server is rate-limiting (Retry-After names its window).
+        # Raising makes the retry policy wait and re-attempt the file instead of
+        # silently skipping it until the next cycle/RESYNC.
+        retry_after_s = _parse_retry_after(response.headers.get("Retry-After"))
+        response.close()
+        raise RateLimitedError(
+            f'Server rate-limited downloading "{file.filepath}"',
+            retry_after_s=retry_after_s,
+        )
     if status >= 500:
         response.close()
         raise ServerError(f'Server error downloading "{file.filepath}": {status}')
@@ -2329,6 +2346,14 @@ def _handle_upload_response(file: File, response, t0: float) -> None:
             log.error(f'Access denied uploading "{file.filepath}"')
         case 409:
             _handle_upload_conflict_response(file, response)
+        case 429:
+            # Transient: the server rate-limited the upload. Raise a retryable
+            # error (not a permanent 4xx) so the wrapper waits and re-attempts
+            # instead of dropping the file until the next cycle/RESYNC.
+            raise RateLimitedError(
+                f'Server rate-limited uploading "{file.filepath}"',
+                retry_after_s=_parse_retry_after(response.headers.get("Retry-After")),
+            )
         case code if code >= 500:
             # Transient server-side failure: raise so the wrapper backs off.
             raise ServerError(f'Server error uploading "{file.filepath}": {code}')

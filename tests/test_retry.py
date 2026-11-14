@@ -55,6 +55,13 @@ def _mock_400_response() -> MagicMock:
     return resp
 
 
+def _mock_429_response(retry_after: str = "0") -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = 429
+    resp.headers = {"Retry-After": retry_after}
+    return resp
+
+
 class TestUploadRetryBehavior:
     """Tests that verify the actual retry mechanism for uploads."""
 
@@ -164,6 +171,40 @@ class TestUploadRetryBehavior:
 
         assert call_count == 2  # 1 failure + 1 success
 
+    def test_retries_on_rate_limit_429(self, tmp_path):
+        """Upload is retried on 429 (rate limit), which is transient not permanent."""
+        local = tmp_path / "local"
+        local.mkdir()
+        test_file = local / "f.txt"
+        test_file.write_bytes(b"retry on rate limit")
+
+        file = File(
+            filepath=str(test_file),
+            sha256sum="abc123",
+            size=len(b"retry on rate limit"),
+        )
+
+        call_count = 0
+
+        def _rate_limited_then_success(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                return _mock_429_response()
+            return _mock_200_response()
+
+        with (
+            patch("hsync_client.transfer.CONFIG", _RETRY_CONFIG),
+            patch("hsync_client.transfer.post", side_effect=_rate_limited_then_success),
+            patch("hsync_client.transfer.compute_sha256", return_value="abc123"),
+            patch("hsync_client.transfer._wait_for_stable_file", return_value=True),
+            patch("hsync_client.transfer._record_synced_base"),
+            patch("hsync_client.transfer.prepare_delta_upload", return_value=None),
+        ):
+            upload_file(file, check_size=False)
+
+        assert call_count == 2  # 1 rate-limited + 1 success
+
     def test_emits_transfer_failed_after_all_retries_exhausted(self, tmp_path):
         """After max retries, the failure is surfaced via transfer_failed event."""
         local = tmp_path / "local"
@@ -259,3 +300,80 @@ class TestDownloadRetryBehavior:
 
         # 404 should not be retried — one attempt only
         assert call_count == 1
+
+    def test_retries_on_rate_limit_429(self, tmp_path):
+        """Download is retried on 429 (rate limit), not skipped as permanent."""
+        local = tmp_path / "local"
+        local.mkdir()
+
+        file = File(filepath="remote/f.txt", sha256sum="abc123", size=12)
+
+        call_count = 0
+
+        def _rate_limited_then_success(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                return _mock_429_response()
+            return _mock_200_response()
+
+        with (
+            patch("hsync_client.transfer.CONFIG", _RETRY_CONFIG),
+            patch("hsync_client.transfer.get", side_effect=_rate_limited_then_success),
+            patch("hsync_client.transfer.compute_sha256", return_value="abc123"),
+            patch("hsync_client.transfer.is_sha256_hex", return_value=True),
+            patch("hsync_client.transfer.replace"),
+            patch("hsync_client.transfer._record_synced_base"),
+            patch("hsync_client.transfer.prepare_delta_download", return_value=None),
+        ):
+            download_file(file)
+
+        assert call_count == 2  # 1 rate-limited + 1 success
+
+
+class TestRetryAfterWait:
+    """The retry wait honours a server ``Retry-After`` within the policy bound."""
+
+    @staticmethod
+    def _state(exc: BaseException | None) -> MagicMock:
+        outcome = MagicMock()
+        outcome.exception.return_value = exc
+        state = MagicMock(outcome=outcome)
+        state.attempt_number = 1
+        return state
+
+    def test_honours_retry_after(self):
+        from hsync_client.exceptions import RateLimitedError
+        from hsync_client.retry import _RetryAfterWait
+
+        wait = _RetryAfterWait(min_wait=1.0, max_wait=10.0)
+        delay = wait(self._state(RateLimitedError("429", retry_after_s=7.0)))
+
+        assert delay == 7.0
+
+    def test_caps_retry_after_at_max_wait(self):
+        from hsync_client.exceptions import RateLimitedError
+        from hsync_client.retry import _RetryAfterWait
+
+        wait = _RetryAfterWait(min_wait=1.0, max_wait=10.0)
+        delay = wait(self._state(RateLimitedError("429", retry_after_s=60.0)))
+
+        assert delay == 10.0
+
+    def test_falls_back_to_exponential_without_retry_after(self):
+        from hsync_client.retry import _RetryAfterWait
+
+        wait = _RetryAfterWait(min_wait=1.0, max_wait=10.0)
+        delay = wait(self._state(RequestException("blip")))
+
+        assert 1.0 <= delay <= 10.0
+
+    def test_falls_back_to_exponential_on_non_finite_retry_after(self):
+        """A non-finite Retry-After must not become a sleep(nan) ValueError."""
+        from hsync_client.exceptions import RateLimitedError
+        from hsync_client.retry import _RetryAfterWait
+
+        wait = _RetryAfterWait(min_wait=1.0, max_wait=10.0)
+        delay = wait(self._state(RateLimitedError("429", retry_after_s=float("nan"))))
+
+        assert 1.0 <= delay <= 10.0

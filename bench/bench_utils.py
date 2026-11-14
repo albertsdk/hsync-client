@@ -86,7 +86,7 @@ def main() -> None:
     assert inbound_size_cap(None, 0) is None
     assert inbound_size_cap(None, 4096) == 4096
     assert http_connect_timeout() == 30.0
-    assert upload_timeout() == (30.0, None)
+    assert upload_timeout() == (30.0, 60.0)
     assert is_same_paths("/srv/a/./b", "/srv/a/b") is True
     assert ensure_str_path(b"abc") == "abc" and ensure_str_path(None) == ""
     assert normalize_bucket_relpath(f"{_BUCKET_ROOT}/a/b.txt", _BUCKET_ROOT) == "a/b.txt"
@@ -120,7 +120,7 @@ def main() -> None:
         assert http_connect_timeout() == 30.0
 
     def op_upload_timeout() -> None:
-        assert upload_timeout() == (30.0, None)
+        assert upload_timeout() == (30.0, 60.0)
 
     def op_is_same_paths() -> None:
         assert is_same_paths("/srv/a/./b", "/srv/a/b") is True

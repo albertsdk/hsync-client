@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A `chmod` or a `touch` was silently lost on Linux with watchdog 7 (the
+  metadata change arrived as a dedicated `attrib` event the client never read),
+  so permissions and mtime converged only at the periodic resync.
+- A server or peer `429` no longer drops the file: the transfer is retried,
+  honouring the server's `Retry-After` within the per-file retry bound.
+
 ## [1.1.2] - 2026-11-12
 
 ### Added

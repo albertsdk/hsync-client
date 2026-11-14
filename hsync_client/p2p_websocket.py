@@ -2632,6 +2632,16 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
                     )
                     self._schedule_create_upload(src_path)
 
+    def on_attrib(self, event) -> None:
+        """Handle a metadata-only event (watchdog >= 7 ``attrib``).
+
+        A chmod or a touch raises ``IN_ATTRIB``, which watchdog 7 reports as a
+        dedicated ``FileAttribEvent``/``DirAttribEvent``. The permission/touch
+        classification below is already the correct handling for it, so route
+        the event to ``on_modified`` instead of duplicating the branch.
+        """
+        self.on_modified(event)
+
     def on_modified(self, event) -> None:
         """Handle file/directory modification events."""
         src_path = ensure_str_path(event.src_path)

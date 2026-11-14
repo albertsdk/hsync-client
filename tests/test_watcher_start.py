@@ -97,6 +97,22 @@ class TestInotifyEventFilter:
 
         assert captured["event_filter"] == _INOTIFY_EVENT_FILTER
 
+    def test_inotify_filter_carries_attrib_events(self):
+        """Inotify chmod/touch events (``attrib``) must survive the filter.
+
+        Regression: watchdog 7 reports ``IN_ATTRIB`` as a dedicated
+        ``FileAttribEvent``/``DirAttribEvent`` and ``queue_event`` drops any
+        event matching no filter class, so omitting them silently discarded
+        every chmod and touch before the handler could see it.
+        """
+        from watchdog.events import DirAttribEvent, FileAttribEvent
+
+        from hsync_client.watcher import _INOTIFY_EVENT_FILTER
+
+        filter_set = set(_INOTIFY_EVENT_FILTER)
+        assert FileAttribEvent in filter_set, "file attrib events must be kept"
+        assert DirAttribEvent in filter_set, "directory attrib events must be kept"
+
     def test_polling_schedule_carries_no_filter(self):
         from hsync_client.watcher import _INOTIFY_EVENT_FILTER
 

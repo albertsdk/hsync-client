@@ -62,8 +62,8 @@ from common import (  # noqa: E402  (import after sys.path tweak)
 )
 from hsync_common.protocol.tls_trust import TrustPolicy  # noqa: E402
 
-from hsync_client.rdv_client import (  # noqa: E402
-    RendezvousClient,
+from hsync_client.rdv_client import RendezvousClient  # noqa: E402
+from hsync_client.rdv_frames import (  # noqa: E402
     build_leave_frame,
     build_query_frame,
     build_refresh_frame,

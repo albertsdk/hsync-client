@@ -590,7 +590,8 @@ the new `_on_metadata_changed` hook), records the touch with
 version (`_attach_effective_version`) and broadcasts a `modified` event; the
 slave adopts the advertised mtime locally in `sync.update_file` when its own
 version is not causally ahead. The reverse direction is symmetric: the slave's
-`on_modified` tracks the mtime next to the mode and, on a content-identical
+`on_modified` (reached from the watchdog ≥ 7 `attrib` event via `on_attrib`)
+tracks the mtime next to the mode and, on a content-identical
 touch, pushes a metadata-only PATCH to the master
 (`P2PSlaveFileEventHandler._propagate_metadata_change`). No bytes cross the wire.
 

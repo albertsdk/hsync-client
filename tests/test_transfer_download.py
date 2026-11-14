@@ -1077,6 +1077,34 @@ class TestPeerDownloadFallback:
             source, PeerFailureKind.busy, retry_after_s=1.25
         )
 
+    def test_peer_429_defers_the_source_like_a_busy_seeder(self, tmp_path):
+        """A rate-limited peer is deferred (busy), never a permanent malformed failure."""
+        import hashlib
+
+        content = b"master payload"
+        digest = hashlib.sha256(content).hexdigest()
+        file = File(filepath="limited.txt", sha256sum=digest, size=len(content))
+        source = self._source("r" * 21)
+        resolver = self._resolver((source,))
+        limited = MagicMock()
+        limited.status_code = 429
+        limited.headers = {"Retry-After": "0.75"}
+        master = self._response(content, digest)
+
+        with (
+            patch("hsync_client.transfer.CONFIG", self._config(tmp_path)),
+            patch("hsync_client.transfer.get", side_effect=[limited, master]) as mock_get,
+            patch("hsync_client.transfer.get_ssl_verify", return_value=False),
+            patch("hsync_client.transfer._record_synced_base"),
+        ):
+            download_file(file, source_resolver=resolver)
+
+        assert (tmp_path / "limited.txt").read_bytes() == content
+        assert mock_get.call_count == 2
+        resolver.record_failure.assert_called_once_with(
+            source, PeerFailureKind.busy, retry_after_s=0.75
+        )
+
     def test_peer_disconnect_resumes_same_partial_from_master(self, tmp_path):
         """An interrupted exact body preserves its prefix for the next source."""
         import hashlib
@@ -1380,6 +1408,9 @@ class TestRetryAfterParsing:
             ("abc", None),
             ("-3", None),
             ("Wed, 21 Oct 2015 07:28:00 GMT", None),
+            ("nan", None),
+            ("inf", None),
+            ("-inf", None),
         ],
     )
     def test_only_a_non_negative_delay_seconds_is_accepted(self, header, expected):

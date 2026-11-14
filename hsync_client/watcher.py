@@ -36,10 +36,12 @@ from typing import Any
 
 from loguru import logger as log
 from watchdog.events import (
+    DirAttribEvent,
     DirCreatedEvent,
     DirDeletedEvent,
     DirModifiedEvent,
     DirMovedEvent,
+    FileAttribEvent,
     FileClosedEvent,
     FileCreatedEvent,
     FileDeletedEvent,
@@ -59,11 +61,22 @@ from hsync_client.events import emit_warning, emit_warning_cleared
 # ~6x slower dispatch with downloads running). FileClosedEvent (IN_CLOSE_WRITE)
 # stays: it is the file-ready signal after a save. The polling backend is
 # unaffected (no filter passed).
+#
+# FileAttribEvent/DirAttribEvent matter since watchdog 7: a chmod or a touch
+# (IN_ATTRIB) is reported as a dedicated ``attrib`` event, not as
+# FileModifiedEvent. ``queue_event`` drops any event that matches no filter
+# class, so omitting them silently discards every chmod/touch before the
+# handler sees it. IN_ATTRIB stays in the *kernel mask* because the
+# DirModifiedEvent/FileModifiedEvent entries already request it in watchdog's
+# ``get_event_mask_from_filter``; the Attrib entries only widen the
+# queue-side filter. The handler routes ``on_attrib`` to ``on_modified``.
 _INOTIFY_EVENT_FILTER: tuple[type[Any], ...] = (
+    DirAttribEvent,
     DirCreatedEvent,
     DirDeletedEvent,
     DirModifiedEvent,
     DirMovedEvent,
+    FileAttribEvent,
     FileClosedEvent,
     FileCreatedEvent,
     FileDeletedEvent,
