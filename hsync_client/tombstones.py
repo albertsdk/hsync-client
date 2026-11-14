@@ -156,6 +156,21 @@ def clear_deletion(abs_path: str) -> None:
             store.save()
 
 
+def marker_vclock(relpath: str) -> dict[str, int] | None:
+    """Return the deletion marker's clock for a bucket-relative path, or ``None``.
+
+    Takes the *relative* path (the store's own key space) so callers that already
+    hold one — ``sync_state`` minting a version — do not re-resolve an absolute
+    path. Used to seed a re-created file's clock past the marker it superseded.
+    """
+    with _lock:
+        entry = get_tombstone_store().get(relpath)
+    if not entry:
+        return None
+    vclock = entry.get("vclock")
+    return dict(vclock) if vclock else None
+
+
 def merge_payload(payload: dict[str, TombstoneEntry] | None) -> int:
     """Merge a remote (master) payload causally; persist and return change count."""
     with _lock:

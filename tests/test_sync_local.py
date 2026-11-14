@@ -13,7 +13,7 @@ import pytest
 from hsync_common.models.file import File, clear_sha256_cache
 from hsync_common.models.sync_action import SyncActionName
 from hsync_common.models.tombstone import tombstone_key
-from hsync_common.models.version import merge_vclocks
+from hsync_common.models.version import VClockOrder, compare_vclocks, merge_vclocks
 
 from hsync_client import sync_state as ss_mod
 from hsync_client import tombstones as ts_mod
@@ -1837,6 +1837,20 @@ class TestClientTombstonesModule:
 
             assert ts_mod.get_payload() == {}
 
+    def test_marker_vclock_returns_the_marker_clock(self, tmp_path):
+        """marker_vclock exposes the marker clock for a bucket-relative path."""
+        cid = _peer_cid("R")
+        with patch("hsync_client.state_backend.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            assert ts_mod.marker_vclock("gone.txt") is None
+            ts_mod.record_deletion(
+                str(tmp_path / "gone.txt"),
+                sha256sum="abc",
+                origin_cid=cid,
+                timestamp=int(time.time()),
+            )
+
+            assert ts_mod.marker_vclock("gone.txt") == {cid: 1}
+
     def test_merge_payload_causal(self, tmp_path):
         """merge_payload adopts causally dominant markers and reports the change count."""
         now = int(time.time())
@@ -2208,6 +2222,56 @@ class TestClientSyncStateModule:
             # Drop the in-memory cache so the next access loads from the side-car.
             ss_mod._stores.clear()
             assert ss_mod.get_base_hash(str(tmp_path / "a.txt")) == "hh"
+
+    def test_note_local_edit_dominates_the_paths_deletion_marker(self, tmp_path):
+        """A path re-created after a deletion must mint a clock past its marker.
+
+        Regression: minting from an empty clock (``tick_vclock(None, cid)``) made
+        the fresh version a causal *ancestor* of the marker, so any peer still
+        holding the marker proved the re-creation stale and deleted it on both
+        sides (observed as a re-created file disappearing in the p2p soak).
+        """
+        target = tmp_path / "recreated.txt"
+        cid = _peer_cid("M")
+        with patch(
+            "hsync_client.state_backend.CONFIG",
+            {"LOCAL_BUCKET": str(tmp_path), "CID": cid},
+        ):
+            ts_mod.record_deletion(
+                str(target),
+                sha256sum="a" * 64,
+                origin_cid=_peer_cid("R"),
+                timestamp=int(time.time()),
+            )
+            marker = ts_mod.marker_vclock("recreated.txt")
+            assert marker == {_peer_cid("R"): 1}
+
+            ss_mod.note_local_edit(str(target), "b" * 64)
+
+            minted = ss_mod.get_vclock(str(target))
+            assert minted is not None
+            assert compare_vclocks(minted, marker) is VClockOrder.dominates
+
+    def test_local_version_for_compare_dominates_the_deletion_marker(self, tmp_path):
+        """The advertised version of a re-creation also supersedes the marker."""
+        target = tmp_path / "recreated.txt"
+        cid = _peer_cid("M")
+        with patch(
+            "hsync_client.state_backend.CONFIG",
+            {"LOCAL_BUCKET": str(tmp_path), "CID": cid},
+        ):
+            ts_mod.record_deletion(
+                str(target),
+                sha256sum="a" * 64,
+                origin_cid=_peer_cid("R"),
+                timestamp=int(time.time()),
+            )
+            marker = ts_mod.marker_vclock("recreated.txt")
+
+            eff = ss_mod.local_version_for_compare(str(target), "b" * 64)
+
+            assert eff is not None
+            assert compare_vclocks(eff["vclock"], marker) is VClockOrder.dominates
 
 
 # Fixed mtime (unix seconds) shared by every peer and the server below, so the

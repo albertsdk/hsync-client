@@ -30,6 +30,7 @@ from hsync_common.models.version import SyncStateStore, merge_vclocks, new_versi
 from loguru import logger as log
 
 from hsync_client.state_backend import bucket_dir, local_cid, resolve_bucket_folder
+from hsync_client.tombstones import marker_vclock
 
 # Cache of per-folder stores, keyed by folder UUID. Tests that switch
 # LOCAL_BUCKET stay isolated because a new directory gets a new marker.
@@ -187,6 +188,23 @@ def local_version_and_base(
     return _local_compare(abs_path, current_hash)
 
 
+def _mint_clock(relpath: str, entry: dict | None, cid: str) -> dict[str, int]:
+    """Advance a path's clock, seeded from the deletion marker it superseded.
+
+    A path re-created after a deletion has no stored version (the delete removed
+    it) but keeps the marker, whose clock dominates the deleted file. Minting
+    from an empty clock (``tick_vclock(None, cid)``) makes the fresh version a
+    causal *ancestor* of the marker, so every peer holding the marker proves it
+    stale and deletes the re-creation — a re-created file disappearing on both
+    peers (add-wins requires the re-creation to be causally after the deletion,
+    ADR-0003).
+    """
+    return tick_vclock(
+        merge_vclocks(entry["vclock"] if entry else None, marker_vclock(relpath)),
+        cid,
+    )
+
+
 def _local_compare(
     abs_path: str,
     current_hash: str | None,
@@ -210,7 +228,7 @@ def _local_compare(
                             "version_id": "",
                             "origin_cid": cid,
                             "ts": 0,
-                            "vclock": tick_vclock(None, cid),
+                            "vclock": _mint_clock(relpath, None, cid),
                             "corrected_mtime": _corrected_mtime_of(abs_path),
                         },
                         stored_base,
@@ -225,7 +243,7 @@ def _local_compare(
                         "version_id": entry["version_id"],
                         "origin_cid": cid,
                         "ts": entry["ts"],
-                        "vclock": tick_vclock(entry["vclock"], cid),
+                        "vclock": _mint_clock(relpath, entry, cid),
                         "corrected_mtime": _corrected_mtime_of(abs_path),
                     },
                     stored_base,
@@ -263,7 +281,7 @@ def note_local_edit(abs_path: str, current_hash: str) -> None:
         store.record(
             relpath,
             base_hash=current_hash,
-            vclock=tick_vclock(entry["vclock"] if entry else None, cid),
+            vclock=_mint_clock(relpath, entry, cid),
             version_id=new_version_id(),
             origin_cid=cid,
             corrected_mtime=_corrected_mtime_of(abs_path),

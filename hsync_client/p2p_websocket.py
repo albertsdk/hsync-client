@@ -1424,8 +1424,17 @@ class P2PMasterFileEventHandler(BaseFileEventHandler):
             f'{self._label(label, src_path)} "{src_path}"'
             f" ({actual_trigger}){self._cid_suffix(src_path)}"
         )
-        # A (re-)created/modified file invalidates any prior deletion marker so
-        # peers do not delete the freshly written file on their next full sync.
+        # Anti-aliasing invariant (§3.4.7): persist the self-record for a
+        # *local* edit before broadcasting. Inbound edits (written on behalf
+        # of a peer via the HTTP API) are skipped — their clock was already
+        # registered with the merged history at upload acceptance (ADR-0022 §5), and a
+        # tick here would mis-attribute the edit to the master.
+        self._publish_modified(file, src_path, "local edit")
+        # Order matters: the broadcast resolves the file's version by reading
+        # the path's deletion marker so the new clock can supersede it. Clearing
+        # the marker first would restart the clock from scratch, and the peers —
+        # which still hold theirs — would prove the fresh file stale and delete
+        # it on both sides. The local marker is obsolete only after the mint.
         # Best-effort: tombstone bookkeeping must never break event propagation.
         try:
             from hsync_client.tombstones import clear_deletion
@@ -1433,12 +1442,6 @@ class P2PMasterFileEventHandler(BaseFileEventHandler):
             clear_deletion(src_path)
         except Exception as e:  # pragma: no cover - defensive
             log.debug(f"Could not clear tombstone for {src_path}: {e}")
-        # Anti-aliasing invariant (§3.4.7): persist the self-record for a
-        # *local* edit before broadcasting. Inbound edits (written on behalf
-        # of a peer via the HTTP API) are skipped — their clock was already
-        # registered with the merged history at upload acceptance (ADR-0022 §5), and a
-        # tick here would mis-attribute the edit to the master.
-        self._publish_modified(file, src_path, "local edit")
 
     def _on_deleted(self, src_path: str, is_directory: bool) -> None:
         """Record a deletion marker so offline peers do not resurrect the path.
