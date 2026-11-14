@@ -2252,6 +2252,73 @@ class TestClientSyncStateModule:
             assert minted is not None
             assert compare_vclocks(minted, marker) is VClockOrder.dominates
 
+    def test_no_history_mint_never_reuses_a_published_counter(self, tmp_path):
+        """A path that lost its row and marker must not re-mint a published counter.
+
+        ADR-0022 node-scope anti-aliasing: with no retained history the mint
+        reserves the installation counter, so neither this node's earlier version
+        nor a peer marker carrying that counter can dominate the fresh version —
+        which would delete the re-creation on both peers.
+        """
+        target = tmp_path / "restored.txt"
+        cid = _peer_cid("M")
+        cfg = {"LOCAL_BUCKET": str(tmp_path), "CID": cid}
+        with (
+            patch("hsync_client.state_backend.CONFIG", cfg),
+            patch("hsync_client.sync.CONFIG", {**cfg, "SYNC_DIRECTION": "bidirectional"}),
+        ):
+            target.write_text("v1")
+            ss_mod.note_local_edit(str(target), "a" * 64)
+            published = ss_mod.get_vclock(str(target))
+            assert published == {cid: 1}
+
+            # The file vanished outside the watcher: the row is dropped and no
+            # marker is recorded, so the path keeps no causal history at all.
+            ss_mod.retain([])
+            assert ss_mod.get_vclock(str(target)) is None
+            assert ts_mod.marker_vclock("restored.txt") is None
+
+            target.write_text("v2")
+            ss_mod.note_local_edit(str(target), "b" * 64)
+            minted = ss_mod.get_vclock(str(target))
+
+        assert minted is not None
+        assert minted != published
+        assert compare_vclocks(minted, published) is VClockOrder.dominates
+        # A peer marker holding the counter this node published earlier no longer
+        # proves the fresh version stale.
+        peer_marker = dict(published, **{_peer_cid("D"): 1})
+        assert compare_vclocks(peer_marker, minted) is not VClockOrder.dominates
+
+    def test_compare_mint_is_pure_and_deterministic(self, tmp_path):
+        """The pure compare API must not reserve a counter or vary between calls.
+
+        ADR-0022 §3.4.7: ``local_version_for_compare`` never mutates the store.
+        With no stored history the would-be clock is a plain tick, so a dry-run
+        preview neither advances the installation counter nor returns a different
+        version on a second call for the same unchanged file.
+        """
+        target = tmp_path / "fresh.txt"
+        cid = _peer_cid("M")
+        with (
+            patch(
+                "hsync_client.state_backend.CONFIG",
+                {"LOCAL_BUCKET": str(tmp_path), "CID": cid},
+            ),
+            patch("hsync_client.sync_state.get_sync_state_store") as store,
+        ):
+            store.return_value.next_clock_counter.side_effect = AssertionError(
+                "the pure compare path must not reserve a counter"
+            )
+            target.write_text("v1")
+            first = ss_mod.local_version_for_compare(str(target), "a" * 64)
+            second = ss_mod.local_version_for_compare(str(target), "a" * 64)
+
+        assert first is not None
+        assert first["vclock"] == {cid: 1}
+        assert second is not None
+        assert second["vclock"] == first["vclock"]
+
     def test_local_version_for_compare_dominates_the_deletion_marker(self, tmp_path):
         """The advertised version of a re-creation also supersedes the marker."""
         target = tmp_path / "recreated.txt"

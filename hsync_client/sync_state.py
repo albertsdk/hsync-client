@@ -188,7 +188,7 @@ def local_version_and_base(
     return _local_compare(abs_path, current_hash)
 
 
-def _mint_clock(relpath: str, entry: dict | None, cid: str) -> dict[str, int]:
+def _mint_clock(relpath: str, entry: dict | None, cid: str, *, reserve: bool) -> dict[str, int]:
     """Advance a path's clock, seeded from the deletion marker it superseded.
 
     A path re-created after a deletion has no stored version (the delete removed
@@ -198,11 +198,26 @@ def _mint_clock(relpath: str, entry: dict | None, cid: str) -> dict[str, int]:
     stale and deletes the re-creation — a re-created file disappearing on both
     peers (add-wins requires the re-creation to be causally after the deletion,
     ADR-0003).
+
+    With no retained history at all (no version row **and** no marker: the file
+    vanished outside the watcher, e.g. an unmounted volume, and came back) the
+    counter is taken from the installation-wide floor instead of restarting at 1,
+    so a counter this node already published for the path is never minted twice
+    and a peer's surviving marker cannot dominate the fresh version (the
+    node-scope anti-aliasing invariant, ADR-0022).
+
+    ``reserve`` selects how that floor is consulted. The persisting mint
+    (``note_local_edit``) reserves a never-published value (a durable counter
+    increment). The compare mint (``_local_compare``, used by the pure preview
+    APIs) must stay pure and deterministic, so it ticks from an empty clock
+    without touching the store.
     """
-    return tick_vclock(
-        merge_vclocks(entry["vclock"] if entry else None, marker_vclock(relpath)),
-        cid,
-    )
+    seed = merge_vclocks(entry["vclock"] if entry else None, marker_vclock(relpath))
+    if not seed:
+        if reserve:
+            return {cid: get_sync_state_store().next_clock_counter()}
+        return tick_vclock(None, cid)
+    return tick_vclock(seed, cid)
 
 
 def _local_compare(
@@ -228,7 +243,7 @@ def _local_compare(
                             "version_id": "",
                             "origin_cid": cid,
                             "ts": 0,
-                            "vclock": _mint_clock(relpath, None, cid),
+                            "vclock": _mint_clock(relpath, None, cid, reserve=False),
                             "corrected_mtime": _corrected_mtime_of(abs_path),
                         },
                         stored_base,
@@ -243,7 +258,7 @@ def _local_compare(
                         "version_id": entry["version_id"],
                         "origin_cid": cid,
                         "ts": entry["ts"],
-                        "vclock": _mint_clock(relpath, entry, cid),
+                        "vclock": _mint_clock(relpath, entry, cid, reserve=False),
                         "corrected_mtime": _corrected_mtime_of(abs_path),
                     },
                     stored_base,
@@ -281,7 +296,7 @@ def note_local_edit(abs_path: str, current_hash: str) -> None:
         store.record(
             relpath,
             base_hash=current_hash,
-            vclock=_mint_clock(relpath, entry, cid),
+            vclock=_mint_clock(relpath, entry, cid, reserve=True),
             version_id=new_version_id(),
             origin_cid=cid,
             corrected_mtime=_corrected_mtime_of(abs_path),
