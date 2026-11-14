@@ -18,6 +18,42 @@ Environment Variables:
 """
 
 import multiprocessing
+import sys
+
+
+def _answer_display_flag() -> bool:
+    """Answer the eager global display flags before the CLI is imported.
+
+    ``--version``/``-V`` and ``--help-symbols`` are eager parent-level callbacks:
+    Typer prints and exits during parsing, before any command runs, so they can be
+    served here for a fraction of the cost. Every real command still goes through
+    Typer unchanged.
+
+    Only a *leading* flag is intercepted. ``hsync server --version`` and every
+    other argument combination keep their existing Typer semantics (no token
+    after the flag is inspected), so this can only replace a path Typer would
+    have resolved to the same output.
+
+    Returns ``True`` when it answered the flag and the caller must stop.
+    """
+    argv = sys.argv[1:]
+    if not argv:
+        return False
+
+    if argv[0] in ("-V", "--version"):
+        from hsync_common.constants import HSYNC_VERSION
+
+        print(f"hsync {HSYNC_VERSION}")
+        return True
+
+    if argv[0] == "--help-symbols":
+        from hsync_client.log_labels import legend_lines
+
+        for line in legend_lines():
+            print(line)
+        return True
+
+    return False
 
 
 def main() -> None:
@@ -33,6 +69,9 @@ def main() -> None:
     into the helper diversion; outside a frozen build it is a no-op.
     """
     multiprocessing.freeze_support()
+
+    if _answer_display_flag():
+        return
 
     # Imported here, after the helper diversion, so the diverted child never
     # pays for the heavy CLI import.
