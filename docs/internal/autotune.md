@@ -67,6 +67,11 @@ NVMe is detected by `nvme*` prefix. Device-mapper/LVM is resolved via
 
 **Scope**: only the sync root (`LOCAL_BUCKET`) is probed, never the system disk.
 
+**Platform**: `/proc/self/mountinfo` and `/sys/class/block` are Linux-only, so
+off Linux the probe is skipped entirely (`_HAS_LINUX_BLOCK_PROBE` is false) and
+returns `UNKNOWN` without the failure warning — otherwise every Windows/macOS
+run would log a spurious probe failure.
+
 **Container caveat**: inside a container the device→sysfs mapping often breaks
 (bind mounts, overlay). The probe fails → `UNKNOWN` → conservative defaults.
 

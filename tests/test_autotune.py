@@ -361,6 +361,17 @@ class TestDetectStorageType:
         result = detect_storage_type(str(tmp_path))
         assert result == StorageType.UNKNOWN
 
+    def test_non_linux_returns_unknown_without_probing(self, monkeypatch):
+        """The ``/proc``+``/sys`` probe is Linux-only (regression: off Linux it
+        always logged a spurious failure and assumed HDD-class on every run)."""
+
+        def _fail(*_args, **_kw):
+            raise AssertionError("the Linux block probe must not run off Linux")
+
+        monkeypatch.setattr("hsync_client.autotune._HAS_LINUX_BLOCK_PROBE", False)
+        monkeypatch.setattr("hsync_client.autotune._find_base_block_device", _fail)
+        assert detect_storage_type("/whatever") == StorageType.UNKNOWN
+
 
 class TestMeasureBandwidthActive:
     """Active bandwidth probe: failure → None."""

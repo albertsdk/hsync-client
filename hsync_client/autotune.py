@@ -19,6 +19,7 @@ Architecture
    auto-tuning is disabled or probes fail.
 """
 
+import sys
 from dataclasses import dataclass
 from enum import StrEnum
 from socket import create_connection
@@ -282,9 +283,18 @@ def classify_bandwidth(
 # Probes — §3.3  Local storage type
 # =============================================================================
 
+# The storage-class probe reads ``/proc/self/mountinfo`` and
+# ``/sys/class/block/<dev>/queue/rotational``, both Linux-only. Elsewhere the
+# class is simply unknown (the conservative HDD-class default applies) — and
+# probing would only emit a spurious failure warning.
+_HAS_LINUX_BLOCK_PROBE = sys.platform == "linux"
+
 
 def detect_storage_type(path: str) -> StorageType:
     """Return the storage-device class of the filesystem backing *path*."""
+    if not _HAS_LINUX_BLOCK_PROBE:
+        return StorageType.UNKNOWN
+
     import os
     from pathlib import Path
 

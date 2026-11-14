@@ -139,6 +139,47 @@ class TestInotifyEventFilter:
         assert _INOTIFY_EVENT_FILTER  # the tuple itself is never empty
 
 
+class TestNativeObserverKwarg:
+    """The inotify-only ``generate_full_events`` kwarg must not be passed off Linux.
+
+    Regression: ``watchdog.observers.Observer`` is ``WindowsApiObserver`` on
+    Windows (and FSEventsObserver/kqueue elsewhere); none accepts
+    ``generate_full_events``, so building the native observer with it raised a
+    ``TypeError`` that ``WatcherManager.start`` (which only catches ``OSError``)
+    did not translate into the polling fallback — the watcher never started.
+    """
+
+    def test_native_observer_built_without_generate_full_events(self, monkeypatch):
+        import hsync_client.watcher as watcher
+
+        captured: list[dict[str, Any]] = []
+
+        class _NativeObserver:
+            def __init__(self, **kwargs: Any) -> None:
+                captured.append(kwargs)
+
+        monkeypatch.setattr(watcher, "_HAS_INOTIFY", False)
+        monkeypatch.setattr("watchdog.observers.Observer", _NativeObserver)
+        watcher.WatcherManager._new_observer("inotify")
+
+        assert captured == [{}], "the native observer must be built without the kwarg"
+
+    def test_inotify_observer_requests_full_events(self, monkeypatch):
+        import hsync_client.watcher as watcher
+
+        captured: list[dict[str, Any]] = []
+
+        class _InotifyObserver:
+            def __init__(self, **kwargs: Any) -> None:
+                captured.append(kwargs)
+
+        monkeypatch.setattr(watcher, "_HAS_INOTIFY", True)
+        monkeypatch.setattr("watchdog.observers.Observer", _InotifyObserver)
+        watcher.WatcherManager._new_observer("inotify")
+
+        assert captured == [{"generate_full_events": True}]
+
+
 class TestWatcherOserrorClass:
     """Classifier: inotify limits, FD exhaustion, and pass-through."""
 

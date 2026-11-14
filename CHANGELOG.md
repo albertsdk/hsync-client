@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A file re-created at a path that had been deleted is no longer deleted again
   on both peers: its version clock is now seeded from the deletion marker it
   supersedes instead of starting from scratch.
+- The file watcher no longer fails to start on Windows and macOS: the
+  inotify-only `generate_full_events` argument is no longer passed to the
+  platform-native observer, which rejects it.
+- Storage detection is skipped off Linux instead of logging a spurious
+  "storage detection failed" warning and assuming HDD-class on every run.
 
 ## [1.1.2] - 2026-11-12
 

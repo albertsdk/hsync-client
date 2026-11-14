@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import contextlib
 import errno
+import sys
 import threading
 from enum import StrEnum
 from typing import Any
@@ -50,6 +51,11 @@ from watchdog.events import (
 )
 
 from hsync_client.events import emit_warning, emit_warning_cleared
+
+# ``watchdog.observers.Observer`` is the platform-native observer: InotifyObserver
+# on Linux, WindowsApiObserver / FSEventsObserver / KqueueObserver elsewhere.
+# Only the Linux inotify observer accepts ``generate_full_events``.
+_HAS_INOTIFY = sys.platform == "linux"
 
 # Per-watch event filter for the inotify backend: every class maps to the
 # kernel mask bits its handler consumes, EXCEPT FileOpenedEvent and
@@ -323,6 +329,14 @@ class WatcherManager:
     def _new_observer(backend: str) -> Any:
         if backend == "inotify":
             from watchdog.observers import Observer
+
+            if not _HAS_INOTIFY:
+                # Off Linux ``Observer`` is the platform-native watcher
+                # (WindowsApiObserver / FSEventsObserver / kqueue), whose
+                # ``__init__`` has no ``generate_full_events`` parameter:
+                # passing it raises TypeError and aborts the watcher start
+                # (the OSError fallback in ``start`` does not catch TypeError).
+                return Observer()
 
             # generate_full_events: report moves whose other end lies outside
             # the watched tree as move events with an empty source/destination
