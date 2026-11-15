@@ -32,11 +32,11 @@ def _wait_for(predicate, timeout: float = 5.0) -> bool:
 class TestStdinCommandHandlerInit:
     """Tests for StdinCommandHandler initialization."""
 
-    def test_init_creates_empty_handlers(self):
-        """Handler dict is empty on creation."""
+    def test_init_registers_only_the_builtin_stop(self):
+        """A new reader knows only the built-in STOP command."""
         log = MagicMock()
         handler = StdinCommandHandler(log)
-        assert handler._handlers == {}
+        assert list(handler._handlers) == [stdin_commands.STOP_COMMAND]
 
     def test_init_should_stop_false(self):
         """_should_stop is False on creation."""
@@ -71,7 +71,7 @@ class TestRegister:
         handler = StdinCommandHandler(log)
         handler.register("CMD1", MagicMock())
         handler.register("CMD2", MagicMock())
-        assert len(handler._handlers) == 2
+        assert {"CMD1", "CMD2"} <= set(handler._handlers)
 
     def test_register_overwrites(self):
         """Registering same command overwrites previous handler."""
@@ -425,6 +425,45 @@ class TestRunDispatch:
             await handler.run()
 
         assert any("stdin reader error" in str(c) for c in log.error.call_args_list)
+
+
+class TestStopCommand:
+    """STOP shuts the client down through the main-thread interrupt path."""
+
+    def test_stop_interrupts_the_main_thread(self, monkeypatch):
+        interrupts: list[bool] = []
+        monkeypatch.setattr(
+            stdin_commands._thread, "interrupt_main", lambda: interrupts.append(True)
+        )
+        handler = StdinCommandHandler(MagicMock())
+
+        handler._dispatch_in_thread(b'{"cmd": "STOP"}\n')
+
+        assert interrupts == [True]
+        assert handler._should_stop is True
+
+    @pytest.mark.asyncio
+    async def test_stop_ends_the_async_reader(self, monkeypatch):
+        interrupts: list[bool] = []
+        monkeypatch.setattr(
+            stdin_commands._thread, "interrupt_main", lambda: interrupts.append(True)
+        )
+        handler = StdinCommandHandler(MagicMock())
+        after = MagicMock()
+        handler.register("PREVIEW", after)
+
+        with _patch_pipe_setup(_make_reader(b'{"cmd": "STOP"}\n{"cmd": "PREVIEW"}\n')):
+            await handler.run()
+
+        assert interrupts == [True]
+        after.assert_not_called()
+
+    def test_stop_raises_keyboard_interrupt_in_main_thread(self):
+        """End to end: the real interrupt reaches the main thread."""
+        handler = StdinCommandHandler(MagicMock())
+        with pytest.raises(KeyboardInterrupt):
+            handler._dispatch_in_thread(b'{"cmd": "STOP"}\n')
+            time.sleep(1)  # interrupt is delivered at the next bytecode check
 
 
 class TestThreadReader:

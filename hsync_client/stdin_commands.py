@@ -16,12 +16,15 @@ Each command is a single JSON object terminated by a newline::
     {"cmd": "PREVIEW"}
     {"cmd": "RESYNC", "filter": "docs/"}
 
+``STOP`` is built in on every reader and shuts the client down like ``SIGTERM``.
+
 The ``cmd`` field is mandatory; additional fields are passed as
 keyword arguments to the handler.
 """
 
 from __future__ import annotations
 
+import _thread
 import asyncio
 import contextlib
 import inspect
@@ -43,6 +46,10 @@ _IS_WINDOWS = sys.platform == "win32"
 # structured message (typically < 1 KB); this cap prevents an OOM DoS from
 # a single unbounded readline() when the parent process sends a giant frame.
 _MAX_STDIN_LINE_BYTES = 1 * 1024 * 1024
+
+# Built-in command, registered on every reader: graceful process shutdown.
+# Consumer: hsync-desktop (engine/process.py, Windows stop).
+STOP_COMMAND = "STOP"
 
 
 class _BoundedLineReader:
@@ -135,12 +142,25 @@ class StdinCommandHandler:
         self._thread_fd: int | None = None
         self._wake_w: int | None = None
         self._thread_lock = threading.Lock()
+        self.register(STOP_COMMAND, self._request_shutdown)
 
     # ── public API ────────────────────────────────────────────────────
 
     def stop(self) -> None:
         """Signal the run loop to exit after the current handler returns."""
         self._should_stop = True
+
+    def _request_shutdown(self, **_kw: object) -> None:
+        """``STOP``: shut the whole client down the way ``SIGINT``/``SIGTERM`` do.
+
+        Raises ``KeyboardInterrupt`` in the main thread (the path every mode
+        already handles: stop the servers, flush the logs). It is the only
+        graceful stop available on Windows, where the parent cannot deliver a
+        console control event to this process.
+        """
+        self._log.info("Stop requested on stdin")
+        self._should_stop = True
+        _thread.interrupt_main()
 
     def register(self, cmd: str, handler: Callable[..., Any]) -> None:
         """Register *handler* for *cmd*.

@@ -238,7 +238,7 @@ In continuous mode, the client accepts runtime commands via stdin. Each command 
 single JSON line:
 
 ```json
-{"command": "SET_SYNC_DIRECTION", "direction": "upload-only"}
+{"cmd": "SET_SYNC_DIRECTION", "direction": "upload-only"}
 ```
 
 ### Supported commands
@@ -249,6 +249,7 @@ single JSON line:
 | `SYNC` | (none) | Trigger an immediate full resync |
 | `PREVIEW` | (none) | Run a dry-run preview of pending sync actions |
 | `SET_BANDWIDTH` | `{"upload": 1048576}` / `{"download": 500000}` | Update upload/download bandwidth limits at runtime |
+| `STOP` | (none) | Shut the client down cleanly, like `SIGTERM` (the graceful stop the desktop uses on Windows); accepted by every command reader |
 
 Commands are processed asynchronously by `stdin_commands.py`. The direction
 change is applied inline without restarting the watchdog observer — events
