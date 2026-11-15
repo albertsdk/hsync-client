@@ -13,6 +13,7 @@ from hsync_common.endpoint import HostPort
 from hsync_client.constants import PEER_TIMEOUT, RENDEZVOUS_REFRESH_INTERVAL
 from hsync_client.p2p_rendezvous import build_rendezvous_plan
 from hsync_client.p2p_rendezvous_hybrid import HybridRendezvous
+from hsync_client.p2p_rendezvous_multi import MultiRdvRendezvous
 
 _CID = "A" * 21
 
@@ -157,8 +158,30 @@ class TestHybridLifecycle:
         assert manager is shared
         assert hybrid.peer_manager is shared
         mdns.create_peer_manager.assert_called_once()
-        mdns.start.assert_called_once_with(register_service=True, peer_manager=shared)
-        rendezvous.start.assert_called_once_with(register_service=True, peer_manager=shared)
+        mdns.start.assert_called_once_with(
+            register_service=True, peer_manager=shared, announce_started=False
+        )
+        rendezvous.start.assert_called_once_with(
+            register_service=True, peer_manager=shared, announce_started=False
+        )
+
+    def test_start_with_a_real_fanout_child_shares_one_manager(self):
+        """A real ``MultiRdvRendezvous`` child must accept the shared manager.
+
+        Regression: the hybrid passes ``peer_manager`` to its rendezvous child,
+        but the fan-out's ``start`` used to reject it when mDNS and several
+        discovery servers were both configured.
+        """
+        mdns = MagicMock()
+        mdns.port = 9000
+        shared = MagicMock(name="shared_peer_manager")
+        mdns.create_peer_manager.return_value = shared
+        first, second = MagicMock(name="first"), MagicMock(name="second")
+
+        HybridRendezvous(mdns=mdns, rendezvous=MultiRdvRendezvous([first, second])).start()
+
+        assert first.start.call_args.kwargs["peer_manager"] is shared
+        assert second.start.call_args.kwargs["peer_manager"] is shared
 
     def test_stop_stops_both_plans(self):
         hybrid, mdns, rendezvous, _ = _hybrid()

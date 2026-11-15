@@ -364,13 +364,18 @@ class RdvRendezvous(RendezvousPlanState):
     # -- RendezvousPlan surface -------------------------------------------------
 
     def start(
-        self, register_service: bool = True, peer_manager: PeerManager | None = None
+        self,
+        register_service: bool = True,
+        peer_manager: PeerManager | None = None,
+        *,
+        announce_started: bool = True,
     ) -> PeerManager:
         """Start the lease loop and return the shared :class:`PeerManager`.
 
         ``peer_manager`` lets a combined plan share one manager across both
         rendezvous sources (mDNS + rendezvous); it is built from this plan's
-        configuration when omitted.
+        configuration when omitted. ``announce_started`` is accepted for the
+        uniform plan surface; this source logs no "started" line of its own.
         """
         manager = peer_manager or self.create_peer_manager()
         self._peer_manager = manager

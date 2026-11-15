@@ -44,6 +44,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A transfer that failed after its retries is counted as failed, so the cycle
   reports "completed with N failed transfer(s)" instead of "completed
   successfully".
+- With mDNS and several discovery servers configured, the client failed to start
+  (`HybridRendezvous` passed a shared `PeerManager` to a fan-out start that
+  rejected it); it now starts.
+- The hybrid plan (mDNS + a discovery server) logs a single "P2P rendezvous
+  started" line instead of two: only the top-level plan announces the start.
 
 ## [1.1.2] - 2026-11-12
 

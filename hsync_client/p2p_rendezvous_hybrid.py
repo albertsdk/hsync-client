@@ -50,13 +50,22 @@ class HybridRendezvous(RendezvousPlanState):
 
     # -- RendezvousPlan surface -------------------------------------------------
 
-    def start(self, register_service: bool = True) -> PeerManager:
-        """Start every source over one shared :class:`PeerManager`."""
+    def start(self, register_service: bool = True, *, announce_started: bool = True) -> PeerManager:
+        """Start every source over one shared :class:`PeerManager`.
+
+        The children are told not to announce, so the operator sees a single
+        "P2P rendezvous started" line for the hybrid plan.
+        """
         manager = self._mdns.create_peer_manager()
         self._peer_manager = manager
-        self._mdns.start(register_service=register_service, peer_manager=manager)
-        self._rendezvous.start(register_service=register_service, peer_manager=manager)
-        log.info("P2P rendezvous started (mDNS + discovery servers)")
+        self._mdns.start(
+            register_service=register_service, peer_manager=manager, announce_started=False
+        )
+        self._rendezvous.start(
+            register_service=register_service, peer_manager=manager, announce_started=False
+        )
+        if announce_started:
+            log.info("P2P rendezvous started (mDNS + discovery servers)")
         return manager
 
     def stop(self) -> None:

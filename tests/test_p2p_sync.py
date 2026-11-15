@@ -287,6 +287,38 @@ class TestStartStop:
         finally:
             lan.stop()
 
+    @staticmethod
+    def _started_line_count(announce_started: bool) -> int:
+        import io
+
+        import loguru
+
+        from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
+
+        lan = MdnsRendezvous(cid="test123", bucket="photos")
+        buffer = io.StringIO()
+        sink = loguru.logger.add(buffer, format="{message}", colorize=False, enqueue=False)
+        try:
+            with (
+                patch("hsync_client.p2p_rendezvous_mdns.Zeroconf"),
+                patch("hsync_client.p2p_rendezvous_mdns.ServiceBrowser"),
+            ):
+                lan.start(register_service=False, announce_started=announce_started)
+        finally:
+            loguru.logger.remove(sink)
+            lan.stop()
+        return buffer.getvalue().count("P2P rendezvous started")
+
+    def test_announce_started_controls_the_started_line(self):
+        """Only the top-level plan announces the "started" line.
+
+        Regression: the hybrid used to show two "P2P rendezvous started" lines
+        because the mDNS child announced its own; a composite now passes
+        ``announce_started=False`` so the line is emitted once.
+        """
+        assert self._started_line_count(True) == 1
+        assert self._started_line_count(False) == 0
+
     def test_stop_unregisters_and_closes(self):
         from hsync_client.p2p_rendezvous_mdns import MdnsRendezvous
 

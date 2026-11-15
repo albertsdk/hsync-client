@@ -45,9 +45,25 @@ class TestComposition:
 
         assert manager is first.create_peer_manager.return_value
         for source in (first, second):
-            source.start.assert_called_once_with(register_service=True, peer_manager=manager)
+            source.start.assert_called_once_with(
+                register_service=True, peer_manager=manager, announce_started=True
+            )
         assert second.create_peer_manager.call_count == 0
         assert plan.peer_manager is manager
+
+    def test_start_accepts_a_parent_peer_manager(self):
+        """A composite parent (the hybrid) injects its manager; the fan-out uses it."""
+        first, second = _source(), _source()
+        shared = MagicMock(name="shared_peer_manager")
+
+        manager = MultiRdvRendezvous([first, second]).start(peer_manager=shared)
+
+        assert manager is shared
+        assert first.create_peer_manager.call_count == 0
+        for source in (first, second):
+            source.start.assert_called_once_with(
+                register_service=True, peer_manager=shared, announce_started=True
+            )
 
     def test_stop_stops_every_source_and_drops_the_shared_mapping(self):
         first, second = _source(), _source()

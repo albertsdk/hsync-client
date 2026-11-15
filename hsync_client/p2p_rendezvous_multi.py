@@ -59,23 +59,38 @@ class MultiRdvRendezvous(RendezvousPlanState):
     def create_peer_manager(self) -> PeerManager:
         """Refuse: the composite never owns a manager of its own.
 
-        ``start`` builds exactly one manager (from the first source's config) and
-        injects it into every source, so peer state is single. Building another
-        one here would split rendezvous and the election; the error makes that
-        misuse loud instead of silent.
+        ``start`` either adopts the manager a parent composite injected or builds
+        one from the first source's config, and injects it into every source, so
+        peer state is single. Building another one here would split rendezvous
+        and the election; the error makes that misuse loud instead of silent.
         """
         raise RuntimeError(
             "MultiRdvRendezvous.start() creates the single shared PeerManager; "
             "the composite cannot build another one"
         )
 
-    def start(self, register_service: bool = True) -> PeerManager:
-        """Start every lease loop over one shared :class:`PeerManager`."""
-        manager = self._sources[0].create_peer_manager()
+    def start(
+        self,
+        register_service: bool = True,
+        peer_manager: PeerManager | None = None,
+        *,
+        announce_started: bool = True,
+    ) -> PeerManager:
+        """Start every lease loop over one shared :class:`PeerManager`.
+
+        ``peer_manager`` is the manager a parent composite already built (the
+        combined mDNS + rendezvous plan); a shared one keeps peer state single.
+        """
+        manager = peer_manager or self._sources[0].create_peer_manager()
         self._peer_manager = manager
         for source in self._sources:
-            source.start(register_service=register_service, peer_manager=manager)
-        log.info(f"P2P rendezvous started ({len(self._sources)} discovery server(s))")
+            source.start(
+                register_service=register_service,
+                peer_manager=manager,
+                announce_started=announce_started,
+            )
+        if announce_started:
+            log.info(f"P2P rendezvous started ({len(self._sources)} discovery server(s))")
         return manager
 
     def stop(self) -> None:

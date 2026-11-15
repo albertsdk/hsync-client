@@ -213,7 +213,11 @@ class MdnsRendezvous(RendezvousPlanState):
         return self._cert_fingerprint
 
     def start(
-        self, register_service: bool = True, peer_manager: PeerManager | None = None
+        self,
+        register_service: bool = True,
+        peer_manager: PeerManager | None = None,
+        *,
+        announce_started: bool = True,
     ) -> PeerManager:
         """
         Start P2P rendezvous and optionally register service.
@@ -225,6 +229,8 @@ class MdnsRendezvous(RendezvousPlanState):
             peer_manager: A pre-built :class:`PeerManager` to share with another
                 plan (the combined mDNS + rdv rendezvous). Built from this
                 plan's configuration when omitted.
+            announce_started: False when a parent composite logs the "started"
+                line itself (the hybrid plan).
 
         Returns:
             PeerManager for monitoring discovered peers and master election.
@@ -251,7 +257,8 @@ class MdnsRendezvous(RendezvousPlanState):
         self._browser = ServiceBrowser(self._zeroconf, HSYNC_SERVICE_TYPE, listener)
 
         self._running = True
-        log.info("P2P rendezvous started")
+        if announce_started:
+            log.info("P2P rendezvous started")
 
         # Start the liveness heartbeat: peers must see a changing TXT value at
         # least every HEARTBEAT_INTERVAL or their staleness sweep falsely

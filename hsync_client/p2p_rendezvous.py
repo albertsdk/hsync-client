@@ -71,8 +71,12 @@ class RendezvousPlan(Protocol):
         """Shared peer state, or ``None`` before :meth:`start`."""
         ...
 
-    def start(self, register_service: bool = True) -> PeerManager:
-        """Start rendezvous and return the shared :class:`PeerManager`."""
+    def start(self, register_service: bool = True, *, announce_started: bool = True) -> PeerManager:
+        """Start rendezvous and return the shared :class:`PeerManager`.
+
+        ``announce_started`` is False for a child of a composite plan, so the
+        "P2P rendezvous started" line is logged once, by the top-level plan.
+        """
         ...
 
     def stop(self) -> None:
@@ -173,9 +177,16 @@ class RendezvousSource(Protocol):
     """
 
     def start(
-        self, register_service: bool = True, peer_manager: PeerManager | None = None
+        self,
+        register_service: bool = True,
+        peer_manager: PeerManager | None = None,
+        *,
+        announce_started: bool = True,
     ) -> PeerManager:
-        """Start the lease loop(s) and return the shared :class:`PeerManager`."""
+        """Start the lease loop(s) and return the shared :class:`PeerManager`.
+
+        ``announce_started`` is False when a composite logs the "started" line.
+        """
         ...
 
     def stop(self) -> None:
