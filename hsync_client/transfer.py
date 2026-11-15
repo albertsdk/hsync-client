@@ -11,6 +11,7 @@ synchronizing files with the remote server.
 import hashlib
 import hmac
 import math
+import os
 import re
 import threading
 from collections.abc import Callable, Iterator, Sized
@@ -1822,8 +1823,15 @@ def wire_relpath(file: File) -> str:
     against ``LOCAL_BUCKET`` so the peer only ever receives a path inside the
     bucket it is allowed to touch.
     """
-    prefix = f"{CONFIG['LOCAL_BUCKET']}".rstrip("/")
-    return str(file.filepath or "").removeprefix(prefix).lstrip("/")
+    raw = str(file.filepath or "")
+    # Component-aware: a Windows path mixes ``\`` and ``/``, so a plain string
+    # prefix strip leaves the absolute path in place and the peer rejects it as
+    # invalid. A relative path (remote listing) is not under the bucket and is
+    # kept as-is.
+    rel = relpath_in_bucket(raw, str(CONFIG["LOCAL_BUCKET"]))
+    if rel is None:
+        rel = raw
+    return rel.replace(os.sep, "/").lstrip("/")
 
 
 def delete_file_remote(file: File) -> None:
@@ -2408,9 +2416,12 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
     try:
         # Prepare upload request
         uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files"
-        prefix = f"{CONFIG['LOCAL_BUCKET']}".rstrip("/")
-        path = str(Path(file.filepath).parent).rstrip("/").removeprefix(prefix).lstrip("/")
-        filename = f"{path}/{Path(file.filepath).name}" if path else Path(file.filepath).name
+        # Bucket-relative and POSIX-separated (the wire contract rejects
+        # backslashes); ``path`` is the subdirectory, ``filename`` the full
+        # relative path used by the status/delta probes.
+        rel = wire_relpath(file)
+        path = rel.rpartition("/")[0]
+        filename = rel or Path(file.filepath).name
 
         # Delta branch: when the peer still holds the recorded base, only the
         # changed blocks need to cross the wire. Any recoverable failure falls

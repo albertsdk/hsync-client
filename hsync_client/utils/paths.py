@@ -158,11 +158,16 @@ def normalize_bucket_relpath(raw_path: str, bucket_root: str) -> str | None:
     out-of-bucket, or invalid paths (including lone-surrogate paths that cannot
     be UTF-8 encoded for the wire).
     """
-    candidate = raw_path
-    if os.path.isabs(candidate):
-        candidate = relpath_in_bucket(candidate, bucket_root)
-        if candidate is None:
-            return None
+    candidate = relpath_in_bucket(str(raw_path), str(bucket_root))
+    if candidate is None:
+        # Not under the (absolute) root: either already bucket-relative or an
+        # absolute path outside the bucket. Validation below rejects the latter.
+        candidate = raw_path
+    # ``relpath_in_bucket`` rejoins with ``os.sep``; the wire contract uses
+    # POSIX separators and rejects backslashes (``validate_remote_relpath``),
+    # so fold the platform separator first — otherwise a nested path is
+    # rejected as invalid on Windows.
+    candidate = candidate.replace(os.sep, "/")
     try:
         return validate_remote_relpath(candidate)
     except UnicodeError:

@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Proactor pipe read (which fails on a synchronous parent pipe with
   `ERROR_INVALID_PARAMETER`), so `SYNC`/`PREVIEW`/direction/bandwidth commands
   from the desktop are no longer dropped.
+- Uploads, deletes and renames send a bucket-relative path with POSIX separators
+  on Windows, so the server no longer rejects them with `HSYNC-1002 Invalid path`.
 
 ## [1.1.2] - 2026-11-12
 

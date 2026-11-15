@@ -8,6 +8,7 @@ re-upload the file: the caller pairs the stale remote path with the new local
 one by content hash and asks the peer to move its own copy.
 """
 
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -52,6 +53,20 @@ class TestWireRelpath:
         file = File(filepath="sub/a.bin", size=1, sha256sum="a" * 64)
         with patch("hsync_client.transfer.CONFIG", _config(tmp_path)):
             assert wire_relpath(file) == "sub/a.bin"
+
+    def test_windows_mixed_separators_are_relativised(self, monkeypatch):
+        """A Windows path mixes ``\\`` and ``/`` and must still come out relative.
+
+        Regression: a plain string prefix strip left the absolute path in place,
+        so the peer rejected the upload with HSYNC-1002 Invalid path.
+        """
+        monkeypatch.setattr(os, "sep", "\\")
+        bucket = "C:/Users/test-win\\HSYNC"
+        config = _config("/unused")
+        config["LOCAL_BUCKET"] = bucket
+        file = File(filepath=f"{bucket}\\sub\\Dieta.docx", size=1, sha256sum="a" * 64)
+        with patch("hsync_client.transfer.CONFIG", config):
+            assert wire_relpath(file) == "sub/Dieta.docx"
 
 
 class TestRenameFileRemote:
