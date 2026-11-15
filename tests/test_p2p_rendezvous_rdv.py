@@ -513,6 +513,10 @@ class TestAdvertisement:
         assert source == "rendezvous"
         assert reason == "token_required"
         assert "token_required" in message
+        # Actionable, not just the raw code: name the gated bucket and the fix
+        # (the node's key line must hold the DERIVED group key, not the password).
+        assert "shared" in message
+        assert "derive-group-key" in message
 
     def test_a_transient_refusal_stays_log_only(self, monkeypatch):
         """``rate_limited``/``overloaded`` heal themselves: no structured event."""

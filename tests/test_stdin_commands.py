@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import hsync_client.stdin_commands as stdin_commands
 from hsync_client.stdin_commands import StdinCommandHandler
 
 
@@ -534,3 +535,93 @@ class TestThreadReader:
             for fd in (read_fd, write_fd):
                 with contextlib.suppress(OSError):
                     os.close(fd)
+
+
+class TestWindowsBlockingReader:
+    """Windows reads stdin with a blocking thread.
+
+    The Proactor loop can only read an *overlapped* pipe, but a parent's
+    standard-input pipe is synchronous (``ReadFile(OVERLAPPED)`` ->
+    ERROR_INVALID_PARAMETER 87), and ``select`` cannot wait on a Windows pipe.
+    The blocking path is platform-independent, so it is exercised here with a
+    real pipe (force the branch with ``_IS_WINDOWS``).
+    """
+
+    def test_readline_blocking_splits_lines_and_reports_eof(self):
+        reader = stdin_commands._BoundedLineReader()
+        read_fd, write_fd = os.pipe()
+        try:
+            os.write(write_fd, b'{"cmd": "SYNC"}\n{"cmd": "PRE')
+            assert reader.readline_blocking(read_fd, 1024) == b'{"cmd": "SYNC"}\n'
+            os.close(write_fd)
+            write_fd = -1
+            assert reader.readline_blocking(read_fd, 1024) == b'{"cmd": "PRE'
+            assert reader.readline_blocking(read_fd, 1024) == b""
+        finally:
+            for fd in (read_fd, write_fd):
+                if fd >= 0:
+                    with contextlib.suppress(OSError):
+                        os.close(fd)
+
+    def test_readline_blocking_drains_an_over_cap_line(self):
+        reader = stdin_commands._BoundedLineReader()
+        read_fd, write_fd = os.pipe()
+        try:
+            os.write(write_fd, b"x" * 64 + b"\n")
+            os.close(write_fd)
+            write_fd = -1
+            assert reader.readline_blocking(read_fd, 16) == b""  # rejected + drained
+        finally:
+            for fd in (read_fd, write_fd):
+                if fd >= 0:
+                    with contextlib.suppress(OSError):
+                        os.close(fd)
+
+    def test_the_blocking_reader_dispatches_and_stops_at_eof(self):
+        handler = StdinCommandHandler(MagicMock())
+        seen: list[str] = []
+        handler.register("SYNC", lambda **_kw: seen.append("sync"))
+        read_fd, write_fd = os.pipe()
+
+        def _feed() -> None:
+            os.write(write_fd, b'{"cmd": "SYNC"}\n')
+            os.close(write_fd)
+
+        feeder = threading.Thread(target=_feed, daemon=True)
+        feeder.start()
+        try:
+            asyncio.run(handler._run_blocking_reader(read_fd))
+        finally:
+            with contextlib.suppress(OSError):
+                os.close(read_fd)
+            feeder.join(timeout=5)
+        assert seen == ["sync"]
+
+    def test_the_thread_reader_blocks_and_dispatches_on_windows(self, monkeypatch):
+        monkeypatch.setattr(stdin_commands, "_IS_WINDOWS", True)
+        handler = StdinCommandHandler(MagicMock())
+        seen: list[str] = []
+        handler.register("SYNC", lambda **_kw: seen.append("sync"))
+
+        read_fd, write_fd = os.pipe()
+        real_dup = os.dup
+        thread = threading.Thread(
+            target=handler.run_in_thread,
+            args=(threading.Event(),),
+            daemon=True,
+        )
+        try:
+            with patch("os.dup", side_effect=lambda _fd: real_dup(read_fd)):
+                thread.start()
+                assert _wait_for(lambda: handler._thread_fd is not None)
+                os.write(write_fd, b'{"cmd": "SYNC"}\n')
+                assert _wait_for(lambda: seen == ["sync"])
+                os.close(write_fd)  # EOF ends the blocking read
+                write_fd = -1
+                thread.join(timeout=2)
+            assert not thread.is_alive()
+        finally:
+            for fd in (read_fd, write_fd):
+                if fd >= 0:
+                    with contextlib.suppress(OSError):
+                        os.close(fd)

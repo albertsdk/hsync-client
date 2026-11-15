@@ -197,6 +197,25 @@ class SharedUpnpMapping:
                 log.debug(f"UPnP unmap failed: {exc}")
 
 
+def _token_required_guidance(bucket: str) -> str:
+    """Recovery steps for a ``token_required`` refusal, for the log only.
+
+    The structured warning stays one line (it becomes a desktop toast); this
+    multi-line block is where the operator finds the exact fix.
+    """
+    return (
+        f"Discovery server gates bucket '{bucket}': it only accepts a token derived\n"
+        f"from the group key in its '{bucket}=<key>' line, and the token derived from\n"
+        "this client's shared password did not match.\n"
+        "On the server, that line must hold the DERIVED key, not the password:\n"
+        "  1. hsync derive-group-key        # same shared password -> 64 hex\n"
+        f"  2. put '{bucket}=<64 hex>' in the server's group-keys file\n"
+        f"  3. restart it with --protected-bucket {bucket} --keys-file <path>\n"
+        "Or point the group at a discovery server whose bucket is open.\n"
+        "Local-network discovery (mDNS) does not use this server, so LAN sync keeps working."
+    )
+
+
 class RdvRendezvous(RendezvousPlanState):
     """``RendezvousPlan`` backed by a ``rdv/1`` rendezvous node."""
 
@@ -889,12 +908,19 @@ class RdvRendezvous(RendezvousPlanState):
         self._refusals_logged.add(exc.error)
         log.warning(message)
         if exc.error == "token_required":
-            # The node protects its bucket with a token derived from the P2P key,
-            # so this is the one refusal the user can act on (set the shared
-            # password). Reach the front-end (the desktop toast + notification)
-            # instead of staying a log-only line; ``rate_limited``/``overloaded``
-            # are transient and self-healing, so they stay log-only.
-            emit_warning(message, source="rendezvous", reason="token_required")
+            # The node gates this bucket with a token derived from the group key,
+            # so this is the one refusal the user can act on. ``rate_limited`` /
+            # ``overloaded`` are transient and self-healing, so they stay
+            # log-only. The structured warning stays one actionable line (the
+            # desktop toast); the full recovery steps go to the log.
+            log.warning(_token_required_guidance(self._bucket))
+            emit_warning(
+                f"{message} — the discovery server gates bucket '{self._bucket}': "
+                "its bucket=<key> line must hold the group key derived from the "
+                "shared password (hsync derive-group-key), not the password itself",
+                source="rendezvous",
+                reason="token_required",
+            )
 
     def _current_connected(self) -> int:
         if self._connected_clients_provider is not None:

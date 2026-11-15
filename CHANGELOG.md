@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   platform-native observer, which rejects it.
 - Storage detection is skipped off Linux instead of logging a spurious
   "storage detection failed" warning and assuming HDD-class on every run.
+- A `token_required` rendezvous refusal now names the gated bucket and states the
+  fix (the node's `bucket=<key>` line must hold the group key derived from the
+  shared password, `hsync derive-group-key`) instead of only the raw error code.
+- The stdin command channel works on Windows: a blocking reader thread replaces
+  the Proactor pipe read (which fails on a synchronous parent pipe with
+  `ERROR_INVALID_PARAMETER`), so `SYNC`/`PREVIEW`/direction/bandwidth commands
+  from the desktop are no longer dropped.
 
 ## [1.1.2] - 2026-11-12
 

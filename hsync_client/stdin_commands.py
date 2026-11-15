@@ -29,9 +29,15 @@ import json
 import os
 import select
 import stat
+import sys
 import threading
 from collections.abc import Callable
 from typing import Any
+
+# Windows cannot poll a pipe with ``select`` and the Proactor event loop can only
+# read *overlapped* pipes; a parent's standard-input pipe is synchronous, so both
+# paths need a blocking reader thread there (see ``run`` / ``run_in_thread``).
+_IS_WINDOWS = sys.platform == "win32"
 
 # Maximum stdin line length (1 MiB). A JSON command line is a compact
 # structured message (typically < 1 KB); this cap prevents an OOM DoS from
@@ -80,6 +86,36 @@ class _BoundedLineReader:
                         self._buf.extend(chunk[nl + 1 :])
                         return b""
             chunk = await reader.read(self._READ_CHUNK)
+            if not chunk:
+                line = bytes(self._buf)
+                self._buf.clear()
+                return line  # EOF (b"" when no partial line was buffered)
+            self._buf.extend(chunk)
+
+    def readline_blocking(self, fd: int, max_bytes: int) -> bytes:
+        """Synchronous ``readline`` over a blocking fd, same wire contract.
+
+        Used by the Windows reader: a blocking ``os.read`` works with a
+        synchronous parent pipe, which neither ``select`` nor the Proactor
+        ``connect_read_pipe`` can handle.
+        """
+        while True:
+            nl = self._buf.find(b"\n")
+            if nl != -1 and nl < max_bytes:
+                line = bytes(self._buf[: nl + 1])
+                del self._buf[: nl + 1]
+                return line
+            if len(self._buf) >= max_bytes:
+                self._buf.clear()
+                while True:
+                    chunk = os.read(fd, self._READ_CHUNK)
+                    if not chunk:
+                        return b""
+                    nl = chunk.find(b"\n")
+                    if nl != -1:
+                        self._buf.extend(chunk[nl + 1 :])
+                        return b""
+            chunk = os.read(fd, self._READ_CHUNK)
             if not chunk:
                 line = bytes(self._buf)
                 self._buf.clear()
@@ -136,6 +172,24 @@ class StdinCommandHandler:
             return None
         return str(cmd), data
 
+    async def _handle_line(self, line: bytes) -> None:
+        """Parse one command line and run its handler on the current loop."""
+        parsed = self._parse(line)
+        if parsed is None:
+            return
+        cmd, data = parsed
+        handler = self._handlers.get(cmd)
+        if handler is None:
+            self._log.warning(f"Unknown stdin command: {cmd}")
+            return
+        try:
+            if inspect.iscoroutinefunction(handler):
+                await handler(**data)
+            else:
+                handler(**data)
+        except Exception as exc:
+            self._log.error(f"stdin command '{cmd}' failed: {exc}")
+
     def run_in_thread(self, stop: threading.Event) -> None:
         """Blocking reader for callers that have no event loop.
 
@@ -160,6 +214,9 @@ class StdinCommandHandler:
         ):
             self._log.debug("stdin command reader unavailable: stdin is not a pipe or terminal")
             os.close(dup_fd)
+            return
+        if _IS_WINDOWS:
+            self._run_blocking_thread(dup_fd, stop)
             return
         wake_r, wake_w = os.pipe()
         os.set_blocking(wake_w, False)
@@ -212,6 +269,39 @@ class StdinCommandHandler:
                 os.close(dup_fd)
             self._log.debug("stdin command reader stopped")
 
+    def _run_blocking_thread(self, dup_fd: int, stop: threading.Event) -> None:
+        """Windows thread reader: block on stdin until EOF.
+
+        ``select`` cannot wait on a Windows pipe, so the loop blocks on the read
+        and ends at EOF (the parent closes stdin when it stops the run). There is
+        no wake pipe, so ``stop_thread`` is a no-op here; the caller ends the
+        read by closing the process.
+        """
+        with self._thread_lock:
+            if self._thread_fd is not None:
+                os.close(dup_fd)
+                raise RuntimeError("a stdin thread reader is already active")
+            self._thread_fd = dup_fd
+            self._wake_w = None
+        reader = _BoundedLineReader()
+        self._log.debug("stdin command reader started (thread)")
+        try:
+            while not stop.is_set():
+                try:
+                    line = reader.readline_blocking(dup_fd, _MAX_STDIN_LINE_BYTES)
+                except OSError:
+                    break
+                if not line:  # EOF: the parent closed the pipe
+                    break
+                self._dispatch_in_thread(line)
+        finally:
+            with self._thread_lock:
+                self._thread_fd = None
+                self._wake_w = None
+            with contextlib.suppress(OSError):
+                os.close(dup_fd)
+            self._log.debug("stdin command reader stopped")
+
     def stop_thread(self) -> None:
         """Unblock :meth:`run_in_thread` through its wake pipe."""
         with self._thread_lock:
@@ -241,6 +331,14 @@ class StdinCommandHandler:
 
     async def run(self) -> None:
         """Read lines from stdin and dispatch commands until EOF."""
+        if _IS_WINDOWS:
+            try:
+                dup_fd = os.dup(0)
+            except OSError as exc:
+                self._log.debug(f"stdin command reader unavailable: {exc}")
+                return
+            await self._run_blocking_reader(dup_fd)
+            return
         loop = asyncio.get_running_loop()
         reader = asyncio.StreamReader()
         protocol = asyncio.StreamReaderProtocol(reader)
@@ -287,33 +385,68 @@ class StdinCommandHandler:
                 line = await line_reader.readline(reader, _MAX_STDIN_LINE_BYTES)
                 if not line:  # EOF
                     break
-
-                parsed = self._parse(line)
-                if parsed is None:
-                    continue
-                cmd, data = parsed
-
-                handler = self._handlers.get(cmd)
-                if handler is None:
-                    self._log.warning(f"Unknown stdin command: {cmd}")
-                    continue
-
-                # Call handler (sync or async) with remaining fields
-                try:
-                    if inspect.iscoroutinefunction(handler):
-                        await handler(**data)
-                    else:
-                        handler(**data)
-                except Exception as exc:
-                    self._log.error(f"stdin command '{cmd}' failed: {exc}")
-
+                await self._handle_line(line)
                 if self._should_stop:
                     break
-
             except asyncio.CancelledError:
                 break
             except Exception as exc:
                 self._log.error(f"stdin reader error: {exc}")
                 break
 
+        self._log.debug("stdin command reader stopped")
+
+    async def _run_blocking_reader(self, fd: int) -> None:
+        """Windows stdin reader: a blocking thread hands each line to the loop.
+
+        Proactor ``connect_read_pipe`` needs an *overlapped* pipe, but a parent's
+        standard-input pipe is synchronous, so the first ``ReadFile(OVERLAPPED)``
+        fails with ERROR_INVALID_PARAMETER (87). A blocking ``os.read`` works with
+        any pipe; the thread ends on EOF (the parent closes stdin) and is left to
+        the process exit if the loop shuts down first. Takes ownership of *fd*.
+        """
+        loop = asyncio.get_running_loop()
+        try:
+            mode = os.fstat(fd).st_mode
+        except OSError as exc:
+            self._log.debug(f"stdin command reader unavailable: {exc}")
+            with contextlib.suppress(OSError):
+                os.close(fd)
+            return
+        if not (
+            stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode) or (stat.S_ISCHR(mode) and os.isatty(fd))
+        ):
+            self._log.debug("stdin command reader unavailable: stdin is not a pipe or terminal")
+            with contextlib.suppress(OSError):
+                os.close(fd)
+            return
+
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+
+        def _pump() -> None:
+            reader = _BoundedLineReader()
+            try:
+                while not self._should_stop:
+                    line = reader.readline_blocking(fd, _MAX_STDIN_LINE_BYTES)
+                    if not line:  # EOF
+                        break
+                    with contextlib.suppress(RuntimeError):
+                        loop.call_soon_threadsafe(queue.put_nowait, line)
+            except OSError:
+                pass
+            finally:
+                with contextlib.suppress(OSError):
+                    os.close(fd)
+                with contextlib.suppress(RuntimeError):
+                    loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        threading.Thread(target=_pump, name="hsync-stdin", daemon=True).start()
+        self._log.debug("stdin command reader started")
+        while True:
+            line = await queue.get()
+            if line is None:  # the pump ended (EOF or closed descriptor)
+                break
+            await self._handle_line(line)
+            if self._should_stop:
+                break
         self._log.debug("stdin command reader stopped")
