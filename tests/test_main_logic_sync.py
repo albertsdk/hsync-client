@@ -1085,6 +1085,38 @@ class TestEvaluateServerTrust:
             is None
         )
 
+    def test_an_unreadable_certificate_is_not_reported_as_a_pin_mismatch(
+        self, tmp_path, monkeypatch
+    ):
+        """A failed probe must not claim the pinned certificate changed.
+
+        Regression: ``fetch_server_fingerprint`` returns ``None`` when the server
+        is unreachable or presents no certificate; that was reported as a changed
+        pin with an empty ``sha256:`` fingerprint and a re-pin command for an
+        empty value, which reads as a man-in-the-middle alarm.
+        """
+        from hsync_common.protocol.tls_trust import TrustPolicy
+
+        import hsync_client.server_trust_resolution as ml
+        from hsync_client.server_trust import ServerTrustStore
+        from hsync_client.server_trust_resolution import ServerTrustError
+
+        store = ServerTrustStore(tmp_path / "servers.json")
+        store.set("h", 443, "a" * 64, source="cli")
+        monkeypatch.setattr(ml, "default_server_trust_store", lambda: store)
+        monkeypatch.setattr(ml, "fetch_server_fingerprint", lambda *a, **k: None)
+        log = MagicMock()
+        with patch("hsync_client.server_trust_resolution.emit_event") as emit:
+            with pytest.raises(ServerTrustError):
+                ml._evaluate_server_trust(self._config(TrustPolicy.ask), log, "h", 443)
+
+        logged = "\n".join(str(call.args[0]) for call in log.error.call_args_list)
+        assert "could not read" in logged
+        assert "man-in-the-middle" not in logged
+        assert "sha256:" not in logged
+        emit.assert_called_once()
+        assert emit.call_args.kwargs.get("reason") == "connection"
+
     def test_accept_new_pins_the_first_sighting(self, tmp_path, monkeypatch):
         import hsync_client.server_trust_resolution as ml
         from hsync_client.server_trust import ServerTrustStore

@@ -1346,7 +1346,7 @@ async def _execute_parallel_transfers(
     executor = _get_transfer_executor(max_concurrent)
 
     async def transfer_with_semaphore(
-        func: Callable[[File], None], file: File, *, is_download: bool = False
+        func: Callable[[File], bool], file: File, *, is_download: bool = False
     ) -> None:
         """Execute a transfer function with semaphore limiting."""
         async with semaphore:
@@ -1358,7 +1358,7 @@ async def _execute_parallel_transfers(
             t0 = monotonic()
             try:
                 # Run synchronous function in thread pool
-                await loop.run_in_executor(executor, func, file)
+                transferred = await loop.run_in_executor(executor, func, file)
             except PermanentDownloadError as e:
                 # Permanent failure (e.g. over the size cap): record it so
                 # the file is not retried on every resync tick, and notify
@@ -1369,6 +1369,12 @@ async def _execute_parallel_transfers(
                 _count_transfer_failure(counters)
                 log.error(f"Transfer error for {file.filepath}: {e}")
             else:
+                if transferred is False:
+                    # The transfer swallowed a permanent failure (it already
+                    # logged it and emitted ``transfer_failed``): count it so
+                    # the cycle does not report "completed successfully".
+                    _count_transfer_failure(counters)
+                    return
                 counters_key = "downloaded" if is_download else "uploaded"
                 stats[counters_key] = stats.get(counters_key, 0) + 1
                 file_size = file.size or 0
@@ -1383,7 +1389,7 @@ async def _execute_parallel_transfers(
     # Add download tasks
     from functools import partial
 
-    observed_download: Callable[[File], None] = partial(
+    observed_download: Callable[[File], bool] = partial(
         download_file,
         candidates=source_candidates,
         source_resolver=source_resolver,

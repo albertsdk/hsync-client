@@ -31,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the desktop are no longer dropped.
 - Uploads, deletes and renames send a bucket-relative path with POSIX separators
   on Windows, so the server no longer rejects them with `HSYNC-1002 Invalid path`.
+- A certificate-fingerprint probe that fails (server unreachable or no
+  certificate) is reported as "could not read the fingerprint" instead of a pin
+  mismatch with an empty `sha256:` and a re-pin command for an empty value.
+- A transfer that failed after its retries is counted as failed, so the cycle
+  reports "completed with N failed transfer(s)" instead of "completed
+  successfully".
 
 ## [1.1.2] - 2026-11-12
 

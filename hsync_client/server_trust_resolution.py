@@ -156,6 +156,22 @@ def _evaluate_server_trust(config: HsyncConfig, log, host: str, port: int) -> st
     stored = store.get(host, port)
     explicit = tuple(config.get("SERVER_FINGERPRINTS") or ())
 
+    if observed is None:
+        # A failed probe is not a pin mismatch: reporting one would claim a
+        # possible man-in-the-middle changed the certificate when none was even
+        # read, and offer to re-pin an empty fingerprint.
+        log.error(
+            f"Sync server '{format_authority(host, port)}' trust failed: could not read "
+            "the certificate fingerprint (the server is unreachable or presented no "
+            "certificate)."
+        )
+        emit_event(
+            UiEventName.error,
+            reason="connection",
+            message="could not read the sync-server certificate fingerprint",
+        )
+        raise ServerTrustError("server presented no certificate")
+
     if explicit:
         if observed is not None and fingerprint_matches(observed, explicit):
             store.set(host, port, observed, source="flag")

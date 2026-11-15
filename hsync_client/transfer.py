@@ -552,7 +552,7 @@ def download_file(
     candidates: P2PCandidateMap | None = None,
     source_resolver: P2PSourceResolver | None = None,
     refresh_peer_sources: bool = False,
-) -> None:
+) -> bool:
     """
     Download a file from the remote server with per-file retry/backoff.
 
@@ -560,17 +560,22 @@ def download_file(
     so a single transient network blip (timeout, connection reset, 5xx) does not
     leave the file unsynced until the next full sync. Permanent errors (4xx) are
     never retried. When every attempt is exhausted the failure is surfaced as a
-    ``transfer_failed`` event for the UI.
+    ``transfer_failed`` event for the UI and ``False`` is returned, so the sync
+    cycle counts the failure instead of reporting success.
 
     The whole download holds the per-path lock so a concurrent upload or
     inbound delete of the same local path cannot interleave and lose the update.
 
     Args:
         file: File object with remote metadata (filepath, sha256sum, etc.).
+
+    Returns:
+        ``False`` when the download failed after retries; every other outcome
+        (completed, or skipped as an unsafe/vanished path) returns ``True``.
     """
     if not file.filepath or not file.name:
         log.error("Invalid file metadata: missing filepath or name")
-        return
+        return True
 
     # The remote path is untrusted: refuse anything that would escape the
     # local bucket (traversal, absolute paths, symlink hops, engine files).
@@ -583,7 +588,7 @@ def download_file(
             path=file.filepath,
             message="unsafe remote path rejected",
         )
-        return
+        return False
 
     max_attempts, min_wait, max_wait = _transfer_retry_params()
     attempt = retry_on_transient_transfer_error(max_attempts, min_wait, max_wait)(
@@ -601,6 +606,8 @@ def download_file(
     except (RequestException, ServerError) as exc:
         log.error(f'Download failed after retries for "{file.filepath}": {exc}')
         _emit_transfer_failed("download", file.filepath, str(exc))
+        return False
+    return True
 
 
 def _build_download_request(
@@ -1960,7 +1967,7 @@ def upload_file(
     permissions_only: bool = False,
     _reschedules_left: int | None = None,
     inventory_observer: InventoryObserver = NOOP_INVENTORY_OBSERVER,
-) -> None:
+) -> bool:
     """
     Upload a file to the remote server with per-file retry/backoff.
 
@@ -1997,10 +2004,15 @@ def upload_file(
                      (``IN_CLOSE_WRITE``) event; enables the fast re-check.
         _reschedules_left: Internal; remaining deferred attempts when this call
                            originates from a rescheduled Timer.
+
+    Returns:
+        ``False`` when the upload failed after retries or was refused by the
+        security guard; every other outcome (completed, or skipped as a benign
+        no-op/deferral) returns ``True``.
     """
     if not file.filepath:
         log.error("Cannot upload file: missing filepath")
-        return
+        return True
 
     # Security: never dereference a symlink whose target escapes the bucket.
     # This covers the realtime (watch/P2P slave) upload path, which builds the
@@ -2023,12 +2035,12 @@ def upload_file(
                     path=file.filepath,
                     message="symlink target escapes bucket",
                 )
-                return
+                return False
         except OSError:
             log.warning(
                 f'{ActionLabel.SECURITY} Cannot inspect symlink, not uploading: "{file.filepath}"'
             )
-            return
+            return False
 
     if check_size:
         pre_identity = _file_identity(file.filepath)
@@ -2036,7 +2048,7 @@ def upload_file(
             # File never stopped being written within the wait window: defer the
             # upload instead of transferring a half-written file.
             _reschedule_upload(file, _reschedules_left, permissions_only, inventory_observer)
-            return
+            return True
 
         # Refresh metadata after the write is complete. Reuse the digest
         # already on *file* (watcher / reconcile scan) only when size and
@@ -2046,7 +2058,7 @@ def upload_file(
             st = Path(file.filepath).stat()
         except OSError:
             log.warning(f'File "{file.filepath}" disappeared after stability wait')
-            return
+            return True
         post_identity = (st.st_size, st.st_mtime_ns)
         if file.sha256sum and pre_identity == post_identity:
             _apply_stat_metadata(file, st)
@@ -2057,14 +2069,17 @@ def upload_file(
         log.debug(f'Written file: "{file.filepath}" ({format_bytes(file.size)})')
         inventory_observer.upsert(file)
 
-        _dispatch_upload(file, permissions_only)
-        return
+        return _dispatch_upload(file, permissions_only)
 
-    _dispatch_upload(file, permissions_only)
+    return _dispatch_upload(file, permissions_only)
 
 
-def _dispatch_upload(file: File, permissions_only: bool) -> None:
-    """Run the retry-wrapped upload attempt for an already-stabilized file."""
+def _dispatch_upload(file: File, permissions_only: bool) -> bool:
+    """Run the retry-wrapped upload attempt for an already-stabilized file.
+
+    Returns ``False`` when the attempt fails after retries (the failure is also
+    logged and surfaced as a ``transfer_failed`` event), ``True`` otherwise.
+    """
     max_attempts, min_wait, max_wait = _transfer_retry_params()
     attempt = retry_on_transient_transfer_error(max_attempts, min_wait, max_wait)(
         _upload_file_attempt
@@ -2079,6 +2094,8 @@ def _dispatch_upload(file: File, permissions_only: bool) -> None:
             f'Upload failed after retries for "{file.filepath}": {escape_loguru_markup(str(exc))}'
         )
         _emit_transfer_failed("upload", file.filepath, str(exc))
+        return False
+    return True
 
 
 def _resolve_effective_version(file: File) -> dict | None:

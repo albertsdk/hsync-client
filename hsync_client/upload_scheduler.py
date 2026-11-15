@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from hsync_common.models.file import File
 from loguru import logger as log
 
-UploadFn = Callable[..., None]
+UploadFn = Callable[..., object]
 
 
 @dataclass(slots=True)

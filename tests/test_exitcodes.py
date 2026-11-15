@@ -103,6 +103,28 @@ class TestParallelTransferFailureCounting:
         asyncio.run(_run())
         assert counters["failed"] == 2
 
+    def test_a_swallowed_failure_returning_false_is_counted(self):
+        """A transfer that returns ``False`` (retries exhausted) counts as failed.
+
+        Regression: ``upload_file``/``download_file`` log the failure and emit
+        ``transfer_failed`` but swallow the exception, so the cycle reported
+        "Sync completed successfully" after a failed upload.
+        """
+        counters: dict[str, int] = {"failed": 0, "uploaded": 0}
+
+        async def _run() -> None:
+            with (
+                patch("hsync_client.transfer.download_file"),
+                patch("hsync_client.transfer.upload_file", return_value=False),
+            ):
+                from hsync_client.sync import _execute_parallel_transfers
+
+                await _execute_parallel_transfers([], [self._file("b.txt")], counters)
+
+        asyncio.run(_run())
+        assert counters["failed"] == 1
+        assert counters["uploaded"] == 0
+
     def test_counters_omitted_when_not_collecting(self):
         """Callers that do not need stats can omit the counters mapping."""
 
