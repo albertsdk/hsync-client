@@ -1480,3 +1480,36 @@ class TestStartupErrorVisibility:
         # The readiness marker must never precede the refusal: the client would
         # look "running" and its exit like a clean stop.
         assert not any(event["event"] == "ready" for event in captured)
+
+
+def test_autotune_startup_defers_the_bandwidth_probe_until_after_trust(tmp_path):
+    """The startup autotune pass must not probe /health before TLS trust exists.
+
+    Regression: the active probe ran before ``_run_remote_mode`` resolved the
+    server pin (ADR-0036), so the normal self-signed deployment failed
+    certificate verification and logged two misleading warnings at every start.
+    The post-connect refresh (``remote_websocket._refresh_network_tuning``)
+    probes with the pin/CA/--insecure policy already applied, before the first
+    sync, and seeds the passive EMA there.
+    """
+    from hsync_client import autotune as autotune_mod
+    from hsync_client import runtime_resolvers
+    from hsync_client.autotune import StorageType as _StorageType
+
+    options = _default_run_sync_kwargs(tmp_path)
+    with (
+        patch("hsync_client.runtime_resolvers.get_autotune_enabled", return_value=True),
+        patch("hsync_client.autotune.measure_rtt", return_value=None),
+        patch(
+            "hsync_client.autotune.detect_storage_type",
+            return_value=_StorageType.UNKNOWN,
+        ),
+        patch("hsync_client.autotune.measure_bandwidth_active") as probe,
+        patch.object(autotune_mod, "_bw_ema", None),
+    ):
+        tuning = runtime_resolvers._resolve_autotune(
+            options, MagicMock(), "https://198.51.100.7:9753", False
+        )
+
+    probe.assert_not_called()
+    assert tuning is not None

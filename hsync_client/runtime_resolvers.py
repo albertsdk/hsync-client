@@ -244,7 +244,6 @@ def _resolve_autotune(
     options: RunOptions, log, effective_server_url: str, using_p2p_placeholder: bool
 ) -> _ResolvedTuning:
     """Probe the network and resolve autotune-managed tuning values."""
-    verify_ssl = options.safety.verify_ssl
     http_timeout = options.transfers.http_timeout
     local_path = options.sync.local_path
     continuous = options.sync.continuous
@@ -266,7 +265,6 @@ def _resolve_autotune(
                 classify_network,
                 derive_profile,
                 detect_storage_type,
-                measure_bandwidth_active,
                 measure_rtt,
                 profile_transfer_queue,
             )
@@ -279,13 +277,15 @@ def _resolve_autotune(
             # to the post-rendezvous refresh in p2p_handler (slave role only).
             rtt_ms = None if using_p2p_placeholder else measure_rtt(rtt_host, rtt_port)
             net_class = classify_network(rtt_ms)
-            # Active bandwidth probe seeds the class at startup when the passive
-            # EMA has no data yet (no transfers have run). Skipped for the P2P
-            # placeholder — no server URL exists until a master is discovered.
-            active_mbps = None
-            if not using_p2p_placeholder and autotune_mod._bw_ema is None:
-                active_mbps = measure_bandwidth_active(effective_server_url, verify=verify_ssl)
-            bw_class = classify_bandwidth(autotune_mod._bw_ema, active_mbps)
+            # The active bandwidth probe is deliberately NOT run here: startup
+            # happens before ``_run_remote_mode`` resolves the server trust
+            # (ADR-0036), so a self-signed server — the normal deployment — would
+            # be checked against the system CA store and fail with a misleading
+            # warning. The post-connect refresh
+            # (``remote_websocket._refresh_network_tuning``) probes with the
+            # pin/CA/--insecure policy already resolved, before the first sync,
+            # and seeds the passive EMA there.
+            bw_class = classify_bandwidth(autotune_mod._bw_ema, None)
             storage_type = detect_storage_type(local_path)
 
             probe_results = ProbeResults(

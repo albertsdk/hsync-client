@@ -344,33 +344,174 @@ class TestMeasureRtt:
 
 
 class TestDetectStorageType:
-    """Storage probe: failure → UNKNOWN, never raises."""
+    """Storage probe: platform parsing, walk-up, failure → UNKNOWN, never raises."""
 
-    def test_returns_unknown_on_nonexistent_path(self):
-        result = detect_storage_type("/nonexistent/path/that/does/not/exist")
-        assert result == StorageType.UNKNOWN
+    def test_never_raises_for_a_nonexistent_path(self):
+        """The probe answers for the nearest existing ancestor, never raising."""
+        assert detect_storage_type("/nonexistent/path/that/does/not/exist") in StorageType
 
-    def test_returns_unknown_on_permission_error(self, monkeypatch, tmp_path):
-        """Simulate a permission error reading sysfs."""
+    def test_returns_unknown_when_no_ancestor_resolves(self, monkeypatch, tmp_path):
+        """A path with no block-backed ancestor (tmpfs/container overlay) is UNKNOWN."""
+        mountinfo = tmp_path / "mountinfo"
+        mountinfo.write_text("")
+        monkeypatch.setattr("hsync_client.autotune._sysfs_block_device", lambda _st: None)
+        monkeypatch.setattr("hsync_client.autotune._MOUNTINFO", mountinfo)
+        assert detect_storage_type("/nonexistent/path/that/does/not/exist") == StorageType.UNKNOWN
+
+    def test_unexpected_probe_error_returns_unknown(self, monkeypatch):
+        """A probe failure degrades to UNKNOWN (HDD tier) instead of raising."""
+
+        def _boom(_path):
+            raise OSError("probe failed")
+
+        monkeypatch.setattr("hsync_client.autotune.sys.platform", "linux")
+        monkeypatch.setattr("hsync_client.autotune._detect_storage_linux", _boom)
+        assert detect_storage_type("/tmp") == StorageType.UNKNOWN
+
+    def test_unknown_platform_returns_unknown_without_probing(self, monkeypatch):
+        """No probe runs on a platform without a detector."""
+        monkeypatch.setattr("hsync_client.autotune.sys.platform", "aix")
+        assert detect_storage_type("/tmp") == StorageType.UNKNOWN
+
+    @pytest.mark.parametrize(
+        ("name", "base"),
+        [
+            ("sda", "sda"),
+            ("sda1", "sda"),
+            ("nvme0n1", "nvme0n1"),
+            ("nvme0n1p1", "nvme0n1"),
+            ("mmcblk0p1", "mmcblk0"),
+            ("md0p1", "md0"),
+            ("dm-0", "dm-0"),
+            ("loop0", "loop0"),
+        ],
+    )
+    def test_strip_partition(self, name, base, monkeypatch):
+        from hsync_client.autotune import _strip_partition
+
+        assert _strip_partition(name) == base
+
+    def test_mountinfo_source_uses_the_device_not_the_mount_point(self):
+        """Regression: mountinfo field 4 is the mount point; reading it turned
+        ``/home/<user>`` into a device named after the user."""
+        from hsync_client.autotune import _mountinfo_source_from_text
+
+        line = "486 42 0:63 / /home/alice rw,nosuid - ecryptfs /home/alice/.Private rw"
+        assert _mountinfo_source_from_text(line, "/home/alice/projects") == "/home/alice/.Private"
+
+    def test_mountinfo_source_prefers_the_longest_mount_point(self):
+        from hsync_client.autotune import _mountinfo_source_from_text
+
+        text = "\n".join(
+            [
+                "1 0 8:1 / / rw - ext4 /dev/sda1 rw",
+                "2 1 8:2 / /data rw - ext4 /dev/sdb1 rw",
+            ]
+        )
+        assert _mountinfo_source_from_text(text, "/data/bucket") == "/dev/sdb1"
+
+    def test_mountinfo_source_decodes_octal_escapes(self):
+        from hsync_client.autotune import _mountinfo_source_from_text
+
+        line = "1 0 8:1 / /home/alice/my\\040files rw - ext4 /dev/sdc1 rw"
+        assert _mountinfo_source_from_text(line, "/home/alice/my files/b") == "/dev/sdc1"
+
+    def test_dm_resolves_to_its_first_slave(self, tmp_path, monkeypatch):
+        from hsync_client.autotune import _dm_backing
+
+        (tmp_path / "dm-0" / "slaves" / "sda1").mkdir(parents=True)
+        monkeypatch.setattr("hsync_client.autotune._SYS_CLASS_BLOCK", tmp_path)
+        assert _dm_backing("dm-0") == "sda"
+
+    @pytest.mark.parametrize(
+        ("device", "rotational", "expected"),
+        [
+            ("dm-0", "0", StorageType.SSD),
+            ("sdb", "1", StorageType.HDD),
+            ("nvme0n1", None, StorageType.NVME),
+        ],
+    )
+    def test_storage_from_device(self, tmp_path, monkeypatch, device, rotational, expected):
+        from hsync_client.autotune import _storage_from_device
+
+        if rotational is not None:
+            (tmp_path / device / "queue").mkdir(parents=True)
+            (tmp_path / device / "queue" / "rotational").write_text(rotational + "\n")
+        monkeypatch.setattr("hsync_client.autotune._SYS_CLASS_BLOCK", tmp_path)
+        assert _storage_from_device(device) == expected
+
+    def test_linux_base_device_walks_up_out_of_a_pseudo_filesystem(self, tmp_path, monkeypatch):
+        """An ecryptfs home has a synthetic st_dev; the disk behind its mount
+        point is the answer."""
+        import os
         from pathlib import Path
+        from types import SimpleNamespace
 
-        def _raise_oserror(*_args, **_kw):
-            raise OSError("permission denied")
+        from hsync_client.autotune import _linux_base_device
 
-        monkeypatch.setattr(Path, "read_text", _raise_oserror)
-        result = detect_storage_type(str(tmp_path))
-        assert result == StorageType.UNKNOWN
+        (tmp_path / "home" / "alice" / "projects").mkdir(parents=True)
+        target = tmp_path / "home" / "alice" / "projects"
+        real_stat = os.stat
+        synthetic = real_stat(tmp_path / "home").st_dev + 1
 
-    def test_non_linux_returns_unknown_without_probing(self, monkeypatch):
-        """The ``/proc``+``/sys`` probe is Linux-only (regression: off Linux it
-        always logged a spurious failure and assumed HDD-class on every run)."""
+        def fake_stat(path, *args, **kwargs):
+            if Path(path).name in ("alice", "projects"):
+                return SimpleNamespace(st_dev=synthetic)
+            return real_stat(path, *args, **kwargs)
 
-        def _fail(*_args, **_kw):
-            raise AssertionError("the Linux block probe must not run off Linux")
+        monkeypatch.setattr(os, "stat", fake_stat)
+        monkeypatch.setattr(
+            "hsync_client.autotune._sysfs_block_device",
+            lambda st: None if st == synthetic else "dm-0",
+        )
+        assert _linux_base_device(str(target)) == "dm-0"
 
-        monkeypatch.setattr("hsync_client.autotune._HAS_LINUX_BLOCK_PROBE", False)
-        monkeypatch.setattr("hsync_client.autotune._find_base_block_device", _fail)
-        assert detect_storage_type("/whatever") == StorageType.UNKNOWN
+    def test_linux_base_device_falls_back_to_the_mount_source(self, tmp_path, monkeypatch):
+        """btrfs subvolumes have an anonymous st_dev; the mount source names the disk."""
+        import os as _os
+
+        from hsync_client.autotune import _linux_base_device
+
+        target = tmp_path / "data" / "bucket"
+        target.mkdir(parents=True)
+        mountinfo = tmp_path / "mountinfo"
+        mountinfo.write_text(f"1 0 0:44 / {_os.path.realpath(target)} rw - btrfs /dev/sda2 rw\n")
+        monkeypatch.setattr("hsync_client.autotune._sysfs_block_device", lambda _st: None)
+        monkeypatch.setattr("hsync_client.autotune._MOUNTINFO", mountinfo)
+        assert _linux_base_device(str(target)) == "sda"
+
+    def test_windows_class_mapping(self):
+        from hsync_client.autotune import _windows_storage_class
+
+        assert _windows_storage_class(17, False) == StorageType.NVME
+        assert _windows_storage_class(11, True) == StorageType.HDD
+        assert _windows_storage_class(11, False) == StorageType.SSD
+
+    def test_windows_probe_returns_none_when_the_ioctl_layer_fails(self, monkeypatch):
+        from hsync_client.autotune import _detect_storage_windows
+
+        monkeypatch.setattr("hsync_client.autotune._windows_query_storage", lambda _p: None)
+        assert _detect_storage_windows("C:\\") is None
+
+    @pytest.mark.parametrize(
+        ("info", "expected"),
+        [
+            ({"SolidState": True, "DeviceProtocol": "PCI-Express"}, StorageType.NVME),
+            ({"SolidState": True, "DeviceProtocol": "SATA"}, StorageType.SSD),
+            ({"SolidState": False}, StorageType.HDD),
+            ({}, None),
+        ],
+    )
+    def test_macos_class_mapping(self, info, expected):
+        from hsync_client.autotune import _macos_storage_class
+
+        assert _macos_storage_class(info) == expected
+
+    def test_macos_probe_requires_a_device_node(self, monkeypatch):
+        from hsync_client.autotune import _detect_storage_macos
+
+        monkeypatch.setattr("hsync_client.autotune._macos_device_node", lambda _p: None)
+        assert _detect_storage_macos("/") is None
 
 
 class TestMeasureBandwidthActive:

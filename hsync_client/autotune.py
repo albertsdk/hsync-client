@@ -19,9 +19,12 @@ Architecture
    auto-tuning is disabled or probes fail.
 """
 
+import os
+import re
 import sys
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from socket import create_connection
 from statistics import median as _median
 from time import monotonic
@@ -283,69 +286,345 @@ def classify_bandwidth(
 # Probes — §3.3  Local storage type
 # =============================================================================
 
-# The storage-class probe reads ``/proc/self/mountinfo`` and
-# ``/sys/class/block/<dev>/queue/rotational``, both Linux-only. Elsewhere the
-# class is simply unknown (the conservative HDD-class default applies) — and
-# probing would only emit a spurious failure warning.
-_HAS_LINUX_BLOCK_PROBE = sys.platform == "linux"
+# Sysfs/mountinfo test seams: module-level paths so the unit tests can point them
+# at a fixture tree instead of the host's real devices.
+_SYS_DEV_BLOCK = Path("/sys/dev/block")
+_SYS_CLASS_BLOCK = Path("/sys/class/block")
+_MOUNTINFO = Path("/proc/self/mountinfo")
+
+# Partition suffix: `sda1`→`sda`, `nvme0n1p1`→`nvme0n1`, `mmcblk0p1`→`mmcblk0`.
+# Device-mapper names (`dm-0`) are indices, not partitions, and are left as-is.
+_PARTITION_RE = re.compile(
+    r"^(?P<base>nvme\d+n\d+|mmcblk\d+|loop\d+|md\d+|sd[a-z]+|vd[a-z]+|hd[a-z]+)(?:p?\d+)?$"
+)
+
+_WINDOWS_BUS_NVME = 17
+_WINDOWS_STORAGE_DEVICE_PROPERTY = 0
+_WINDOWS_STORAGE_SEEK_PENALTY_PROPERTY = 7
+_WINDOWS_IOCTL_STORAGE_QUERY_PROPERTY = 0x002D1400
+_WINDOWS_IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS = 0x00560000
 
 
 def detect_storage_type(path: str) -> StorageType:
-    """Return the storage-device class of the filesystem backing *path*."""
-    if not _HAS_LINUX_BLOCK_PROBE:
-        return StorageType.UNKNOWN
+    """Return the storage-device class of the filesystem backing *path*.
 
-    import os
-    from pathlib import Path
+    Best-effort and platform-specific: Linux reads sysfs (walking up through
+    pseudo-filesystem mounts such as ecryptfs/overlay), Windows asks the storage
+    stack for the bus type and seek penalty, macOS asks ``diskutil``. When the
+    platform has no probe, or the path lives on a filesystem with no backing
+    block device (tmpfs, a container overlay), the class is UNKNOWN — the
+    conservative HDD-tier default (``_STORAGE_BASE_CONCURRENCY``). A failed probe
+    is logged at DEBUG: on those layouts it is a normal condition, not a fault
+    the user can act on.
+    """
+    try:
+        if sys.platform.startswith("linux"):
+            detected = _detect_storage_linux(path)
+        elif sys.platform == "win32":
+            detected = _detect_storage_windows(path)
+        elif sys.platform == "darwin":
+            detected = _detect_storage_macos(path)
+        else:
+            return StorageType.UNKNOWN
+    except (OSError, ValueError, KeyError, AttributeError) as exc:
+        log.debug(f"autotune: storage detection failed ({exc}); assuming HDD-class")
+        return StorageType.UNKNOWN
+    return detected or StorageType.UNKNOWN
+
+
+# ── Linux: sysfs + mountinfo ─────────────────────────────────────────────
+
+
+def _detect_storage_linux(path: str) -> StorageType | None:
+    device = _linux_base_device(path)
+    return _storage_from_device(device) if device else None
+
+
+def _linux_base_device(path: str) -> str | None:
+    """Resolve the block device backing *path*, crossing pseudo-filesystem mounts.
+
+    ``st_dev`` identifies a block device for ext4/xfs/vfat/LVM, but ecryptfs,
+    overlayfs, tmpfs and btrfs subvolumes carry a synthetic device number with no
+    ``/sys/dev/block`` entry. The probe therefore walks up to the nearest
+    ancestor whose ``st_dev`` resolves (an encrypted home resolves to the disk
+    behind its mount point) and falls back to the mount source for the cases a
+    walk cannot reach (btrfs reports a bare ``/dev/sdaN`` source).
+    """
+    current = Path(path)
+    try:
+        candidates = (current.resolve(), *current.resolve().parents)
+    except OSError:
+        candidates = (current, *current.parents)
+    for candidate in candidates:
+        try:
+            node = _sysfs_block_device(os.stat(candidate).st_dev)
+        except OSError:
+            continue
+        if node:
+            return node
+    source = _mountinfo_source(path)
+    if source is None:
+        return None
+    if os.path.isabs(source):
+        if source.startswith("/dev/"):
+            return _strip_partition(Path(source).name)
+        if os.path.exists(source):
+            try:
+                return _sysfs_block_device(os.stat(source).st_dev)
+            except OSError:
+                return None
+        return None
+    return None
+
+
+def _sysfs_block_device(st_dev: int) -> str | None:
+    """Resolve a ``st_dev`` to a base block-device name via ``/sys/dev/block``."""
+    node = _SYS_DEV_BLOCK / f"{os.major(st_dev)}:{os.minor(st_dev)}"
+    if not node.exists():
+        return None
+    return _strip_partition(Path(os.path.realpath(node)).name)
+
+
+def _storage_from_device(device: str) -> StorageType | None:
+    """Classify a Linux block device (resolving device-mapper layers)."""
+    base = _dm_backing(device)
+    if base.startswith("nvme"):
+        return StorageType.NVME
+    try:
+        rotational = (_SYS_CLASS_BLOCK / base / "queue" / "rotational").read_text().strip()
+    except OSError:
+        return None
+    return StorageType.HDD if rotational == "1" else StorageType.SSD
+
+
+def _strip_partition(name: str) -> str:
+    """Drop a partition suffix (``sda1``→``sda``, ``nvme0n1p1``→``nvme0n1``)."""
+    match = _PARTITION_RE.match(name)
+    return match.group("base") if match else name
+
+
+def _dm_backing(name: str) -> str:
+    """Resolve a device-mapper device to its first slave (LVM/crypt)."""
+    if not name.startswith("dm-"):
+        return name
+    try:
+        slaves = list((_SYS_CLASS_BLOCK / name / "slaves").iterdir())
+    except OSError:
+        return name
+    return _strip_partition(slaves[0].name) if slaves else name
+
+
+def _mountinfo_source(path: str) -> str | None:
+    """Return the mount *source* for *path* (longest matching mount point)."""
+    try:
+        text = _MOUNTINFO.read_text()
+    except OSError:
+        return None
+    return _mountinfo_source_from_text(text, path)
+
+
+def _mountinfo_source_from_text(text: str, path: str) -> str | None:
+    """Parse ``/proc/self/mountinfo`` and return the source for *path*.
+
+    The block device is the field after the ``-`` separator, never the mount
+    point (mountinfo field 4); reading the mount point used to turn
+    ``/home/<user>`` into a device named after the user.
+    """
+    target = os.path.realpath(path)
+    best: tuple[int, str] | None = None
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) < 7 or "-" not in fields:
+            continue
+        separator = fields.index("-")
+        if len(fields) < separator + 3:
+            continue
+        mount_point = _mountinfo_unescape(fields[4])
+        if target != mount_point and not target.startswith(mount_point.rstrip("/") + "/"):
+            continue
+        if best is None or len(mount_point) > best[0]:
+            best = (len(mount_point), _mountinfo_unescape(fields[separator + 2]))
+    return best[1] if best else None
+
+
+def _mountinfo_unescape(value: str) -> str:
+    """Decode the octal escapes mountinfo uses for spaces/tabs/newlines."""
+    return re.sub(r"\\([0-7]{3})", lambda match: chr(int(match.group(1), 8)), value)
+
+
+# ── Windows: volume → physical disk → bus type + seek penalty ────────────
+
+
+def _detect_storage_windows(path: str) -> StorageType | None:
+    """Classify the physical disk behind *path* through the Windows storage stack.
+
+    ``GetVolumePathNameW`` maps the path to its volume,
+    ``IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS`` maps the volume to its disk, then
+    ``IOCTL_STORAGE_QUERY_PROPERTY`` yields the bus type (NVMe) and whether the
+    device incurs a seek penalty (HDD). No external tool is spawned.
+    """
+    queried = _windows_query_storage(path)
+    return _windows_storage_class(*queried) if queried is not None else None
+
+
+def _windows_storage_class(bus_type: int, incurs_seek_penalty: bool) -> StorageType:
+    """Map the Windows storage descriptors to a storage class (pure)."""
+    if bus_type == _WINDOWS_BUS_NVME:
+        return StorageType.NVME
+    return StorageType.HDD if incurs_seek_penalty else StorageType.SSD
+
+
+def _windows_query_storage(path: str) -> tuple[int, bool] | None:  # pragma: no cover
+    """Return ``(bus_type, incurs_seek_penalty)`` for the disk behind *path*."""
+    import ctypes
+    import struct
+    from ctypes import wintypes
+
+    class _StorageQuery(ctypes.Structure):
+        _fields_ = [
+            ("PropertyId", wintypes.DWORD),
+            ("QueryType", wintypes.DWORD),
+            ("AdditionalParameters", ctypes.c_ubyte * 1),
+        ]
+
+    # WinDLL exists only on Windows; the stub omits it on other platforms.
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    invalid = wintypes.HANDLE(-1).value
+    share, open_existing = 0x00000003, 3
+
+    def query(handle, property_id: int, size: int) -> bytes | None:
+        request = _StorageQuery(property_id, 0)
+        buffer = ctypes.create_string_buffer(size)
+        returned = wintypes.DWORD(0)
+        ok = kernel32.DeviceIoControl(
+            handle,
+            _WINDOWS_IOCTL_STORAGE_QUERY_PROPERTY,
+            ctypes.byref(request),
+            ctypes.sizeof(request),
+            buffer,
+            len(buffer),
+            ctypes.byref(returned),
+            None,
+        )
+        return buffer.raw[: returned.value] if ok else None
+
+    root = ctypes.create_unicode_buffer(261)
+    if not kernel32.GetVolumePathNameW(path, root, len(root)):
+        return None
+    handle = kernel32.CreateFileW(
+        "\\\\.\\" + root.value.rstrip("\\"), 0, share, None, open_existing, 0, None
+    )
+    if handle in (invalid, None):
+        return None
+    try:
+        buffer = ctypes.create_string_buffer(1024)
+        returned = wintypes.DWORD(0)
+        if not kernel32.DeviceIoControl(
+            handle,
+            _WINDOWS_IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
+            None,
+            0,
+            buffer,
+            len(buffer),
+            ctypes.byref(returned),
+            None,
+        ):
+            return None
+        disk_number = struct.unpack_from("<I", buffer.raw, 8)[0]
+    finally:
+        kernel32.CloseHandle(handle)
+
+    disk = kernel32.CreateFileW(
+        f"\\\\.\\PhysicalDrive{disk_number}", 0, share, None, open_existing, 0, None
+    )
+    if disk in (invalid, None):
+        return None
+    try:
+        descriptor = query(disk, _WINDOWS_STORAGE_DEVICE_PROPERTY, 1024)
+        penalty = query(disk, _WINDOWS_STORAGE_SEEK_PENALTY_PROPERTY, 16)
+    finally:
+        kernel32.CloseHandle(disk)
+    if not descriptor or not penalty:
+        return None
+    bus_type = struct.unpack_from("<I", descriptor, 28)[0]
+    incurs_seek_penalty = bool(penalty[8]) if len(penalty) > 8 else True
+    return bus_type, incurs_seek_penalty
+
+
+# ── macOS: diskutil metadata ─────────────────────────────────────────────
+
+
+def _detect_storage_macos(path: str) -> StorageType | None:
+    """Classify the volume behind *path* through ``diskutil info -plist``.
+
+    ``statvfs`` yields the device node; ``diskutil`` then reports whether the
+    media is solid-state and, for SSDs, its protocol (an Apple/PCI-Express NVMe
+    device is distinguished from a SATA SSD).
+    """
+    device = _macos_device_node(path)
+    if not device:
+        return None
+    info = _macos_disk_info(device)
+    return _macos_storage_class(info) if info else None
+
+
+def _macos_device_node(path: str) -> str | None:
+    """Return the ``/dev/disk…`` node backing *path* (``None`` off-disk)."""
+    try:
+        source = getattr(os.statvfs(path), "f_mntfromname", None)
+    except OSError:
+        return None
+    if isinstance(source, bytes):
+        source = source.decode("utf-8", "replace")
+    return source if isinstance(source, str) and source.startswith("/dev/") else None
+
+
+def _macos_disk_info(device: str) -> dict | None:  # pragma: no cover - macOS-only
+    """Run ``diskutil info -plist`` for *device* and parse it (2 s timeout)."""
+    import plistlib
+    import subprocess
 
     try:
-        dev = _find_base_block_device(os.stat(path).st_dev)
-        if dev.startswith("nvme"):
-            return StorageType.NVME
-        rotational = Path(f"/sys/class/block/{dev}/queue/rotational").read_text().strip()
-        return StorageType.HDD if rotational == "1" else StorageType.SSD
-    except (OSError, PermissionError, KeyError) as e:
-        log.warning(f"autotune: storage detection failed ({e}); assuming HDD-class")
-        return StorageType.UNKNOWN
+        completed = subprocess.run(
+            ["diskutil", "info", "-plist", device],
+            capture_output=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0 or not completed.stdout:
+        return None
+    try:
+        return plistlib.loads(completed.stdout)
+    except (ValueError, plistlib.InvalidFileException):
+        return None
 
 
-def _find_base_block_device(st_dev: int) -> str:
-    """Resolve ``os.stat().st_dev`` to the base block device name."""
-    from pathlib import Path
-
-    mountinfo = Path("/proc/self/mountinfo").read_text()
-    major, minor = (st_dev >> 8) & 0xFFF, st_dev & 0xFF
-    dev_str = f"{major}:{minor}"
-
-    source = next(
-        (
-            fields[4]
-            for line in mountinfo.splitlines()
-            if len(fields := line.split()) >= 5 and fields[2] == dev_str
-        ),
-        None,
-    )
-    if source is None:
-        raise OSError(f"Cannot find device for st_dev {dev_str} in mountinfo")
-
-    dev_node = Path(source).name
-    return _reduce_to_base_device(dev_node)
-
-
-def _reduce_to_base_device(dev_name: str) -> str:
-    """Strip partition suffix and resolve device-mapper / LVM layers."""
-    import re
-    from pathlib import Path
-
-    base = re.sub(r"p?\d+$", "", dev_name)
-
-    if base.startswith("dm-"):
-        slaves_dir = Path(f"/sys/class/block/{base}/slaves")
-        if slaves_dir.exists():
-            slaves = list(slaves_dir.iterdir())
-            if slaves:
-                return slaves[0].name
-    return base
+def _macos_storage_class(info: dict) -> StorageType | None:
+    """Map a ``diskutil info -plist`` payload to a storage class (pure)."""
+    solid_state = info.get("SolidState")
+    if solid_state is None:
+        return None
+    if not solid_state:
+        return StorageType.HDD
+    protocol = str(
+        info.get("DeviceProtocol") or info.get("Protocol") or info.get("BusProtocol") or ""
+    ).lower()
+    if "nvme" in protocol or "pci-express" in protocol:
+        return StorageType.NVME
+    return StorageType.SSD
 
 
 # =============================================================================
