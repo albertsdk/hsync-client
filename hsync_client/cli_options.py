@@ -884,10 +884,12 @@ ServerTrustOpt = Annotated[
     typer.Option(
         "--server-trust",
         help=(
-            "Sync-server TLS trust policy: 'chain' (default: standard CA validation), "
-            "'ask' (confirm an unknown fingerprint on a terminal, fail closed without "
-            "one), 'accept-new' (pin the first sighting silently), 'strict' (require a "
-            "pin) or 'none' (no verification; loopback/tests only)."
+            "Sync-server TLS trust policy: 'auto' (stored pin, else standard CA "
+            "validation when valid, else pin the first sighting), 'chain' (default: "
+            "standard CA validation), 'ask' (confirm an unknown fingerprint on a "
+            "terminal, fail closed without one), 'accept-new' (pin the first sighting "
+            "silently), 'strict' (require a pin) or 'none' (no verification; "
+            "loopback/tests only)."
         ),
         metavar="POLICY",
         show_default=False,
@@ -989,10 +991,11 @@ RendezvousTrustOpt = Annotated[
     typer.Option(
         "--rendezvous-server-trust",
         help=(
-            "Rendezvous-server TLS trust policy: 'ask' (default: confirm an unknown "
-            "fingerprint on a terminal, fail closed without one), 'accept-new' "
-            "(pin the first sighting silently), 'strict' (require a pin) or "
-            "'none' (no verification; loopback/tests only)."
+            "Rendezvous-server TLS trust policy: 'auto' (stored pin, else pin the "
+            "first sighting), 'ask' (default: confirm an unknown fingerprint on a "
+            "terminal, fail closed without one), 'accept-new' (pin the first sighting "
+            "silently), 'strict' (require a pin) or 'none' (no verification; "
+            "loopback/tests only)."
         ),
         metavar="POLICY",
         show_default=False,
@@ -1056,9 +1059,10 @@ P2PTrustOpt = Annotated[
     typer.Option(
         "--p2p-trust",
         help=(
-            "P2P master trust policy: 'ask' (default: confirm an unknown master "
-            "fingerprint on a terminal, fail closed without one), 'accept-new' "
-            "(pin the first sighting silently) or 'strict' (require an explicit pin)."
+            "P2P master trust policy: 'auto' (stored pin, else pin the first "
+            "sighting), 'ask' (default: confirm an unknown master fingerprint on a "
+            "terminal, fail closed without one), 'accept-new' (pin the first sighting "
+            "silently) or 'strict' (require an explicit pin)."
         ),
         metavar="POLICY",
         show_default=False,

@@ -235,7 +235,7 @@ class EnvSettings(BaseSettings):
     )
 
     # Server TLS Trust (ADR-0036): chain (default) or SSH-style pinning policies
-    server_trust: Literal["chain", "ask", "accept-new", "strict", "none"] | None = Field(
+    server_trust: Literal["auto", "chain", "ask", "accept-new", "strict", "none"] | None = Field(
         default=None,
         description="Sync-server TLS trust policy (default: chain)",
     )
@@ -278,7 +278,7 @@ class EnvSettings(BaseSettings):
         le=RENDEZVOUS_REFRESH_INTERVAL_MAX,
         description="rdv/1 lease/query cadence in seconds (default 30)",
     )
-    rendezvous_server_trust: Literal["ask", "accept-new", "strict", "none"] | None = Field(
+    rendezvous_server_trust: Literal["auto", "ask", "accept-new", "strict", "none"] | None = Field(
         default=None,
         description="Rendezvous-server TLS trust policy (default: ask)",
     )
@@ -305,7 +305,7 @@ class EnvSettings(BaseSettings):
         default=False,
         description="Never become master in P2P mode (always remain a client/slave)",
     )
-    p2p_trust: Literal["ask", "accept-new", "strict"] = Field(
+    p2p_trust: Literal["auto", "ask", "accept-new", "strict"] = Field(
         default="ask",
         description=(
             "P2P master trust policy: 'ask' (default: confirm an unknown master "

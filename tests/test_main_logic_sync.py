@@ -1132,6 +1132,73 @@ class TestEvaluateServerTrust:
         )
         assert store.get("h", 443) == "a" * 64
 
+    def test_auto_uses_chain_when_the_certificate_is_ca_valid(self, tmp_path, monkeypatch):
+        from hsync_common.protocol.tls_trust import TrustPolicy
+
+        import hsync_client.server_trust_resolution as ml
+        from hsync_client.server_trust import ServerTrustStore
+
+        store = ServerTrustStore(tmp_path / "servers.json")
+        monkeypatch.setattr(ml, "default_server_trust_store", lambda: store)
+        monkeypatch.setattr(ml, "probe_server_trust", lambda *a, **k: ("a" * 64, True))
+
+        # CA-valid: standard validation, no pin recorded.
+        assert (
+            ml._evaluate_server_trust(self._config(TrustPolicy.auto), MagicMock(), "h", 443) is None
+        )
+        assert store.get("h", 443) is None
+
+    def test_auto_pins_a_self_signed_server_and_emits_the_notice(self, tmp_path, monkeypatch):
+        from hsync_common.protocol.tls_trust import TrustPolicy
+
+        import hsync_client.server_trust_resolution as ml
+        from hsync_client.server_trust import ServerTrustStore
+
+        store = ServerTrustStore(tmp_path / "servers.json")
+        monkeypatch.setattr(ml, "default_server_trust_store", lambda: store)
+        monkeypatch.setattr(ml, "probe_server_trust", lambda *a, **k: ("a" * 64, False))
+        warnings: list[dict] = []
+        monkeypatch.setattr(
+            ml, "emit_warning", lambda message, **kw: warnings.append({"message": message, **kw})
+        )
+
+        assert (
+            ml._evaluate_server_trust(self._config(TrustPolicy.auto), MagicMock(), "h", 443)
+            == "a" * 64
+        )
+        assert store.get("h", 443) == "a" * 64
+        assert warnings and warnings[0]["reason"] == "tofu_first_use"
+
+    def test_auto_enforces_a_stored_pin(self, tmp_path, monkeypatch):
+        from hsync_common.protocol.tls_trust import TrustPolicy
+
+        import hsync_client.server_trust_resolution as ml
+        from hsync_client.server_trust import ServerTrustStore
+
+        store = ServerTrustStore(tmp_path / "servers.json")
+        store.set("h", 443, "a" * 64, source="cli")
+        monkeypatch.setattr(ml, "default_server_trust_store", lambda: store)
+        monkeypatch.setattr(ml, "fetch_server_fingerprint", lambda *a, **k: "a" * 64)
+
+        assert (
+            ml._evaluate_server_trust(self._config(TrustPolicy.auto), MagicMock(), "h", 443)
+            == "a" * 64
+        )
+
+    def test_auto_refuses_a_changed_stored_pin(self, tmp_path, monkeypatch):
+        from hsync_common.protocol.tls_trust import TrustPolicy
+
+        import hsync_client.server_trust_resolution as ml
+        from hsync_client.server_trust import ServerTrustStore
+
+        store = ServerTrustStore(tmp_path / "servers.json")
+        store.set("h", 443, "b" * 64, source="cli")
+        monkeypatch.setattr(ml, "default_server_trust_store", lambda: store)
+        monkeypatch.setattr(ml, "fetch_server_fingerprint", lambda *a, **k: "a" * 64)
+
+        with pytest.raises(ml.ServerTrustError):
+            ml._evaluate_server_trust(self._config(TrustPolicy.auto), MagicMock(), "h", 443)
+
     def test_matched_pin_proceeds(self, tmp_path, monkeypatch):
         import hsync_client.server_trust_resolution as ml
         from hsync_client.server_trust import ServerTrustStore

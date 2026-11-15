@@ -25,7 +25,9 @@ from hsync_common.protocol.pairing import (
 from hsync_common.protocol.tls_trust import (
     DEFAULT_SELF_SIGNED_POLICY,
     TrustAction,
+    TrustPolicy,
     evaluate_tls_trust,
+    resolve_auto_policy,
 )
 
 from hsync_client.config import HsyncConfig
@@ -203,7 +205,9 @@ def _evaluate_master_pin(
         # ``run_sync`` always sets the key; a hand-built config without it falls
         # back to the SSOT default (fail closed on an unknown master), never to
         # silent auto-trust.
-        policy = config.get("P2P_TRUST", DEFAULT_SELF_SIGNED_POLICY)
+        policy = resolve_auto_policy(
+            config.get("P2P_TRUST", DEFAULT_SELF_SIGNED_POLICY), stored, chain_trusted=False
+        )
         action = evaluate_tls_trust(policy, stored, fingerprint)
         if action is TrustAction.prompt:
             prompt = build_peer_trust_prompt(config)
@@ -230,6 +234,13 @@ def _evaluate_master_pin(
     _clear_trust_notice(notified, master.cid)
     if decision is PinDecision.trusted:
         log.info(known_peer_added_message(master.cid, bucket, store.path))
+        if policy is TrustPolicy.accept_new:
+            emit_warning(
+                f"P2P master {master.cid} identity accepted on first use "
+                f"(SHA256 {fingerprint}); verify it in the trusted-keys list.",
+                source="peer",
+                reason="tofu_first_use",
+            )
     return True
 
 

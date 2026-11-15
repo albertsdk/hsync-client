@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--server-trust`/`--rendezvous-server-trust`/`--p2p-trust` (and the matching
+  `HSYNC_*_TRUST` variables) accept `auto`: a stored pin wins, else standard CA
+  validation for the sync server, else pin the first sighting. A first-use pin
+  is logged and surfaced as a non-blocking notice.
+
 ### Fixed
 
 - A `chmod` or a `touch` was silently lost on Linux with watchdog 7 (the

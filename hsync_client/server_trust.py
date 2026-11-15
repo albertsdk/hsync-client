@@ -40,6 +40,7 @@ __all__ = [
     "default_server_trust_path",
     "default_server_trust_store",
     "fetch_server_fingerprint",
+    "probe_server_trust",
     "resolve_server_trust",
 ]
 
@@ -76,6 +77,17 @@ def default_server_trust_store() -> ServerTrustStore:
     return ServerTrustStore()
 
 
+def _der_fingerprint(der: object) -> str | None:
+    """Return the bare lowercase SHA-256 hex digest of a DER certificate."""
+    if not isinstance(der, bytes) or not der:
+        return None
+    # Lazy import: ``hsync_common.ssl_utils`` pulls ``cryptography``, which must
+    # not be loaded just by importing the CLI/trust surface.
+    from hsync_common.ssl_utils import fingerprint_from_der
+
+    return fingerprint_from_der(der)
+
+
 def fetch_server_fingerprint(
     host: str, port: int, timeout: float = _FINGERPRINT_PROBE_TIMEOUT
 ) -> str | None:
@@ -94,13 +106,38 @@ def fetch_server_fingerprint(
                 der = tls.getpeercert(binary_form=True)
     except (OSError, ssl.SSLError):
         return None
-    if not isinstance(der, bytes) or not der:
-        return None
-    # Lazy import: ``hsync_common.ssl_utils`` pulls ``cryptography``, which must
-    # not be loaded just by importing the CLI/trust surface.
-    from hsync_common.ssl_utils import fingerprint_from_der
+    return _der_fingerprint(der)
 
-    return fingerprint_from_der(der)
+
+def probe_server_trust(
+    host: str,
+    port: int,
+    *,
+    ca_cert: str | None = None,
+    timeout: float = _FINGERPRINT_PROBE_TIMEOUT,
+) -> tuple[str | None, bool]:
+    """Return ``(observed_fingerprint, chain_trusted)`` for *host:port*.
+
+    The verified handshake runs first (system CA, or *ca_cert* as the anchor, with
+    the same SNI hostname as the real request); on success the peer certificate of
+    that same connection is the fingerprint, so a later pin can never disagree with
+    the validated chain. Only a certificate verification failure falls back to the
+    unverified probe that feeds TOFU. Any other failure returns ``(None, False)``
+    so the caller reports that it could not read the fingerprint.
+    """
+    try:
+        context = ssl.create_default_context(cafile=ca_cert)
+    except (OSError, ssl.SSLError):
+        return None, False
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            with context.wrap_socket(sock, server_hostname=host) as tls:
+                der = tls.getpeercert(binary_form=True)
+    except ssl.SSLCertVerificationError:
+        return fetch_server_fingerprint(host, port, timeout), False
+    except (OSError, ssl.SSLError):
+        return None, False
+    return _der_fingerprint(der), True
 
 
 def resolve_server_trust(

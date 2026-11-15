@@ -18,6 +18,7 @@ from hsync_common.protocol.tls_trust import (
     TrustAction,
     TrustPolicy,
     evaluate_tls_trust,
+    resolve_auto_policy,
     resolve_trust_policy,
 )
 
@@ -26,10 +27,11 @@ from hsync_client.config import (
     get_rendezvous_server_trust,
     get_server_trust,
 )
-from hsync_client.events import UiEventName, emit_event
+from hsync_client.events import UiEventName, emit_event, emit_warning
 from hsync_client.server_trust import (
     default_server_trust_store,
     fetch_server_fingerprint,
+    probe_server_trust,
     resolve_server_trust,
 )
 from hsync_client.trust_messages import (
@@ -151,9 +153,24 @@ def _evaluate_server_trust(config: HsyncConfig, log, host: str, port: int) -> st
     if policy is TrustPolicy.chain or policy is TrustPolicy.none:
         return None
 
-    observed = fetch_server_fingerprint(host, port, float(config.get("HTTP_TIMEOUT", 10)))
     store = default_server_trust_store()
     stored = store.get(host, port)
+    timeout = float(config.get("HTTP_TIMEOUT", 10))
+
+    if policy is TrustPolicy.auto:
+        if stored:
+            # A known identity is enforced: read the presented certificate to
+            # compare, exactly like ``strict``.
+            policy = TrustPolicy.strict
+            observed = fetch_server_fingerprint(host, port, timeout)
+        else:
+            observed, chain_trusted = probe_server_trust(
+                host, port, ca_cert=config.get("CA_CERT"), timeout=timeout
+            )
+            policy = resolve_auto_policy(TrustPolicy.auto, None, chain_trusted=chain_trusted)
+    else:
+        observed = fetch_server_fingerprint(host, port, timeout)
+
     explicit = tuple(config.get("SERVER_FINGERPRINTS") or ())
 
     if observed is None:
@@ -190,6 +207,12 @@ def _evaluate_server_trust(config: HsyncConfig, log, host: str, port: int) -> st
             raise ServerTrustError("server presented no certificate")
         store.set(host, port, observed, source="tofu")
         log.info(known_server_added_message(host, port, store.path))
+        emit_warning(
+            f"Sync server '{format_authority(host, port)}' identity accepted on "
+            f"first use (SHA256 {observed}); verify it in the trusted-keys list.",
+            source="server",
+            reason="tofu_first_use",
+        )
         return observed
     if action is TrustAction.prompt:
         prompt = build_trust_prompt(

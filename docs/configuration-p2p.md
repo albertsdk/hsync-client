@@ -15,14 +15,14 @@ p2p configuration for peer-to-peer synchronization without a central server.
 | `--no-mdns` | Exclude the local network: discover peers only through the configured discovery server(s), not mDNS (requires `--rendezvous-server`; without one there would be no discovery channel) | `false` |
 | `--rendezvous-server-fingerprint` | Pin a discovery server's certificate fingerprint (`sha256:<hex>` or bare hex); repeatable up to two per server for a rotation window; refused without `--rendezvous-server` | — (`ask`: confirm at the prompt on a terminal, fail closed without one) |
 | `--rendezvous-server-tofu` | Trust a discovery server's certificate on first use; a later mismatch is refused | `false` |
-| `--rendezvous-server-trust` | Rendezvous-server TLS trust policy: `ask` (prompt on a terminal and remember, fail closed without one), `accept-new`, `strict`, `none` | `ask` |
+| `--rendezvous-server-trust` | Rendezvous-server TLS trust policy: `auto` (stored pin, else pin the first sighting), `ask` (prompt on a terminal and remember, fail closed without one), `accept-new`, `strict`, `none` | `ask` |
 | `--rendezvous-transport` | Transport used to reach every rendezvous server: `auto` (default) races QUIC/UDP (preferred) and TLS/TCP on each endpoint's port(s) (RFC 8305), `quic` or `tcp` uses one transport only | `auto` |
 | `--group` | p2p group name (only peers in the same group see each other) | — (all peers visible) |
 | `--listen-port` | Port when acting as p2p master; `0` = pick a free port | `0` (auto) |
 | *(data relay)* | No client option: when no advertised candidate is reachable (both peers behind carrier-grade NAT) the client relays the data plane through the rendezvous automatically, if the node runs with `--relay` | — (last resort; see [Sync across networks](p2p-rendezvous.md#behind-carrier-grade-nat-mobile-hotspot-guest-network)) |
 | `--prefer-master` | Prefer this device as the master | `false` (CLI only) |
 | `--never-master` | Prevent this device from ever becoming master | `false` |
-| `--p2p-trust` | P2P master trust policy: `ask` (confirm an unknown master on a terminal, fail closed without one), `accept-new` (pin the first sighting silently) or `strict` (require an explicit pin) | `ask` |
+| `--p2p-trust` | P2P master trust policy: `auto` (stored pin, else pin the first sighting), `ask` (confirm an unknown master on a terminal, fail closed without one), `accept-new` (pin the first sighting silently) or `strict` (require an explicit pin) | `ask` |
 | `--no-peer-download` | Disable peer-assisted downloads for this run; overrides an enabled environment setting | `false` |
 | `--allow-unauthenticated-writes` | Dangerously allow write-capable sync without a shared secret | `false` |
 | `--peer-rendezvous-timeout` | Seconds to wait for p2p peer rendezvous (`0` = wait indefinitely) | `0` (indefinite) |
@@ -60,8 +60,10 @@ The `p2p` subcommand and `--prefer-master` have no environment-variable equivale
 `--p2p-trust` applies to the elected master only (ADR-0040): `ask` (the
 default) confirms a first-seen master certificate on a terminal and fails closed
 without one, `accept-new` pins it silently, and `strict` requires an explicit pin
-before any connection. An unknown master is therefore never trusted implicitly;
-see [FAQ — p2p Mode](faq-p2p.md#security--safety) for the out-of-band steps.
+before any connection. `auto` enforces a known pin and otherwise pins the first
+sighting (the master is self-signed, so there is no CA chain to prefer). An
+unknown master is therefore never trusted implicitly under `ask`; see
+[FAQ — p2p Mode](faq-p2p.md#security--safety) for the out-of-band steps.
 Peer seeders are selected through that master and receive their own persistent
 `(device ID, bucket)` TOFU pin before the requester opens a connection.
 
@@ -106,7 +108,7 @@ Both must be explicit: a TTY or `--allow-deletions` never grants them.
 | `HSYNC_RENDEZVOUS_SERVER_EXTRA_PORTS` | Extra ports tried on **each** endpoint for **both** transports, comma-separated and ordered (dial fallback); e.g. `53` so a client whose **egress firewall** blocks port 443 on one transport can still reach the same node on 53. Tried after the endpoint's own/default port | — |
 | `HSYNC_RENDEZVOUS_SERVER_FINGERPRINTS` | Pins **per endpoint**: `ENDPOINT=FINGERPRINT[|FINGERPRINT]`, comma-separated (`sha256:<hex>` or bare hex; `|` separates the rotation window). A pin must name a configured endpoint; a bare fingerprint is accepted only with one endpoint. With several servers each keeps its own identity | — |
 | `HSYNC_RENDEZVOUS_SERVER_TOFU` | Trust a discovery server's certificate on first use (`1` = on) | `false` |
-| `HSYNC_RENDEZVOUS_SERVER_TRUST` | Rendezvous-server TLS trust policy: `ask` (prompt on a terminal and remember, fail closed without one), `accept-new`, `strict` (each configured server needs its pin), `none` | `ask` |
+| `HSYNC_RENDEZVOUS_SERVER_TRUST` | Rendezvous-server TLS trust policy: `auto` (stored pin, else pin the first sighting), `ask` (prompt on a terminal and remember, fail closed without one), `accept-new`, `strict` (each configured server needs its pin), `none` | `ask` |
 | `HSYNC_MAP_DATA_PORT` | Map the master TCP port with UPnP (`true`/`false`); off by default | `false` |
 | `HSYNC_MDNS` | Discover peers over mDNS on the local network (`true`/`false`); set to `false` to use only the configured discovery servers (requires `HSYNC_RENDEZVOUS_SERVER_ENDPOINTS`) | `true` |
 | `HSYNC_NEVER_MASTER` | Never become master | `false` |
@@ -114,7 +116,7 @@ Both must be explicit: a TTY or `--allow-deletions` never grants them.
 | `HSYNC_LOCKS_DIR` | Instance-lock dir (`<sha256>.lock` per synced directory) | `$XDG_RUNTIME_DIR/hsync/locks`, else `<device-dir>/locks` |
 | `HSYNC_P2P_PIN_FILE` | Pinned fingerprints of known p2p peers (TOFU) | `$HSYNC_STATE_DIR/p2p_known_peers.json`; `$XDG_STATE_HOME/hsync/…` or `~/.local/state/hsync/…` when the state dir is unset |
 | `HSYNC_RENDEZVOUS_SERVER_TRUST_FILE` | Trusted rendezvous fingerprints (known-hosts store) | `$HSYNC_STATE_DIR/rendezvous_server_known_hosts.json`; the XDG/local-state path when the state dir is unset |
-| `HSYNC_P2P_TRUST` | P2P master trust policy: `ask`, `accept-new` or `strict` | `ask` |
+| `HSYNC_P2P_TRUST` | P2P master trust policy: `auto`, `ask`, `accept-new` or `strict` | `ask` |
 | `HSYNC_PEER_RENDEZVOUS_TIMEOUT` | p2p peer rendezvous timeout in seconds (`0` = indefinitely) | `0` |
 | `HSYNC_HEARTBEAT_INTERVAL` | LAN mDNS re-announce / liveness-evaluation cadence in seconds (`1`–`60`). A fresh record is announced in a burst first (every second for the first ten cycles, also after a network change), so a peer that is already running sees this node in about a second | `5` |
 | `HSYNC_RENDEZVOUS_SERVER_REFRESH_INTERVAL` | `rdv/1` lease cadence in seconds (`1`–`300`): the steady rate at which the client registers, refreshes and queries the rendezvous once the group is complete. While a node is joining — or has no master — it samples faster (a jittered start-up burst, then one query per 12 s), and the node's per-source budgets admit every value in this range | `30` |

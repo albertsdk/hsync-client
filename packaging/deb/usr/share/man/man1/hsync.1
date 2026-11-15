@@ -1,7 +1,7 @@
 .\" Man page for HSYNC - file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-11-09" "hsync 1.1.4" "User Commands"
+.TH HSYNC 1 "2026-11-15" "hsync 1.1.4" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -711,7 +711,7 @@ API key for authenticating with the server.
 .TP
 .B HSYNC_SERVER_TRUST
 Sync\-server TLS trust policy:
-.IR chain " (default), " ask ", " accept-new ", " strict " or " none .
+.IR auto ", " chain " (default), " ask ", " accept-new ", " strict " or " none .
 Equivalent to
 .BR \-\-server\-trust .
 .TP
@@ -839,7 +839,7 @@ Trust the rendezvous certificate on first use (1 = on; default off).
 .TP
 .B HSYNC_RENDEZVOUS_SERVER_TRUST
 Rendezvous TLS trust policy:
-.IR ask " (default), " accept-new ", " strict " or " none .
+.IR auto ", " ask " (default), " accept-new ", " strict " or " none .
 Equivalent to
 .BR \-\-rendezvous\-server\-trust .
 .TP
@@ -878,7 +878,7 @@ Never become master in p2p mode (default:
 .BR false ).
 .TP
 .B HSYNC_P2P_TRUST
-Trust policy for the elected p2p master: ask (default), accept-new or strict
+Trust policy for the elected p2p master: auto, ask (default), accept-new or strict
 (see
 .BR \-\-p2p\-trust ).
 .TP

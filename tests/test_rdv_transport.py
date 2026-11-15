@@ -243,6 +243,16 @@ class TestTcpTls:
         client.verify_peer_der(der)
         client.verify_peer_der(der)  # second sighting proceeds silently
 
+    def test_auto_pins_the_first_sighting_then_enforces_it(self, tmp_path, monkeypatch) -> None:
+        """``auto`` on a self-signed rendezvous resolves to TOFU then the pin."""
+        from hsync_client.rendezvous_trust import RENDEZVOUS_TRUST_FILE_ENV
+
+        monkeypatch.setenv(RENDEZVOUS_TRUST_FILE_ENV, str(tmp_path / "trust.json"))
+        der = _der(_fake_cert())
+        client = RendezvousClient("rdv.test", 443, policy=TrustPolicy.auto)
+        client.verify_peer_der(der)  # first sighting pinned (TOFU)
+        client.verify_peer_der(der)  # known pin proceeds
+
 
 def test_close_unused_dials_closes_only_the_completed_loser() -> None:
     """A losing attempt that already completed is closed, never leaked."""

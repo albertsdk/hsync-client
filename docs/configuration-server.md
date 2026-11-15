@@ -12,7 +12,7 @@ Server-mode configuration for connecting to a central HSYNC Server.
 | `--server-url` | Sync-server URL: a full `https://…[/path]` URL or a bare `HOST[:PORT]` (HTTPS implied, default port `9753`); required in server mode unless `HSYNC_SERVER_URL` is set | `HSYNC_SERVER_URL` |
 | `-b, --bucket` | Bucket name | (required; CLI only) |
 | `--ca-cert` | Path to CA certificate for self-signed server certs | — |
-| `--server-trust` | TLS trust policy: `chain` (default), `ask`, `accept-new`, `strict`, `none` | `chain` |
+| `--server-trust` | TLS trust policy: `auto`, `chain` (default), `ask`, `accept-new`, `strict`, `none` | `chain` |
 | `--server-fingerprint` | Pin the server certificate fingerprint (`sha256:<hex>` or bare hex; repeat up to two for a rotation window) | — |
 | `--server-tofu` | Trust the server certificate on first use (TOFU) | `false` |
 | `--insecure` | Skip SSL certificate verification | `false` |
@@ -31,6 +31,7 @@ on a LAN) choose one of the SSH-style policies:
 
 | Policy | Behaviour |
 |---|---|
+| `auto` | Stored pin, else standard CA validation when valid, else pin the first sighting (Desktop default) |
 | `chain` | Standard CA validation; no fingerprint pinning (default) |
 | `ask` | Show the fingerprint and ask on first contact; fail closed without a terminal |
 | `accept-new` | Pin the first sighting silently (Trust-On-First-Use) |
@@ -56,7 +57,7 @@ fingerprint for the out-of-band step.
 |---|---|---|
 | `HSYNC_SERVER_URL` | Sync-server URL: bare `host`, `host:port`, `[IPv6]`, `[IPv6]:port`, or a full `https://…[/path]` URL (same as `--server-url`) | (required or pass `--server-url`) |
 | `HSYNC_API_KEY` | Account token (`hs_<id>_<secret>`) | (required in server mode) |
-| `HSYNC_SERVER_TRUST` | TLS trust policy (`chain`/`ask`/`accept-new`/`strict`/`none`) | `chain` |
+| `HSYNC_SERVER_TRUST` | TLS trust policy (`auto`/`chain`/`ask`/`accept-new`/`strict`/`none`) | `chain` |
 | `HSYNC_SERVER_FINGERPRINT` | Certificate fingerprint(s) to pin (up to two) | — |
 | `HSYNC_SERVER_TOFU` | Trust the certificate on first use | `false` |
 | `HSYNC_SERVER_TRUST_FILE` | File storing the trusted server fingerprints | `$HSYNC_STATE_DIR/server_known_hosts.json`; the XDG/local-state path when the state dir is unset |

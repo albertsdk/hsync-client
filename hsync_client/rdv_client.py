@@ -55,6 +55,7 @@ from hsync_common.protocol.tls_trust import (
     TrustAction,
     TrustPolicy,
     evaluate_tls_trust,
+    resolve_auto_policy,
 )
 from hsync_common.ssl_utils import fingerprint_from_der
 from hsync_common.text import compact_json_bytes
@@ -63,7 +64,7 @@ from loguru import logger as log
 
 from hsync_client.asyncio_utils import run_on_fresh_loop
 from hsync_client.constants import RDV_REPLY_TIMEOUT_S, RELAY_IDLE_TIMEOUT_S
-from hsync_client.events import UiEventName, emit_event
+from hsync_client.events import UiEventName, emit_event, emit_warning
 from hsync_client.rendezvous_trust import RendezvousTrustStore, default_rendezvous_trust_store
 from hsync_client.trust_messages import known_hosts_added_message, mismatch_guidance
 
@@ -870,12 +871,21 @@ class RendezvousClient:
             return
 
         stored = store.get(self.host, self.port)
+        # Self-signed transport: ``auto`` enforces a known pin, else pins the
+        # first sighting (no CA chain is available here).
+        policy = resolve_auto_policy(policy, stored, chain_trusted=False)
         action = evaluate_tls_trust(policy, stored, observed)
         if action is TrustAction.proceed:
             return
         if action is TrustAction.pin_and_proceed:
             store.set(self.host, self.port, observed, source="tofu")
             self._announce_known_host(store)
+            emit_warning(
+                f"Rendezvous {format_authority(self.host, self.port)} identity accepted on "
+                f"first use (SHA256 {observed}); verify it in the trusted-keys list.",
+                source="rendezvous",
+                reason="tofu_first_use",
+            )
             return
         if action is TrustAction.prompt:
             self._prompt_and_pin(store, observed)
