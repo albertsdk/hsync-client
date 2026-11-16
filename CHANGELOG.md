@@ -27,8 +27,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The file watcher no longer fails to start on Windows and macOS: the
   inotify-only `generate_full_events` argument is no longer passed to the
   platform-native observer, which rejects it.
-- Storage detection is skipped off Linux instead of logging a spurious
-  "storage detection failed" warning and assuming HDD-class on every run.
+- Storage detection now works on every platform instead of being skipped off
+  Linux: Linux resolves the block device through `/sys/dev/block` (partitions,
+  dm/LVM) and walks up through ecryptfs/overlay mounts, Windows asks the storage
+  stack for the disk bus type and seek penalty, and macOS reads `diskutil`. A
+  synthetic or unreadable device logs at debug and keeps the conservative HDD
+  tier, so an SSD/NVMe no longer runs at the HDD concurrency default.
+- The startup autotune pass no longer probes `/health` before the server trust
+  is resolved, so a self-signed server (the normal deployment) no longer fails
+  certificate verification with two warnings at every start; the post-connect
+  refresh probes after the pin/CA/`--insecure` policy is applied.
 - A `token_required` rendezvous refusal now names the gated bucket and states the
   fix (the node's `bucket=<key>` line must hold the group key derived from the
   shared password, `hsync derive-group-key`) instead of only the raw error code.
