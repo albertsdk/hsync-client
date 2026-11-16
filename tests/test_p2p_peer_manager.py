@@ -1204,6 +1204,30 @@ class TestDuplicateIdentityDetection:
         error_calls = [c for c in mock_log.error.call_args_list if "Duplicate" in str(c)]
         assert len(error_calls) == 1
 
+    def test_duplicate_identity_memo_is_bounded(self):
+        """A clone fight must not grow the dedup memo without bound.
+
+        Each distinct ``address:cert_fp`` signature is remembered only to log
+        once, and a hostile LAN peer can mint signatures forever; the memo keeps
+        the most recent ones instead of growing with the attack.
+        """
+        from hsync_client.p2p_peers import _DUPLICATE_IDENTITY_MAX_SIGNATURES
+
+        pm = PeerManager(local_cid="local123", bucket="photos", local_address="192.168.1.1")
+        with patch("hsync_client.p2p_peers.log"):
+            for i in range(_DUPLICATE_IDENTITY_MAX_SIGNATURES + 50):
+                pm.add_peer(
+                    Peer(
+                        cid="local123",
+                        bucket="photos",
+                        address=f"10.0.{i // 250}.{i % 250}",
+                        port=9753,
+                    )
+                )
+
+        assert len(pm._duplicate_identity_seen) == _DUPLICATE_IDENTITY_MAX_SIGNATURES
+        assert pm._peers == {}
+
     def test_duplicate_identity_emits_ui_event(self):
         """Rendezvous detection emits the duplicate_identity UI event once."""
         from hsync_client.events import UiEventName

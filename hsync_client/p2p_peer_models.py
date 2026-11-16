@@ -43,7 +43,7 @@ def server_url(address: str, port: int, *, use_https: bool) -> str:
     return build_url(protocol, address, port)
 
 
-@dataclass
+@dataclass(slots=True)
 class LivenessSource:
     """One source of peer-liveness evidence, in its own unit.
 
@@ -76,7 +76,7 @@ class LivenessSource:
     last_answer: float = 0.0
 
 
-@dataclass
+@dataclass(slots=True)
 class Peer:
     """Represents a discovered peer on the P2P."""
 

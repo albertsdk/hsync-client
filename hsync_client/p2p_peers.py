@@ -52,6 +52,13 @@ from hsync_client.p2p_peer_models import (
 # 0 means "use a random available port".
 HSYNC_P2P_LISTEN_PORT = 0
 
+# ``_report_duplicate_identity`` logs once per ``address:cert_fp`` signature to
+# avoid a flood from a clone fight, but that memo must not grow without bound: a
+# LAN peer can mint signatures (unauthenticated mDNS) carrying our CID forever.
+# Keep the most recent ones and evict FIFO; an evicted signature only means the
+# same clash could be logged again much later.
+_DUPLICATE_IDENTITY_MAX_SIGNATURES = 256
+
 
 def get_free_port() -> int:
     """
@@ -203,7 +210,7 @@ class PeerManager:
         # Dedup guard for the duplicate-identity warning: mDNS heartbeats
         # re-deliver the same foreign record every few seconds, so the error is
         # reported once per distinct (address, fingerprint) signature.
-        self._duplicate_identity_seen: set[str] = set()
+        self._duplicate_identity_seen: dict[str, None] = {}
         self._master_cid: str | None = None
         self._local_server_ready = False
         self._local_inbound = False
@@ -493,7 +500,9 @@ class PeerManager:
         with self._lock:
             if signature in self._duplicate_identity_seen:
                 return
-            self._duplicate_identity_seen.add(signature)
+            if len(self._duplicate_identity_seen) >= _DUPLICATE_IDENTITY_MAX_SIGNATURES:
+                self._duplicate_identity_seen.pop(next(iter(self._duplicate_identity_seen)), None)
+            self._duplicate_identity_seen[signature] = None
         log.error(
             f"{ActionLabel.SECURITY} Duplicate device identity detected: a peer at "
             f"{peer.address}:{peer.port} presents this client's CID "

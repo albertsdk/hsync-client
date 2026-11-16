@@ -3,6 +3,7 @@
 
 """Tests for Peer data class in P2P module."""
 
+from hsync_client.p2p_peer_models import LivenessSource
 from hsync_client.p2p_peers import Peer, dial_candidates
 
 
@@ -176,3 +177,10 @@ class TestDialCandidates:
         assert dial_candidates(object(), address="192.168.1.100", port=9753) == (
             ("192.168.1.100", 9753),
         )
+
+
+def test_peer_models_avoid_a_per_instance_dict():
+    """The registry keeps one instance per discovered peer, so both models are
+    slotted: a ``__dict__`` per peer is pure overhead (~136 B for ``Peer``)."""
+    assert "__slots__" in vars(Peer)
+    assert "__slots__" in vars(LivenessSource)
