@@ -17,7 +17,7 @@ import threading
 from collections.abc import Callable, Iterator, Sized
 from contextlib import suppress
 from dataclasses import dataclass
-from os import close, fsync, remove, replace, stat_result, utime
+from os import close, fsync, remove, stat_result, utime
 from pathlib import Path
 from tempfile import mkstemp
 from time import monotonic
@@ -32,6 +32,7 @@ from hsync_common.constants import (
     CHUNK_SIZE_SMALL,
     CONTENT_TYPE_OCTET_STREAM,
     HEADER_CHECKSUM_SHA256,
+    PARTIAL_DELTA_SUFFIX,
 )
 from hsync_common.disk import check_free_space
 from hsync_common.format import format_bytes, format_duration
@@ -133,7 +134,7 @@ from hsync_client.utils.fs_ops import (
     remove_with_retry,
     replace_with_retry,
 )
-from hsync_client.utils.paths import local_path_length_ok
+from hsync_client.utils.paths import absolute_path_length_ok, local_path_length_ok
 
 
 def _transfer_retry_params() -> tuple[int, float, float]:
@@ -584,7 +585,12 @@ def download_file(
         log.error("Invalid file metadata: missing filepath or name")
         return True
 
-    if not local_path_length_ok(CONFIG.get("LOCAL_BUCKET", ""), file.filepath):
+    # Check the names actually written: the final path and the .part/.delta.part
+    # temporary the downloader opens before the atomic commit.
+    if not all(
+        local_path_length_ok(CONFIG.get("LOCAL_BUCKET", ""), f"{file.filepath}{suffix}")
+        for suffix in ("", PARTIAL_DOWNLOAD_SUFFIX, PARTIAL_DELTA_SUFFIX)
+    ):
         log.warning(
             f'{ActionLabel.SKIP} Path exceeds this platform limit; skipping "{file.filepath}"'
         )
@@ -1372,13 +1378,7 @@ def _stream_download_body(
             cleanup_partial = True
             return
         clear_read_only(full_save_path)
-        try:
-            replace(partial_file_path, full_save_path)
-        except PermissionError:
-            # Windows: the target or the partial is still open elsewhere
-            # (antivirus/indexer). Retry briefly instead of abandoning the
-            # download; POSIX never takes this branch.
-            replace_with_retry(partial_file_path, full_save_path)
+        replace_with_retry(partial_file_path, full_save_path)
         cleanup_partial = False
         _finalize_download(
             file,
@@ -2789,6 +2789,11 @@ def materialize_symlink_local(link: Symlink) -> bool:
     local = resolve_within(bucket, link.filepath, resolve_final=False)
     if local is None:
         log.warning(f'{ActionLabel.SECURITY} Rejected unsafe symlink path: "{link.filepath}"')
+        return False
+    if not absolute_path_length_ok(local):
+        log.warning(
+            f'{ActionLabel.SKIP} Path exceeds this platform limit; skipping symlink "{local}"'
+        )
         return False
     if not link.target:
         log.warning(f'{ActionLabel.SECURITY} Refusing symlink with empty target: "{local}"')

@@ -11,6 +11,7 @@ from os.path import abspath, normpath
 from pathlib import Path
 from typing import IO
 
+from hsync_common.constants import PARTIAL_DOWNLOAD_SUFFIX
 from hsync_common.models.sentinel import remove_empty_dir
 from hsync_common.models.tombstone import relpath_in_bucket
 from hsync_common.path_validation import (
@@ -201,7 +202,7 @@ def is_case_insensitive(root: str) -> bool:
         cached = _case_sensitivity_cache.get(key)
     if cached is not None:
         return cached
-    probe_name = f".hsync-case-probe-{os.getpid()}-A"
+    probe_name = f".hsync-case-probe-{os.getpid()}-A{PARTIAL_DOWNLOAD_SUFFIX}"
     probe = Path(key) / probe_name
     insensitive = False
     try:

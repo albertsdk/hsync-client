@@ -13,6 +13,7 @@ import os
 import sys
 import threading
 import time
+import unicodedata
 from collections import deque
 from collections.abc import Callable, Coroutine, Iterable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -98,6 +99,7 @@ from hsync_client.retry import retry_on_network_error
 from hsync_client.state_backend import local_cid
 from hsync_client.utils import (
     classify_connection_error,
+    get_permissions,
     get_ssl_verify,
     is_inflight_partial,
     set_permissions,
@@ -359,6 +361,13 @@ def _record_permanent_download_failure(file: File, e: PermanentDownloadError) ->
 # =============================================================================
 
 
+# Case-only renames hop through this marker: it ends with the partial suffix so
+# a stranded one is never synchronised, but the startup sweep recognises it and
+# moves the file back instead of deleting the user's content (see
+# ``_cleanup_partial_files``).
+_RENAME_TEMP_SUFFIX = f".hsync-rename{PARTIAL_DOWNLOAD_SUFFIX}"
+
+
 def _cleanup_partial_files() -> int:
     """
     Clean up incomplete .part files from previous interrupted downloads.
@@ -386,6 +395,18 @@ def _cleanup_partial_files() -> int:
                 if is_inflight_partial(partial_path):
                     log.debug(f"Keeping in-flight partial: {partial_path}")
                     continue
+                if file.endswith(_RENAME_TEMP_SUFFIX):
+                    # An interrupted case-only rename: the bytes are the user's
+                    # own file one rename away from its final name, so restore
+                    # them instead of deleting them as an abandoned partial.
+                    target_path = os.path.join(root, file[: -len(_RENAME_TEMP_SUFFIX)])
+                    if not os.path.lexists(target_path):
+                        try:
+                            replace_with_retry(partial_path, target_path)
+                            log.info(f"Recovered interrupted rename: {target_path}")
+                        except OSError as e:
+                            log.warning(f"Could not recover interrupted rename {partial_path}: {e}")
+                        continue
                 try:
                     remove_with_retry(partial_path)
                     log.debug(f"Removed incomplete download: {partial_path}")
@@ -656,56 +677,104 @@ def _reconcile_tombstones() -> tuple[list[str], dict[str, dict]]:
     return existing_paths, tombstones
 
 
-def _entry_relpath(info: dict, bucket: str) -> str | None:
-    """Return a listing entry's bucket-relative identity (POSIX, NFC)."""
+def _raw_entry_relpath(info: dict, bucket: str) -> str | None:
+    """Return a listing entry's bucket-relative path with its on-disk spelling.
+
+    Unlike the version/tombstone identity this is NOT NFC-folded: collision
+    detection must see the raw spelling, otherwise two canonically-equivalent
+    local names already fold to one string before the grouping.
+    """
     fp = str(info.get("filepath") or "")
     if not fp:
         return None
-    return relpath_in_bucket(fp, bucket) if os.path.isabs(fp) else fp
+    if not os.path.isabs(fp):
+        return fp
+    try:
+        rel = os.path.relpath(fp, bucket)
+    except ValueError:  # a different drive on Windows
+        return None
+    if rel == os.pardir or rel.startswith(os.pardir + os.sep):
+        return None
+    return rel.replace(os.sep, "/")
 
 
 def _drop_case_collisions(
     local_files: list[dict], remote_files: list[dict]
 ) -> tuple[list[dict], list[dict]]:
-    """Drop casefold collisions on a case-insensitive local filesystem.
+    """Drop names that collide on the local filesystem.
 
-    Two paths that differ only by case cannot both exist locally: the engine
-    would overwrite one with the other every cycle (and in ``download-only``
-    delete it). The winner is an existing local path (never destroy local data
-    because of a remote collision), otherwise the lexicographically smallest
-    relative path. Every loser is logged and skipped, so the cycle settles
-    instead of oscillating.
+    Two paths that differ only by case (a case-insensitive filesystem) or only
+    by Unicode normal form (NFC vs NFD, on any filesystem) cannot be addressed
+    independently: the version/tombstone identity folds them to one key, so
+    reconciling both would silently overwrite one and never sync the twin. The
+    winner is an existing local path (never destroy local data because of a
+    remote collision), otherwise the lexicographically smallest relative path;
+    every loser is logged and skipped, so the cycle settles instead of
+    oscillating.
+
+    A loser is dropped from both tracks — except the remote representative of a
+    group whose winner is a local path: dropping it would leave the winner with
+    no remote counterpart, and a ``download-only`` mirror would then delete it
+    even though its bytes are the peer's file under the other spelling. That
+    entry is re-pointed at the winner's spelling instead.
     """
     bucket = CONFIG.get("LOCAL_BUCKET", "")
-    if not bucket or not is_case_insensitive(bucket):
+    if not bucket:
         return local_files, remote_files
+    fold_case = is_case_insensitive(bucket)
+
+    # Tag every entry once: the raw spelling is the on-disk name, while the
+    # grouping key is the version/tombstone identity (NFC, case-folded only
+    # where the filesystem itself folds).
+    entries = [(info, True, _raw_entry_relpath(info, bucket)) for info in local_files]
+    entries += [(info, False, _raw_entry_relpath(info, bucket)) for info in remote_files]
 
     groups: dict[str, list[tuple[str, bool]]] = {}
-    for info, is_local in [(i, True) for i in local_files] + [(i, False) for i in remote_files]:
-        rel = _entry_relpath(info, bucket)
-        if rel:
-            groups.setdefault(rel.casefold(), []).append((rel, is_local))
+    for _info, is_local, rel in entries:
+        if not rel:
+            continue
+        key = unicodedata.normalize("NFC", rel)
+        groups.setdefault(key.casefold() if fold_case else key, []).append((rel, is_local))
 
-    losers: set[str] = set()
+    losers: dict[str, str] = {}
+    local_winners: set[str] = set()
     for group in groups.values():
         distinct = {rel for rel, _ in group}
         if len(distinct) < 2:
             continue
         local_rels = {rel for rel, is_local in group if is_local}
         winner = min(local_rels) if local_rels else min(distinct)
+        if local_rels:
+            local_winners.add(winner)
         for rel in distinct - {winner}:
-            losers.add(rel)
+            losers[rel] = winner
             log.warning(
-                f'{ActionLabel.SKIP} "{rel}" collides with "{winner}" on a '
-                "case-insensitive filesystem; skipping it"
+                f'{ActionLabel.SKIP} "{rel}" collides with "{winner}" on this '
+                "filesystem; skipping it"
             )
     if not losers:
         return local_files, remote_files
 
-    return (
-        [i for i in local_files if _entry_relpath(i, bucket) not in losers],
-        [i for i in remote_files if _entry_relpath(i, bucket) not in losers],
-    )
+    kept_local = [info for info, is_local, rel in entries if is_local and rel not in losers]
+    kept_remote_rels = {
+        rel for _info, is_local, rel in entries if not is_local and rel not in losers
+    }
+    kept_remote: list[dict] = []
+    repointed: set[str] = set()
+    for info, is_local, rel in entries:
+        if is_local:
+            continue
+        if rel not in losers:
+            kept_remote.append(info)
+            continue
+        winner = losers[rel]
+        if winner not in local_winners:
+            continue
+        if winner in kept_remote_rels or winner in repointed:
+            continue
+        repointed.add(winner)
+        kept_remote.append({**info, "filepath": winner, "name": winner.rsplit("/", 1)[-1]})
+    return kept_local, kept_remote
 
 
 def _is_case_only_rename(old_path: str, new_path: str) -> bool:
@@ -715,6 +784,19 @@ def _is_case_only_rename(old_path: str, new_path: str) -> bool:
         and old_path.casefold() == new_path.casefold()
         and is_case_insensitive(CONFIG.get("LOCAL_BUCKET", ""))
     )
+
+
+def _rename_abs_path(path: str) -> str:
+    """Resolve a rename-pair path against the local bucket when it is relative.
+
+    A rename pair mixes forms: the vacated path of a local rename is absolute,
+    while a remote-derived path is bucket-relative. Resolving both before the
+    move and the state update keeps the operation inside the tree instead of
+    addressing the process working directory.
+    """
+    if Path(path).is_absolute():
+        return path
+    return str(Path(CONFIG["LOCAL_BUCKET"]) / path)
 
 
 def _retain_merge_bases(local_files: list[dict], existing_paths: list[str]) -> None:
@@ -2068,12 +2150,15 @@ def _apply_local_rename(old_file: File, new_file: File) -> bool:
     new_path = new_file.filepath or ""
     if not old_path or not new_path:
         return False
+    old_path = _rename_abs_path(old_path)
+    new_path = _rename_abs_path(new_path)
     try:
         Path(new_path).parent.mkdir(parents=True, exist_ok=True)
         # A case-only rename on a case-insensitive filesystem addresses the same
-        # file before and after, so rename through a skipped .part name.
+        # file before and after, so rename through a recoverable .part marker
+        # (the startup sweep moves it back if the process dies in between).
         if _is_case_only_rename(old_path, new_path):
-            temporary = f"{new_path}{PARTIAL_DOWNLOAD_SUFFIX}"
+            temporary = f"{new_path}{_RENAME_TEMP_SUFFIX}"
             replace_with_retry(old_path, temporary)
             try:
                 replace_with_retry(temporary, new_path)
@@ -2231,6 +2316,39 @@ def get_dirs_remote() -> list[dict] | None:
     return data if isinstance(data, list) else None
 
 
+def _permissions_diverge(local_permissions: str, remote_permissions: str) -> bool:
+    """Whether a local/remote permission pair needs to be applied at all.
+
+    A lossy host (NTFS carries only the owner-write bit) — or a pair where the
+    peer advertised ``readonly_permissions`` — can represent nothing beyond that
+    bit, so a difference confined to the other bits is not a divergence:
+    applying it would ping-pong a POSIX ``600`` against its canonical ``644`` on
+    every cycle. The single definition of "permissions diverge" for the
+    reconciliation, the directory converge and the event appliers.
+    """
+    if not local_permissions or not remote_permissions:
+        return False
+    if local_permissions == remote_permissions:
+        return False
+    if local_permissions_are_lossy() or CONFIG.get("REMOTE_READONLY_PERMISSIONS", False):
+        return has_owner_write(local_permissions) != has_owner_write(remote_permissions)
+    return True
+
+
+def _directory_permissions_diverge(local_permissions: str, remote_permissions: str) -> bool:
+    """Whether a directory permission difference needs to be applied.
+
+    A lossy host (or a pair with a lossy peer) cannot represent a non-writable
+    directory — it always keeps its tree traversable — so converging any
+    directory mode would ping-pong 555/755 on every cycle.
+    """
+    if local_permissions == remote_permissions:
+        return False
+    if local_permissions_are_lossy() or CONFIG.get("REMOTE_READONLY_PERMISSIONS", False):
+        return False
+    return bool(local_permissions and remote_permissions)
+
+
 def converge_directory_permissions(remote_dirs: list[dict]) -> None:
     """Apply divergent remote directory permissions locally.
 
@@ -2265,6 +2383,16 @@ def converge_directory_permissions(remote_dirs: list[dict]) -> None:
         except ValueError:
             continue
         if local_dir.permissions == sanitized:
+            continue
+        if not _directory_permissions_diverge(local_dir.permissions, sanitized):
+            # A lossy host cannot represent a non-writable directory (it always
+            # keeps its tree traversable), so converging would ping-pong 555/755.
+            log.debug(
+                'Skipping directory permission converge on a lossy host: "{}" ({} -> {})',
+                local_dir.path,
+                local_dir.permissions,
+                sanitized,
+            )
             continue
         try:
             set_permissions_on_dir(local_dir.path, sanitized)
@@ -2424,7 +2552,9 @@ def reconcile_directories(remote_dirs: list[dict], *, p2p_mode: bool) -> None:
         if cid:
             params["cid"] = str(cid)
         try:
-            params["permissions"] = f"{os.stat(root).st_mode & 0o777:04o}"
+            # Canonical reader: on a lossy host the synthetic NTFS 666/777 must
+            # never reach a POSIX peer (it would chmod its tree to them).
+            params["permissions"] = get_permissions(root)
         except OSError:
             pass
         try:
@@ -2653,17 +2783,8 @@ def _actions_from_remote(
             if action == SyncActionName.nothing and persist_state:
                 local_perms = local_file.permissions
                 remote_perms = remote_file.permissions
-                if local_perms and remote_perms and local_perms != remote_perms:
-                    # A lossy host (Windows) can only represent writable vs
-                    # read-only; comparing the full POSIX string would ping-pong
-                    # a POSIX 600 against its canonical 644 on every cycle. The
-                    # projection keeps the portable bit and ignores the rest.
-                    lossy = local_permissions_are_lossy() or CONFIG.get(
-                        "REMOTE_READONLY_PERMISSIONS", False
-                    )
-                    if lossy and has_owner_write(local_perms) == has_owner_write(remote_perms):
-                        pass  # same portable projection: no permission-only action
-                    elif direction == "download-only":
+                if _permissions_diverge(local_perms, remote_perms):
+                    if direction == "download-only":
                         if local_file.filepath:
                             set_permissions(local_file.filepath, remote_perms)
                             log.debug(
@@ -2998,7 +3119,7 @@ def update_dir(data: dict) -> Dir | None:
     if dir:
         # Directory exists - check if permissions need updating
         dir_data = Dir.from_dict(data, CONFIG["LOCAL_BUCKET"])
-        if dir_data.permissions != dir.permissions and dir.path and dir_data.permissions:
+        if dir.path and _directory_permissions_diverge(dir.permissions, dir_data.permissions):
             dir.permissions = dir_data.permissions
             set_permissions_on_dir(dir.path, dir.permissions)
     else:
@@ -3137,7 +3258,7 @@ def update_file(
                     sync_state.merge_and_record(file.filepath, file.sha256sum, remote_vclock)
                     inventory_observer.upsert(file)
                     return
-            if file.permissions != file_data.permissions:
+            if _permissions_diverge(file.permissions, file_data.permissions):
                 # Only permissions differ - update them
                 if file_data.permissions:
                     set_permissions(file_data.filepath, file_data.permissions)

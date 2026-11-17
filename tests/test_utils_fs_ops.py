@@ -129,11 +129,35 @@ class TestSymlinkSkip:
         assert fs_ops.create_symlink_or_skip(str(target), str(link)) is True
         assert link.is_symlink()
 
-    def test_unsupported_host_skips_instead_of_failing(self, tmp_path, monkeypatch):
+    def test_windows_host_without_privilege_skips_instead_of_failing(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(fs_ops, "_IS_WINDOWS", True)
+
         def denied(_target, _link):
-            raise OSError(errno.EPERM, "privilege not held")
+            raise OSError(errno.EPERM, "A required privilege is not held", None, 1314)
 
         monkeypatch.setattr(fs_ops.os, "symlink", denied)
+
+        assert fs_ops.create_symlink_or_skip("t", str(tmp_path / "l")) is False
+
+    def test_posix_permission_error_still_propagates(self, tmp_path, monkeypatch):
+        """EACCES/EPERM on POSIX are real failures, not 'no symlink support'."""
+        monkeypatch.setattr(fs_ops, "_IS_WINDOWS", False)
+
+        def denied(_target, _link):
+            raise OSError(errno.EACCES, "permission denied")
+
+        monkeypatch.setattr(fs_ops.os, "symlink", denied)
+
+        with pytest.raises(OSError):
+            fs_ops.create_symlink_or_skip("t", str(tmp_path / "l"))
+
+    def test_posix_filesystem_without_link_support_skips(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(fs_ops, "_IS_WINDOWS", False)
+
+        def unsupported(_target, _link):
+            raise OSError(errno.ENOTSUP, "operation not supported")
+
+        monkeypatch.setattr(fs_ops.os, "symlink", unsupported)
 
         assert fs_ops.create_symlink_or_skip("t", str(tmp_path / "l")) is False
 

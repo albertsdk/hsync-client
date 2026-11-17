@@ -265,7 +265,7 @@ class TestDownloadRetryBehavior:
             patch("hsync_client.transfer.get", side_effect=_transient_then_success),
             patch("hsync_client.transfer.compute_sha256", return_value="abc123"),
             patch("hsync_client.transfer.is_sha256_hex", return_value=True),
-            patch("hsync_client.transfer.replace"),
+            patch("hsync_client.transfer.replace_with_retry"),
             patch("hsync_client.transfer._record_synced_base"),
             patch("hsync_client.transfer.prepare_delta_download", return_value=None),
         ):
@@ -322,7 +322,7 @@ class TestDownloadRetryBehavior:
             patch("hsync_client.transfer.get", side_effect=_rate_limited_then_success),
             patch("hsync_client.transfer.compute_sha256", return_value="abc123"),
             patch("hsync_client.transfer.is_sha256_hex", return_value=True),
-            patch("hsync_client.transfer.replace"),
+            patch("hsync_client.transfer.replace_with_retry"),
             patch("hsync_client.transfer._record_synced_base"),
             patch("hsync_client.transfer.prepare_delta_download", return_value=None),
         ):

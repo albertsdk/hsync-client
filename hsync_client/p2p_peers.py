@@ -411,6 +411,7 @@ class PeerManager:
                             existing.compression_enabled != peer.compression_enabled
                             or existing.delta_enabled != peer.delta_enabled
                             or existing.peer_download_enabled != peer.peer_download_enabled
+                            or existing.readonly_permissions != peer.readonly_permissions
                         )
                     )
                     or endpoints_changed
@@ -426,6 +427,7 @@ class PeerManager:
                     existing.compression_enabled = peer.compression_enabled
                     existing.delta_enabled = peer.delta_enabled
                     existing.peer_download_enabled = peer.peer_download_enabled
+                    existing.readonly_permissions = peer.readonly_permissions
                     existing.capabilities_known = peer.capabilities_known
                 if endpoints_changed:
                     existing.endpoints = endpoints

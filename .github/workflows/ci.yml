@@ -73,7 +73,9 @@ jobs:
         run: poetry run pytest -q --ignore-glob='*test_bb*'
 
   # Cross-platform signal (the `python` job above is Linux-only).
-  # macOS keeps POSIX modes and symlinks, so it runs the full unit suite; the
+  # NOTE: both jobs check out `hsync-common` at `main`, so this change only goes
+  # green once the paired hsync-common commit is pushed/merged — land common
+  # first. macOS keeps POSIX modes and symlinks, so it runs the full unit suite; the
   # Windows runner runs the platform-parity subset, because the wider suite has
   # POSIX-mode assertions and symlink creation (Developer Mode) that need a
   # dedicated Windows sweep before they can be blocking. The BB suite stays on

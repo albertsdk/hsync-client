@@ -773,7 +773,12 @@ def _run_as_slave(
         # Set compression capability based on master peer
         config["SERVER_COMPRESSION_ENABLED"] = master.compression_enabled
         config["SERVER_DELTA_ENABLED"] = master.delta_enabled
-        config["REMOTE_READONLY_PERMISSIONS"] = master.readonly_permissions
+        if master.readonly_permissions:
+            # Advisory only: the mDNS TXT record is unauthenticated, so
+            # ``REMOTE_READONLY_PERMISSIONS`` is switched on by the capability
+            # the master proves in the WSS handshake
+            # (``adopt_remote_capabilities``), never by this hint.
+            log.debug("Master advertises lossy local permissions (advisory TXT hint)")
 
         set_config(config)
 

@@ -774,6 +774,25 @@ class TestAddPeerUpdate:
         assert peer.startup_time == 42.0
         assert peer.sync_direction == "upload-only"
 
+    def test_capability_upgrade_carries_readonly_permissions(self):
+        """A peer first seen without capabilities adopts the lossy flag on update."""
+        pm = PeerManager(local_cid="local123", bucket="photos")
+        pm.add_peer(Peer(cid="peer1", bucket="photos", address="192.168.1.100", port=9753))
+        assert pm._peers["peer1"].readonly_permissions is False
+
+        pm.add_peer(
+            Peer(
+                cid="peer1",
+                bucket="photos",
+                address="192.168.1.100",
+                port=9753,
+                readonly_permissions=True,
+                capabilities_known=True,
+            )
+        )
+
+        assert pm._peers["peer1"].readonly_permissions is True
+
     def test_update_refreshes_the_heartbeat_evidence(self):
         """A new announce re-stamps the peer, so a stale record comes back."""
         pm = PeerManager(local_cid="local123", bucket="photos")

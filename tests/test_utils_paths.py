@@ -84,3 +84,28 @@ class TestPathLengthLimit:
         fits = "d/" + "f" * (paths._WINDOWS_MAX_PATH - len(base) - 3)
         assert paths.local_path_length_ok(base, fits) is True
         assert paths.local_path_length_ok(base, fits + "f") is False
+
+
+def test_case_probe_uses_an_internal_partial_name(tmp_path, monkeypatch):
+    """The probe lives inside the bucket: it must look like an engine artifact."""
+    from pathlib import Path
+
+    from hsync_common.constants import PARTIAL_DOWNLOAD_SUFFIX
+    from hsync_common.path_validation import is_internal_name
+
+    from hsync_client.utils.paths import is_case_insensitive
+
+    seen: list[str] = []
+    original = Path.write_text
+
+    def spy(self, *args, **kwargs):
+        seen.append(self.name)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", spy)
+
+    is_case_insensitive(str(tmp_path))
+
+    assert seen
+    assert seen[0].endswith(PARTIAL_DOWNLOAD_SUFFIX)
+    assert is_internal_name(seen[0])

@@ -12,7 +12,7 @@ represented at all are skipped with a warning in the log.
 | ACLs | not synchronised | not synchronised |
 | Symlinks | created as symlinks | require Windows Developer Mode (or elevation); without it each link is skipped with one warning |
 | Long paths | no total-path limit (per-component limit only) | an absolute path longer than 259 characters is skipped with a warning |
-| Case sensitivity | case-sensitive | two names that differ only by case cannot coexist: an existing local file always wins, otherwise the lexicographically smallest remote path is kept and the others are skipped with a warning |
+| Case sensitivity | case-sensitive | two names that differ only by case cannot coexist, and names that differ only by Unicode normal form (NFC vs NFD) collide on every filesystem (the wire and version keys are NFC): an existing local file always wins, otherwise the lexicographically smallest relative path is kept and the others are skipped with a warning |
 | Hidden files | dotfiles / `.hsyncignore` patterns | same pattern-based rules; the Windows hidden attribute is not synchronised |
 | Timestamps | nanosecond mtime | mtime drives change detection; FAT/exFAT's 2-second granularity can hide a same-size edit until the content changes |
 
@@ -22,11 +22,21 @@ A device whose filesystem cannot represent full POSIX modes advertises the
 `readonly_permissions` capability. Peers then compare permission changes on the
 portable bit (writable vs read-only) instead of the full mode string, so a POSIX
 `600` and a Windows canonical `644` never bounce back and forth. The transition
-between writable and read-only still propagates in both directions.
+between writable and read-only still propagates in both directions. Directories
+always stay traversable on such a host (a non-writable directory mode cannot be
+represented), so directory permission divergence is skipped rather than
+converged when either side is lossy.
 
-## Upgrading an existing Windows install
+## Upgrading an existing install
 
-A Windows installation created by an earlier build may hold local state entries
-keyed with backslashes. Those entries are ignored by the current build and the
-next synchronisation records the correct keys; a one-shot `hsync state reset`
-is the clean recommendation for such an install.
+The bucket-relative identity of a path is separator-independent and NFC
+normalized, so two builds that recorded the same file under different spellings
+(pre-Windows backslashes, or a macOS NFD name) derive different state keys. A
+`hsync state reset` is the clean recommendation for an install that predates the
+current build: it re-records the identity of every file, at the cost of one full
+re-hash. The following cases need it:
+
+- a Windows install created by an earlier build (backslash-keyed entries);
+- a Linux or Windows install whose files include a **non-NFC** name (typically a
+  tree created on macOS, where names are NFD): the version and tombstone keys
+  change, so history recorded under the old key is not matched.

@@ -23,9 +23,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - An inbound rename that changes only the case of a path now applies reliably on
-  case-insensitive filesystems.
+  case-insensitive filesystems, and an inbound rename whose destination already
+  holds local content is left to the causal reconcile instead of overwriting it.
 - Overwriting or deleting a Windows Read-only file no longer fails: the
-  attribute is cleared before the operation.
+  attribute is cleared before the operation. The delta rebuild and the inbound
+  P2P upload commit take the same path.
+- A name collision (case- or normal-form-fold) no longer makes a `download-only`
+  mirror delete the local file that won it: the remote entry is re-pointed at
+  the winner's spelling instead of being dropped.
+- A crash between the two steps of a case-only rename no longer loses the file:
+  the startup sweep restores the stranded marker instead of deleting it.
+- The long-path guard also covers the `.part`/`.delta.part` names a transfer
+  writes before the atomic commit, and a POSIX `EACCES`/`EPERM` is no longer
+  mistaken for a host that cannot create symlinks.
+- The P2P slave no longer takes `REMOTE_READONLY_PERMISSIONS` from the
+  unauthenticated mDNS TXT record (advisory hint only): the permission
+  projection switches on the capability proved in the WSS handshake.
 - A `chmod` or a `touch` was silently lost on Linux with watchdog 7 (the
   metadata change arrived as a dedicated `attrib` event the client never read),
   so permissions and mtime converged only at the periodic resync.

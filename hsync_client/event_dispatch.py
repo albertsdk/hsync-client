@@ -25,6 +25,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from os import readlink
+from os.path import samefile
 from pathlib import Path
 from shutil import rmtree
 
@@ -480,6 +481,19 @@ def _ensure_parent_dir(path: str) -> None:
         Path(parent).mkdir(parents=True, exist_ok=True)
 
 
+def _same_local_entry(a: str, b: str) -> bool:
+    """Whether two existing paths are the same filesystem entry.
+
+    A case-only rename addresses one file under two spellings, so the guard
+    against clobbering an existing destination must not treat it as a
+    collision.
+    """
+    try:
+        return samefile(a, b)
+    except OSError:
+        return False
+
+
 async def _rename_path(
     src_path: str | None,
     dst_path: str | None,
@@ -502,6 +516,16 @@ async def _rename_path(
     _mark(ctx, dst_path)
     try:
         if path_present(src_path):
+            if path_present(dst_path) and not _same_local_entry(src_path, dst_path):
+                # The destination already holds local content. ``os.replace``
+                # would clobber it silently; leaving the divergence to the
+                # causal reconcile (the pre-change ``os.rename`` behaviour on
+                # Windows) is the only non-destructive choice.
+                log.warning(
+                    f"{_tag('RENAME')} Destination already exists, leaving the "
+                    f'overwrite to the reconcile: "{dst_path}"'
+                )
+                return
             log.info(f'{_tag("RENAME")} "{src_path}" -> "{dst_path}"{cid_suffix(origin_cid)}')
             _ensure_parent_dir(dst_path)
             await asyncio.to_thread(replace_with_retry, src_path, dst_path)

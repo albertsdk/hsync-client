@@ -81,6 +81,7 @@ from hsync_client.progress import (
     emit_completed_transfer,
     progress_reporter,
 )
+from hsync_client.utils.fs_ops import replace_with_retry
 
 # HTTP status codes used here (kept local to avoid a p2p_server import cycle).
 _HTTP_OK = 200
@@ -503,7 +504,7 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
                 current = {"detail": "destination_changed"}
             handler._send_json_response(_HTTP_CONFLICT, current)
             return
-        os.replace(part_path, filepath)
+        replace_with_retry(part_path, filepath)
         cleanup_path = None
 
         mtime = meta.get("mtime")

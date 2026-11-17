@@ -121,7 +121,11 @@ from hsync_client.utils import (
     inbound_size_cap,
     open_partial_no_follow,
 )
-from hsync_client.utils.fs_ops import create_symlink_or_skip, remove_with_retry
+from hsync_client.utils.fs_ops import (
+    create_symlink_or_skip,
+    remove_with_retry,
+    replace_with_retry,
+)
 
 if TYPE_CHECKING:
     from hsync_client.p2p_inventory import P2PInventoryStore
@@ -2601,7 +2605,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
                 dest_path, dest_path, arb.loser_cid, side="local", ensure_parent=True
             )
 
-        os.replace(tmp_path, dest_path)
+        replace_with_retry(tmp_path, dest_path)
         ctx.tmp_path = None
 
         # Record the agreed version with the merged clock (ADR-0022 §5).

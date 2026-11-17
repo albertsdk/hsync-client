@@ -40,9 +40,13 @@ _DELAY_S = 0.05  # 5 attempts ≈ 0.2 s of backoff, well inside a cycle
 _RETRYABLE_ERRNOS = (errno.EACCES, errno.EPERM, errno.EBUSY)
 
 # Errors meaning "this host/filesystem cannot create symlinks": Windows without
-# Developer Mode/elevation (WinError 1314, EPERM) and filesystems without link
-# support. The engine skips the link once per path instead of failing the cycle.
+# Developer Mode/elevation (WinError 1314, EPERM/EACCES) and a filesystem
+# without link support. On POSIX only ENOTSUP qualifies: EACCES/EPERM there are
+# ordinary permission failures (unwritable parent, ACL, immutable flag) that
+# must keep propagating, or a broken bucket directory would silently drop every
+# symlink.
 _SYMLINK_UNSUPPORTED_ERRNOS = (errno.EPERM, errno.EACCES, errno.ENOTSUP)
+_SYMLINK_UNSUPPORTED_POSIX_ERRNOS = (errno.ENOTSUP,)
 _SYMLINK_UNSUPPORTED_WINERRORS = (1314,)  # ERROR_PRIVILEGE_NOT_HELD
 _SYMLINK_WARNED: set[str] = set()
 _SYMLINK_WARNED_CAP = 4096
@@ -91,7 +95,9 @@ def _symlink_unsupported(exc: OSError) -> bool:
     """Whether *exc* means the host cannot create a symlink at all."""
     if getattr(exc, "winerror", None) in _SYMLINK_UNSUPPORTED_WINERRORS:
         return True
-    return exc.errno in _SYMLINK_UNSUPPORTED_ERRNOS
+    if _IS_WINDOWS:
+        return exc.errno in _SYMLINK_UNSUPPORTED_ERRNOS
+    return exc.errno in _SYMLINK_UNSUPPORTED_POSIX_ERRNOS
 
 
 def create_symlink_or_skip(target: str, link_path: str) -> bool:
