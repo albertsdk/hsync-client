@@ -543,7 +543,8 @@ p2p mode uses mDNS (Multicast DNS) for peer rendezvous:
   [p2p protocol](https://github.com/albertsdk/hsync-common/blob/main/docs/p2p-protocol.md)
   (`P2P_TXT_KEYS`) — `cid`, `bucket`, `version`, `cert_fp`, `sync_direction`,
   `server_ready`, `prefer_master`, `never_master`, `startup_time`, `group`,
-  `delta`, `peer_download`, `connected`, `compression`, `https` — boolean flags
+  `delta`, `peer_download`, `readonly_permissions`, `connected`,
+  `compression`, `https` — boolean flags
   only when true
 - **Dependency**: `zeroconf` (Python library for mDNS/DNS-SD)
 

@@ -18,7 +18,7 @@ from collections.abc import Callable, Coroutine, Iterable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from errno import EACCES, EBUSY, EIO, ENOENT
-from os import cpu_count, remove, walk
+from os import cpu_count, walk
 from os.path import basename
 from pathlib import Path
 from shutil import copy2
@@ -28,6 +28,7 @@ from traceback import print_tb
 from typing import Any, cast
 
 from hsync_common.clock import clamp_incoming_corrected_mtime, offset_store, uncorrect_mtime
+from hsync_common.constants import PARTIAL_DOWNLOAD_SUFFIX
 from hsync_common.disk import check_free_space
 from hsync_common.format import format_bytes
 from hsync_common.listing import iter_bucket_entries as _iter_bucket_entries
@@ -53,7 +54,11 @@ from hsync_common.path_validation import (
     resolve_within,
     validate_remote_relpath,
 )
-from hsync_common.permissions import sanitize_remote_permissions
+from hsync_common.permissions import (
+    has_owner_write,
+    local_permissions_are_lossy,
+    sanitize_remote_permissions,
+)
 from loguru import logger as log
 from requests import RequestException
 
@@ -98,6 +103,8 @@ from hsync_client.utils import (
     set_permissions,
     set_permissions_on_dir,
 )
+from hsync_client.utils.fs_ops import remove_with_retry, replace_with_retry
+from hsync_client.utils.paths import absolute_path_length_ok, is_case_insensitive
 
 # ── Sync-cycle coordination flag ──────────────────────────────────────────
 # A threading.Event (not a Lock) because the watcher must NOT be blocked:
@@ -380,7 +387,7 @@ def _cleanup_partial_files() -> int:
                     log.debug(f"Keeping in-flight partial: {partial_path}")
                     continue
                 try:
-                    remove(partial_path)
+                    remove_with_retry(partial_path)
                     log.debug(f"Removed incomplete download: {partial_path}")
                     removed_count += 1
                 except OSError as e:
@@ -649,6 +656,67 @@ def _reconcile_tombstones() -> tuple[list[str], dict[str, dict]]:
     return existing_paths, tombstones
 
 
+def _entry_relpath(info: dict, bucket: str) -> str | None:
+    """Return a listing entry's bucket-relative identity (POSIX, NFC)."""
+    fp = str(info.get("filepath") or "")
+    if not fp:
+        return None
+    return relpath_in_bucket(fp, bucket) if os.path.isabs(fp) else fp
+
+
+def _drop_case_collisions(
+    local_files: list[dict], remote_files: list[dict]
+) -> tuple[list[dict], list[dict]]:
+    """Drop casefold collisions on a case-insensitive local filesystem.
+
+    Two paths that differ only by case cannot both exist locally: the engine
+    would overwrite one with the other every cycle (and in ``download-only``
+    delete it). The winner is an existing local path (never destroy local data
+    because of a remote collision), otherwise the lexicographically smallest
+    relative path. Every loser is logged and skipped, so the cycle settles
+    instead of oscillating.
+    """
+    bucket = CONFIG.get("LOCAL_BUCKET", "")
+    if not bucket or not is_case_insensitive(bucket):
+        return local_files, remote_files
+
+    groups: dict[str, list[tuple[str, bool]]] = {}
+    for info, is_local in [(i, True) for i in local_files] + [(i, False) for i in remote_files]:
+        rel = _entry_relpath(info, bucket)
+        if rel:
+            groups.setdefault(rel.casefold(), []).append((rel, is_local))
+
+    losers: set[str] = set()
+    for group in groups.values():
+        distinct = {rel for rel, _ in group}
+        if len(distinct) < 2:
+            continue
+        local_rels = {rel for rel, is_local in group if is_local}
+        winner = min(local_rels) if local_rels else min(distinct)
+        for rel in distinct - {winner}:
+            losers.add(rel)
+            log.warning(
+                f'{ActionLabel.SKIP} "{rel}" collides with "{winner}" on a '
+                "case-insensitive filesystem; skipping it"
+            )
+    if not losers:
+        return local_files, remote_files
+
+    return (
+        [i for i in local_files if _entry_relpath(i, bucket) not in losers],
+        [i for i in remote_files if _entry_relpath(i, bucket) not in losers],
+    )
+
+
+def _is_case_only_rename(old_path: str, new_path: str) -> bool:
+    """Whether *old_path* -> *new_path* differs only by case on this filesystem."""
+    return (
+        old_path != new_path
+        and old_path.casefold() == new_path.casefold()
+        and is_case_insensitive(CONFIG.get("LOCAL_BUCKET", ""))
+    )
+
+
 def _retain_merge_bases(local_files: list[dict], existing_paths: list[str]) -> None:
     """Drop merge bases for vanished files so the version store stays bounded."""
     # Drop merge-base records for files that no longer exist locally so the
@@ -827,7 +895,7 @@ def _apply_deletions(
     for file in deletes:
         if file.filepath and Path(file.filepath).exists():
             try:
-                remove(file.filepath)
+                remove_with_retry(file.filepath)
                 deleted += 1
                 inventory_observer.remove_file(file.filepath)
                 sync_state.clear_base(file.filepath)
@@ -1099,6 +1167,7 @@ async def sync(
         _cycle_preflight()
 
         local_files, remote_files = _collect_listings(inventory_observer)
+        local_files, remote_files = _drop_case_collisions(local_files, remote_files)
 
         existing_paths, tombstones = _reconcile_tombstones()
 
@@ -2001,7 +2070,18 @@ def _apply_local_rename(old_file: File, new_file: File) -> bool:
         return False
     try:
         Path(new_path).parent.mkdir(parents=True, exist_ok=True)
-        os.replace(old_path, new_path)
+        # A case-only rename on a case-insensitive filesystem addresses the same
+        # file before and after, so rename through a skipped .part name.
+        if _is_case_only_rename(old_path, new_path):
+            temporary = f"{new_path}{PARTIAL_DOWNLOAD_SUFFIX}"
+            replace_with_retry(old_path, temporary)
+            try:
+                replace_with_retry(temporary, new_path)
+            except OSError:
+                replace_with_retry(temporary, old_path)  # best-effort rollback
+                raise
+        else:
+            replace_with_retry(old_path, new_path)
     except OSError as exc:
         log.warning(
             f'{ActionLabel.RENAME} Could not move "{old_path}" to "{new_path}" ({exc}); '
@@ -2312,6 +2392,11 @@ def reconcile_directories(remote_dirs: list[dict], *, p2p_mode: bool) -> None:
             continue
         if full.is_dir():
             continue
+        if not absolute_path_length_ok(str(full)):
+            log.warning(
+                f'{ActionLabel.SKIP} Directory path exceeds this platform limit; skipping "{full}"'
+            )
+            continue
         try:
             full.mkdir(parents=True, exist_ok=True)
             log.debug(f'Reconciled directory (remote): "{full}"')
@@ -2428,7 +2513,7 @@ def _actions_from_local(
         # get_files_local; the upload path re-validates the target anyway.
         if local_file_dict.get("type") == "symlink":
             link = Symlink.from_dict(local_file_dict, bucket_root)
-            if link.filepath and str(link.filepath).lstrip("/") not in remote_filepaths:
+            if link.filepath and str(link.filepath) not in remote_filepaths:
                 actions.append(SyncAction(link, SyncActionName.upload_symlink))
             continue
         local_file_info = File.from_dict(local_file_dict, bucket_root)
@@ -2506,7 +2591,7 @@ def _actions_from_remote(
         if remote_file_info.get("type") == "symlink":
             link = Symlink.from_dict(remote_file_info, bucket_root)
             if link.filepath:
-                remote_filepaths.add(str(link.filepath).lstrip("/"))
+                remote_filepaths.add(str(link.filepath))
             actions.append(SyncAction(link, SyncActionName.download_symlink))
             continue
         # One malformed entry (bogus types for size/mtime, unreadable local
@@ -2523,7 +2608,7 @@ def _actions_from_remote(
             # cannot be compared: skipping it as "absent" would queue the
             # local copy for deletion in download-only mode (or a spurious
             # re-upload otherwise). Count it as remotely present instead.
-            remote_filepaths.add(str(remote_file_info["filepath"]).lstrip("/"))
+            remote_filepaths.add(str(remote_file_info["filepath"]))
             continue
 
         # Track remote paths for later comparison
@@ -2569,7 +2654,16 @@ def _actions_from_remote(
                 local_perms = local_file.permissions
                 remote_perms = remote_file.permissions
                 if local_perms and remote_perms and local_perms != remote_perms:
-                    if direction == "download-only":
+                    # A lossy host (Windows) can only represent writable vs
+                    # read-only; comparing the full POSIX string would ping-pong
+                    # a POSIX 600 against its canonical 644 on every cycle. The
+                    # projection keeps the portable bit and ignores the rest.
+                    lossy = local_permissions_are_lossy() or CONFIG.get(
+                        "REMOTE_READONLY_PERMISSIONS", False
+                    )
+                    if lossy and has_owner_write(local_perms) == has_owner_write(remote_perms):
+                        pass  # same portable projection: no permission-only action
+                    elif direction == "download-only":
                         if local_file.filepath:
                             set_permissions(local_file.filepath, remote_perms)
                             log.debug(
@@ -2911,6 +3005,12 @@ def update_dir(data: dict) -> Dir | None:
         # Directory doesn't exist - create it
         dir = Dir.from_dict(data, CONFIG["LOCAL_BUCKET"])
         if dir.path:
+            if not absolute_path_length_ok(dir.path):
+                log.warning(
+                    f"{ActionLabel.SKIP} Directory path exceeds this platform limit; "
+                    f'skipping "{dir.path}"'
+                )
+                return dir
             Path(dir.path).mkdir(parents=True, exist_ok=True)
             emit_event(UiEventName.dir_created, path=dir.path)
             if dir.permissions:

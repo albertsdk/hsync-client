@@ -2650,3 +2650,81 @@ class TestThreeWayMergeEndToEnd:
             assert all(a.name == SyncActionName.nothing for a in doc_actions), [
                 (a.name, a.file.filepath) for a in doc_actions
             ]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="asserts POSIX mode bits, lossy on Windows")
+class TestPermissionModelProjection:
+    """A lossy peer keeps only the owner-write bit: no permission ping-pong.
+
+    Windows cannot represent POSIX group/other bits, so comparing the full mode
+    string would re-upload a POSIX ``600`` against its canonical Windows ``644``
+    on every cycle. The reconciliation projects the comparison to the portable
+    bit when either side is lossy; the readonly transition still propagates.
+    """
+
+    @staticmethod
+    def _run(
+        tmp_path,
+        local_mode,
+        remote_perms,
+        *,
+        direction="bidirectional",
+        remote_lossy=False,
+        monkeypatch=None,
+    ):
+        target = tmp_path / "p.txt"
+        target.write_text("content", encoding="utf-8")
+        os.chmod(target, int(local_mode, 8))
+        local = File.get(str(target))
+        assert local is not None
+        local_dict = local.to_dict()
+        remote = dict(local_dict)
+        remote["filepath"] = "p.txt"
+        remote["permissions"] = remote_perms
+        config = {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": direction}
+        if remote_lossy:
+            config["REMOTE_READONLY_PERMISSIONS"] = True
+        if monkeypatch is not None:
+            monkeypatch.setattr("hsync_client.sync.local_permissions_are_lossy", lambda: True)
+        with patch("hsync_client.sync.CONFIG", config):
+            return target, get_sync_actions([remote], [local_dict])
+
+    def test_posix_peers_compare_the_full_mode(self, tmp_path):
+        _, actions = self._run(tmp_path, "600", "644")
+
+        assert [a.name for a in actions] == [SyncActionName.upload]
+
+    def test_lossy_local_projects_to_the_owner_write_bit(self, tmp_path, monkeypatch):
+        _, actions = self._run(tmp_path, "600", "644", monkeypatch=monkeypatch)
+
+        assert [a.name for a in actions] == [SyncActionName.nothing]
+
+    def test_lossy_remote_projects_to_the_owner_write_bit(self, tmp_path):
+        _, actions = self._run(tmp_path, "600", "644", remote_lossy=True)
+
+        assert [a.name for a in actions] == [SyncActionName.nothing]
+
+    def test_lossy_projection_still_propagates_readonly(self, tmp_path, monkeypatch):
+        _, actions = self._run(tmp_path, "644", "444", monkeypatch=monkeypatch)
+
+        assert [a.name for a in actions] == [SyncActionName.upload]
+
+    def test_lossy_download_only_ignores_non_portable_bits(self, tmp_path, monkeypatch):
+        import stat as stat_mod
+
+        target, actions = self._run(
+            tmp_path, "600", "644", direction="download-only", monkeypatch=monkeypatch
+        )
+
+        assert [a.name for a in actions] == [SyncActionName.nothing]
+        assert stat_mod.S_IMODE(target.stat().st_mode) == 0o600
+
+    def test_lossy_download_only_adopts_readonly(self, tmp_path, monkeypatch):
+        import stat as stat_mod
+
+        target, actions = self._run(
+            tmp_path, "644", "444", direction="download-only", monkeypatch=monkeypatch
+        )
+
+        assert [a.name for a in actions] == [SyncActionName.nothing]
+        assert stat_mod.S_IMODE(target.stat().st_mode) == 0o444

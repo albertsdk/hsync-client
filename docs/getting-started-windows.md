@@ -38,3 +38,5 @@ yourself if you want the bare `hsync` command).
 ## Next
 
 - Every CLI option and environment variable: [Configuration](configuration.md).
+- What Windows can and cannot represent (permissions, symlinks, long paths,
+  case-insensitive names): [Platform limits](platform-limitations.md).

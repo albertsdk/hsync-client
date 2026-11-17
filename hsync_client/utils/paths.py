@@ -174,6 +174,67 @@ def normalize_bucket_relpath(raw_path: str, bucket_root: str) -> str | None:
         return None
 
 
+_IS_WINDOWS = os.name == "nt"  # test seam (see local_path_length_ok)
+
+# Windows MAX_PATH is 260 characters including the terminating NUL.
+_WINDOWS_MAX_PATH = 259
+
+# Case sensitivity is a property of the filesystem, not the platform (APFS can
+# be case-sensitive and ``os.path.normcase`` is a no-op on macOS), so it is
+# probed once per root and cached.
+_case_sensitivity_cache: dict[str, bool] = {}
+_case_sensitivity_lock = threading.Lock()
+
+
+def is_case_insensitive(root: str) -> bool:
+    """Return whether *root*'s filesystem compares names case-insensitively.
+
+    Probes once per root: a mixed-case file is created and the lower-case
+    spelling is tested for existence, then removed. Two remote paths that differ
+    only by case cannot coexist on such a filesystem, so the reconciliation
+    drops the loser deterministically instead of overwriting one with the other
+    every cycle. An unwritable root yields ``False`` (the engine reports the
+    write failure itself).
+    """
+    key = abspath(str(root))
+    with _case_sensitivity_lock:
+        cached = _case_sensitivity_cache.get(key)
+    if cached is not None:
+        return cached
+    probe_name = f".hsync-case-probe-{os.getpid()}-A"
+    probe = Path(key) / probe_name
+    insensitive = False
+    try:
+        probe.write_text("", encoding="utf-8")
+        insensitive = probe.with_name(probe_name.lower()).exists()
+    except OSError:
+        insensitive = False
+    finally:
+        try:
+            probe.unlink()
+        except OSError:
+            pass
+    with _case_sensitivity_lock:
+        _case_sensitivity_cache[key] = insensitive
+    return insensitive
+
+
+def absolute_path_length_ok(path: str) -> bool:
+    """Whether an absolute local path fits the platform limit.
+
+    Only Windows has a meaningful total-path limit (``_WINDOWS_MAX_PATH``); POSIX
+    enforces a per-component limit that ``validate_remote_relpath`` already
+    checks. The consumer skips the operation (and logs why) instead of failing
+    with an opaque OS error.
+    """
+    return not _IS_WINDOWS or len(path) <= _WINDOWS_MAX_PATH
+
+
+def local_path_length_ok(base: str, rel: str) -> bool:
+    """Whether the absolute local path for *rel* under *base* fits the limit."""
+    return absolute_path_length_ok(str(Path(base) / rel) if rel else str(base))
+
+
 # One re-usable lock per local path, created on demand and reference-counted so
 # the registry never grows unbounded. Operations on the same path (parallel
 # transfers, watcher-triggered uploads, inbound downloads/deletes) run in worker

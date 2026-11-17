@@ -399,6 +399,7 @@ def _build_config(
         "SERVER_COMPRESSION_ENABLED": False,  # Set during WebSocket handshake
         "DELTA_ENABLED": delta_enabled and get_delta_enabled(),
         "SERVER_DELTA_ENABLED": False,  # Set during WebSocket handshake / master election
+        "REMOTE_READONLY_PERMISSIONS": False,  # Set from the handshake / master election
         # CLI overrides for the delta size floor (None = use env settings)
         "DELTA_MIN_FILE_SIZE": delta_min_file_size,
         "DELTA_MIN_FILE_SIZE_P2P": delta_min_file_size_p2p,

@@ -20,6 +20,7 @@ import threading
 import time
 from collections.abc import Callable
 
+from hsync_common.permissions import local_permissions_are_lossy
 from hsync_common.protocol.handshake import PROTOCOL_VERSION_P2P
 from loguru import logger as log
 from zeroconf import (
@@ -701,6 +702,10 @@ class MdnsRendezvous(RendezvousPlanState):
             properties["delta"] = "true"
         if CONFIG.get("P2P_PEER_DOWNLOAD", True):
             properties["peer_download"] = "true"
+        # Lossy permission model (Windows): peers project permission-only
+        # comparisons to the owner-write bit instead of the full POSIX mode.
+        if local_permissions_are_lossy():
+            properties["readonly_permissions"] = "true"
         # Add server ready flag
         if server_ready:
             properties["server_ready"] = "true"

@@ -35,3 +35,52 @@ class TestNormalizeBucketRelpath:
         monkeypatch.setattr(os, "sep", "\\")
         root = "C:/Users/test-win\\HSYNC"
         assert normalize_bucket_relpath(f"{root}\\sub\\f.txt", root) == "sub/f.txt"
+
+
+class TestCaseSensitivityProbe:
+    """The case-insensitivity probe must reflect the filesystem, not the OS."""
+
+    def test_probe_matches_the_filesystem_behavior(self, tmp_path):
+        import hsync_client.utils.paths as paths
+
+        (tmp_path / "ProbeCase").write_text("", encoding="utf-8")
+        expected = (tmp_path / "probecase").exists()
+        paths._case_sensitivity_cache.clear()
+
+        assert paths.is_case_insensitive(str(tmp_path)) is expected
+
+    def test_probe_is_cached_per_root(self, tmp_path, monkeypatch):
+        import hsync_client.utils.paths as paths
+
+        paths._case_sensitivity_cache.clear()
+        first = paths.is_case_insensitive(str(tmp_path))
+
+        def _boom(*_args, **_kwargs):
+            raise AssertionError("the probe must not run twice for the same root")
+
+        monkeypatch.setattr(paths.Path, "write_text", _boom)
+        assert paths.is_case_insensitive(str(tmp_path)) is first
+
+
+class TestPathLengthLimit:
+    def test_posix_has_no_total_path_limit(self, monkeypatch):
+        import hsync_client.utils.paths as paths
+
+        monkeypatch.setattr(paths, "_IS_WINDOWS", False)
+        assert paths.absolute_path_length_ok("a" * 5000) is True
+
+    def test_windows_boundary(self, monkeypatch):
+        import hsync_client.utils.paths as paths
+
+        monkeypatch.setattr(paths, "_IS_WINDOWS", True)
+        assert paths.absolute_path_length_ok("a" * paths._WINDOWS_MAX_PATH) is True
+        assert paths.absolute_path_length_ok("a" * (paths._WINDOWS_MAX_PATH + 1)) is False
+
+    def test_local_path_length_uses_the_absolute_form(self, monkeypatch):
+        import hsync_client.utils.paths as paths
+
+        monkeypatch.setattr(paths, "_IS_WINDOWS", True)
+        base = "C:/bucket"
+        fits = "d/" + "f" * (paths._WINDOWS_MAX_PATH - len(base) - 3)
+        assert paths.local_path_length_ok(base, fits) is True
+        assert paths.local_path_length_ok(base, fits + "f") is False

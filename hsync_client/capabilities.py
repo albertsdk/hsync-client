@@ -13,6 +13,7 @@ re-assembled independently in each transport module.
 
 from __future__ import annotations
 
+from hsync_common.permissions import local_permissions_are_lossy
 from hsync_common.protocol.handshake import Capability
 
 from hsync_client.config import CONFIG
@@ -27,7 +28,9 @@ def local_capabilities() -> set[Capability]:
     (deletion-marker gossip, ADR-0003) are always implemented by this client, and
     every node publishes a read-only inventory (``index``) so peers can compute
     sync status regardless of whether it serves blocks. ``peer_download``,
-    ``compression`` and ``delta`` are feature-toggled.
+    ``compression`` and ``delta`` are feature-toggled. ``readonly_permissions``
+    is advertised only by a lossy host (Windows): the reconciliation then
+    projects permission-only comparisons to the owner-write bit.
     """
     caps: set[Capability] = {
         Capability.vector_clocks,
@@ -40,6 +43,8 @@ def local_capabilities() -> set[Capability]:
         caps.add(Capability.compression)
     if CONFIG.get("DELTA_ENABLED", False):
         caps.add(Capability.delta)
+    if local_permissions_are_lossy():
+        caps.add(Capability.readonly_permissions)
     return caps
 
 
@@ -54,3 +59,4 @@ def adopt_remote_capabilities(remote: set[Capability]) -> None:
     """
     CONFIG["SERVER_COMPRESSION_ENABLED"] = Capability.compression in remote
     CONFIG["SERVER_DELTA_ENABLED"] = Capability.delta in remote
+    CONFIG["REMOTE_READONLY_PERMISSIONS"] = Capability.readonly_permissions in remote

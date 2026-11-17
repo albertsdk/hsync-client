@@ -130,6 +130,7 @@ class HsyncServiceListener(ServiceListener):
             compression_enabled = _tx_bool(properties, b"compression")
             delta_enabled = _tx_bool(properties, b"delta")
             peer_download_enabled = _tx_bool(properties, b"peer_download")
+            readonly_permissions = _tx_bool(properties, b"readonly_permissions")
             # Server ready flag (indicates HTTP server is listening)
             server_ready = _tx_bool(properties, b"server_ready")
             # Prefer master flag (for master election)
@@ -218,6 +219,7 @@ class HsyncServiceListener(ServiceListener):
                 compression_enabled=compression_enabled,
                 delta_enabled=delta_enabled,
                 peer_download_enabled=peer_download_enabled,
+                readonly_permissions=readonly_permissions,
                 capabilities_known=True,
                 server_ready=server_ready,
                 connected=connected,

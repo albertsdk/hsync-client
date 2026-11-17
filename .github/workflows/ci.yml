@@ -71,3 +71,54 @@ jobs:
       - name: Tests
         working-directory: hsync-client
         run: poetry run pytest -q --ignore-glob='*test_bb*'
+
+  # Cross-platform signal (the `python` job above is Linux-only).
+  # macOS keeps POSIX modes and symlinks, so it runs the full unit suite; the
+  # Windows runner runs the platform-parity subset, because the wider suite has
+  # POSIX-mode assertions and symlink creation (Developer Mode) that need a
+  # dedicated Windows sweep before they can be blocking. The BB suite stays on
+  # Linux (env-gated).
+  platforms:
+    name: tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            pytest-args: "--ignore-glob='*test_bb*'"
+          - os: windows-latest
+            pytest-args: >-
+              tests/test_utils_paths.py tests/test_utils_fs_ops.py
+              tests/test_cross_platform_sync.py tests/test_capabilities.py
+              tests/test_startup_imports.py
+    steps:
+      - name: Checkout hsync-client
+        uses: actions/checkout@v7.0.1
+        with:
+          path: hsync-client
+
+      - name: Checkout hsync-common
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: albertsdk/hsync-common
+          ref: main
+          path: hsync-common
+          token: ${{ secrets.HSYNC_COMMON_PAT }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.14"
+
+      - name: Install Poetry
+        run: pipx install poetry==2.4.1
+
+      - name: Install dependencies
+        working-directory: hsync-client
+        run: poetry install --no-interaction --without blackbox
+
+      - name: Tests
+        working-directory: hsync-client
+        shell: bash
+        run: poetry run pytest -q ${{ matrix.pytest-args }}

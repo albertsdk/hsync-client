@@ -1011,6 +1011,9 @@ class HsyncConfig(TypedDict):
     DELTA_ENABLED: bool
     # Peer delta capability (set at runtime after handshake / master election)
     SERVER_DELTA_ENABLED: bool
+    # Remote authority advertises lossy (owner-write/read-only only) modes
+    # (set at runtime from the handshake / master election)
+    REMOTE_READONLY_PERMISSIONS: bool
     # CLI override for the minimum file size for delta transfer, remote mode
     # (None = use HSYNC_DELTA_MIN_FILE_SIZE / built-in default)
     DELTA_MIN_FILE_SIZE: int | None

@@ -91,6 +91,7 @@ class Peer:
     compression_enabled: bool = False
     delta_enabled: bool = False  # rsync-style delta transfer capability
     peer_download_enabled: bool = False
+    readonly_permissions: bool = False  # local modes are lossy (owner-write/read-only only)
     # Whether the three capability flags above were advertised by the source
     # (the mDNS TXT record carries them; the rendezvous relay does not). When two
     # plans feed one PeerManager, an update that does not know the capabilities

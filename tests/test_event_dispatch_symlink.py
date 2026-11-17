@@ -69,7 +69,7 @@ class TestApplyInboundSymlinkEvent:
 
         with (
             patch("hsync_client.event_dispatch.CONFIG", config),
-            patch("hsync_client.event_dispatch.os_symlink") as mock_symlink,
+            patch("hsync_client.event_dispatch.create_symlink_or_skip") as mock_symlink,
         ):
             await apply_inbound_event(event, REMOTE_DISPATCH_CTX)
             mock_symlink.assert_not_called()

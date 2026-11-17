@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Cross-platform synchronisation parity on Windows and macOS: a lossy host
+  advertises `readonly_permissions`, so permission-only changes are compared on
+  the owner-write bit instead of re-applying POSIX modes, and filesystem
+  operations a platform refuses are skipped with a warning — names that collide
+  when case is folded, paths over the Windows `MAX_PATH` limit, and symlinks
+  created without the required privilege.
 - `--server-trust`/`--rendezvous-server-trust`/`--p2p-trust` (and the matching
   `HSYNC_*_TRUST` variables) accept `auto`: a stored pin wins, else standard CA
   validation for the sync server, else pin the first sighting. A first-use pin
@@ -16,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An inbound rename that changes only the case of a path now applies reliably on
+  case-insensitive filesystems.
+- Overwriting or deleting a Windows Read-only file no longer fails: the
+  attribute is cleared before the operation.
 - A `chmod` or a `touch` was silently lost on Linux with watchdog 7 (the
   metadata change arrived as a dedicated `attrib` event the client never read),
   so permissions and mtime converged only at the periodic resync.

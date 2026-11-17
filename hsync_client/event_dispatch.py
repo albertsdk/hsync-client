@@ -24,8 +24,7 @@ import asyncio
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from os import readlink, remove, rename, unlink
-from os import symlink as os_symlink
+from os import readlink
 from pathlib import Path
 from shutil import rmtree
 
@@ -50,6 +49,11 @@ from hsync_client.p2p_sources import P2PSourceResolver
 from hsync_client.sync import _in_subdir_rel, update_dir, update_file
 from hsync_client.transfer import download_file
 from hsync_client.utils import cid_suffix, path_lock, path_present, safe_rmdir_if_empty
+from hsync_client.utils.fs_ops import (
+    create_symlink_or_skip,
+    remove_with_retry,
+    replace_with_retry,
+)
 
 
 def _remove_locked(filepath: str) -> bool:
@@ -61,7 +65,7 @@ def _remove_locked(filepath: str) -> bool:
     """
     with path_lock(filepath):
         if path_present(filepath):
-            remove(filepath)
+            remove_with_retry(filepath)
             return True
     return False
 
@@ -500,7 +504,7 @@ async def _rename_path(
         if path_present(src_path):
             log.info(f'{_tag("RENAME")} "{src_path}" -> "{dst_path}"{cid_suffix(origin_cid)}')
             _ensure_parent_dir(dst_path)
-            await asyncio.to_thread(rename, src_path, dst_path)
+            await asyncio.to_thread(replace_with_retry, src_path, dst_path)
             # Emit only after the rename is applied: consumers that observe the
             # filesystem (e.g. the desktop reading the destination mtime) must
             # see the file at its new path, not a transient missing state.
@@ -549,7 +553,7 @@ async def _apply_delete(src: dict, ctx: EventDispatchContext, origin_cid: object
                 if Path(local).is_symlink():
                     # A symlinked directory arrives as a LINK entry: remove
                     # the link, never descend into its target.
-                    await asyncio.to_thread(unlink, local)
+                    await asyncio.to_thread(remove_with_retry, local)
                 else:
                     await asyncio.to_thread(rmtree, local, False)
             else:
@@ -650,8 +654,9 @@ async def _apply_symlink(src: dict, ctx: EventDispatchContext, origin_cid: objec
                 )
                 return
         elif Path(local).is_symlink() or Path(local).exists():
-            unlink(local)
-        await asyncio.to_thread(os_symlink, target, local)
+            remove_with_retry(local)
+        if not await asyncio.to_thread(create_symlink_or_skip, target, local):
+            return
         ctx.inventory_observer.remove_file(local)
     finally:
         _unmark(ctx, local)

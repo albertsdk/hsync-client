@@ -121,6 +121,7 @@ from hsync_client.utils import (
     inbound_size_cap,
     open_partial_no_follow,
 )
+from hsync_client.utils.fs_ops import create_symlink_or_skip, remove_with_retry
 
 if TYPE_CHECKING:
     from hsync_client.p2p_inventory import P2PInventoryStore
@@ -1612,8 +1613,6 @@ class P2PEndpointMixin(_HTTPTransportBase):
         if self._reject_duplicate_cid(_first(query, "cid")):
             return
 
-        from os import symlink as os_symlink
-
         from hsync_common.path_validation import is_safe_symlink_target
 
         rel_path = _first(query, "path")
@@ -1678,9 +1677,14 @@ class P2PEndpointMixin(_HTTPTransportBase):
                     )
                     return
             elif link_path.is_symlink() or link_path.exists():
-                os.remove(full_path)
+                remove_with_retry(full_path)
 
-            os_symlink(target, full_path)
+            if not create_symlink_or_skip(target, full_path):
+                # This host cannot create symlinks (Windows without Developer
+                # Mode): the upload succeeded structurally, the link is skipped
+                # on this side instead of failing the peer's cycle forever.
+                self._send_json_response(HTTP_OK, {"status": "skipped"})
+                return
             self._send_json_response(HTTP_CREATED, {"status": "created"})
         except Exception as e:
             log.error(f"Error creating symlink {full_path}: {e}")

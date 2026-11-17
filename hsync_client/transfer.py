@@ -127,6 +127,13 @@ from hsync_client.utils import (
 from hsync_client.utils import (
     upload_timeout as _upload_timeout,
 )
+from hsync_client.utils.fs_ops import (
+    clear_read_only,
+    create_symlink_or_skip,
+    remove_with_retry,
+    replace_with_retry,
+)
+from hsync_client.utils.paths import local_path_length_ok
 
 
 def _transfer_retry_params() -> tuple[int, float, float]:
@@ -575,6 +582,12 @@ def download_file(
     """
     if not file.filepath or not file.name:
         log.error("Invalid file metadata: missing filepath or name")
+        return True
+
+    if not local_path_length_ok(CONFIG.get("LOCAL_BUCKET", ""), file.filepath):
+        log.warning(
+            f'{ActionLabel.SKIP} Path exceeds this platform limit; skipping "{file.filepath}"'
+        )
         return True
 
     # The remote path is untrusted: refuse anything that would escape the
@@ -1358,7 +1371,14 @@ def _stream_download_body(
             )
             cleanup_partial = True
             return
-        replace(partial_file_path, full_save_path)
+        clear_read_only(full_save_path)
+        try:
+            replace(partial_file_path, full_save_path)
+        except PermissionError:
+            # Windows: the target or the partial is still open elsewhere
+            # (antivirus/indexer). Retry briefly instead of abandoning the
+            # download; POSIX never takes this branch.
+            replace_with_retry(partial_file_path, full_save_path)
         cleanup_partial = False
         _finalize_download(
             file,
@@ -2792,10 +2812,9 @@ def materialize_symlink_local(link: Symlink) -> bool:
             )
             return False
     elif Path(local).is_symlink() or Path(local).exists():
-        Path(local).unlink()
-    from os import symlink as os_symlink
-
-    os_symlink(link.target, local)
+        remove_with_retry(local)
+    if not create_symlink_or_skip(link.target, local):
+        return False
     log.info(f'{ActionLabel.SYMLINK} Created symlink: "{local}" -> "{link.target}"')
     return True
 

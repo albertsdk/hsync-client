@@ -69,6 +69,7 @@ cross-network rendezvous on top of it.
 
 - [Usage](usage.md) — CLI syntax and behaviour (symlinks, error handling, auto-tuning).
 - [Performance](performance.md) — measured throughput by mode, workload and phase.
+- [Platform limits](platform-limitations.md) — what Linux, Windows and macOS each guarantee (permissions, symlinks, long paths, case-insensitive names).
 - [Internal architecture](internal/architecture.md) — how the client is structured.
 - [p2p protocol internals](internal/p2p-internals.md) — deep P2P details.
 - [Auto-tuning internals](internal/autotune.md) — environment-adaptive defaults.
