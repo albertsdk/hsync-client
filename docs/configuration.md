@@ -220,6 +220,14 @@ identity marker.
 | `HSYNC_STATE_DIR` | Installation state directory: the server's per-bucket state and the default parent of the device identity, the trust stores and the p2p pins (each keeps its own override) | `$XDG_STATE_HOME/hsync` or `~/.local/state/hsync` |
 | `HSYNC_STATE_DB` | Explicit single sync-state DB for this process (overrides the per-folder layout) | unset |
 
+These paths use `~` and are the **same on every platform**: the client does not
+switch to `%APPDATA%` on Windows or `~/Library` on macOS, so on Windows
+`~/.local/state/hsync` is `%USERPROFILE%\.local\state\hsync`.
+`HSYNC_STATE_DIR` relocates the whole tree (device identity, trust stores, p2p
+pins, per-bucket state) in one move. The client has no configuration file:
+settings come from flags and `HSYNC_*` variables, optionally loaded with
+`--env-file`.
+
 ## Tuning for containers and VMs
 
 Storage and network class are **probed at runtime**. There are no

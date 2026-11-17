@@ -40,8 +40,16 @@ for the checksum reference.
 hsync --help
 ```
 
-If `hsync` is not found, `~/.local/bin` is not on your `PATH` — add it or re-run
-the installer without `--no-symlink`.
+The installer symlinks `hsync` into `~/.local/bin`. On Linux that directory is
+often already on `PATH`; on macOS it is not, so add it once in your shell
+profile (zsh is the default shell):
+
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+exec zsh
+```
+
+The installer prints the same hint when the directory is not on `PATH`.
 
 ## Manage and update
 

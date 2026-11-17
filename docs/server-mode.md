@@ -111,7 +111,7 @@ hsync server --server-url server.example.com -b media -p /srv/media --stability-
 hsync server --server-url server.example.com:443 -b mybucket -p /path/to/dir
 ```
 
-For scheduled background sync (cron, systemd timer, Task Scheduler) use
+For scheduled background sync (cron, systemd timer, launchd, Task Scheduler) use
 one-shot mode (`--once`; `--allow-deletions` accepts the deletion-risk
 confirmation):
 

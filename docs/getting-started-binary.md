@@ -33,14 +33,28 @@ curl -fLO "https://github.com/albertsdk/hsync-client/releases/latest/download/hs
 
 ## Extract and install
 
+Linux (x86-64):
+
 ```bash
-# Linux / macOS
 tar -xzf hsync-client-VERSION-linux-amd64.tar.gz
-install hsync ~/.local/bin/hsync
+mkdir -p ~/.local/bin
+install -m 0755 hsync ~/.local/bin/hsync
 ```
 
-Requires the standalone `hsync` binary to be executable and on your `PATH`.
-Alternatively, extract it into any directory and invoke it by full path.
+macOS (Apple Silicon):
+
+```bash
+tar -xzf hsync-client-VERSION-darwin-arm64.tar.gz
+mkdir -p ~/.local/bin
+install -m 0755 hsync ~/.local/bin/hsync
+```
+
+Pick the archive that matches your machine (`...-linux-arm64`,
+`...-darwin-arm64`, `...-darwin-amd64`). On macOS `~/.local/bin` is not on the
+default `PATH`: the [installer script guide](getting-started-script.md) shows the
+one-line `PATH` export. On Windows the `.zip` contains `hsync.exe`; the
+[Windows installer](getting-started-windows.md) page covers extracting it and
+adding it to `PATH`.
 
 ## macOS: clear the quarantine flag
 

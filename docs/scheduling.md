@@ -1,10 +1,10 @@
-# Scheduling & Automation (cron / systemd)
+# Scheduling & Automation (cron / systemd / launchd / Task Scheduler)
 
 One-shot sync is HSYNC's primary interface for automation. A one-shot run
 performs a single full sync cycle — compare, upload, download, delete — and
 then exits, making the outcome scriptable through the process **exit code**.
-This page covers that contract and provides ready-to-use cron and systemd
-examples.
+This page covers that contract and provides ready-to-use cron, systemd, launchd
+and Task Scheduler examples.
 
 ## One-shot mode at a glance
 
@@ -237,6 +237,133 @@ systemctl start hsync-documents.service   # one cycle now
 systemctl status hsync-documents.service  # Success or exit code in journal
 systemctl list-timers hsync-documents.timer
 ```
+
+## macOS (launchd)
+
+A per-user **LaunchAgent** runs the one-shot sync at login and then on a fixed
+interval. `launchd` does not expand `~`, so the plist carries absolute paths;
+keep the command in a wrapper script (which can use `$HOME`) and point the plist
+at it.
+
+Create the directories and a `0600` env file with the secrets:
+
+```bash
+mkdir -p "$HOME/bin" "$HOME/Library/LaunchAgents" \
+    "$HOME/.config/hsync"
+install -m 600 /dev/null "$HOME/.config/hsync/hsync.env"
+cat > "$HOME/.config/hsync/hsync.env" <<'EOF'
+HSYNC_API_KEY="hs_ACCOUNT_ID_ACCOUNT_SECRET"
+EOF
+```
+
+Wrapper `$HOME/bin/hsync-sync.sh`:
+
+```bash
+#!/bin/sh
+exec "$HOME/.local/bin/hsync" server \
+    --server-url "https://server.example.com" -b documents \
+    -p "$HOME/Documents" --once --allow-deletions \
+    --env-file "$HOME/.config/hsync/hsync.env" \
+    --log-file "$HOME/Library/Logs/hsync-documents.log"
+```
+
+Agent `$HOME/Library/LaunchAgents/net.example.hsync.documents.plist` (replace
+`USERNAME` with your account name):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>net.example.hsync.documents</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/USERNAME/bin/hsync-sync.sh</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>3600</integer>
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>
+```
+
+Load it and run one cycle immediately:
+
+```bash
+chmod +x "$HOME/bin/hsync-sync.sh"
+launchctl bootstrap gui/"$(id -u)" \
+    "$HOME/Library/LaunchAgents/net.example.hsync.documents.plist"
+launchctl kickstart -k gui/"$(id -u)/net.example.hsync.documents"
+```
+
+`StartInterval` is in seconds. `--log-file` keeps the run's log (or add
+`StandardOutPath`/`StandardErrorPath` to the plist). Keep the interval larger
+than the worst-case cycle: two overlapping runs corrupt nothing (the client
+exits `1` on the instance lock) but the second one is wasted. Remove the agent
+with:
+
+```bash
+launchctl bootout gui/"$(id -u)" \
+    "$HOME/Library/LaunchAgents/net.example.hsync.documents.plist"
+```
+
+## Windows (Task Scheduler)
+
+The per-user installer places `hsync.exe` in
+`%LOCALAPPDATA%\Programs\HSYNC`. A scheduled task runs it in your user context;
+keep the command in a `.cmd` wrapper so the quoting stays readable, and keep the
+secret in an env file that only your account can read.
+
+Create `%USERPROFILE%\hsync.env` and restrict it to your account:
+
+```powershell
+$key = 'HSYNC_API_KEY="hs_ACCOUNT_ID_ACCOUNT_SECRET"'
+Set-Content -Encoding ascii "$env:USERPROFILE\hsync.env" $key
+icacls "$env:USERPROFILE\hsync.env" /inheritance:r
+icacls "$env:USERPROFILE\hsync.env" /grant:r "$env:USERNAME:(R)"
+```
+
+Wrapper `%LOCALAPPDATA%\Programs\HSYNC\hsync-sync.cmd`:
+
+```bat
+@echo off
+mkdir "%LOCALAPPDATA%\HSYNC\logs" 2>nul
+"%LOCALAPPDATA%\Programs\HSYNC\hsync.exe" server ^
+    --server-url "https://server.example.com" -b documents ^
+    -p "%USERPROFILE%\Documents" --once --allow-deletions ^
+    --env-file "%USERPROFILE%\hsync.env" ^
+    --log-file "%LOCALAPPDATA%\HSYNC\logs\documents.log"
+```
+
+Register an hourly task that runs as you:
+
+```powershell
+$wrapper = "$env:LOCALAPPDATA\Programs\HSYNC\hsync-sync.cmd"
+schtasks /Create /SC HOURLY /TN "HSYNC-Documents" /TR $wrapper /F
+```
+
+Run it once and inspect the last result:
+
+```powershell
+schtasks /Run /TN "HSYNC-Documents"
+schtasks /Query /TN "HSYNC-Documents" /V /FO LIST
+```
+
+The `Last Result` value is the client's exit code (see the table above). By
+default the task runs only while you are logged on; to run whether or not you
+are logged on, open the task's properties and choose that option (Windows then
+stores your credentials). Remove the task with:
+
+```powershell
+schtasks /Delete /TN "HSYNC-Documents" /F
+```
+
+If `%LOCALAPPDATA%` contains spaces, quote the `/TR` path inside the command.
+The p2p one-shot flags are the same as in the cron example above
+(`--allow-unauthenticated-p2p` only for a keyless run).
 
 ## See also
 
