@@ -68,6 +68,19 @@ class TestCaseCollisions:
         assert remote_out[0]["name"] == "a.txt"
         assert remote_out[0]["size"] == 3
 
+    def test_a_persistent_collision_is_logged_once(self, tmp_path, monkeypatch):
+        remote = [{"filepath": "A.txt"}, {"filepath": "a.txt"}]
+        monkeypatch.setattr("hsync_client.sync._collision_warned", set())
+        with (
+            patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch("hsync_client.sync.is_case_insensitive", return_value=True),
+            patch("hsync_client.sync.log") as mock_log,
+        ):
+            _drop_case_collisions([], remote)
+            _drop_case_collisions([], remote)
+
+        assert mock_log.warning.call_count == 1
+
     def test_case_sensitive_filesystem_is_left_alone(self, tmp_path):
         remote = [{"filepath": "A.txt"}, {"filepath": "a.txt"}]
         with (
@@ -219,6 +232,23 @@ class TestLongPath:
 
         def length_ok(_base, rel):
             return not rel.endswith(PARTIAL_DOWNLOAD_SUFFIX)
+
+        with (
+            patch("hsync_client.transfer.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch("hsync_client.transfer.local_path_length_ok", side_effect=length_ok),
+            patch("hsync_client.transfer.get") as mock_get,
+        ):
+            assert download_file(file) is True  # skipped, not a failure
+        mock_get.assert_not_called()
+
+    def test_download_skips_when_the_parked_payload_name_exceeds_the_limit(self, tmp_path):
+        """The longest transient is the parked literal payload."""
+        from hsync_client.transfer import download_file
+
+        file = File(filepath="x.bin", sha256sum="a" * 64, size=3)
+
+        def length_ok(_base, rel):
+            return not rel.endswith(".delta.part.lit")
 
         with (
             patch("hsync_client.transfer.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),

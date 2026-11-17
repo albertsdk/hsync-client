@@ -33,9 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the winner's spelling instead of being dropped.
 - A crash between the two steps of a case-only rename no longer loses the file:
   the startup sweep restores the stranded marker instead of deleting it.
-- The long-path guard also covers the `.part`/`.delta.part` names a transfer
-  writes before the atomic commit, and a POSIX `EACCES`/`EPERM` is no longer
-  mistaken for a host that cannot create symlinks.
+- The long-path guard also covers every transient name a transfer writes before
+  the atomic commit (`.part`, `.delta.part`, `.delta.part.lit`), and a POSIX
+  `EACCES`/`EPERM` is no longer mistaken for a host that cannot create symlinks.
+- A persistent name collision is reported once instead of once per sync cycle.
 - The P2P slave no longer takes `REMOTE_READONLY_PERMISSIONS` from the
   unauthenticated mDNS TXT record (advisory hint only): the permission
   projection switches on the capability proved in the WSS handshake.

@@ -32,6 +32,7 @@ from hsync_common.constants import (
     CHUNK_SIZE_SMALL,
     CONTENT_TYPE_OCTET_STREAM,
     HEADER_CHECKSUM_SHA256,
+    PARTIAL_DELTA_LIT_SUFFIX,
     PARTIAL_DELTA_SUFFIX,
 )
 from hsync_common.disk import check_free_space
@@ -585,11 +586,17 @@ def download_file(
         log.error("Invalid file metadata: missing filepath or name")
         return True
 
-    # Check the names actually written: the final path and the .part/.delta.part
-    # temporary the downloader opens before the atomic commit.
+    # Check the names actually written: the final path and the .part /
+    # .delta.part / .delta.part.lit temporaries the transfer opens (and parks)
+    # before the atomic commit.
     if not all(
         local_path_length_ok(CONFIG.get("LOCAL_BUCKET", ""), f"{file.filepath}{suffix}")
-        for suffix in ("", PARTIAL_DOWNLOAD_SUFFIX, PARTIAL_DELTA_SUFFIX)
+        for suffix in (
+            "",
+            PARTIAL_DOWNLOAD_SUFFIX,
+            PARTIAL_DELTA_SUFFIX,
+            PARTIAL_DELTA_LIT_SUFFIX,
+        )
     ):
         log.warning(
             f'{ActionLabel.SKIP} Path exceeds this platform limit; skipping "{file.filepath}"'

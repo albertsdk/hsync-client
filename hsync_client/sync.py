@@ -367,6 +367,12 @@ def _record_permanent_download_failure(file: File, e: PermanentDownloadError) ->
 # ``_cleanup_partial_files``).
 _RENAME_TEMP_SUFFIX = f".hsync-rename{PARTIAL_DOWNLOAD_SUFFIX}"
 
+# A collision is a steady state, not a transient: each (loser, winner) decision
+# is logged once so a persistent collision does not flood the log every cycle.
+# Bounded, so a hostile listing cannot grow it without limit.
+_collision_warned: set[tuple[str, str]] = set()
+_COLLISION_WARNED_CAP = 4096
+
 
 def _cleanup_partial_files() -> int:
     """
@@ -748,10 +754,14 @@ def _drop_case_collisions(
             local_winners.add(winner)
         for rel in distinct - {winner}:
             losers[rel] = winner
-            log.warning(
-                f'{ActionLabel.SKIP} "{rel}" collides with "{winner}" on this '
-                "filesystem; skipping it"
-            )
+            if len(_collision_warned) >= _COLLISION_WARNED_CAP:
+                _collision_warned.clear()
+            if (rel, winner) not in _collision_warned:
+                _collision_warned.add((rel, winner))
+                log.warning(
+                    f'{ActionLabel.SKIP} "{rel}" collides with "{winner}" on this '
+                    "filesystem; skipping it"
+                )
     if not losers:
         return local_files, remote_files
 
