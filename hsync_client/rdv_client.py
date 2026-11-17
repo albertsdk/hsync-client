@@ -365,17 +365,17 @@ class RendezvousClient:
         """Ordered ports to try for this node (multi-port egress fallback)."""
         return self._candidate_ports()
 
-    def resolved_relay_ip(self, port: int | None = None) -> str:
-        """Resolve the node host once (the IP relay attach connections pin to).
+    def resolved_relay_ips(self, port: int | None = None) -> tuple[str, ...]:
+        """Resolve the node host once into the ordered IPs a relay may pin to.
 
         A relay listener opens one control connection plus one connection per
         ``relay_attach``; with several A/AAAA records an attach dialing the
         hostname could reach another node instance (which does not hold the
         pending ``relay_id``) or another address family (failing the node's
-        ``peer_ip`` check). Resolving once and pinning every relay connection to
-        the same IP makes all of them reach the same node instance. The address
-        family is whatever the resolver returns first (IPv4 or IPv6), so an
-        IPv6-only node is not forced to a failing IPv4 lookup.
+        ``peer_ip`` check). The caller tries these candidates in order and pins
+        the first that completes TLS+ALPN, so every later connection reaches the
+        same node instance while a broken first family (an unroutable IPv6 on a
+        dual-stack host) falls back to the next one.
         """
         import socket
 
@@ -387,8 +387,12 @@ class RendezvousClient:
         )
         # ``getaddrinfo`` returns an IPv6 sockaddr as a 4-tuple; only the address
         # is used here.
-        address = infos[0][4][0]
-        return str(address)
+        addresses: list[str] = []
+        for info in infos:
+            address = str(info[4][0])
+            if address not in addresses:
+                addresses.append(address)
+        return tuple(addresses)
 
     async def _open_rdv_tls_stream(
         self, ip: str, port: int, context: ssl.SSLContext

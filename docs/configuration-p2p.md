@@ -33,7 +33,9 @@ the client derives the 64-hex group key with scrypt) or from `HSYNC_P2P_KEY`
 secret, reads and download-only operation remain available, but write-capable
 sync is refused unless the dangerous CLI or environment opt-in is explicit.
 Parent processes (desktop GUI) may pass it on a pipe with the hidden
-`--p2p-passphrase-fd` (password) or `--p2p-key-fd` (raw key) flag.
+`--p2p-passphrase-fd` (password) or `--p2p-key-fd` (raw key) flag. The fd form
+is POSIX-oriented (an inherited descriptor); on Windows pass
+`HSYNC_P2P_PASSPHRASE`/`HSYNC_P2P_KEY` or load an `--env-file` instead.
 
 The **raw key** (`HSYNC_P2P_KEY`) must be at least 32 characters: it is the only
 entropy behind the `bucket_token`, so the client refuses to start with a shorter

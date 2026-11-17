@@ -12,6 +12,7 @@ from __future__ import annotations
 import threading
 
 from hsync_client import net_watch
+from hsync_client.net_utils import LocalAddresses
 from hsync_client.net_watch import (
     OFFLINE_SOURCE_IP,
     NetworkChangeMonitor,
@@ -40,15 +41,33 @@ class _Probe:
 
 
 class TestNetworkSignature:
-    """The loopback fallback ``get_local_ip`` returns means "offline"."""
+    """The signature carries every family, so an IPv6-only change is a transition."""
 
     def test_loopback_fallback_is_offline(self, monkeypatch):
-        monkeypatch.setattr(net_watch, "get_local_ip", lambda: OFFLINE_SOURCE_IP)
+        monkeypatch.setattr(
+            net_watch,
+            "get_local_addresses",
+            lambda: LocalAddresses(ipv4=(OFFLINE_SOURCE_IP,), ipv6=()),
+        )
         assert network_signature() == OFFLINE
 
     def test_routable_address_is_online(self, monkeypatch):
-        monkeypatch.setattr(net_watch, "get_local_ip", lambda: "192.168.1.10")
+        monkeypatch.setattr(
+            net_watch,
+            "get_local_addresses",
+            lambda: LocalAddresses(ipv4=("192.168.1.10",), ipv6=()),
+        )
         assert network_signature() == ONLINE
+
+    def test_ipv6_addresses_are_part_of_the_signature(self, monkeypatch):
+        monkeypatch.setattr(
+            net_watch,
+            "get_local_addresses",
+            lambda: LocalAddresses(ipv4=("192.168.1.10",), ipv6=("fd00::1",)),
+        )
+        assert network_signature() == NetworkSignature(
+            source_ip="192.168.1.10", online=True, ipv6=("fd00::1",)
+        )
 
 
 class TestPollOnce:

@@ -93,7 +93,7 @@ def _start_slave_inventory(
             peer_read_cap=config.get("P2P_PEER_READ_CAP", 2),
         )
         try:
-            p2p_sync.update_endpoint_ready(True)
+            p2p_sync.update_endpoint_ready(True, bound_families=p2p_server.bound_families)
         except Exception as exc:
             try:
                 p2p_sync.update_endpoint_ready(False)

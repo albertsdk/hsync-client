@@ -448,7 +448,17 @@ See also: [Architecture > Pre-Sync Safety Check](internal/architecture.md#pre-sy
 
 ### Peers Not Discovering Each Other
 
-1. **Check firewall**: Ensure mDNS (UDP port 5353) is allowed
+1. **Allow mDNS and the listener**: peers discover each other over mDNS on
+   **UDP 5353** and then dial the master's data-plane **TCP** port
+   (`--listen-port`, OS-assigned by default). Allow both on the host:
+   - **macOS 15+**: the first local-network access raises the **Local Network**
+     permission (System Settings → Privacy & Security → Local Network); if it was
+     denied, mDNS stays blocked — allow the terminal (or the client binary)
+     there. The master also needs the macOS firewall prompt to accept incoming
+     connections.
+   - **Windows**: allow the client on the **Private** network profile when the
+     Windows Defender Firewall prompt appears, or add an inbound rule for its
+     port; a denied prompt leaves peers unable to dial the master.
 2. **Check network**: All devices must be on the same subnet (or point the whole group at the same rendezvous for cross-network rendezvous)
 3. **Increase timeout**: Use `--peer-rendezvous-timeout 15` for slower networks, or `--peer-rendezvous-timeout 0` to wait indefinitely for the first peer/master
 4. **Running in a container?**: mDNS multicast cannot cross the NAT boundary of

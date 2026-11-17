@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `HSYNC_*_TRUST` variables) accept `auto`: a stored pin wins, else standard CA
   validation for the sync server, else pin the first sighting. A first-use pin
   is logged and surfaced as a non-blocking notice.
+- IPv6 on the local network: the data-plane listener binds dual-stack, mDNS
+  advertises ULA/global IPv6 addresses alongside IPv4, and the record only
+  carries the families the listener actually bound (an IPv4-only host or network
+  keeps working unchanged).
 
 ### Fixed
 
@@ -64,6 +68,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `token_required` rendezvous refusal now names the gated bucket and states the
   fix (the node's `bucket=<key>` line must hold the group key derived from the
   shared password, `hsync derive-group-key`) instead of only the raw error code.
+- A Windows host with several adapters (Wi-Fi, Ethernet, VPN) now advertises
+  every interface instead of only the address the hostname resolves to.
+- A relay connection on a dual-stack host no longer stalls on an unreachable
+  IPv6 address: the resolved candidates are tried in order and the first that
+  completes the TLS handshake is pinned for every later connection.
+- Console output stays UTF-8 even when redirected on Windows (Task Scheduler,
+  `cmd`), so the log glyphs are no longer lost.
 - The stdin command channel works on Windows: a blocking reader thread replaces
   the Proactor pipe read (which fails on a synchronous parent pipe with
   `ERROR_INVALID_PARAMETER`), so `SYNC`/`PREVIEW`/direction/bandwidth commands

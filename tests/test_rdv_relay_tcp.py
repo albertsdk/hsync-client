@@ -84,7 +84,7 @@ class TestTcpRelaySession:
             def verify_peer_der(self, der):
                 calls.append(f"verify:{der}")
 
-        session = _TcpRelaySession(_ClientSeam(), ip="203.0.113.7")
+        session = _TcpRelaySession(_ClientSeam(), ips=("203.0.113.7",))
         reader, writer = asyncio.run(session.open_stream())
         assert reader is not None and writer is not None
         assert calls == ["dial:443:203.0.113.7", "verify:b'cert-der'"]
@@ -108,10 +108,41 @@ class TestTcpRelaySession:
             def verify_peer_der(self, _der):
                 return None
 
-        session = _TcpRelaySession(_ClientSeam(), ip="198.51.100.9")
+        session = _TcpRelaySession(_ClientSeam(), ips=("198.51.100.9",))
         for _ in range(3):  # control + two attaches
             asyncio.run(session.open_stream())
         assert dialed == [(443, "198.51.100.9")] * 3
+
+    def test_open_stream_falls_back_to_the_next_resolved_address(self) -> None:
+        """A broken first family falls back to the next IP, then stays pinned."""
+        dialed: list[tuple[int, str]] = []
+
+        class _ClientSeam:  # noqa: N801
+            transport = "tcp"
+            host = "rdv.example.net"
+            port = 443
+
+            def candidate_ports(self):
+                return (443,)
+
+            async def dial_relay_tcp(self, port, *, ip):
+                dialed.append((port, ip))
+                if ip == "2001:db8::1":
+                    raise OSError("unreachable")
+                return object(), object(), None
+
+            def verify_peer_der(self, _der):
+                return None
+
+        session = _TcpRelaySession(_ClientSeam(), ips=("2001:db8::1", "198.51.100.9"))
+        for _ in range(2):
+            asyncio.run(session.open_stream())
+
+        assert dialed == [
+            (443, "2001:db8::1"),
+            (443, "198.51.100.9"),
+            (443, "198.51.100.9"),
+        ]
 
     def test_close_clears_every_connection(self, monkeypatch) -> None:
         closed: list[bool] = []
@@ -137,7 +168,7 @@ class TestTcpRelaySession:
             def verify_peer_der(self, _der):
                 return None
 
-        session = _TcpRelaySession(_ClientSeam(), ip="203.0.113.7")
+        session = _TcpRelaySession(_ClientSeam(), ips=("203.0.113.7",))
         asyncio.run(session.open_stream())
         asyncio.run(session.close())
         assert closed == [True]
@@ -163,6 +194,6 @@ class TestTcpRelaySession:
             def verify_peer_der(self, _der):
                 return None
 
-        session = _TcpRelaySession(_ClientSeam(), ip="198.51.100.9")
+        session = _TcpRelaySession(_ClientSeam(), ips=("198.51.100.9",))
         asyncio.run(session.open_stream())
         assert attempts == [443, 53]

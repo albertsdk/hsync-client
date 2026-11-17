@@ -20,7 +20,8 @@ Server-mode configuration for connecting to a central HSYNC Server.
 There is **no** `--api-key` flag. The account token is read from the
 `HSYNC_API_KEY` environment variable. The desktop GUI (and other parent
 processes) may pass it on a pipe with the hidden `--api-key-fd` flag; that
-option is not part of the interactive CLI.
+option is not part of the interactive CLI. The fd form is POSIX-oriented; on
+Windows set `HSYNC_API_KEY` or load an `--env-file` instead.
 
 ## Server certificate trust
 

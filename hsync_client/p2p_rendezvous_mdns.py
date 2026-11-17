@@ -39,7 +39,12 @@ from hsync_client.constants import (
     PEER_TIMEOUT,
     RENDEZVOUS_TIMEOUT_DEFAULT,
 )
-from hsync_client.net_utils import get_local_ip, get_local_ips
+from hsync_client.net_utils import (
+    LocalAddresses,
+    address_family,
+    get_local_addresses,
+    get_local_ip,
+)
 from hsync_client.net_watch import (
     NetworkChangeMonitor,
     NetworkSignature,
@@ -67,14 +72,29 @@ RENDEZVOUS_TIMEOUT = RENDEZVOUS_TIMEOUT_DEFAULT
 PRESENCE_REFRESH_COALESCE_S = 2.0
 
 
-def _merge_local_ips(primary: str) -> list[str]:
-    """The live interface addresses, with *primary* forced first.
+# A service record carries every advertised address; a handful per family is
+# enough and keeps the mDNS packet within the classic 9000-byte budget.
+_MDNS_MAX_ADDRESSES = 16
 
-    Used after a network change: the monitor names the recovered source address,
-    which must head the list, and the rest of the current interfaces follow.
+
+def _pack_address(value: str) -> bytes:
+    """Pack an address literal for ``ServiceInfo.addresses`` (A or AAAA)."""
+    if ":" in value:
+        return socket.inet_pton(socket.AF_INET6, value)
+    return socket.inet_aton(value)
+
+
+def _merged_local_addresses(primary: str) -> LocalAddresses:
+    """The live addresses after a network change, with *primary* forced first.
+
+    The monitor names the recovered default-route IPv4 address, which must head
+    the list; the rest of the current interfaces (both families) follow.
     """
-    ips = list(dict.fromkeys(([primary] if primary else []) + get_local_ips()))
-    return ips or [get_local_ip()]
+    addresses = get_local_addresses()
+    if not primary:
+        return addresses
+    ipv4 = tuple(dict.fromkeys((primary, *addresses.ipv4)))
+    return LocalAddresses(ipv4=ipv4, ipv6=addresses.ipv6)
 
 
 class MdnsRendezvous(RendezvousPlanState):
@@ -148,8 +168,11 @@ class MdnsRendezvous(RendezvousPlanState):
         # re-announced on every heartbeat, so a stale address would keep peers
         # dialing a dead endpoint until the process restarted. ``_local_ip`` is
         # the default-route address, used for logging and change detection.
-        self._local_ips = get_local_ips()
-        self._local_ip = self._local_ips[0]
+        self._local_addresses = get_local_addresses()
+        self._local_ips = list(self._local_addresses.all)
+        self._local_ip = (
+            self._local_addresses.ipv4[0] if self._local_addresses.ipv4 else get_local_ip()
+        )
         self._network_monitor: NetworkChangeMonitor | None = None
         self._network_offline = False
 
@@ -296,13 +319,16 @@ class MdnsRendezvous(RendezvousPlanState):
         """mDNS has no separate endpoint publication: readiness is unchanged."""
         return True
 
-    def update_server_ready(self) -> None:
+    def update_server_ready(self, *, bound_families: frozenset[int] | None = None) -> None:
         """
         Update the mDNS service to indicate the server is ready.
 
         Call this after starting the HTTP server when becoming master.
-        This re-registers the service with server_ready=true.
+        This re-registers the service with server_ready=true. ``bound_families``
+        is the family set the listener actually bound, so the record never
+        advertises an AAAA the server does not serve.
         """
+        self._apply_bound_families(bound_families)
         self._refresh_service(server_ready=True, endpoint_ready=False)
         log.info("Updated mDNS service: server_ready=true")
 
@@ -319,13 +345,17 @@ class MdnsRendezvous(RendezvousPlanState):
         self._refresh_service(server_ready=False, endpoint_ready=False)
         log.info("Updated mDNS service: server_ready=false")
 
-    def update_endpoint_ready(self, ready: bool) -> None:
+    def update_endpoint_ready(
+        self, ready: bool, *, bound_families: frozenset[int] | None = None
+    ) -> None:
         """Advertise or withdraw this slave's reachable read-only seeder endpoint.
 
         Drives the endpoint-material TXT keys (``https``/``cert_fp``) only: whether
         this node can actually serve a peer download is advertised over the
         authenticated WSS handshake, never on the rendezvous record (ADR-0030).
+        ``bound_families`` filters the advertised addresses to the bound families.
         """
+        self._apply_bound_families(bound_families)
         self._refresh_service(server_ready=False, endpoint_ready=ready)
         log.info(f"Updated mDNS service: seeder endpoint={'ready' if ready else 'down'}")
 
@@ -531,8 +561,10 @@ class MdnsRendezvous(RendezvousPlanState):
             previous_ip = self._local_ip
             previous_zc = self._zeroconf
             previous_info = self._service_info
-            self._local_ips = _merge_local_ips(local_ip)
-            self._local_ip = self._local_ips[0]
+            merged = _merged_local_addresses(local_ip)
+            self._local_addresses = merged
+            self._local_ips = list(merged.all)
+            self._local_ip = merged.ipv4[0] if merged.ipv4 else local_ip
             self._service_info = None
             self._browser = None
             self._zeroconf = None
@@ -671,7 +703,11 @@ class MdnsRendezvous(RendezvousPlanState):
         # network-change recovery in __init__/start, so the record never
         # advertises a dead endpoint). Every active interface is published so a
         # peer on any of the node's networks can dial it directly.
-        local_ips = self._local_ips or [get_local_ip()]
+        # Only the sampled interfaces this listener can actually serve; an
+        # unsampled plan still advertises one probe address.
+        families = getattr(self, "_bound_families", frozenset({4}))
+        sampled = self._local_ips or [get_local_ip()]
+        local_ips = [ip for ip in sampled if address_family(ip) in families] or [get_local_ip()]
 
         # Create service name: bucket-cid
         service_name = f"{self._bucket}-{self._cid}.{HSYNC_SERVICE_TYPE}"
@@ -735,7 +771,7 @@ class MdnsRendezvous(RendezvousPlanState):
             service_name,
             port=self._port,
             properties=properties,
-            addresses=[socket.inet_aton(local_ip) for local_ip in local_ips],
+            addresses=[_pack_address(ip) for ip in local_ips[:_MDNS_MAX_ADDRESSES]],
         )
 
     def wait_for_rendezvous(self, timeout: float = RENDEZVOUS_TIMEOUT) -> None:

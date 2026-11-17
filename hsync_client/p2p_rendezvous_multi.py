@@ -112,20 +112,22 @@ class MultiRdvRendezvous(RendezvousPlanState):
         self._peer_manager.wait_for_change(timeout)
         self.log_peer_count()
 
-    def update_endpoint_ready(self, ready: bool) -> None:
+    def update_endpoint_ready(
+        self, ready: bool, *, bound_families: frozenset[int] | None = None
+    ) -> None:
         """Publish (or retract) this node's data-plane endpoint on every source."""
         for source in self._sources:
-            source.update_endpoint_ready(ready)
+            source.update_endpoint_ready(ready, bound_families=bound_families)
 
     def endpoint_published(self) -> bool:
         """True once any source that can still carry traffic published the endpoint."""
         usable = [source for source in self._sources if not source.source_disabled()]
         return any(source.endpoint_published() for source in usable)
 
-    def update_server_ready(self) -> None:
+    def update_server_ready(self, *, bound_families: frozenset[int] | None = None) -> None:
         """Publish that the local master server is ready on every source."""
         for source in self._sources:
-            source.update_server_ready()
+            source.update_server_ready(bound_families=bound_families)
 
     def update_server_not_ready(self) -> None:
         """Publish that the local master server is no longer ready on every source."""

@@ -106,6 +106,7 @@ from hsync_client.multipart import (
     _CappedBytesWriter,
     _StreamingMultipartParser,
 )
+from hsync_client.net_utils import normalize_peer_ip
 from hsync_client.progress import (
     ProgressReporter,
     ProgressWriter,
@@ -2859,7 +2860,7 @@ class _AiohttpTransport(P2PEndpointMixin):
         version = request.version
         self.requestline = f"{request.method} {self.path} HTTP/{version.major}.{version.minor}"
         self.headers = request.headers  # type: ignore[assignment]
-        remote = request.remote or ""
+        remote = normalize_peer_ip(request.remote or "")
         self.client_address = (remote, 0)
         self.close_connection = False
         self._status = 0
@@ -3109,6 +3110,24 @@ class _P2PSite(web.SockSite):
             self._server = await loop.create_server(server, sock=self._sock, backlog=self._backlog)
 
 
+def _create_listener_socket(port: int) -> tuple[socket.socket, frozenset[int]]:
+    """Bind the data-plane listener; dual-stack when the host supports it.
+
+    A dual-stack ``::`` socket serves IPv4 and IPv6 on one port. A host with IPv6
+    disabled (``EAFNOSUPPORT``/``EADDRNOTAVAIL``) or a platform that rejects
+    ``dualstack_ipv6`` falls back to IPv4; the returned family set is exactly what
+    the advertiser may publish.
+    """
+    try:
+        return (
+            socket.create_server(("::", port), family=socket.AF_INET6, dualstack_ipv6=True),
+            frozenset({4, 6}),
+        )
+    except (ValueError, OSError) as exc:
+        log.debug(f"Dual-stack listener unavailable ({exc}); binding IPv4 only")
+        return socket.create_server(("0.0.0.0", port)), frozenset({4})
+
+
 class P2PServer:
     """Unified HTTPS/WSS listener for the P2P serving role.
 
@@ -3150,6 +3169,7 @@ class P2PServer:
         """
         self._port = port
         self._actual_port = port
+        self._bound_families: frozenset[int] = frozenset()
         self._use_https = use_https
         self._cert_file = cert_file
         self._key_file = key_file
@@ -3226,6 +3246,11 @@ class P2PServer:
     def port(self) -> int:
         """The actual bound port (resolved from the OS when ``port=0``)."""
         return self._actual_port
+
+    @property
+    def bound_families(self) -> frozenset[int]:
+        """Address families the listener bound (4, 6 or both); set by start()."""
+        return self._bound_families
 
     @property
     def use_https(self) -> bool:
@@ -3446,7 +3471,8 @@ class P2PServer:
 
             # Bind first and read the port back: an OS-assigned (port 0) or a
             # configured port is resolved from the real socket, never guessed.
-            sock = socket.create_server(("0.0.0.0", self._port))
+            sock, bound_families = _create_listener_socket(self._port)
+            self._bound_families = bound_families
             self._actual_port = int(sock.getsockname()[1])
             if self._websocket_server is not None:
                 self._websocket_server.set_port(self._actual_port)
@@ -3528,7 +3554,7 @@ class P2PServer:
         slots = self._dispatch_slots
         if context is None or executor is None or slots is None:
             raise web.HTTPServiceUnavailable(text="P2P server is not serving")
-        remote = request.remote or ""
+        remote = normalize_peer_ip(request.remote or "")
         # Relayed peers share the loopback address; separate their buckets by CID
         # so one busy relayed peer cannot starve the others.
         bucket = _admission_key(remote, request)

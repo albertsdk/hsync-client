@@ -18,6 +18,7 @@ import pytest
 from hsync_client.config import CONFIG, HsyncConfig
 from hsync_client.events import UiEventName
 from hsync_client.main_logic import run_sync
+from hsync_client.net_utils import LocalAddresses
 from hsync_client.p2p_peers import Peer
 from tests.test_main_logic_sync import _default_run_sync_kwargs
 
@@ -452,7 +453,10 @@ class TestSelectMasterEndpoint:
         master = _master_with_endpoints([("10.145.201.139", 9000), ("192.168.1.42", 9000)])
         with (
             # No /24 match with either candidate: the advertised order is kept.
-            patch("hsync_client.p2p_master_connect.get_local_ips", return_value=["10.99.0.1"]),
+            patch(
+                "hsync_client.p2p_master_connect.get_local_addresses",
+                return_value=LocalAddresses(ipv4=("10.99.0.1",), ipv6=()),
+            ),
             patch(
                 "hsync_client.p2p_master_connect._probe_master_endpoint",
                 side_effect=lambda host, port, fingerprint, timeout: host == "192.168.1.42",
@@ -467,7 +471,10 @@ class TestSelectMasterEndpoint:
 
         master = _master_with_endpoints([])  # mDNS: no advertised candidates
         with (
-            patch("hsync_client.p2p_master_connect.get_local_ips", return_value=["10.0.0.5"]),
+            patch(
+                "hsync_client.p2p_master_connect.get_local_addresses",
+                return_value=LocalAddresses(ipv4=("10.0.0.5",), ipv6=()),
+            ),
             patch("hsync_client.p2p_master_connect._probe_master_endpoint") as probe,
         ):
             assert _select_master_endpoint(master, MagicMock()) == ("192.168.1.1", 9000)
@@ -481,7 +488,10 @@ class TestSelectMasterEndpoint:
 
         master = _master_with_endpoints([("192.168.1.1", 9000)])
         with (
-            patch("hsync_client.p2p_master_connect.get_local_ips", return_value=["10.0.0.5"]),
+            patch(
+                "hsync_client.p2p_master_connect.get_local_addresses",
+                return_value=LocalAddresses(ipv4=("10.0.0.5",), ipv6=()),
+            ),
             patch("hsync_client.p2p_master_connect._probe_master_endpoint", return_value=False),
         ):
             assert _select_master_endpoint(master, MagicMock()) is None
@@ -498,7 +508,10 @@ class TestSelectMasterEndpoint:
             return True
 
         with (
-            patch("hsync_client.p2p_master_connect.get_local_ips", return_value=["192.168.1.50"]),
+            patch(
+                "hsync_client.p2p_master_connect.get_local_addresses",
+                return_value=LocalAddresses(ipv4=("192.168.1.50",), ipv6=()),
+            ),
             patch("hsync_client.p2p_master_connect._probe_master_endpoint", side_effect=reachable),
         ):
             assert _select_master_endpoint(master, MagicMock()) == ("192.168.1.42", 9000)
@@ -540,7 +553,10 @@ class TestSelectMasterEndpoint:
             return timeout > MASTER_PROBE_FAST_TIMEOUT_S
 
         with (
-            patch("hsync_client.p2p_master_connect.get_local_ips", return_value=["192.168.1.50"]),
+            patch(
+                "hsync_client.p2p_master_connect.get_local_addresses",
+                return_value=LocalAddresses(ipv4=("192.168.1.50",), ipv6=()),
+            ),
             patch("hsync_client.p2p_master_connect._probe_master_endpoint", side_effect=slow),
         ):
             assert _select_master_endpoint(master, MagicMock()) == ("192.168.1.42", 9000)
@@ -552,7 +568,10 @@ class TestSelectMasterEndpoint:
 
         master = _master_with_endpoints([("203.0.113.10", 9000), ("192.168.1.42", 9000)])
         with (
-            patch("hsync_client.p2p_master_connect.get_local_ips", return_value=["192.168.1.50"]),
+            patch(
+                "hsync_client.p2p_master_connect.get_local_addresses",
+                return_value=LocalAddresses(ipv4=("192.168.1.50",), ipv6=()),
+            ),
             patch("hsync_client.p2p_master_connect._probe_master_endpoint", return_value=False),
         ):
             assert _select_master_endpoint(master, MagicMock()) is None

@@ -17,7 +17,7 @@ from hsync_common.protocol.handshake import PROTOCOL_VERSION_P2P
 from loguru import logger as log
 from zeroconf import ServiceInfo, ServiceListener, Zeroconf
 
-from hsync_client.net_utils import get_local_ips
+from hsync_client.net_utils import get_local_addresses
 from hsync_client.p2p_peers import (
     HEARTBEAT_SOURCE,
     Peer,
@@ -40,6 +40,11 @@ def _tx_bool(properties: Mapping[bytes, bytes | None], key: bytes) -> bool:
     """
     raw = properties.get(key, b"")
     return raw.decode("utf-8").lower() == "true" if raw else False
+
+
+def _all_local_ips() -> list[str]:
+    """The node's own addresses, both families (listener default provider)."""
+    return list(get_local_addresses().all)
 
 
 class HsyncServiceListener(ServiceListener):
@@ -66,11 +71,11 @@ class HsyncServiceListener(ServiceListener):
                 removes immediately (tests).
             local_ips: Supplies this node's own addresses, used to promote a
                 discovered peer's same-subnet address to its primary endpoint.
-                Defaults to :func:`get_local_ips`.
+                Defaults to every local address of both families.
         """
         self._peer_manager = peer_manager
         self._goodbye_grace_s = goodbye_grace_s
-        self._local_ips = local_ips or get_local_ips
+        self._local_ips = local_ips or _all_local_ips
         self._pending_goodbyes: dict[str, threading.Timer] = {}
         self._pending_lock = threading.Lock()
 

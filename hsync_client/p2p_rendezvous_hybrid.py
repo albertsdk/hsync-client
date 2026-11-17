@@ -94,10 +94,12 @@ class HybridRendezvous(RendezvousPlanState):
         self._mdns.emit_rendezvous_status()
         self._rendezvous.log_peer_count()
 
-    def update_endpoint_ready(self, ready: bool) -> None:
+    def update_endpoint_ready(
+        self, ready: bool, *, bound_families: frozenset[int] | None = None
+    ) -> None:
         """Publish (or retract) this node's data-plane endpoint on every source."""
-        self._mdns.update_endpoint_ready(ready)
-        self._rendezvous.update_endpoint_ready(ready)
+        self._mdns.update_endpoint_ready(ready, bound_families=bound_families)
+        self._rendezvous.update_endpoint_ready(ready, bound_families=bound_families)
 
     def endpoint_published(self) -> bool:
         """True once every source that can still carry traffic published it.
@@ -113,10 +115,10 @@ class HybridRendezvous(RendezvousPlanState):
             return self._mdns.endpoint_published()
         return self._mdns.endpoint_published() and self._rendezvous.endpoint_published()
 
-    def update_server_ready(self) -> None:
+    def update_server_ready(self, *, bound_families: frozenset[int] | None = None) -> None:
         """Publish that the local master server is ready on every source."""
-        self._mdns.update_server_ready()
-        self._rendezvous.update_server_ready()
+        self._mdns.update_server_ready(bound_families=bound_families)
+        self._rendezvous.update_server_ready(bound_families=bound_families)
 
     def discovery_settled(self) -> bool:
         """True once the rendezvous source has answered a first query round.

@@ -227,8 +227,18 @@ class TestHybridFanOut:
     def test_endpoint_ready_reaches_both_plans(self):
         hybrid, mdns, rendezvous, _ = _hybrid()
         hybrid.update_endpoint_ready(True)
-        mdns.update_endpoint_ready.assert_called_once_with(True)
-        rendezvous.update_endpoint_ready.assert_called_once_with(True)
+        mdns.update_endpoint_ready.assert_called_once_with(True, bound_families=None)
+        rendezvous.update_endpoint_ready.assert_called_once_with(True, bound_families=None)
+
+    def test_bound_families_reach_both_plans(self):
+        hybrid, mdns, rendezvous, _ = _hybrid()
+        families = frozenset({4, 6})
+        hybrid.update_server_ready(bound_families=families)
+        hybrid.update_endpoint_ready(True, bound_families=families)
+        mdns.update_server_ready.assert_called_once_with(bound_families=families)
+        rendezvous.update_server_ready.assert_called_once_with(bound_families=families)
+        mdns.update_endpoint_ready.assert_called_once_with(True, bound_families=families)
+        rendezvous.update_endpoint_ready.assert_called_once_with(True, bound_families=families)
 
     def test_server_ready_reaches_both_plans(self):
         hybrid, mdns, rendezvous, _ = _hybrid()

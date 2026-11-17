@@ -41,7 +41,7 @@ from hsync_client.constants import (
     RENDEZVOUS_DEFAULT_PORT,
     RENDEZVOUS_REFRESH_INTERVAL,
 )
-from hsync_client.net_utils import get_local_ips
+from hsync_client.net_utils import address_family, get_local_addresses
 from hsync_client.p2p_peers import PeerManager
 from hsync_client.trust_prompt import build_trust_prompt
 
@@ -93,7 +93,9 @@ class RendezvousPlan(Protocol):
         """
         ...
 
-    def update_endpoint_ready(self, ready: bool) -> None:
+    def update_endpoint_ready(
+        self, ready: bool, *, bound_families: frozenset[int] | None = None
+    ) -> None:
         """Publish whether this node's data-plane endpoint is reachable."""
         ...
 
@@ -106,7 +108,7 @@ class RendezvousPlan(Protocol):
         """
         ...
 
-    def update_server_ready(self) -> None:
+    def update_server_ready(self, *, bound_families: frozenset[int] | None = None) -> None:
         """Publish that the local master server is ready to accept peers."""
         ...
 
@@ -197,7 +199,9 @@ class RendezvousSource(Protocol):
         """Log the alive-peer count once per rendezvous window."""
         ...
 
-    def update_endpoint_ready(self, ready: bool) -> None:
+    def update_endpoint_ready(
+        self, ready: bool, *, bound_families: frozenset[int] | None = None
+    ) -> None:
         """Publish (or retract) this node's data-plane endpoint."""
         ...
 
@@ -219,7 +223,7 @@ class RendezvousSource(Protocol):
         """
         ...
 
-    def update_server_ready(self) -> None:
+    def update_server_ready(self, *, bound_families: frozenset[int] | None = None) -> None:
         """Publish that the local master server is ready to accept peers."""
         ...
 
@@ -289,6 +293,9 @@ class RendezvousPlanState:
     _use_https: bool
     _local_ip: str | None
     _peer_timeout: float
+    # Address families the data-plane listener actually bound (4 and/or 6);
+    # advertisement is filtered to them. Defaults to IPv4 until reported.
+    _bound_families: frozenset[int]
 
     def _init_common_fields(
         self,
@@ -324,6 +331,7 @@ class RendezvousPlanState:
         self._startup_time = startup_time if startup_time > 0 else now_corrected()
         self._sync_direction = sync_direction
         self._peer_timeout = peer_timeout
+        self._bound_families = frozenset({4})
 
     @property
     def port(self) -> int:
@@ -369,7 +377,27 @@ class RendezvousPlanState:
             return list(ips)
         if self._local_ip:
             return [self._local_ip]
-        return get_local_ips()
+        return list(get_local_addresses().all)
+
+    def _filtered_local_addresses(self) -> list[str]:
+        """Local addresses on the families the listener actually bound.
+
+        Defaults to IPv4 until ``update_server_ready``/``update_endpoint_ready``
+        reports the real bind, so a peer is never handed an AAAA the data-plane
+        listener does not serve.
+        """
+        families = getattr(self, "_bound_families", frozenset({4}))
+        return [ip for ip in self._advertised_local_addresses() if address_family(ip) in families]
+
+    def _apply_bound_families(self, bound_families: frozenset[int] | None) -> None:
+        """Store the families the listener bound (a no-op when not reported).
+
+        An empty set means "not bound yet" (the listener reports only after
+        ``start``), so it keeps the previous default instead of muting the
+        advertisement.
+        """
+        if bound_families:
+            self._bound_families = frozenset(bound_families)
 
     def create_peer_manager(self) -> PeerManager:
         """Build the :class:`PeerManager` from this plan's shared configuration.

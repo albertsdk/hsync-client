@@ -16,6 +16,11 @@ this page covers running without a rendezvous configured.
   `HSYNC_P2P_PASSPHRASE="a-long-shared-password"`.
 - A read-only peer (`--sync-direction download-only`) needs no key.
 
+mDNS advertises every active interface over **IPv4 and IPv6**: ULA and global
+IPv6 addresses are published, while IPv6 link-local addresses are not (they carry
+no portable scope). An IPv6-only LAN therefore syncs through its ULA or global
+addresses.
+
 ## Run the plan
 
 ```bash
@@ -71,7 +76,7 @@ indefinitely) for one-shot runs.
 
 | Symptom | Likely cause |
 |---|---|
-| No peers discovered | Devices on different networks/VLANs, or mDNS blocked (some guest Wi-Fi and container networks) → use the [rendezvous plan](p2p-rendezvous.md) across networks. |
+| No peers discovered | Devices on different networks/VLANs, or mDNS/firewall blocked (guest Wi-Fi, container networks, a denied macOS Local Network or Windows firewall prompt — see [p2p troubleshooting](p2p-mode.md#peers-not-discovering-each-other)) → use the [rendezvous plan](p2p-rendezvous.md) across networks. |
 | Peers seen, no sync | Different `HSYNC_P2P_PASSPHRASE`/`HSYNC_P2P_KEY`, bucket or `--group`. |
 | Writes refused | No shared secret on one side: set the same password or raw key, or use `--sync-direction download-only`. |
 

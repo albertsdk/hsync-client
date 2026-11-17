@@ -59,7 +59,7 @@ from hsync_client.constants import (
 )
 from hsync_client.events import emit_warning, emit_warning_cleared
 from hsync_client.nat_traversal import CandidateEndpoint, candidate_endpoints
-from hsync_client.net_utils import get_local_ip, get_local_ips
+from hsync_client.net_utils import get_local_ip
 from hsync_client.net_watch import (
     OFFLINE_SOURCE_IP,
     NetworkChangeMonitor,
@@ -490,8 +490,11 @@ class RdvRendezvous(RendezvousPlanState):
             if peers:
                 log.info(f"rdv rendezvous: found {len(peers)} peer(s)")
 
-    def update_endpoint_ready(self, ready: bool) -> None:
+    def update_endpoint_ready(
+        self, ready: bool, *, bound_families: frozenset[int] | None = None
+    ) -> None:
         """Publish (or retract) this node's data-plane endpoint."""
+        self._apply_bound_families(bound_families)
         self._endpoint_ready = ready
         self._wake.set()
 
@@ -531,15 +534,17 @@ class RdvRendezvous(RendezvousPlanState):
         """True once the rendezvous has been sent our endpoint (second register)."""
         return self._published_endpoints
 
-    def update_server_ready(self) -> None:
+    def update_server_ready(self, *, bound_families: frozenset[int] | None = None) -> None:
         """The local master server is ready to accept peers.
 
         Publishes the incumbency twice: in the rendezvous advertisement (so relayed
         peers rank this node as the serving master, exactly like the mDNS
         ``server_ready`` TXT flag) and in the shared :class:`PeerManager` (an
         incumbent must also win its *own* election, otherwise the next relayed
-        seeder would demote it and the role would flap).
+        seeder would demote it and the role would flap). ``bound_families``
+        filters the endpoint candidates to the families the listener bound.
         """
+        self._apply_bound_families(bound_families)
         self._server_ready = True
         self._advert_generation += 1
         self._wake.set()
@@ -615,7 +620,7 @@ class RdvRendezvous(RendezvousPlanState):
 
     def _advertised_signature(self) -> tuple[tuple[str, int], ...]:
         """The local candidate list the next register would publish, as (host, port)."""
-        local_ips = [self._local_ip] if self._local_ip else get_local_ips()
+        local_ips = self._filtered_local_addresses()
         return _wire_signature(self._endpoint_wire(local_ips, include_observed=False))
 
     def _republish_stale_endpoint(self) -> bool:
@@ -955,7 +960,7 @@ class RdvRendezvous(RendezvousPlanState):
         # default-route address records what this publication carries, so the
         # comparison against a later network change is exact. A configured
         # override (``--local-ip``) pins a single address.
-        local_ips = [self._local_ip] if self._local_ip else get_local_ips()
+        local_ips = self._filtered_local_addresses()
         local_ip = local_ips[0] if local_ips else get_local_ip()
         endpoints = self._endpoint_wire(local_ips) if publish_endpoint else []
         ack = self._client.register(
@@ -1147,7 +1152,7 @@ class RdvRendezvous(RendezvousPlanState):
         # ordering policy lives once, in dial_candidates), so a same-NAT peer
         # dials the local path; the full list is kept for connect-time fallback.
         primary_host, primary_port = dial_candidates(
-            candidates, candidates[0][0], candidates[0][1], get_local_ips()
+            candidates, candidates[0][0], candidates[0][1], self._advertised_local_addresses()
         )[0]
         return Peer(
             cid=wire["cid"],

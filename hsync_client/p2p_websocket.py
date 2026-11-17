@@ -114,6 +114,7 @@ from hsync_client.file_event_handler import (
     touch_log_line,
 )
 from hsync_client.inbound_queue import InboundEventQueue
+from hsync_client.net_utils import normalize_peer_ip
 from hsync_client.net_watch import NetworkSignature, get_network_monitor
 from hsync_client.p2p_inventory import (
     NOOP_INVENTORY_OBSERVER,
@@ -612,8 +613,13 @@ class P2PWebSocketServer:
 
     @staticmethod
     def _peer_ip(client_addr) -> str:
-        """Extract the peer IP from a websocket remote address."""
-        return client_addr[0] if isinstance(client_addr, tuple) else str(client_addr)
+        """Extract and normalize the peer IP from a websocket remote address.
+
+        A dual-stack listener reports IPv4 peers as ``::ffff:a.b.c.d``; the peer
+        records and the ownership checks store one form, never two.
+        """
+        raw = client_addr[0] if isinstance(client_addr, tuple) else str(client_addr)
+        return normalize_peer_ip(str(raw))
 
     @staticmethod
     def _resolve_serve_slots(

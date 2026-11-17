@@ -362,6 +362,8 @@ schtasks /Delete /TN "HSYNC-Documents" /F
 ```
 
 If `%LOCALAPPDATA%` contains spaces, quote the `/TR` path inside the command.
+The client forces UTF-8 on its standard streams, so a redirected log keeps the
+log glyphs; the `--log-file` sink is UTF-8 as well.
 The p2p one-shot flags are the same as in the cron example above
 (`--allow-unauthenticated-p2p` only for a keyless run).
 

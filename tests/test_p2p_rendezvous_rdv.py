@@ -30,6 +30,7 @@ from hsync_client.constants import (
     RENDEZVOUS_QUERY_BURST_JITTER_S,
     RENDEZVOUS_UNPUBLISHED_SAMPLE_RETRIES,
 )
+from hsync_client.net_utils import LocalAddresses
 from hsync_client.p2p_peers import Peer, PeerManager
 from hsync_client.p2p_rendezvous_rdv import (
     _TEST_ADVERTISED_ENDPOINTS_ENV,
@@ -293,8 +294,8 @@ class TestPeerFeed:
             lambda: "192.168.1.50",
         )
         monkeypatch.setattr(
-            "hsync_client.p2p_rendezvous_rdv.get_local_ips",
-            lambda: ["192.168.1.50"],
+            "hsync_client.p2p_rendezvous.get_local_addresses",
+            lambda: LocalAddresses(ipv4=("192.168.1.50",), ipv6=()),
         )
         plan, _ = make_plan()
         public_first = relayed_peer(
@@ -321,8 +322,8 @@ class TestPeerFeed:
             lambda: "10.0.0.5",
         )
         monkeypatch.setattr(
-            "hsync_client.p2p_rendezvous_rdv.get_local_ips",
-            lambda: ["10.0.0.5"],
+            "hsync_client.p2p_rendezvous.get_local_addresses",
+            lambda: LocalAddresses(ipv4=("10.0.0.5",), ipv6=()),
         )
         plan, _ = make_plan()
         remote = relayed_peer(
@@ -1092,7 +1093,8 @@ class TestNetworkChange:
         plan, fake_upnp = make_plan(upnp_enabled=True)
         monkeypatch.setattr("hsync_client.p2p_rendezvous_rdv.get_local_ip", lambda: "203.0.113.10")
         monkeypatch.setattr(
-            "hsync_client.p2p_rendezvous_rdv.get_local_ips", lambda: ["203.0.113.10"]
+            "hsync_client.p2p_rendezvous.get_local_addresses",
+            lambda: LocalAddresses(ipv4=("203.0.113.10",), ipv6=()),
         )
         plan.update_server_ready()
         plan._publish_endpoint()
@@ -1103,7 +1105,8 @@ class TestNetworkChange:
 
         monkeypatch.setattr("hsync_client.p2p_rendezvous_rdv.get_local_ip", lambda: "198.51.100.7")
         monkeypatch.setattr(
-            "hsync_client.p2p_rendezvous_rdv.get_local_ips", lambda: ["198.51.100.7"]
+            "hsync_client.p2p_rendezvous.get_local_addresses",
+            lambda: LocalAddresses(ipv4=("198.51.100.7",), ipv6=()),
         )
         assert plan._republish_stale_endpoint() is True
         assert plan._published_endpoints is False
@@ -1123,7 +1126,8 @@ class TestNetworkChange:
         plan, _ = make_plan()
         monkeypatch.setattr("hsync_client.p2p_rendezvous_rdv.get_local_ip", lambda: "203.0.113.10")
         monkeypatch.setattr(
-            "hsync_client.p2p_rendezvous_rdv.get_local_ips", lambda: ["203.0.113.10"]
+            "hsync_client.p2p_rendezvous.get_local_addresses",
+            lambda: LocalAddresses(ipv4=("203.0.113.10",), ipv6=()),
         )
         plan.update_server_ready()
         plan._publish_endpoint()

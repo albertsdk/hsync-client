@@ -134,13 +134,25 @@ class TestBroadcast:
         plan.set_connected_clients_provider(None)
 
         for source in (first, second):
-            source.update_endpoint_ready.assert_called_once_with(True)
-            source.update_server_ready.assert_called_once_with()
+            source.update_endpoint_ready.assert_called_once_with(True, bound_families=None)
+            source.update_server_ready.assert_called_once_with(bound_families=None)
             source.update_server_not_ready.assert_called_once_with()
             source.set_connected_clients.assert_called_once_with(3)
             source.set_master_eligibility.assert_called_once_with(False)
             source.refresh_election_advertisement.assert_called_once_with()
             source.set_connected_clients_provider.assert_called_once_with(None)
+
+    def test_bound_families_reach_every_source(self):
+        first, second = _source(), _source()
+        plan = MultiRdvRendezvous([first, second])
+        families = frozenset({4, 6})
+
+        plan.update_server_ready(bound_families=families)
+        plan.update_endpoint_ready(True, bound_families=families)
+
+        for source in (first, second):
+            source.update_server_ready.assert_called_once_with(bound_families=families)
+            source.update_endpoint_ready.assert_called_once_with(True, bound_families=families)
 
     def test_the_peer_count_is_logged_once_not_once_per_source(self):
         first, second = _source(), _source()

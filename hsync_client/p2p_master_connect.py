@@ -45,7 +45,7 @@ from hsync_client.events import (
     emit_warning,
     emit_warning_cleared,
 )
-from hsync_client.net_utils import get_local_ips
+from hsync_client.net_utils import get_local_addresses
 from hsync_client.p2p_peers import dial_candidates
 from hsync_client.p2p_rendezvous import (
     RendezvousPlan,
@@ -319,7 +319,7 @@ def _select_master_endpoint(master, log) -> tuple[str, int] | None:
         advertised,
         master.address,
         master.port,
-        get_local_ips(),
+        list(get_local_addresses().all),
     )
     if not advertised and len(candidates) == 1:
         # mDNS: the peer announced one address directly; connect-time is the

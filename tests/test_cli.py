@@ -45,11 +45,21 @@ class TestEntryPoints:
                 "multiprocessing.freeze_support",
                 side_effect=lambda: events.append("freeze_support"),
             ),
+            patch(
+                "hsync_client.main._force_utf8_streams",
+                side_effect=lambda: events.append("utf8"),
+            ),
+            patch(
+                "hsync_client.main._answer_display_flag",
+                side_effect=lambda: events.append("display_flag") or False,
+            ),
             patch("hsync_client.cli.run", side_effect=lambda: events.append("run")),
         ):
             main()
 
-        assert events == ["freeze_support", "run"]
+        # UTF-8 is forced before the eager flags (--help-symbols prints glyphs
+        # before logging exists) and before the CLI runs.
+        assert events == ["freeze_support", "utf8", "display_flag", "run"]
 
     def test_module_entrypoint_delegates_to_main(self):
         """python -m hsync_client invokes hsync_client.main.main."""
@@ -1426,3 +1436,34 @@ def test_build_run_options_maps_and_normalizes_shared_options():
     assert opts.transfers.delta_enabled is False
     assert opts.transfers.ignore_patterns == ["a"]
     assert opts.logging.debug is False
+
+
+class TestForceUtf8Streams:
+    """The standard streams are forced to UTF-8 for redirected output."""
+
+    class _FakeStream:
+        def __init__(self):
+            self.calls = []
+
+        def reconfigure(self, **kwargs):
+            self.calls.append(kwargs)
+
+    def test_reconfigures_both_streams(self, monkeypatch):
+        from hsync_client import main as main_module
+
+        out, err = self._FakeStream(), self._FakeStream()
+        monkeypatch.setattr(main_module.sys, "stdout", out)
+        monkeypatch.setattr(main_module.sys, "stderr", err)
+
+        main_module._force_utf8_streams()
+
+        assert out.calls == [{"encoding": "utf-8", "errors": "replace"}]
+        assert err.calls == [{"encoding": "utf-8", "errors": "replace"}]
+
+    def test_skips_streams_without_reconfigure(self, monkeypatch):
+        from hsync_client import main as main_module
+
+        monkeypatch.setattr(main_module.sys, "stdout", None)
+        monkeypatch.setattr(main_module.sys, "stderr", object())
+
+        main_module._force_utf8_streams()  # must not raise

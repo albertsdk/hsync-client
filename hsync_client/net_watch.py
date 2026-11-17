@@ -38,7 +38,7 @@ from dataclasses import dataclass
 
 from loguru import logger as log
 
-from hsync_client.net_utils import get_local_ip
+from hsync_client.net_utils import get_local_addresses
 
 # Poll cadence: a few seconds keep the recovery prompt while the probe stays
 # negligible (one UDP socket per poll, no traffic).
@@ -63,12 +63,16 @@ class NetworkSignature:
 
     source_ip: str
     online: bool
+    ipv6: tuple[str, ...] = ()
 
 
 def network_signature() -> NetworkSignature:
-    """Sample the local source IP and derive the connectivity posture."""
-    source_ip = get_local_ip()
-    return NetworkSignature(source_ip=source_ip, online=source_ip != OFFLINE_SOURCE_IP)
+    """Sample the local addresses and derive the connectivity posture."""
+    addresses = get_local_addresses()
+    source_ip = addresses.ipv4[0] if addresses.ipv4 else OFFLINE_SOURCE_IP
+    return NetworkSignature(
+        source_ip=source_ip, online=source_ip != OFFLINE_SOURCE_IP, ipv6=addresses.ipv6
+    )
 
 
 class NetworkChangeMonitor:

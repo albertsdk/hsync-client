@@ -189,9 +189,12 @@ class _TcpRelaySession(_RelaySession):
 
     transport = "tcp"
 
-    def __init__(self, client: RendezvousClient, *, ip: str) -> None:
+    def __init__(self, client: RendezvousClient, *, ips: tuple[str, ...]) -> None:
         self._client = client
-        self._ip = ip
+        self._candidates = ips
+        # Pinned once the first connection succeeds; every later attach reuses
+        # it so all of them reach the same node instance.
+        self._ip: str | None = None
         self._writers: list[Any] = []
 
     async def open_stream(self) -> tuple[Any, Any]:
@@ -203,23 +206,26 @@ class _TcpRelaySession(_RelaySession):
         with zero application bytes sent.
         """
         last_exc: BaseException | None = None
-        for port in self._client.candidate_ports():
-            try:
-                reader, writer, cert_der = await self._client.dial_relay_tcp(port, ip=self._ip)
-            except (OSError, TimeoutError) as exc:
-                last_exc = exc
-                continue
-            try:
-                self._client.verify_peer_der(cert_der)
-            except BaseException:
-                # A refused identity is fatal, but the connection must not leak:
-                # it is not tracked yet, so close it here before propagating.
-                _close_writer(writer)
-                raise
-            self._writers.append(writer)
-            return reader, writer
+        for ip in (self._ip,) if self._ip else self._candidates:
+            for port in self._client.candidate_ports():
+                try:
+                    reader, writer, cert_der = await self._client.dial_relay_tcp(port, ip=ip)
+                except (OSError, TimeoutError) as exc:
+                    last_exc = exc
+                    continue
+                try:
+                    self._client.verify_peer_der(cert_der)
+                except BaseException:
+                    # A refused identity is fatal, but the connection must not
+                    # leak: it is not tracked yet, so close it here before
+                    # propagating.
+                    _close_writer(writer)
+                    raise
+                self._ip = ip
+                self._writers.append(writer)
+                return reader, writer
         raise ConnectionError(
-            f"relay cannot reach {self._client.host} on any candidate port"
+            f"relay cannot reach {self._client.host} on any candidate address"
         ) from last_exc
 
     async def close(self) -> None:
@@ -294,7 +300,7 @@ async def _relay_session(client: RendezvousClient) -> AsyncIterator[_RelaySessio
     pinned to a single resolved IP (see :class:`_TcpRelaySession`).
     """
     if _relay_transport(client) == "tcp":
-        session = _TcpRelaySession(client, ip=client.resolved_relay_ip())
+        session = _TcpRelaySession(client, ips=client.resolved_relay_ips())
         try:
             yield session
             return

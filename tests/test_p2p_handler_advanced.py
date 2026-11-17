@@ -1343,7 +1343,9 @@ class TestSlaveInventoryLifecycle:
             inventory_store=None,
             peer_read_cap=3,
         )
-        p2p_sync.update_endpoint_ready.assert_called_once_with(True)
+        p2p_sync.update_endpoint_ready.assert_called_once_with(
+            True, bound_families=server.bound_families
+        )
         publisher_cls.assert_called_once_with(str(tmp_path))
         set_active.assert_called_once_with(publisher)
 
@@ -1382,7 +1384,9 @@ class TestSlaveInventoryLifecycle:
             ):
                 assert _start_slave_inventory(config, p2p_sync, MagicMock(), server) is publisher
             server.configure_role.assert_called_once()
-            p2p_sync.update_endpoint_ready.assert_called_once_with(True)
+            p2p_sync.update_endpoint_ready.assert_called_once_with(
+                True, bound_families=server.bound_families
+            )
 
     def test_readiness_publish_failure_yields_role(self, tmp_path):
         """A failed publication withdraws the seeder role before fallback."""

@@ -626,7 +626,7 @@ def _run_as_master(
                 "advertising server_ready so the winner keeps the role."
             )
             return p2p_server, p2p_ws_server
-        p2p_sync.update_server_ready()
+        p2p_sync.update_server_ready(bound_families=p2p_server.bound_families)
         # Rendezvous plan only: the master is reachable across networks only once
         # its endpoint has been published to the rendezvous (UPnP ok or public IP
         # known). mDNS reports published immediately, so its readiness timing is

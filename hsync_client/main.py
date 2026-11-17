@@ -56,6 +56,21 @@ def _answer_display_flag() -> bool:
     return False
 
 
+def _force_utf8_streams() -> None:
+    """Make the standard streams UTF-8 so redirected output never raises.
+
+    On Windows a redirected ``stdout``/``stderr`` uses the ANSI code page while
+    the log and the ``--help-symbols`` legend contain non-ASCII glyphs;
+    ``errors="replace"`` keeps one bad glyph from aborting a run. Real consoles
+    already speak UTF-8 and are unaffected, and streams without ``reconfigure``
+    (pytest capture, a windowed build's ``sys.stdout``) are left alone.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def main() -> None:
     """
     Main entry point for the HSYNC client.
@@ -69,6 +84,8 @@ def main() -> None:
     into the helper diversion; outside a frozen build it is a no-op.
     """
     multiprocessing.freeze_support()
+    # Before the eager flags: --help-symbols prints glyphs before logging exists.
+    _force_utf8_streams()
 
     if _answer_display_flag():
         return
