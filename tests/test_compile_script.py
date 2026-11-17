@@ -18,7 +18,9 @@ Consumers: hsync-client maintainers (regression guard).
 
 from __future__ import annotations
 
+import importlib.util
 import re
+import warnings
 from pathlib import Path
 
 COMPILE_SH = Path(__file__).resolve().parents[1] / "compile.sh"
@@ -144,3 +146,44 @@ def test_pyinstaller_lookup_is_windows_aware() -> None:
     assert 'if [[ "${OS_NAME}" == "windows" ]]; then' in script
     assert 'PYINSTALLER="${VENV_DIR}/Scripts/pyinstaller.exe"' in script
     assert 'PYINSTALLER="${VENV_DIR}/bin/pyinstaller"' in script
+
+
+def _required_bundle_modules() -> list[str]:
+    """The modules ``compile.sh`` requires a frozen bundle to carry."""
+    match = re.search(
+        r"^readonly BUNDLE_REQUIRED_MODULES=\(\n(.*?)^\)",
+        _script(),
+        re.MULTILINE | re.DOTALL,
+    )
+    assert match is not None, "BUNDLE_REQUIRED_MODULES is missing from compile.sh"
+    return re.findall(r'"([^"]+)"', match.group(1))
+
+
+def test_the_frozen_bundle_check_is_wired_into_every_build() -> None:
+    """A lazily- or platform-imported module must be verified in the artifact.
+
+    ``--version`` never reaches the p2p path that imports it, so a bundle that
+    lost such a module only fails once a user runs a real sync.
+    """
+    script = _script()
+
+    assert "verify_frozen_bundle() {" in script
+    # One host-native onefile build (also smoke-run) plus the two onedir builds
+    # used by deb and rpm.
+    assert script.count('verify_frozen_bundle "${bin_path}" run') == 1
+    assert script.count('verify_frozen_bundle "${built_dir}/${APP_NAME}${BIN_EXT}"') == 2
+
+
+def test_the_required_bundle_modules_exist_in_the_build_environment() -> None:
+    """The declared list cannot rot: a renamed upstream module must fail here."""
+    modules = _required_bundle_modules()
+
+    # The motivating case: ifaddr selects its backend from ``os.name`` at import.
+    assert "ifaddr._posix" in modules
+    assert "ifaddr._win32" in modules
+    with warnings.catch_warnings():
+        # Resolving a submodule imports its parent, and ``websockets.legacy``
+        # announces its own deprecation: expected here, not part of the assertion.
+        warnings.simplefilter("ignore", DeprecationWarning)
+        for module in modules:
+            assert importlib.util.find_spec(module) is not None, module

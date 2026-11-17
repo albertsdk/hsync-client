@@ -408,6 +408,51 @@ _onefile_pyi_flags() {
         --exclude-module pkg_resources --exclude-module rapidfuzz"
 }
 
+# Modules whose import is lazy or chosen at runtime (a platform switch, a plugin
+# registry): PyInstaller's static pass may still miss one, and a `--version` run
+# never reaches the code path that imports it. ``ifaddr`` selects its backend
+# from ``os.name`` at import time (the p2p address enumeration); the
+# websockets/watchdog entries mirror the hidden imports declared above, which
+# exist precisely because PyInstaller missed them once.
+readonly BUNDLE_REQUIRED_MODULES=(
+    "ifaddr"
+    "ifaddr._posix"
+    "ifaddr._win32"
+    "websockets.legacy"
+    "websockets.legacy.client"
+    "watchdog.observers"
+    "watchdog.observers.inotify"
+)
+
+# Verify a frozen artifact carries those modules, and optionally that it starts.
+# Fails the build instead of shipping a bundle that breaks only when the p2p path
+# is reached. $1 = binary, $2 = "run" to also execute it (host-native only)
+verify_frozen_bundle() {
+    local binary="$1" smoke="${2:-}"
+    local viewer="${PYINSTALLER%/*}/pyi-archive_viewer"
+    local listing module missing=0
+    [[ -x "${viewer}" ]] || viewer="${PYINSTALLER%/*}/pyi-archive_viewer.exe"
+    if [[ ! -x "${viewer}" ]]; then
+        log_warn "pyi-archive_viewer not found; skipping the frozen bundle check"
+    else
+        listing="$("${viewer}" -r -b "${binary}" 2>/dev/null)"
+        for module in "${BUNDLE_REQUIRED_MODULES[@]}"; do
+            if [[ "${listing}" != *"${module}"* ]]; then
+                log_error "Module missing from the frozen bundle: ${module}"
+                missing=1
+            fi
+        done
+        if [[ "${missing}" -eq 0 ]]; then
+            log_ok "Bundle carries ${#BUNDLE_REQUIRED_MODULES[@]} required modules"
+        fi
+    fi
+    if [[ -n "${smoke}" ]] && ! "${binary}" --version >/dev/null 2>&1; then
+        log_error "The frozen binary did not run: ${binary} --version"
+        missing=1
+    fi
+    [[ "${missing}" -eq 0 ]] || exit 1
+}
+
 # Build the binary
 build_binary() {
     local version
@@ -439,6 +484,9 @@ build_binary() {
     if [[ -f "${bin_path}" ]]; then
         local size
         size="$(du -h "${bin_path}" | cut -f1)"
+
+        # A broken bundle must fail here, not on the user's machine.
+        verify_frozen_bundle "${bin_path}" run
 
         # Clean up temporary build files
         cleanup_temp_files
@@ -638,6 +686,10 @@ build_deb() {
         log_error "PyInstaller --onedir output not found at ${built_dir}"
         exit 1
     fi
+
+    # Module check only: this onedir build may target a foreign arch (Docker),
+    # so it is not executed here; `native` smoke-runs the host binary.
+    verify_frozen_bundle "${built_dir}/${APP_NAME}${BIN_EXT}"
 
     # --- stage .deb tree -------------------------------------------------
     local stage_dir="${DEB_BUILD_DIR}/${DEB_PKG_NAME}_${deb_version}_${deb_arch}"
@@ -1100,6 +1152,9 @@ build_rpm() {
 
     local built_dir="${onedir_dist}/${APP_NAME}"
     [[ -d "${built_dir}" ]] || { log_error "PyInstaller --onedir output not found at ${built_dir}"; exit 1; }
+
+    # Module check only (the arch may be foreign): see the deb site.
+    verify_frozen_bundle "${built_dir}/${APP_NAME}${BIN_EXT}"
 
     # --- stage buildroot + render spec -----------------------------------
     _stage_rpm_buildroot "${RPM_BUILD_DIR}/pkg" "${built_dir}"
