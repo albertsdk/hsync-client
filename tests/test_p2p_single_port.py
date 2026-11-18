@@ -11,6 +11,7 @@ master refuses the realtime upgrade.
 import asyncio
 import json
 import socket
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -64,6 +65,10 @@ def test_advertised_port_is_the_bound_port():
         server.stop()
 
 
+@pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason="BSD SO_REUSEADDR allows a second bind on an occupied port",
+)
 def test_bind_failure_is_fatal():
     """A taken port makes start() raise instead of serving silently."""
     occupied = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

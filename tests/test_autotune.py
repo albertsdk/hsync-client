@@ -391,11 +391,14 @@ class TestDetectStorageType:
 
         assert _strip_partition(name) == base
 
-    def test_mountinfo_source_uses_the_device_not_the_mount_point(self):
+    def test_mountinfo_source_uses_the_device_not_the_mount_point(self, monkeypatch):
         """Regression: mountinfo field 4 is the mount point; reading it turned
         ``/home/<user>`` into a device named after the user."""
         from hsync_client.autotune import _mountinfo_source_from_text
 
+        # The parser is Linux-only (ioctl/mountinfo); macOS realpath follows the
+        # system firmlinks, so pin it for the synthetic lines.
+        monkeypatch.setattr("hsync_client.autotune.os.path.realpath", lambda p: p)
         line = "486 42 0:63 / /home/alice rw,nosuid - ecryptfs /home/alice/.Private rw"
         assert _mountinfo_source_from_text(line, "/home/alice/projects") == "/home/alice/.Private"
 
@@ -410,9 +413,10 @@ class TestDetectStorageType:
         )
         assert _mountinfo_source_from_text(text, "/data/bucket") == "/dev/sdb1"
 
-    def test_mountinfo_source_decodes_octal_escapes(self):
+    def test_mountinfo_source_decodes_octal_escapes(self, monkeypatch):
         from hsync_client.autotune import _mountinfo_source_from_text
 
+        monkeypatch.setattr("hsync_client.autotune.os.path.realpath", lambda p: p)
         line = "1 0 8:1 / /home/alice/my\\040files rw - ext4 /dev/sdc1 rw"
         assert _mountinfo_source_from_text(line, "/home/alice/my files/b") == "/dev/sdc1"
 

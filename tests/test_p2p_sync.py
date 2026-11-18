@@ -625,6 +625,9 @@ class TestRecordPublicationSerialization:
             with (
                 patch("hsync_client.p2p_rendezvous_mdns.Zeroconf") as mock_zc_cls,
                 patch("hsync_client.p2p_rendezvous_mdns.ServiceBrowser"),
+                # The start-up announce burst runs on its own thread; keeping it
+                # out of the window makes the call count deterministic.
+                patch.object(MdnsRendezvous, "_heartbeat_loop"),
             ):
                 lan.start(register_service=True)
                 zc = mock_zc_cls.return_value

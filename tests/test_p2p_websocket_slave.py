@@ -822,7 +822,8 @@ class TestSlaveFileEventHandler:
         seen: list[str] = []
         monkeypatch.setattr(handler, "_propagate_metadata_change", seen.append)
 
-        handler.on_modified(FileModifiedEvent(str(p)))
+        with patch("hsync_client.p2p_websocket.SUPPORTS_ON_CLOSED", True):
+            handler.on_modified(FileModifiedEvent(str(p)))
 
         assert seen == [str(p)]
 
@@ -847,7 +848,8 @@ class TestSlaveFileEventHandler:
         seen: list[str] = []
         monkeypatch.setattr(handler, "_propagate_metadata_change", seen.append)
 
-        handler.dispatch(FileAttribEvent(str(p)))
+        with patch("hsync_client.p2p_websocket.SUPPORTS_ON_CLOSED", True):
+            handler.dispatch(FileAttribEvent(str(p)))
 
         assert seen == [str(p)]
 
@@ -898,10 +900,11 @@ class TestSlaveFileEventHandler:
         seen: list[str] = []
         monkeypatch.setattr(handler, "_propagate_metadata_change", seen.append)
 
-        for _ in range(3):
-            handler._last_mode[str(p)] = p.stat().st_mode & 0o7777
-            handler._last_mtime[str(p)] = 1  # stale: every event classifies as mtime
-            handler.on_modified(FileModifiedEvent(str(p)))
+        with patch("hsync_client.p2p_websocket.SUPPORTS_ON_CLOSED", True):
+            for _ in range(3):
+                handler._last_mode[str(p)] = p.stat().st_mode & 0o7777
+                handler._last_mtime[str(p)] = 1  # stale: every event classifies as mtime
+                handler.on_modified(FileModifiedEvent(str(p)))
 
         assert seen == [str(p)]
 
@@ -921,10 +924,11 @@ class TestSlaveFileEventHandler:
         monkeypatch.setattr(handler, "_propagate_metadata_change", seen.append)
         monkeypatch.setattr(feh, "TOUCH_FOLD_WINDOW", 0)
 
-        for _ in range(2):
-            handler._last_mode[str(p)] = p.stat().st_mode & 0o7777
-            handler._last_mtime[str(p)] = 1
-            handler.on_modified(FileModifiedEvent(str(p)))
+        with patch("hsync_client.p2p_websocket.SUPPORTS_ON_CLOSED", True):
+            for _ in range(2):
+                handler._last_mode[str(p)] = p.stat().st_mode & 0o7777
+                handler._last_mtime[str(p)] = 1
+                handler.on_modified(FileModifiedEvent(str(p)))
 
         assert seen == [str(p), str(p)]
 
@@ -1440,6 +1444,7 @@ class TestSlaveFileEventHandler:
             patch("hsync_client.p2p_websocket.CONFIG", config),
             patch("hsync_client.p2p_websocket.File") as F,
             patch.object(handler, "_upload_to_master"),
+            patch("hsync_client.p2p_websocket.SUPPORTS_ON_CLOSED", True),
         ):
             F.get.return_value = MagicMock()
             handler.on_created(event_created)
