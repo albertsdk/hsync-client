@@ -229,3 +229,39 @@ class TestEventQueueWarning:
         warn.assert_called_once()
         assert warn.call_args.kwargs["source"] == "events"
         assert warn.call_args.kwargs["reason"] == "transient"
+
+
+class TestInvalidNameWarning:
+    """A name no supported device can store never enters the sync."""
+
+    def test_a_non_portable_name_is_skipped_and_reported(self, tmp_path):
+        (tmp_path / "ok.txt").write_text("ok", encoding="utf-8")
+        (tmp_path / "a:b.txt").write_text("colon", encoding="utf-8")
+        (tmp_path / "CON.txt").write_text("reserved", encoding="utf-8")
+
+        with (
+            patch.object(sync_mod, "CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch.object(sync_mod, "emit_warning") as warn,
+            patch.object(sync_mod, "emit_warning_cleared") as cleared,
+        ):
+            files = sync_mod.get_files_local()
+
+        assert {entry["filepath"] for entry in files} == {str(tmp_path / "ok.txt")}
+        warn.assert_called_once()
+        assert warn.call_args.kwargs["source"] == "names"
+        assert warn.call_args.kwargs["reason"] == "invalid-name"
+        cleared.assert_not_called()
+
+    def test_a_clean_scan_retracts_the_condition(self, tmp_path):
+        (tmp_path / "ok.txt").write_text("ok", encoding="utf-8")
+
+        with (
+            patch.object(sync_mod, "CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch.object(sync_mod, "emit_warning") as warn,
+            patch.object(sync_mod, "emit_warning_cleared") as cleared,
+        ):
+            files = sync_mod.get_files_local()
+
+        assert [entry["filepath"] for entry in files] == [str(tmp_path / "ok.txt")]
+        warn.assert_not_called()
+        cleared.assert_called_once_with("names")

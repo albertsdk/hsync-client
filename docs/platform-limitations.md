@@ -43,3 +43,17 @@ re-hash. The following cases need it:
 - a Linux or Windows install whose files include a **non-NFC** name (typically a
   tree created on macOS, where names are NFD): the version and tombstone keys
   change, so history recorded under the old key is not matched.
+
+## File names
+
+Server and direct mode share one rule: a name must be storable **identically on
+every device**. `hsync_common.path_validation.is_valid_filename` is that policy:
+no `< > : " / \ | ? *` or control characters, no trailing dot or space, no
+reserved names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`, with or
+without an extension), components under 255 bytes, and no `.`/`..`.
+
+An entry outside it is **left out of the synchronisation and reported** — the scan
+warns once and names the first few paths — never renamed: a rename on one side
+would stop the copies from agreeing. Rename it locally (or add an ignore rule) and
+the next scan picks it up. The server applies the same rule to every uploaded
+filename and refuses it (`400`, `HSYNC-1007`) instead of storing a mangled name.

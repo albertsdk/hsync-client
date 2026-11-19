@@ -140,6 +140,24 @@ def _count_unreadable_file() -> None:
         _unreadable_total += 1
 
 
+def _warn_invalid_names(names: list[str]) -> None:
+    """Report entries the scan left out because of their names.
+
+    The shared namespace must be representable identically on every device, so a
+    name outside that policy is neither uploaded nor renamed: it stays on disk
+    and the user renames it. The condition is standing until a scan finds none.
+    """
+    examples = ", ".join(f'"{name}"' for name in names[:3])
+    more = f" (+{len(names) - 3} more)" if len(names) > 3 else ""
+    message = (
+        f"{len(names)} item(s) stay out of the sync because their names cannot be "
+        f"stored identically on every device: {examples}{more}. Rename them to remove "
+        '< > : " / \\ | ? *, trailing dots or spaces, and reserved names such as CON.'
+    )
+    log.warning(message)
+    emit_warning(message, source="names", reason="invalid-name")
+
+
 def _warn_unreadable_files(count: int) -> None:
     """Report a scan batch's unreadable files once, as a transient warning."""
     if count <= 0:
@@ -1817,13 +1835,25 @@ def get_files_local() -> list[dict]:
     filter_path = CONFIG.get("FILTER_PATH")
     symlink_entries: list[dict] = []
     regular_paths: list[str] = []
+    invalid_names: list[str] = []
     for abs_path, link in iter_bucket_entries(CONFIG["LOCAL_BUCKET"]):
         if filter_path and not _in_subdir(abs_path, filter_path):
+            continue
+        relative = relpath_in_bucket(abs_path, CONFIG["LOCAL_BUCKET"])
+        if relative and validate_remote_relpath(relative) is None:
+            # A name one device cannot store must not travel: the copy that
+            # arrived (or the one that could not) would stop matching the
+            # sender's. Leave the entry on disk and report it instead.
+            invalid_names.append(relative)
             continue
         if link is not None:
             symlink_entries.append(link.to_dict())
         else:
             regular_paths.append(abs_path)
+    if invalid_names:
+        _warn_invalid_names(invalid_names)
+    else:
+        emit_warning_cleared("names")
 
     # Early return if no files
     if not regular_paths and not symlink_entries:
