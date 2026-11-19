@@ -965,14 +965,14 @@ files = [
 
 [[package]]
 name = "fastapi"
-version = "0.162.7"
+version = "0.165.0"
 description = "FastAPI framework, high performance, easy to learn, fast to code, ready for production"
 optional = false
 python-versions = ">=3.11"
 groups = ["blackbox"]
 files = [
-    {file = "fastapi-0.162.7-py3-none-any.whl", hash = "sha256:fa3be857122ec8d91d4d234e86ac19acf4ef23f5c6c3dfcce78ec0c27c0c5ab4"},
-    {file = "fastapi-0.162.7.tar.gz", hash = "sha256:b7503029c8ef2d2d5fea9049294cf8d0f2805c6621f4677ede269fce19f01efb"},
+    {file = "fastapi-0.165.0-py3-none-any.whl", hash = "sha256:896f48462042bb4f162147eb8fac7e858753dc1f486765709baf105d70e4fc5b"},
+    {file = "fastapi-0.165.0.tar.gz", hash = "sha256:dd94d4128319c1e1d50535ab023ab698f850a4d2822f0e181747b46f4ff3c0ab"},
 ]
 
 [package.dependencies]
@@ -980,7 +980,7 @@ annotated-doc = ">=0.0.2"
 anyio = ">=4.1.0"
 opentelemetry-api = ">=1.44.0"
 pydantic = ">=2.9.0"
-starlette = ">=0.46.0"
+starlette = ">=1.6.0"
 typing-extensions = ">=4.8.0"
 typing-inspection = ">=0.4.2"
 
@@ -1167,7 +1167,7 @@ develop = true
 [package.dependencies]
 aiofiles = ">=25.1.0,<26.0.0"
 cryptography = ">=50.0.2,<51.0.0"
-loguru = ">=0.7.3,<0.8.0"
+loguru = ">=0.7.3,<0.9.0"
 pathspec = ">=1.1.1,<2.0"
 python-dotenv = ">=1.2.4,<2.0.0"
 zstandard = ">=0.25.0,<0.26.0"
@@ -1189,12 +1189,12 @@ develop = true
 [package.dependencies]
 aiofiles = ">=25.1.0,<26.0.0"
 cryptography = ">=50.0.2,<51.0.0"
-fastapi = ">=0.162.2,<0.163.0"
+fastapi = ">=0.162.2,<0.166.0"
 hsync-common = "1.1.10"
-loguru = ">=0.7.3,<0.8.0"
+loguru = ">=0.7.3,<0.9.0"
 prometheus-fastapi-instrumentator = ">=8.1.0,<9.0.0"
 pydantic-settings = ">=2.12.0,<3.0.0"
-python-multipart = ">=0.0.33,<0.0.34"
+python-multipart = ">=0.0.33,<0.0.35"
 slowapi = ">=0.1.10,<0.2.0"
 typer = ">=0.29.0,<0.30.0"
 uvicorn = ">=0.54.0,<0.55.0"
@@ -1426,14 +1426,14 @@ valkey = ["valkey (>=6)"]
 
 [[package]]
 name = "loguru"
-version = "0.7.3"
+version = "0.8.0"
 description = "Python logging made (stupidly) simple"
 optional = false
-python-versions = "<4.0,>=3.5"
+python-versions = ">=3.5"
 groups = ["main", "blackbox"]
 files = [
-    {file = "loguru-0.7.3-py3-none-any.whl", hash = "sha256:31a33c10c8e1e10422bfd431aeb5d351c7cf7fa671e3c4df004162264b28220c"},
-    {file = "loguru-0.7.3.tar.gz", hash = "sha256:19480589e77d47b8d85b2c827ad95d49bf31b0dcde16593892eb51dd18706eb6"},
+    {file = "loguru-0.8.0-py3-none-any.whl", hash = "sha256:e0fba09d6f76ba2d2f4bd1757122942f5a670c702e988b5efaeab99dacba0069"},
+    {file = "loguru-0.8.0.tar.gz", hash = "sha256:fb3e4623288e37700a0577f6e0ce776cc1860b5d95c657d67f07a2476b304867"},
 ]
 
 [package.dependencies]
@@ -1441,7 +1441,7 @@ colorama = {version = ">=0.3.4", markers = "sys_platform == \"win32\""}
 win32-setctime = {version = ">=1.0.0", markers = "sys_platform == \"win32\""}
 
 [package.extras]
-dev = ["Sphinx (==8.1.3) ; python_version >= \"3.11\"", "build (==1.2.2) ; python_version >= \"3.11\"", "colorama (==0.4.5) ; python_version < \"3.8\"", "colorama (==0.4.6) ; python_version >= \"3.8\"", "exceptiongroup (==1.1.3) ; python_version >= \"3.7\" and python_version < \"3.11\"", "freezegun (==1.1.0) ; python_version < \"3.8\"", "freezegun (==1.5.0) ; python_version >= \"3.8\"", "mypy (==0.910) ; python_version < \"3.6\"", "mypy (==0.971) ; python_version == \"3.6\"", "mypy (==1.13.0) ; python_version >= \"3.8\"", "mypy (==1.4.1) ; python_version == \"3.7\"", "myst-parser (==4.0.0) ; python_version >= \"3.11\"", "pre-commit (==4.0.1) ; python_version >= \"3.9\"", "pytest (==6.1.2) ; python_version < \"3.8\"", "pytest (==8.3.2) ; python_version >= \"3.8\"", "pytest-cov (==2.12.1) ; python_version < \"3.8\"", "pytest-cov (==5.0.0) ; python_version == \"3.8\"", "pytest-cov (==6.0.0) ; python_version >= \"3.9\"", "pytest-mypy-plugins (==1.9.3) ; python_version >= \"3.6\" and python_version < \"3.8\"", "pytest-mypy-plugins (==3.1.0) ; python_version >= \"3.8\"", "sphinx-rtd-theme (==3.0.2) ; python_version >= \"3.11\"", "tox (==3.27.1) ; python_version < \"3.8\"", "tox (==4.23.2) ; python_version >= \"3.8\"", "twine (==6.0.1) ; python_version >= \"3.11\""]
+dev = ["Sphinx (==8.2.1) ; python_version >= \"3.11\"", "build (==1.6.1) ; python_version >= \"3.11\"", "colorama (==0.4.5) ; python_version < \"3.8\"", "colorama (==0.4.6) ; python_version >= \"3.8\"", "exceptiongroup (==1.1.3) ; python_version >= \"3.7\" and python_version < \"3.11\"", "freezegun (==1.1.0) ; python_version < \"3.8\"", "freezegun (==1.5.0) ; python_version >= \"3.8\"", "mypy (==0.910) ; python_version < \"3.6\"", "mypy (==0.971) ; python_version == \"3.6\"", "mypy (==1.14.1) ; python_version == \"3.8\"", "mypy (==1.18.2) ; python_version >= \"3.9\" and python_version < \"3.12\"", "mypy (==1.4.1) ; python_version == \"3.7\"", "mypy (==2.3.1) ; python_version >= \"3.12\"", "myst-parser (==4.0.0) ; python_version >= \"3.11\"", "pre-commit (==4.6.0) ; python_version >= \"3.11\"", "pytest (==6.1.2) ; python_version < \"3.8\"", "pytest (==8.3.2) ; python_version >= \"3.8\" and python_version < \"3.12\"", "pytest (==9.1.1) ; python_version >= \"3.12\"", "pytest-cov (==2.12.1) ; python_version < \"3.8\"", "pytest-cov (==5.0.0) ; python_version == \"3.8\"", "pytest-cov (==6.2.1) ; python_version >= \"3.9\"", "pytest-mypy-plugins (==4.0.3) ; python_version >= \"3.12\" and platform_python_implementation != \"PyPy\"", "sphinx-rtd-theme (==3.1.0) ; python_version >= \"3.11\"", "tox (==3.27.1) ; python_version < \"3.8\"", "tox (==4.24.1) ; python_version >= \"3.8\" and python_version < \"3.12\"", "tox (==4.64.4) ; python_version >= \"3.12\"", "twine (==7.0.0) ; python_version >= \"3.11\""]
 
 [[package]]
 name = "macholib"
@@ -2472,14 +2472,14 @@ cli = ["click (>=5.0)"]
 
 [[package]]
 name = "python-multipart"
-version = "0.0.33"
+version = "0.0.34"
 description = "A streaming multipart parser for Python"
 optional = false
 python-versions = ">=3.11"
 groups = ["blackbox"]
 files = [
-    {file = "python_multipart-0.0.33-py3-none-any.whl", hash = "sha256:8f16c07b36add9da6b2ee87d3efcaf0a45a6de9c3d0a5dd94e9ccf7675a7bc45"},
-    {file = "python_multipart-0.0.33.tar.gz", hash = "sha256:b8112424a6abd162ec08d390565dd113ad699f2fe6fef3c987b8bbcbfe9e390d"},
+    {file = "python_multipart-0.0.34-py3-none-any.whl", hash = "sha256:ebacd224bd686eee2f9aa1066a657affe07435a185834e05e5235e2e59173e91"},
+    {file = "python_multipart-0.0.34.tar.gz", hash = "sha256:b998ae90ca6e1e363261ce2e0e230281b8af53867b757970abd69ee9edcd843a"},
 ]
 
 [[package]]
@@ -3557,4 +3557,4 @@ cffi = ["cffi (>=1.17,<2.0) ; platform_python_implementation != \"PyPy\" and pyt
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.15"
-content-hash = "b31c7640589af9da8b07a16531df51e030a9a7d8afa30c288504af00916aa8b4"
+content-hash = "2467dc28148dd18511c026226195f6416efeb822a4d74dc61e567b1a3de04737"
