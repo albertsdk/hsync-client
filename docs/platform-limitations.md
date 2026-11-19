@@ -57,3 +57,14 @@ warns once and names the first few paths — never renamed: a rename on one side
 would stop the copies from agreeing. Rename it locally (or add an ignore rule) and
 the next scan picks it up. The server applies the same rule to every uploaded
 filename and refuses it (`400`, `HSYNC-1007`) instead of storing a mangled name.
+
+Names differ by case as well as by letters. The index is case-sensitive, so
+devices on a case-sensitive filesystem keep `foo` and `Foo` as two files. A device
+whose filesystem folds case can hold only one per group, and the group converges
+on a spelling every peer computes identically: when the bucket has a single
+spelling, the local file is **renamed to it** if only the case differs — the same
+file on that filesystem, so no content moves. When the bucket really holds two
+different files that differ only by case (created on a case-sensitive device),
+this device cannot hold both and nothing is renamed, overwritten or deleted: the
+pair is reported in the problems badge until one is renamed on a device that
+supports both. A capitalisation-only rename is a normal rename and propagates.

@@ -25,61 +25,84 @@ from hsync_client.sync import (
 
 
 class TestCaseCollisions:
-    """Two remote paths that differ only by case cannot both exist locally."""
+    """The index is case-sensitive; a folding filesystem is not.
 
-    def test_remote_only_collision_keeps_the_smallest_path(self, tmp_path):
-        remote = [{"filepath": "A.txt"}, {"filepath": "a.txt"}]
+    One remote spelling converges the local spelling (a case-only rename of the
+    same file); real twins are left alone and reported.
+    """
+
+    @staticmethod
+    def _paths(items: list[dict]) -> list[str]:
+        return [item["filepath"] for item in items]
+
+    def test_one_remote_spelling_converges_the_local_case(self, tmp_path):
+        local_file = tmp_path / "foo.txt"
+        local_file.write_text("content", encoding="utf-8")
+
         with (
             patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
             patch("hsync_client.sync.is_case_insensitive", return_value=True),
+            patch("hsync_client.sync.emit_warning") as warn,
         ):
-            local_out, remote_out = _drop_case_collisions([], remote)
+            local_out, remote_out = _drop_case_collisions(
+                [{"filepath": str(local_file), "name": "foo.txt"}],
+                [{"filepath": "Foo.txt", "name": "Foo.txt", "size": 7}],
+            )
 
+        # The deterministic winner is "Foo.txt"; the file is renamed in place, so
+        # every peer ends up with the same name and the reconcile continues.
+        assert not local_file.exists()
+        assert (tmp_path / "Foo.txt").read_text(encoding="utf-8") == "content"
+        assert self._paths(local_out) == [str(tmp_path / "Foo.txt")]
+        assert self._paths(remote_out) == ["Foo.txt"]
+        warn.assert_not_called()
+
+    def test_the_winner_does_not_depend_on_which_side_is_local(self, tmp_path):
+        for local_name, remote_name in (("foo.txt", "Foo.txt"), ("Foo.txt", "foo.txt")):
+            local_file = tmp_path / local_name
+            local_file.write_text("x", encoding="utf-8")
+            with (
+                patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+                patch("hsync_client.sync.is_case_insensitive", return_value=True),
+            ):
+                local_out, _remote_out = _drop_case_collisions(
+                    [{"filepath": str(local_file)}], [{"filepath": remote_name}]
+                )
+            assert self._paths(local_out) == [str(tmp_path / "Foo.txt")]
+            (tmp_path / "Foo.txt").unlink()
+
+    def test_real_twins_are_left_alone_and_reported(self, tmp_path):
+        local_file = tmp_path / "a.txt"
+        local_file.write_text("local", encoding="utf-8")
+
+        with (
+            patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch("hsync_client.sync.is_case_insensitive", return_value=True),
+            patch("hsync_client.sync.emit_warning") as warn,
+        ):
+            local_out, remote_out = _drop_case_collisions(
+                [{"filepath": str(local_file)}],
+                [{"filepath": "A.txt"}, {"filepath": "a.txt"}],
+            )
+
+        # Nothing is renamed, overwritten or deleted: the group is reported.
         assert local_out == []
-        assert [item["filepath"] for item in remote_out] == ["A.txt"]
+        assert remote_out == []
+        assert local_file.read_text(encoding="utf-8") == "local"
+        warn.assert_called_once()
+        assert warn.call_args.kwargs["source"] == "case-conflict"
 
-    def test_an_existing_local_path_wins_over_the_remote(self, tmp_path):
-        local = [{"filepath": str(tmp_path / "a.txt")}]
-        remote = [{"filepath": "A.txt"}, {"filepath": "a.txt"}]
+    def test_a_conflict_free_cycle_retracts_the_report(self, tmp_path):
         with (
             patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
             patch("hsync_client.sync.is_case_insensitive", return_value=True),
+            patch("hsync_client.sync.emit_warning") as warn,
+            patch("hsync_client.sync.emit_warning_cleared") as cleared,
         ):
-            local_out, remote_out = _drop_case_collisions(local, remote)
+            _drop_case_collisions([{"filepath": str(tmp_path / "a.txt")}], [])
 
-        # The local copy is never deleted/overwritten because of a collision.
-        assert [item["filepath"] for item in local_out] == [str(tmp_path / "a.txt")]
-        assert [item["filepath"] for item in remote_out] == ["a.txt"]
-
-    def test_a_local_winner_keeps_a_remote_counterpart(self, tmp_path):
-        """The master lists only the other spelling: the local winner must keep
-        a remote counterpart, otherwise it looks local-only and a download-only
-        mirror deletes it."""
-        local = [{"filepath": str(tmp_path / "a.txt")}]
-        remote = [{"filepath": "A.txt", "name": "A.txt", "size": 3}]
-        with (
-            patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
-            patch("hsync_client.sync.is_case_insensitive", return_value=True),
-        ):
-            local_out, remote_out = _drop_case_collisions(local, remote)
-
-        assert [item["filepath"] for item in local_out] == [str(tmp_path / "a.txt")]
-        assert [item["filepath"] for item in remote_out] == ["a.txt"]
-        assert remote_out[0]["name"] == "a.txt"
-        assert remote_out[0]["size"] == 3
-
-    def test_a_persistent_collision_is_logged_once(self, tmp_path, monkeypatch):
-        remote = [{"filepath": "A.txt"}, {"filepath": "a.txt"}]
-        monkeypatch.setattr("hsync_client.sync._collision_warned", set())
-        with (
-            patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
-            patch("hsync_client.sync.is_case_insensitive", return_value=True),
-            patch("hsync_client.sync.log") as mock_log,
-        ):
-            _drop_case_collisions([], remote)
-            _drop_case_collisions([], remote)
-
-        assert mock_log.warning.call_count == 1
+        warn.assert_not_called()
+        cleared.assert_called_once_with("case-conflict")
 
     def test_case_sensitive_filesystem_is_left_alone(self, tmp_path):
         remote = [{"filepath": "A.txt"}, {"filepath": "a.txt"}]
@@ -90,10 +113,10 @@ class TestCaseCollisions:
             local_out, remote_out = _drop_case_collisions([], remote)
 
         assert local_out == []
+        # Distinct files on a case-sensitive filesystem: no collision grouping.
         assert remote_out == remote
 
-    def test_normalization_twins_collide_even_on_a_case_sensitive_filesystem(self, tmp_path):
-        """NFC and NFD spellings share one identity: only one can be reconciled."""
+    def test_normalization_twins_prefer_the_nfc_spelling(self, tmp_path):
         import unicodedata
 
         nfc = "caf\u00e9.txt"
@@ -106,7 +129,7 @@ class TestCaseCollisions:
         ):
             _local, remote_out = _drop_case_collisions([], remote)
 
-        assert [item["filepath"] for item in remote_out] == [min(nfc, nfd)]
+        assert [item["filepath"] for item in remote_out] == [nfc]
 
 
 class TestCaseOnlyRename:

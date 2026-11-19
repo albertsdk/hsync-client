@@ -722,25 +722,62 @@ def _raw_entry_relpath(info: dict, bucket: str) -> str | None:
     return rel.replace(os.sep, "/")
 
 
+def _collision_winner(rels: set[str]) -> str:
+    """The spelling every peer picks for a case/normalization group.
+
+    Deterministic over the *union* of the two listings so two case-insensitive
+    peers whose local spellings differ still agree: the case-folded spelling
+    first, the NFC form before its compatibility twin, the raw spelling last.
+    """
+    return min(
+        rels,
+        key=lambda rel: (
+            unicodedata.normalize("NFC", rel).casefold(),
+            0 if unicodedata.normalize("NFC", rel) == rel else 1,
+            rel,
+        ),
+    )
+
+
+def _align_case_spelling(bucket: str, info: dict, winner: str) -> bool:
+    """Rename a local file to *winner* when only the spelling differs.
+
+    Safe only on a filesystem that folds case (the two spellings are the same
+    file there). Returns False when the rename failed, so the caller can leave
+    the group alone instead of planning a write that would loop.
+    """
+    old_abs = str(info.get("filepath") or "")
+    new_abs = os.path.join(bucket, *winner.split("/"))
+    if old_abs and os.path.lexists(old_abs):
+        try:
+            replace_with_retry(old_abs, new_abs)
+        except OSError as exc:
+            log.warning(f'{ActionLabel.SKIP} could not align "{old_abs}" to "{new_abs}": {exc}')
+            return False
+    info["filepath"] = new_abs
+    info["name"] = winner.rsplit("/", 1)[-1]
+    return True
+
+
 def _drop_case_collisions(
     local_files: list[dict], remote_files: list[dict]
 ) -> tuple[list[dict], list[dict]]:
-    """Drop names that collide on the local filesystem.
+    """Converge names that collide on the local filesystem.
 
-    Two paths that differ only by case (a case-insensitive filesystem) or only
-    by Unicode normal form (NFC vs NFD, on any filesystem) cannot be addressed
-    independently: the version/tombstone identity folds them to one key, so
-    reconciling both would silently overwrite one and never sync the twin. The
-    winner is an existing local path (never destroy local data because of a
-    remote collision), otherwise the lexicographically smallest relative path;
-    every loser is logged and skipped, so the cycle settles instead of
-    oscillating.
+    The index is case-sensitive: ``foo`` and ``Foo`` are different files, and a
+    device with a case-sensitive filesystem keeps both. A device whose
+    filesystem folds case can hold one per group, so the group converges on a
+    spelling every peer computes identically (``_collision_winner``):
 
-    A loser is dropped from both tracks — except the remote representative of a
-    group whose winner is a local path: dropping it would leave the winner with
-    no remote counterpart, and a ``download-only`` mirror would then delete it
-    even though its bytes are the peer's file under the other spelling. That
-    entry is re-pointed at the winner's spelling instead.
+    - one remote spelling: the local file is renamed to it when only the case
+      differs (the same file on such a filesystem), then reconciled normally;
+    - several remote spellings (real twins created on a case-sensitive peer): a
+      device that folds case cannot hold both, and overwriting either loses
+      content, so the group is left untouched and reported instead.
+
+    Unicode-normalization twins are grouped as well (the engine's identity folds
+    them); there the rename is skipped because the two spellings can be distinct
+    files even on a case-insensitive filesystem.
     """
     bucket = CONFIG.get("LOCAL_BUCKET", "")
     if not bucket:
@@ -760,17 +797,55 @@ def _drop_case_collisions(
         key = unicodedata.normalize("NFC", rel)
         groups.setdefault(key.casefold() if fold_case else key, []).append((rel, is_local))
 
+    local_by_rel = {rel: info for info, is_local, rel in entries if is_local and rel}
+
     losers: dict[str, str] = {}
+    conflicted: set[str] = set()
+    rewrites: dict[str, str] = {}
     local_winners: set[str] = set()
+    conflicts: list[tuple[str, str]] = []
     for group in groups.values():
         distinct = {rel for rel, _ in group}
         if len(distinct) < 2:
             continue
         local_rels = {rel for rel, is_local in group if is_local}
-        winner = min(local_rels) if local_rels else min(distinct)
+        remote_rels = {rel for rel, is_local in group if not is_local}
+        winner = _collision_winner(distinct)
+
+        if len(remote_rels) >= 2 and fold_case:
+            # Real twins: the bucket holds two files this device cannot both
+            # materialise. Keep both sides untouched and report the group.
+            # On a case-sensitive filesystem the two spellings are distinct
+            # files, so the deterministic winner is reconciled instead (the
+            # engine's identity still tracks only one of them).
+            conflicted |= distinct
+            conflicts.append((winner, sorted(distinct - {winner})[0]))
+            log.warning(
+                f'{ActionLabel.SKIP} "{winner}" and another name differ only by case; '
+                "both stay out of this device's sync"
+            )
+            continue
+
+        aligned = True
+        if local_rels and fold_case:
+            for rel in local_rels:
+                if rel == winner:
+                    continue
+                info = local_by_rel.get(rel)
+                if info is None or not _align_case_spelling(bucket, info, winner):
+                    aligned = False
+                    break
+                rewrites[rel] = winner
+        if not aligned:
+            conflicted |= distinct
+            conflicts.append((winner, sorted(distinct - {winner})[0]))
+            continue
         if local_rels:
             local_winners.add(winner)
         for rel in distinct - {winner}:
+            # A spelling rewritten in place is converged, not dropped.
+            if rewrites.get(rel) == winner:
+                continue
             losers[rel] = winner
             if len(_collision_warned) >= _COLLISION_WARNED_CAP:
                 _collision_warned.clear()
@@ -780,17 +855,43 @@ def _drop_case_collisions(
                     f'{ActionLabel.SKIP} "{rel}" collides with "{winner}" on this '
                     "filesystem; skipping it"
                 )
-    if not losers:
+
+    if conflicts:
+        examples = ", ".join(f'"{a}" / "{b}"' for a, b in conflicts[:3])
+        more = f" (+{len(conflicts) - 3} more)" if len(conflicts) > 3 else ""
+        emit_warning(
+            f"{len(conflicts)} name(s) differ only by letter case and cannot be stored "
+            f"together on this device: {examples}{more}. They are left as they are; "
+            "rename one of each pair on a device that supports both.",
+            source="case-conflict",
+            reason="case-conflict",
+        )
+    else:
+        emit_warning_cleared("case-conflict")
+
+    if not losers and not conflicted:
         return local_files, remote_files
 
-    kept_local = [info for info, is_local, rel in entries if is_local and rel not in losers]
+    kept_local = [
+        info
+        for info, is_local, rel in entries
+        if is_local
+        and rel
+        and rewrites.get(rel, rel) not in losers
+        and rewrites.get(rel, rel) not in conflicted
+        and rel not in conflicted
+    ]
     kept_remote_rels = {
-        rel for _info, is_local, rel in entries if not is_local and rel not in losers
+        rel
+        for _info, is_local, rel in entries
+        if not is_local and rel and rel not in losers and rel not in conflicted
     }
     kept_remote: list[dict] = []
     repointed: set[str] = set()
     for info, is_local, rel in entries:
         if is_local:
+            continue
+        if not rel or rel in conflicted:
             continue
         if rel not in losers:
             kept_remote.append(info)
