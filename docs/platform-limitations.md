@@ -47,10 +47,12 @@ re-hash. The following cases need it:
 ## File names
 
 Server and direct mode share one rule: a name must be storable **identically on
-every device**. `hsync_common.path_validation.is_valid_filename` is that policy:
-no `< > : " / \ | ? *` or control characters, no trailing dot or space, no
-reserved names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`, with or
-without an extension), components under 255 bytes, and no `.`/`..`.
+every device**. `hsync_common.path_validation.is_valid_filename` is the upload
+policy the server applies, and `validate_remote_relpath` is the same rule for
+the paths the scan and the wire carry: no `< > : " / \ | ? *` or control
+characters, no trailing dot or space, no reserved names (`CON`, `PRN`, `AUX`,
+`NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`, with or without an extension), components
+under 255 bytes, and no `.`/`..`.
 
 An entry outside it is **left out of the synchronisation and reported** — the scan
 warns once and names the first few paths — never renamed: a rename on one side
