@@ -739,6 +739,23 @@ def _collision_winner(rels: set[str]) -> str:
     )
 
 
+def _replace_case_only(old_path: str, new_path: str) -> None:
+    """Rename *old_path* to a spelling that differs only by case.
+
+    On a case-insensitive filesystem both spellings address the same file, so a
+    direct replace is a self-overwrite that leaves the stored name unchanged
+    (NTFS). Moving through a marker first makes the new spelling the stored one;
+    the startup sweep restores the original name if the process dies in between.
+    """
+    temporary = f"{new_path}{_RENAME_TEMP_SUFFIX}"
+    replace_with_retry(old_path, temporary)
+    try:
+        replace_with_retry(temporary, new_path)
+    except OSError:
+        replace_with_retry(temporary, old_path)  # best-effort rollback
+        raise
+
+
 def _align_case_spelling(bucket: str, info: dict, winner: str) -> bool:
     """Rename a local file to *winner* when only the spelling differs.
 
@@ -750,7 +767,10 @@ def _align_case_spelling(bucket: str, info: dict, winner: str) -> bool:
     new_abs = os.path.join(bucket, *winner.split("/"))
     if old_abs and os.path.lexists(old_abs):
         try:
-            replace_with_retry(old_abs, new_abs)
+            if old_abs != new_abs and old_abs.casefold() == new_abs.casefold():
+                _replace_case_only(old_abs, new_abs)
+            else:
+                replace_with_retry(old_abs, new_abs)
         except OSError as exc:
             log.warning(f'{ActionLabel.SKIP} could not align "{old_abs}" to "{new_abs}": {exc}')
             return False
@@ -2295,17 +2315,8 @@ def _apply_local_rename(old_file: File, new_file: File) -> bool:
     new_path = _rename_abs_path(new_path)
     try:
         Path(new_path).parent.mkdir(parents=True, exist_ok=True)
-        # A case-only rename on a case-insensitive filesystem addresses the same
-        # file before and after, so rename through a recoverable .part marker
-        # (the startup sweep moves it back if the process dies in between).
         if _is_case_only_rename(old_path, new_path):
-            temporary = f"{new_path}{_RENAME_TEMP_SUFFIX}"
-            replace_with_retry(old_path, temporary)
-            try:
-                replace_with_retry(temporary, new_path)
-            except OSError:
-                replace_with_retry(temporary, old_path)  # best-effort rollback
-                raise
+            _replace_case_only(old_path, new_path)
         else:
             replace_with_retry(old_path, new_path)
     except OSError as exc:

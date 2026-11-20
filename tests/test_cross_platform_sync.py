@@ -21,6 +21,7 @@ from hsync_client.sync import (
     _apply_local_rename,
     _drop_case_collisions,
     _is_case_only_rename,
+    replace_with_retry,
 )
 
 
@@ -51,11 +52,40 @@ class TestCaseCollisions:
 
         # The deterministic winner is "Foo.txt"; the file is renamed in place, so
         # every peer ends up with the same name and the reconcile continues.
-        assert not local_file.exists()
+        # The stored name comes from the directory listing: on a case-insensitive
+        # filesystem "foo.txt" keeps resolving to the renamed file, so exists()
+        # cannot tell the two spellings apart (the CI runners are exactly that).
+        assert sorted(entry.name for entry in tmp_path.iterdir()) == ["Foo.txt"]
         assert (tmp_path / "Foo.txt").read_text(encoding="utf-8") == "content"
         assert self._paths(local_out) == [str(tmp_path / "Foo.txt")]
         assert self._paths(remote_out) == ["Foo.txt"]
         warn.assert_not_called()
+
+    def test_alignment_changes_the_stored_case_through_a_marker(self, tmp_path, monkeypatch):
+        """NTFS: replacing a file with another spelling of itself is a no-op, so
+        the alignment must move through the marker like the rename path does."""
+        local_file = tmp_path / "foo.txt"
+        local_file.write_text("content", encoding="utf-8")
+        real_replace = replace_with_retry
+
+        def ntfs_like_replace(src, dst):
+            if src != dst and src.casefold() == dst.casefold():
+                return  # the OS sees a single file: the stored name is unchanged
+            real_replace(src, dst)
+
+        monkeypatch.setattr("hsync_client.sync.replace_with_retry", ntfs_like_replace)
+
+        with (
+            patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
+            patch("hsync_client.sync.is_case_insensitive", return_value=True),
+        ):
+            local_out, _remote_out = _drop_case_collisions(
+                [{"filepath": str(local_file), "name": "foo.txt"}],
+                [{"filepath": "Foo.txt", "name": "Foo.txt", "size": 7}],
+            )
+
+        assert sorted(entry.name for entry in tmp_path.iterdir()) == ["Foo.txt"]
+        assert self._paths(local_out) == [str(tmp_path / "Foo.txt")]
 
     def test_the_winner_does_not_depend_on_which_side_is_local(self, tmp_path):
         for local_name, remote_name in (("foo.txt", "Foo.txt"), ("Foo.txt", "foo.txt")):
