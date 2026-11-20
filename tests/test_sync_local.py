@@ -89,6 +89,39 @@ class TestEnsureSentinel:
         assert (tmp_path / "empty_sub" / ".hsynckeep").exists()
         assert not (tmp_path / "full_sub" / ".hsynckeep").exists()
 
+    def test_walk_drops_a_marker_left_by_a_momentary_emptiness(self, tmp_path):
+        """A marker created while the directory was empty is not content."""
+        from hsync_client.sync import ensure_hsynckeep_files
+
+        (tmp_path / "filled").mkdir()
+        (tmp_path / "filled" / ".hsynckeep").touch()
+        (tmp_path / "filled" / "track.txt").write_text("x")
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            ensure_hsynckeep_files()
+        assert not (tmp_path / "filled" / ".hsynckeep").exists()
+
+    def test_walk_keeps_the_marker_of_a_dir_with_only_hidden_entries(self, tmp_path):
+        from hsync_client.sync import ensure_hsynckeep_files
+
+        (tmp_path / "hidden_only").mkdir()
+        (tmp_path / "hidden_only" / ".hsynckeep").touch()
+        (tmp_path / "hidden_only" / "f.part").write_text("x")
+        with patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}):
+            ensure_hsynckeep_files()
+        assert (tmp_path / "hidden_only" / ".hsynckeep").exists()
+
+    def test_prune_sentinel_removes_the_marker_once_content_lands(self, tmp_path):
+        from hsync_client.sync import prune_sentinel
+
+        (tmp_path / "album").mkdir()
+        marker = tmp_path / "album" / ".hsynckeep"
+        marker.touch()
+        assert prune_sentinel(str(tmp_path / "album")) is False
+
+        (tmp_path / "album" / "track.txt").write_text("x")
+        assert prune_sentinel(str(tmp_path / "album")) is True
+        assert not marker.exists()
+
 
 class TestGetFilesLocal:
     """Tests for get_files_local function."""

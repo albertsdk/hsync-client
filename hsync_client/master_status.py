@@ -300,7 +300,9 @@ class MasterSyncStatus:
                 devices=len(published),
             )
         # The empty directories: their sentinel never becomes a file row, so
-        # their own state is reported under the directory path.
+        # their own state is reported under the directory path. The rule skips
+        # every directory that holds content on either side, so a marker a peer
+        # left behind in a populated directory produces no verdict.
         for state, directory in empty_dir_states(comparison.held, local_files, bucket_dir):
             emit_event(UiEventName.dir_status, path=directory, state=state)
 

@@ -325,12 +325,15 @@ everywhere.
 
 **When are they created?** At the start of every sync, HSYNC scans your folder
 and adds a `.hsynckeep` to any directory with no files of its own. A directory
-that only contains other directories, or only hidden files, also counts as
-empty. A marker is also added when the last file in a directory is deleted.
+that only contains hidden files also counts as empty; a directory that contains
+other directories does not (the structure below it already keeps it alive). A
+marker is also added when the last file in a directory is deleted.
 
 **Are they synced to other devices?** No. `.hsynckeep` files are local,
 per-device markers: they are never uploaded or downloaded, and each device
-creates and keeps its own.
+creates and keeps its own. A marker is removed again as soon as the directory
+receives real content (a file or a subdirectory), so one never lingers in a
+folder that is no longer empty.
 
 **Can I delete them?** You can, but HSYNC will recreate them at the next sync.
 They are harmless: zero bytes, hidden, and excluded from both sync and Git.

@@ -7,6 +7,9 @@ import time
 from asyncio import new_event_loop
 from unittest.mock import MagicMock, patch
 
+from hsync_common.constants import HSYNCKEEP_FILENAME
+from watchdog.events import FileDeletedEvent
+
 from hsync_client.events import UiEventName
 from hsync_client.remote_websocket import RemoteFileEventHandler
 
@@ -67,6 +70,30 @@ class TestFileEventHandler:
         ):
             self.handler._broadcast_event(message)
             mock_run.assert_not_called()
+
+    # -- delete suppression --
+
+    def test_a_marker_delete_is_not_buffered(self, tmp_path):
+        """The per-device ``.hsynckeep`` must never be broadcast as a delete."""
+        marker = tmp_path / HSYNCKEEP_FILENAME
+        marker.touch()
+
+        self.handler.on_deleted(FileDeletedEvent(str(marker)))
+
+        assert self.handler._pending_deletes == []
+
+    def test_a_regular_file_delete_is_still_buffered(self, tmp_path):
+        """The suppression is the marker's only: user files keep propagating."""
+        target = tmp_path / "gone.txt"
+        target.write_text("x")
+
+        with patch(
+            "hsync_client.file_event_handler.CONFIG",
+            {"LOCAL_BUCKET": str(tmp_path), "SYNC_DIRECTION": "bidirectional"},
+        ):
+            self.handler.on_deleted(FileDeletedEvent(str(target)))
+
+        assert self.handler._pending_deletes == [(str(target), False)]
 
     # -- on_any_event --
 

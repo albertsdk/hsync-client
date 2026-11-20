@@ -801,6 +801,14 @@ class BaseFileEventHandler(FileSystemEventHandler):
                 log.debug(f'Skip sentinel event: "{src_path}"')
                 return
 
+            # The file this event is about may be the first content of a
+            # directory that still carries the marker of a momentary emptiness
+            # (a copy creates the directory before its files). One stat when no
+            # marker exists; the marker itself is never content.
+            from hsync_client.sync import prune_parent_sentinel
+
+            prune_parent_sentinel(src_path, label=ActionLabel.LOCAL_KEEP)
+
             # Symlink branch: a symlink modify/close (retarget) is a symlink
             # event, never a file event. Handle immediately and return.
             # Covers dangling links too (is_symlink() is True even when the
@@ -1096,6 +1104,15 @@ class BaseFileEventHandler(FileSystemEventHandler):
         if event.is_directory and is_hidden_dir(src_path):
             return
         if not event.is_directory and is_hidden_file(src_path):
+            return
+
+        if not event.is_directory and Path(src_path).name == HSYNCKEEP_FILENAME:
+            # The marker is per-device housekeeping, never user content: neither
+            # a user removing it nor the prune that follows a file landing in
+            # the directory may ask the peer to delete ITS marker (on a serving
+            # peer that also removes the now-empty directory). The directory
+            # itself is propagated by the directory event.
+            log.debug(f'Skip sentinel delete: "{src_path}"')
             return
 
         if deletions_are_kept(CONFIG):

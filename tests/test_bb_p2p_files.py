@@ -508,6 +508,73 @@ class TestP2PEmptyDirectoryStatus:
             _terminate(master)
 
 
+class TestP2PDirectoryContent:
+    """A directory that holds anything is never an empty-directory verdict.
+
+    Regression: the verdict matched a ``.hsynckeep`` marker alone. A copy — the
+    desktop's drag & drop import included — materialises every directory before
+    its files, so both peers keep a marker in the directories that were empty for
+    a moment. The status pass then classified those populated directories as
+    empty ones (``to_download`` on the serving device, ``to_upload`` on the
+    replica) and every ancestor folder row read "To sync" with all of its files
+    synced.
+    """
+
+    _POPULATED = {"Album", "Sub"}
+    _EMPTY = {"EmptyLeaf", "InnerEmpty"}
+
+    def test_a_populated_tree_never_reports_a_folder_as_empty(
+        self, p2p_master_dir, p2p_slave_dir, p2p_bucket, tmp_path
+    ):
+        master_events = str(tmp_path / "master-events.jsonl")
+        slave_events = str(tmp_path / "slave-events.jsonl")
+        master = _p2p_start(
+            p2p_master_dir, p2p_bucket, prefer_master=True, events_path=master_events
+        )
+        try:
+            _wait_for_master(master, p2p_slave_dir, p2p_bucket)
+            slave = _p2p_start(
+                p2p_slave_dir, p2p_bucket, never_master=True, events_path=slave_events
+            )
+            try:
+                assert _wait_for_text_in_stderr(slave, "Initial sync complete", timeout=60)
+                assert _wait_for_slave_events(slave), "slave is not listening for events yet"
+
+                # The import order: every directory first, then the files.
+                album = Path(p2p_master_dir) / "Album"
+                (album / "Sub" / "EmptyLeaf").mkdir(parents=True)
+                (album / "OnlyEmptyKids" / "InnerEmpty").mkdir(parents=True)
+                (album / "file.txt").write_bytes(b"x\n")
+                (album / "Sub" / "deep.txt").write_bytes(b"y\n")
+
+                def _verdicts() -> list[tuple[str, str]]:
+                    return [
+                        (Path(str(event.get("path", ""))).name, str(event.get("state", "")))
+                        for event in _events(master_events)
+                        if event.get("event") == "dir_status"
+                    ]
+
+                def _settled() -> bool:
+                    states = {name: state for name, state in _verdicts() if name in self._EMPTY}
+                    return len(states) >= len(self._EMPTY) and all(
+                        state == "synced" for state in states.values()
+                    )
+
+                assert _wait_until(_settled, timeout=60), (
+                    f"empty folders never settled: {_verdicts()}"
+                )
+                pending = [
+                    (name, state)
+                    for name, state in _verdicts()
+                    if name in self._POPULATED and state in {"to_upload", "to_download"}
+                ]
+                assert pending == [], f"populated directories reported as empty: {pending}"
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+
+
 class TestP2PFileModification:
     def test_file_modification_propagates(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
         """File modified on master → updated on slave."""

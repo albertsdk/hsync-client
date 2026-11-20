@@ -1265,24 +1265,25 @@ class P2PMasterFileEventHandler(BaseFileEventHandler):
     def on_created(self, event) -> None:
         """Broadcast a local creation, keeping the empty-dir sentinel in place.
 
-        A master runs no sync cycle, so it is the only place that can create the
-        sentinel for a directory created on the serving share. Without it the
+        A master runs no sync cycle, so it is the only place that can keep the
+        markers of the serving share accurate. Without the sentinel the
         empty-directory verdict every peer computes (``empty_dir_states`` matches
         the sentinel identity) can never report the folder as synced, and the
-        folder row stays pending on the device that created it.
+        folder row stays pending on the device that created it; without the prune
+        a marker a momentary emptiness left behind would keep reporting a
+        populated directory as empty.
         """
         src_path = ensure_str_path(event.src_path)
-        if (
-            event.is_directory
-            and not is_hidden_dir(src_path)
-            and Path(src_path).is_dir()
-            and peek_inbound_origin(src_path) is None
-        ):
-            # Not for a directory a peer asked us to create: ``_handle_create_dir``
-            # already created its sentinel, and its create event is the echo.
-            from hsync_client.sync import ensure_sentinel
+        if event.is_directory and not is_hidden_dir(src_path) and Path(src_path).is_dir():
+            # A new subdirectory is content for its parent, exactly as a file is.
+            from hsync_client.sync import ensure_sentinel, prune_parent_sentinel
 
-            ensure_sentinel(src_path, label=ActionLabel.LOCAL_KEEP)
+            prune_parent_sentinel(src_path, label=ActionLabel.LOCAL_KEEP)
+            if peek_inbound_origin(src_path) is None:
+                # Not for a directory a peer asked us to create:
+                # ``_handle_create_dir`` already created its sentinel, and its
+                # create event is the echo.
+                ensure_sentinel(src_path, label=ActionLabel.LOCAL_KEEP)
         super().on_created(event)
 
     def _origin_cid(self, src_path: str | None = None, dst_path: str | None = None) -> str | None:
@@ -2575,6 +2576,11 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
             # synced to the master.  The watchdog will pick up the new
             # file and trigger an upload via on_closed / on_modified.
             log.debug(f'{ActionLabel.LOCAL_CREATE} "{src_path}" (dir)')
+            # A subdirectory is content for its parent, exactly as a file is: a
+            # marker the parent still carries from a momentary emptiness is stale.
+            from hsync_client.sync import prune_parent_sentinel
+
+            prune_parent_sentinel(src_path, label=ActionLabel.LOCAL_KEEP)
             self._ensure_sentinel(src_path)
             # Notify the master to create the directory (and any missing
             # parents) so it is propagated to other slaves.  The sentinel
@@ -2586,6 +2592,12 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
                 name=f"create-dir-{src_path}",
             )
         elif not event.is_directory and not is_hidden_file(src_path):
+            # The new entry may be the first content of a directory that still
+            # carries the marker of a momentary emptiness (the directory is
+            # created here before its files are downloaded or copied into it).
+            from hsync_client.sync import prune_parent_sentinel
+
+            prune_parent_sentinel(src_path, label=ActionLabel.LOCAL_KEEP)
             if Path(src_path).is_symlink():
                 # Symlink - skip if its target escapes the bucket (a
                 # file-symlink to /etc/passwd must never be dereferenced and
@@ -2950,6 +2962,15 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
 
         # Skip temp files and the echo of an inbound receiving write.
         if self._ignore_watcher_paths(src_path):
+            return
+
+        if not event.is_directory and Path(src_path).name == HSYNCKEEP_FILENAME:
+            # The marker is per-device housekeeping: the inventory must stop
+            # advertising it (this node pruned it, or the user removed it), but
+            # the master must never be asked to delete its own — on the serving
+            # side that also removes the now-empty directory.
+            self._inventory_observer.remove_file(src_path)
+            log.debug(f'Skip sentinel delete: "{src_path}"')
             return
 
         # Skip the echo of an inbound recursive delete: `apply_inbound_event`

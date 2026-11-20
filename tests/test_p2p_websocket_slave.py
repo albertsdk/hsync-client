@@ -17,6 +17,7 @@ from watchdog.events import (
     FileMovedEvent,
 )
 
+from hsync_client.constants import HSYNCKEEP_FILENAME
 from hsync_client.p2p_websocket import P2PSlaveFileEventHandler
 
 
@@ -495,6 +496,51 @@ class TestSlaveFileEventHandler:
 
         # Should not start any operation
         assert len(handler._pending_ops) == 0
+
+    def test_on_deleted_sentinel_is_not_propagated(self, handler, tmp_path):
+        """The per-device marker must never delete a peer's marker.
+
+        A DELETE for ``.hsynckeep`` on the serving side also removes the
+        directory once it is empty, so the housekeeping that drops a stale
+        marker here must stop at the inventory.
+        """
+        bucket = tmp_path / "bucket"
+        folder = bucket / "album"
+        folder.mkdir(parents=True)
+        marker = folder / HSYNCKEEP_FILENAME
+        marker.touch()
+        observer = MagicMock()
+        handler._inventory_observer = observer
+        config = {"LOCAL_BUCKET": str(bucket), "SYNC_DIRECTION": "bidirectional"}
+
+        with patch("hsync_client.p2p_websocket.CONFIG", config):
+            handler.on_deleted(FileDeletedEvent(str(marker)))
+
+        assert handler._pending_deletes == []
+        observer.remove_file.assert_called_once_with(str(marker))
+
+    def test_on_created_file_drops_a_stale_empty_dir_marker(self, handler, tmp_path):
+        """A directory that received its first file is not empty any more."""
+        bucket = tmp_path / "bucket"
+        folder = bucket / "album"
+        folder.mkdir(parents=True)
+        marker = folder / HSYNCKEEP_FILENAME
+        marker.touch()
+        track = folder / "track.txt"
+        track.write_text("x")
+        config = {
+            "LOCAL_BUCKET": str(bucket),
+            "SYNC_DIRECTION": "bidirectional",
+            "REMOTE_BUCKET": "test-bucket",
+        }
+
+        try:
+            with patch("hsync_client.p2p_websocket.CONFIG", config):
+                handler.on_created(FileCreatedEvent(str(track)))
+        finally:
+            handler.cancel_all_create_timers()
+
+        assert not marker.exists()
 
     def test_on_moved_download_only_mode(self, handler, tmp_path):
         """Test that renames are not propagated in download-only mode."""

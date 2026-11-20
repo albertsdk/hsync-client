@@ -40,6 +40,7 @@ from hsync_common.models.file import (
     is_partial_file,
 )
 from hsync_common.models.sentinel import ensure_sentinel as common_ensure_sentinel
+from hsync_common.models.sentinel import prune_sentinel as common_prune_sentinel
 from hsync_common.models.symlink import Symlink
 from hsync_common.models.sync_action import SyncAction, SyncActionName
 from hsync_common.models.tombstone import TombstoneEntry, relpath_in_bucket, tombstone_key
@@ -1285,7 +1286,8 @@ def _cycle_preflight() -> None:
     # Clean up any leftover partial downloads from previous sessions
     _cleanup_partial_files()
 
-    # Ensure empty directories have sentinel files
+    # Reconcile the empty-directory markers: create one where a directory has no
+    # syncable entry and drop the stale one a momentary emptiness left behind.
     ensure_hsynckeep_files()
 
 
@@ -1749,19 +1751,55 @@ def ensure_sentinel(dir_path: str, *, label: str | None = None) -> bool:
     return True
 
 
+def prune_sentinel(dir_path: str, *, label: str | None = None) -> bool:
+    """Drop the ``.hsynckeep`` marker of *dir_path* once it holds content.
+
+    The inverse of :func:`ensure_sentinel`: a directory that was empty when a
+    marker was created (a copy materialises the directory before its files) is
+    no longer empty, and a marker left there would keep making status passes
+    read the directory as an empty one. Returns True when a marker was removed.
+
+    *label* is the optional ``ActionLabel`` prefix for the debug log line, like
+    :func:`ensure_sentinel`.
+    """
+    if not common_prune_sentinel(dir_path):
+        return False
+    prefix = f"{label} " if label else ""
+    log.debug(f'{prefix}Removed stale sentinel "{os.path.join(dir_path, HSYNCKEEP_FILENAME)}"')
+    return True
+
+
+def prune_parent_sentinel(path: str, *, label: str | None = None) -> bool:
+    """Drop the stale marker of *path*'s parent directory.
+
+    A new entry — a file or a subdirectory — is content for the directory that
+    receives it, exactly as :func:`ensure_sentinel` counts it. Callers are the
+    watchers, on the event that created the entry.
+    """
+    parent = os.path.dirname(path)
+    if not parent:
+        return False
+    return prune_sentinel(parent, label=label)
+
+
 def ensure_hsynckeep_files() -> None:
     """
-    Ensure every empty directory under LOCAL_BUCKET contains a sentinel
-    `.hsynckeep` file so that the directory structure is preserved during sync.
+    Keep the empty-directory markers of the local tree in line with its content.
 
-    A directory is considered "empty" when it contains no syncable files
-    (after filtering out hidden files).  Already-existing `.hsynckeep`
-    files count as syncable, so they prevent a second creation.
+    A directory with no syncable entry gets a sentinel `.hsynckeep` file so that
+    the directory structure is preserved during sync; a directory that received
+    content loses the marker a momentary emptiness left behind (a stale marker is
+    what makes a status pass report a populated directory as empty).
+
+    A directory is considered "empty" when it contains no syncable files (after
+    filtering out hidden files). Already-existing `.hsynckeep` files are not
+    content, so they neither block a creation nor survive one.
     """
     local_bucket = CONFIG["LOCAL_BUCKET"]
     for root, dirs, _files in walk(local_bucket):
         # Skip hidden directories (same filter as get_files_local)
         dirs[:] = [d for d in dirs if not is_hidden_dir(d)]
+        prune_sentinel(root)
         ensure_sentinel(root)
 
 

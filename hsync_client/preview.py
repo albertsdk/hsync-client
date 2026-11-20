@@ -19,7 +19,7 @@ from hsync_common.protocol.pairing import p2p_write_requires_key
 
 from hsync_client.config import CONFIG, deletions_are_kept
 from hsync_client.constants import SYNC_DIRECTIONS, ActionLabel
-from hsync_client.empty_dirs import empty_dir_states, sentinel_identities
+from hsync_client.empty_dirs import empty_dir_states, file_identities
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.exceptions import (
     AuthenticationError,
@@ -206,8 +206,10 @@ def _run_preview(log) -> None:
         # which the plan drops (it is not user content). The directory itself is
         # user content, so its verdict comes from the sentinel identity the
         # peer's listing holds: it is what settles a folder row on every device.
+        # The whole listing feeds the rule, not only its sentinels, so a marker a
+        # peer left behind in a populated directory is not read as emptiness.
         bucket_dir = str(CONFIG.get("LOCAL_BUCKET") or "")
-        held = sentinel_identities(remote_files, bucket_dir)
+        held = file_identities(remote_files, bucket_dir)
         for state, directory in empty_dir_states(held, local_files, bucket_dir):
             emit_event(UiEventName.dir_status, path=directory, state=state)
 
