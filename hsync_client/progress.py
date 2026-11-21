@@ -41,30 +41,47 @@ from hsync_client.events import UiEventName, emit_event, emit_progress
 # coarser tick would smooth away the real curve of short transfers.
 PROGRESS_MIN_INTERVAL = 0.25
 
-# Paths whose *delivery* progress the receiver is publishing. A sender counts
-# the bytes it handed to its transport, the receiver counts the bytes it stored:
-# two different totals, so once the receiver reports on a path the sender's own
-# counter must stop feeding that row (they would fight over its scale) until the
-# transfer ends and the path is forgotten.
-_delivery_paths: set[str] = set()
+# Paths whose *delivery* progress the receiver is publishing, stamped with the
+# last sample's monotonic time. A sender counts the bytes it handed to its
+# transport, the receiver counts the bytes it stored: while the receiver is
+# reporting, the sender's own counter must stand down so the row keeps one
+# scale. The mark is refreshed by every frame and **expires** otherwise (a
+# dropped control WebSocket, a paused relay, a lost terminal event): the sender's
+# counter then takes over again instead of leaving the row frozen on the last
+# echo. ``DELIVERY_HOLD_SECONDS`` is four echo intervals.
+DELIVERY_HOLD_SECONDS = 4 * PROGRESS_MIN_INTERVAL
+_delivery_paths: dict[str, float] = {}
 _delivery_lock = threading.Lock()
 
 
 def note_delivery_progress(path: str) -> None:
     """Mark *path* as reported by the receiver (``file_progress`` frame)."""
+    now = monotonic()
     with _delivery_lock:
-        _delivery_paths.add(path)
+        _delivery_paths[path] = now
 
 
 def delivery_progress_active(path: str) -> bool:
-    """True when the receiver is publishing the progress of *path*.
+    """True when the receiver published a sample for *path* just now.
 
     Both the native and the wire form are checked: the receiver addresses a file
     by its bucket-relative ``/``-separated path, the sender knows it as a local
-    absolute path.
+    absolute path. A mark older than ``DELIVERY_HOLD_SECONDS`` is dropped and
+    does not count, so a chain of echoes that stops mid-transfer hands the row
+    back to the local counter.
     """
+    now = monotonic()
     with _delivery_lock:
-        return path in _delivery_paths or path.replace("\\", "/") in _delivery_paths
+        active = False
+        for key in (path, path.replace("\\", "/")):
+            stamp = _delivery_paths.get(key)
+            if stamp is None:
+                continue
+            if now - stamp > DELIVERY_HOLD_SECONDS:
+                del _delivery_paths[key]
+                continue
+            active = True
+        return active
 
 
 def forget_delivery_progress(path: str) -> None:
@@ -81,7 +98,8 @@ def forget_delivery_progress(path: str) -> None:
             if path in (abs_path, rel) or norm in (abs_path.replace("\\", "/"), rel):
                 return
     with _delivery_lock:
-        _delivery_paths.discard(path)
+        _delivery_paths.pop(path, None)
+        _delivery_paths.pop(norm, None)
 
 
 # Paths the master is serving right now, keyed by ``(rel, cid)`` — the validated
@@ -114,9 +132,10 @@ def mark_delivery_if_serving(rel: str, cid: str) -> bool:
         if entry is None:
             return False
         abs_path = entry[0]
+        now = monotonic()
         with _delivery_lock:
-            _delivery_paths.add(abs_path)
-            _delivery_paths.add(rel)
+            _delivery_paths[abs_path] = now
+            _delivery_paths[rel] = now
     return True
 
 
@@ -139,14 +158,14 @@ def stop_serving(rel: str, cid: str) -> None:
         if any(other[0] == rel for other in _serving):
             return
         with _delivery_lock:
-            _delivery_paths.discard(abs_path)
-            _delivery_paths.discard(rel)
+            _delivery_paths.pop(abs_path, None)
+            _delivery_paths.pop(rel, None)
 
 
 class ProgressReporter:
     """Emit throttled ``progress`` events for a single in-flight transfer."""
 
-    __slots__ = ("_path", "_total", "_op", "_last_ts", "_echo", "_delivery_only")
+    __slots__ = ("_path", "_total", "_op", "_last_ts", "_echo")
 
     def __init__(
         self,
@@ -155,7 +174,6 @@ class ProgressReporter:
         op: str,
         *,
         echo: Callable[[int], None] | None = None,
-        delivery_only: bool = False,
     ) -> None:
         self._path = path
         self._total = total
@@ -165,11 +183,6 @@ class ProgressReporter:
         # bytes it stored for a peer's upload, so the sender's row shows the
         # delivery instead of its own transport counter.
         self._echo = echo
-        # The receiver reports this transfer and measures a different quantity
-        # (the master stores decompressed bytes, the sender counts the compressed
-        # payload), so the local counter stays silent: the row keeps one scale
-        # instead of switching mid-transfer.
-        self._delivery_only = delivery_only
 
     def update(self, transferred: int) -> None:
         now = monotonic()
@@ -181,11 +194,9 @@ class ProgressReporter:
         self._last_ts = now
         if self._echo is not None:
             self._echo(transferred)
-        if self._delivery_only:
-            return
         if self._op == "upload" and delivery_progress_active(self._path):
-            # The receiver is the authority on this path: its samples carry the
-            # file total, this counter the wire one.
+            # The receiver is the authority on this path while its frames keep
+            # arriving (the mark expires, so a stalled echo hands the row back).
             return
         # Best-effort path: a slow consumer drops samples instead of blocking
         # the thread that moves the bytes.

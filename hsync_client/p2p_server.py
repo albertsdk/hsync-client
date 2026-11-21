@@ -561,6 +561,15 @@ class _UploadContext:
     # consumed and discarded and the peer is answered 202 with this true
     # offset so it re-probes and resumes (``None`` = no divergence).
     resync: int | None = None
+    # The file part was opened, so a progress stream may have created the
+    # receiver's row: from then on exactly one terminal event must close it.
+    started: bool = False
+    # Set by whatever path published the terminal ``transfer`` event.
+    terminal: bool = False
+    # Why the received body did not commit (``None`` = not a failure: a resync
+    # answer or a committed transfer). The handler's ``finally`` publishes the
+    # matching ``transfer_failed`` exactly once.
+    fail_reason: str | None = None
 
 
 _upload_path_locks_guard = threading.Lock()
@@ -2039,17 +2048,15 @@ class P2PEndpointMixin(_HTTPTransportBase):
                             self.end_headers()
                             response_started = True
                             remaining = compressed_size
-                            # No percentage while serving compressed: the wire
-                            # bytes are not the file the receiver measures. zstd
-                            # emits most of the output early, so the sender would
-                            # read ~55% while the receiver is already at 98% —
-                            # two incompatible scales for one row. A negative
-                            # total marks the figure as unknown (the front-end
-                            # renders an indeterminate bar), while zero would mean
-                            # "keep the row's own size" and still produce a wrong
-                            # percentage. The terminal ``transfer`` event still
-                            # carries the file size, so the row closes correctly.
-                            compressed_reporter = progress_reporter(display_path, -1, "upload")
+                            # The wire scale drives the bar as a fallback (the
+                            # receiver's echo upgrades it to the file scale once
+                            # it lands). The control WebSocket is established
+                            # only after the peer's initial sync, so the echo is
+                            # absent for the first cycle: a serving master must
+                            # still show a determinate bar then.
+                            compressed_reporter = progress_reporter(
+                                display_path, compressed_size, "upload"
+                            )
                             sent = 0
                             while remaining:
                                 chunk = compressed_body.read(min(_P2P_UPLOAD_CHUNK_SIZE, remaining))
@@ -2389,6 +2396,10 @@ class P2PEndpointMixin(_HTTPTransportBase):
             reporter,
             start=0 if resync else (offset_val if is_resumable else 0),
         )
+        # From here on the receiver's row may exist: its terminal event is the
+        # handler's responsibility even when the commit is rejected later. A
+        # discarded (resync) body reports nothing, so it owns no row.
+        ctx.started = reporter is not None
         # Either sink exposes write()/close(); the union type is not IO[bytes],
         # so annotate Any for the zstd stream_writer below.
         capped: Any = _CappedBytesWriter(counted.write, cap) if cap is not None else counted
@@ -2487,6 +2498,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
         """Arbitrate, commit and answer a completed (non-partial) upload."""
         cid = form_fields.get("cid", "")
         if self._reject_duplicate_cid(cid):
+            ctx.fail_reason = "duplicate device identity"
             return
         mtime = form_fields.get("mtime", "")
         ctime = form_fields.get("ctime", "")
@@ -2505,9 +2517,11 @@ class P2PEndpointMixin(_HTTPTransportBase):
         expected_sha = form_fields.get("sha256sum", "")
         if not expected_sha:
             self._send_error_response(HTTP_BAD_REQUEST, "Missing 'sha256sum' field")
+            ctx.fail_reason = "missing 'sha256sum' field"
             return
         if not is_sha256_hex(expected_sha):
             self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'sha256sum' format")
+            ctx.fail_reason = "invalid 'sha256sum' format"
             return
         actual_sha = compute_sha256(tmp_path)
         if not hmac.compare_digest(actual_sha, expected_sha):
@@ -2516,6 +2530,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
                 f"(declared {expected_sha}, computed {actual_sha})"
             )
             self._send_error_response(HTTP_BAD_REQUEST, "Checksum mismatch")
+            ctx.fail_reason = "checksum mismatch"
             return
 
         # Record the CID for accurate logging.  Only authenticated CIDs
@@ -2570,6 +2585,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
             )
             self._send_error_response(HTTP_CONFLICT, "superseded")
             ctx.response_sent = True
+            ctx.fail_reason = "superseded by a newer local version"
             return
 
         if arb.outcome is ArbitrationOutcome.conflict_lost:
@@ -2579,6 +2595,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
                 ctx.tmp_path = None
             self._send_error_response(HTTP_CONFLICT, "conflict_lost")
             ctx.response_sent = True
+            ctx.fail_reason = "conflict: the incoming version lost the tie-break"
             return
 
         # The destination must still be the entry the upload set out to
@@ -2596,6 +2613,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
             )
             self._send_error_response(HTTP_CONFLICT, "destination_changed")
             ctx.response_sent = True
+            ctx.fail_reason = "destination deleted or renamed while uploading"
             return
 
         # accepted / accepted_conflict_won: commit the incoming bytes.
@@ -2653,6 +2671,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
         except OSError:
             committed_size = 0
         emit_completed_transfer("download", dest_path, committed_size)
+        ctx.terminal = True
 
         self._send_json_response(
             HTTP_CREATED,
@@ -2715,26 +2734,37 @@ class P2PEndpointMixin(_HTTPTransportBase):
             self._discard_temp_artifact(ctx.tmp_path, ctx.out_file, ctx.raw_file)
             self._send_error_response_safe(HTTP_FORBIDDEN, "Access denied")
             ctx.response_sent = True
+            ctx.fail_reason = "access denied"
         except ValueError as e:
             # Malformed upload metadata (e.g. missing size on a compressed
             # upload) or decompressed bytes beyond the declared size.
             self._discard_temp_artifact(ctx.tmp_path, ctx.out_file, ctx.raw_file)
             self._send_error_response_safe(HTTP_BAD_REQUEST, f"Invalid upload: {e}")
             ctx.response_sent = True
+            ctx.fail_reason = f"invalid upload: {e}"
         except Exception as e:
             log.error(f"Error handling upload: {e}")
             self._discard_temp_artifact(ctx.tmp_path, ctx.out_file, ctx.raw_file)
             if not ctx.response_sent:
                 self._send_error_response_safe(HTTP_INTERNAL_ERROR, f"Upload error: {e}")
+            ctx.fail_reason = f"upload error: {e}"
         finally:
             # Idempotent safety net for paths that did not go through an
             # error branch (on success ctx tmp_path/raw_file/out_file are None).
             self._discard_temp_artifact(ctx.tmp_path, ctx.out_file, ctx.raw_file)
             # Release the per-path serialization lock; the next upload of the
             # same destination may proceed (and re-probe the fresh state).
-            if ctx.lock is not None:
-                ctx.lock.release()
-                ctx.lock = None
+            lock = ctx.lock
+            ctx.lock = None
+            if lock is not None:
+                lock.release()
+            # Exactly one terminal event per received body: the receiver's row
+            # (created by the progress samples) must never stay in flight. A
+            # 202 resync/partial leaves ``fail_reason`` unset because the peer
+            # continues the same transfer. Emitted after the lock is released so
+            # a stalled event consumer cannot block the next writer.
+            if ctx.fail_reason and not ctx.terminal and ctx.started and ctx.dest_path:
+                emit_failed_transfer("download", ctx.dest_path, ctx.fail_reason)
 
     @staticmethod
     def _discard_temp_artifact(path: str | None, *files) -> None:
@@ -2773,7 +2803,11 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
         from hsync_common.constants import DELTA_MAX_LITERAL_SIZE
 
-        from hsync_client.p2p_delta import handle_delta_apply
+        from hsync_client.p2p_delta import (
+            delta_metadata_dict,
+            delta_metadata_payload_size,
+            handle_delta_apply,
+        )
 
         parser = _StreamingMultipartParser(self.rfile, content_length, boundary)
 
@@ -2790,15 +2824,23 @@ class P2PEndpointMixin(_HTTPTransportBase):
             fd, literal_path = tempfile.mkstemp(prefix="hsync-delta-lit-")
             raw = os.fdopen(fd, "wb")
             raw_file = raw
-            # The form fields precede the file part, so the destination is
-            # already known: report the incoming payload against it. The literal
-            # size is not declared up front (it depends on the diff), so the
-            # reporter throttles by time and the Desktop keeps the row's own
-            # size as the total.
+            # The form fields precede the file part, so the destination and the
+            # literal's declared size are already known: report the incoming
+            # payload against the exact scale the sender reports, so both rows
+            # show the same percentage.
             rel = form_fields.get("path", "")
+            payload_size = delta_metadata_payload_size(
+                delta_metadata_dict(form_fields.get("metadata"))
+            )
+            if payload_size is None:
+                # The literal's declared size is part of the contract and the
+                # progress scale: refuse before any byte reaches the clock.
+                raise ValueError("Invalid payload_size in delta metadata")
             dest_for_progress = resolve_within(CONFIG.get("LOCAL_BUCKET", ""), rel) if rel else None
             reporter = (
-                progress_reporter(dest_for_progress, 0, "download") if dest_for_progress else None
+                progress_reporter(dest_for_progress, payload_size, "download")
+                if dest_for_progress
+                else None
             )
             counted = ProgressWriter(raw.write, reporter)
             capped = _CappedBytesWriter(counted.write, DELTA_MAX_LITERAL_SIZE)

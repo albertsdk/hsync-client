@@ -62,12 +62,13 @@ class TestUploadCompressed:
         ):
             upload_file(file, check_size=False)
 
-    def test_the_compressed_branch_defers_to_the_receiver_in_p2p_mode(self, tmp_path):
-        """A compressed payload is not the file the peer stores.
+    def test_the_compressed_branch_reports_the_wire_total_in_p2p_mode(self, tmp_path):
+        """A compressed upload reports its payload as a fallback.
 
-        The master reports the bytes it decompressed, so in p2p mode its delivery
-        samples are the only honest scale: the local counter starts silent and the
-        row never switches scale mid-transfer.
+        The wire size is the only counter this node owns; the master's delivery
+        frame upgrades the row to the file scale while its frames keep arriving,
+        but a first-cycle upload has no echo at all (the control WebSocket opens
+        after the initial sync), so the local counter must never be silenced.
         """
         test_file = tmp_path / "file.txt"
         test_file.write_bytes(b"A" * 300_000)
@@ -115,16 +116,16 @@ class TestUploadCompressed:
 
         assert seen and seen[0]["op"] == "upload"
         # The compressed branch ran (its total is the wire size, not the file)
-        # and it defers to the receiver's samples.
+        # and feeds the row locally; the echo supersedes it while it arrives.
         assert seen[0]["total"] < 300_000
-        assert seen[0]["delivery_only"] is True
+        assert "delivery_only" not in seen[0]
 
-    def test_the_uncompressed_branch_defers_to_the_receiver_in_p2p_mode(self, tmp_path):
-        """In p2p the master echoes the stored bytes; the local counter stays silent.
+    def test_the_uncompressed_branch_reports_the_file_total_in_p2p_mode(self, tmp_path):
+        """In p2p the master echoes the stored bytes, but only as an upgrade.
 
-        The transport counter measures the socket, not the peer's disk, so in p2p
-        the row is driven by the master's ``file_progress`` frame alone — one
-        scale, no startup burst.
+        The local counter measures the same quantity (the file) and must feed the
+        row from the first chunk: the first sync has no echo, and a dropped
+        control WebSocket would otherwise freeze the bar.
         """
         test_file = tmp_path / "file.txt"
         test_file.write_bytes(b"A" * 300_000)
@@ -171,10 +172,10 @@ class TestUploadCompressed:
             upload_file(file, check_size=False)
 
         assert seen and seen[0]["op"] == "upload"
-        # The identity branch ran (its total is the file) and defers to the
-        # receiver's samples just like the compressed one.
+        # The identity branch ran (its total is the file) and feeds the row
+        # locally; the receiver's echo takes over only while it keeps arriving.
         assert seen[0]["total"] == 300_000
-        assert seen[0]["delivery_only"] is True
+        assert "delivery_only" not in seen[0]
 
     def test_compressed_branch_signals_via_form_field_not_header(self, tmp_path):
         """The compressed branch must NOT set ``Content-Encoding``.

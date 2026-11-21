@@ -2344,16 +2344,17 @@ def _handle_upload_conflict_response(file: File, response) -> bool:
     """
     body = (response.text or "")[:500]
     lower = body.lower()
-    if "superseded" in lower or "conflict_lost" in lower:
+    if "superseded" in lower or "conflict_lost" in lower or "destination_changed" in lower:
         log.info(
             f'{ActionLabel.CONFLICT} Upload of "{file.filepath}" was '
-            f"superseded by a newer remote version; download needed ({body})"
+            f"rejected by the remote arbitration; another cycle must reconcile it "
+            f"({body})"
         )
         emit_event(
             UiEventName.transfer_failed,
             op="upload",
             file=file.filepath,
-            message=f"superseded by remote version: {body}",
+            message=f"rejected by the remote version: {body}",
         )
         return True
     # Legacy / duplicate "already present": the server already holds this
@@ -2394,8 +2395,13 @@ def _handle_upload_response(file: File, response, t0: float) -> None:
             emit_completed_transfer("upload", file.filepath, file.size or 0)
         case 401:
             _emit_auth_error("Authentication failed", "uploading", file.filepath)
+            # The body was already streamed, so the row is in flight: close it
+            # with the matching terminal event (the auth prompt is a separate
+            # signal, not a substitute).
+            _emit_transfer_failed("upload", file.filepath, "authentication failed")
         case 403:
             log.error(f'Access denied uploading "{file.filepath}"')
+            _emit_transfer_failed("upload", file.filepath, "access denied")
         case 409:
             _handle_upload_conflict_response(file, response)
         case 429:
@@ -2627,18 +2633,15 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
                 data["compressed_size"] = compressed_size
 
                 ul_bw_limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
-                # A compressed payload is not the file the peer stores: the
-                # master reports the bytes it decompressed, so in p2p mode its
-                # delivery samples are the only honest scale and the local
-                # counter stays silent (a peer master always publishes them). A
-                # central server publishes none, so there the counter remains the
-                # signal — as it does for the uncompressed branch, whose two
-                # counts measure the same bytes.
+                # The wire scale of the compressed payload drives the bar as a
+                # fallback: the master's delivery frame upgrades it to the file
+                # scale once it lands, but the sender must never depend on that
+                # frame — the control WebSocket is established only after the
+                # initial sync, so a first-cycle upload has no echo at all.
                 reporter = ProgressReporter(
                     file.filepath,
                     compressed_size,
                     "upload",
-                    delivery_only=bool(CONFIG.get("P2P_MODE")),
                 )
                 boundary = uuid4().hex
                 body, content_type = _build_multipart_streaming(
@@ -2679,15 +2682,13 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
             ul_bw_limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
 
             boundary = uuid4().hex
-            # In p2p the master echoes the bytes it stored (``file_progress``), so
-            # the local transport counter stays silent and the row keeps one
-            # scale. The central server has no delivery channel: its counter
-            # remains the only signal.
+            # Same rule as the compressed branch: the local counter always feeds
+            # the row (identical scale to the receiver's echo here), and the
+            # echo takes over only while its frames keep arriving.
             reporter = ProgressReporter(
                 file.filepath,
                 file.size or 0,
                 "upload",
-                delivery_only=bool(CONFIG.get("P2P_MODE")),
             )
             if offset > 0:
                 # Anchor the resumed position BEFORE the first chunk: the

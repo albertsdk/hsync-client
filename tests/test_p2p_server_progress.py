@@ -131,15 +131,13 @@ class TestServeProgress:
         assert transfers[0]["size"] == len(_PAYLOAD)
         assert transfers[0]["file"].endswith("served.bin")
 
-    def test_compressed_serve_reports_an_unknown_total_and_the_file_size(
-        self, server, tmp_path, events
-    ):
-        """A compressed serve has no honest percentage: it reports an unknown total.
+    def test_compressed_serve_reports_the_wire_total(self, server, tmp_path, events):
+        """A compressed serve reports a determinate wire percentage.
 
-        The wire bytes are not the file the receiver counts (zstd emits most of
-        its output early), so a wire-based percentage read ~55% against the
-        receiver's 98%. The terminal event still carries the file size, which is
-        what closes the row.
+        The echo of the receiving slave upgrades the row to the file scale while
+        its frames arrive, but the echo needs the peer's control WebSocket (open
+        only after its initial sync): the serving side must never sit without a
+        bar for the whole first cycle.
         """
         _, port = server
         (tmp_path / "compressible.txt").write_bytes(_PAYLOAD)
@@ -156,8 +154,10 @@ class TestServeProgress:
         assert decompress_data(body) == _PAYLOAD
         progress = [e for e in events if e["event"] == "progress"]
         assert progress and progress[-1]["op"] == "upload"
-        # Negative total: the front-end renders an indeterminate bar.
-        assert all(e["total"] < 0 for e in progress)
+        # The wire total is the staged zstd frame: a determinate percentage that
+        # ends exactly on it.
+        assert all(e["total"] == len(body) for e in progress)
+        assert progress[-1]["transferred"] == len(body)
         transfers = [e for e in events if e["event"] == "transfer"]
         assert [e["size"] for e in transfers] == [len(_PAYLOAD)]
 
@@ -266,3 +266,43 @@ class TestReceivedUploadProgress:
         assert echoed[-1][1]["file"] == "received.bin"
         assert echoed[-1][1]["transferred"] == len(_PAYLOAD)
         assert echoed[-1][1]["total"] == len(_PAYLOAD)
+
+    def test_a_rejected_received_upload_closes_the_row(self, server, tmp_path, events):
+        """A body that does not commit must publish ``transfer_failed``.
+
+        The receiver's row is created by the progress samples of the incoming
+        body; without a terminal event a checksum rejection would leave it in
+        flight until the panel's stale-row safety net (60 s).
+        """
+        import hashlib
+
+        import requests
+
+        _, port = server
+
+        with patch(
+            "hsync_client.p2p_server.CONFIG",
+            unauth_write_config(tmp_path, MIN_FREE_DISK_SPACE=0, MAX_INBOUND_SIZE=0),
+        ):
+            response = requests.post(
+                f"http://localhost:{port}/api/v1/buckets/test/files",
+                data={
+                    "cid": "PeerCid000000000000",
+                    "path": "",
+                    "size": str(len(_PAYLOAD)),
+                    # Wrong on purpose: the master must refuse the commit.
+                    "sha256sum": hashlib.sha256(b"other").hexdigest(),
+                },
+                files={"file": ("received.bin", _PAYLOAD)},
+                timeout=10,
+            )
+
+        _wait_for_events(events, event="transfer_failed", op="download")
+        assert response.status_code == 400
+        failed = [e for e in events if e["event"] == "transfer_failed"]
+        assert len(failed) == 1
+        assert failed[0]["op"] == "download"
+        assert failed[0]["file"].endswith("received.bin")
+        assert "checksum" in failed[0]["message"]
+        assert not [e for e in events if e["event"] == "transfer"]
+        assert not (tmp_path / "received.bin").exists()

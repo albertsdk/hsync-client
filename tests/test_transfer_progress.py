@@ -139,26 +139,33 @@ class TestDeliveryProgress:
         """The receiver addresses a file with "/" separators, Windows does not."""
         calls, clock = captured
         rep = progress.ProgressReporter("C:\\share\\sub\\f.bin", 100, "upload")
+
+        clock[0] = 10.0
         progress.note_delivery_progress("C:/share/sub/f.bin")
-
-        clock[0] = 10.0
         rep.update(40)
 
         assert calls == []
 
-    def test_a_delivery_only_reporter_stays_silent(self, captured):
-        """The receiver reports this transfer, so the local scale is not shown."""
+    def test_a_stale_delivery_mark_lets_the_local_counter_speak_again(self, captured, monkeypatch):
+        """A stalled echo must not silence the sender for the rest of the row.
+
+        The mark is refreshed by every frame and expires after
+        ``DELIVERY_HOLD_SECONDS``: a dropped control WebSocket or a paused relay
+        then hands the row back to the local counter instead of freezing a bar.
+        """
         calls, clock = captured
-        echoed: list[int] = []
-        rep = progress.ProgressReporter(
-            "/bucket/f.bin", 100, "upload", echo=echoed.append, delivery_only=True
-        )
+        monkeypatch.setattr(progress, "DELIVERY_HOLD_SECONDS", 1.0)
+        rep = progress.ProgressReporter("/bucket/f.bin", 100, "upload")
 
         clock[0] = 10.0
         rep.update(40)
+        progress.note_delivery_progress("/bucket/f.bin")
+        clock[0] = 10.5
+        rep.update(60)  # inside the hold window: the receiver is authoritative
+        clock[0] = 12.0
+        rep.update(80)  # the echo stopped: the local counter resumes
 
-        assert calls == []
-        assert echoed == [40]
+        assert [kw["transferred"] for _n, kw in calls] == [40, 80]
 
     def test_the_terminal_event_forgets_the_delivery_mark(self, captured):
         calls, clock = captured

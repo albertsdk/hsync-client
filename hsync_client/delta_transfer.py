@@ -70,7 +70,7 @@ from hsync_client.config import (
     get_delta_min_file_size_p2p,
 )
 from hsync_client.exceptions import ServerError
-from hsync_client.progress import ProgressReporter
+from hsync_client.progress import ProgressReporter, progress_reporter
 from hsync_client.sync_state import get_base_hash, resolve_upload_version_fields
 from hsync_client.utils import (
     get_ssl_verify,
@@ -287,6 +287,10 @@ def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:
             payload_path = compressed_path
             compressed = True
 
+        # The literal payload is what crosses the wire: its byte count is the
+        # total both ends report (the receiving master streams the same literal
+        # into its temp file), so it travels with the metadata.
+        payload_size = Path(payload_path).stat().st_size
         # Attach the effective causal version (vclock + version_id + the ADR-0023
         # corrected mtime) so the server/master can arbitrate the delta-apply
         # against its stored version (ADR-0022/ADR-0023). The server's
@@ -301,6 +305,7 @@ def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:
             "new_size": file.size,
             "block_size": block_size,
             "compressed": compressed,
+            "payload_size": payload_size,
             "mtime": file.mtime,
             "permissions": file.permissions,
             "ops": [op.to_dict() for op in ops],
@@ -312,14 +317,20 @@ def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:
 
         # Stream the multipart body from disk (see _build_multipart_streaming):
         # the form fields are small and the literal payload is yielded in chunks,
-        # so requests never builds the body in RAM.
+        # so requests never builds the body in RAM. The payload's own progress is
+        # reported here: the delta-apply endpoint has no delivery echo (the
+        # receiver's reporter counts the same literal bytes), so without this the
+        # sender's row would stay at its planned status for the whole transfer.
+        # Imported here: ``transfer`` imports this module at load time.
         from hsync_client.transfer import _build_multipart_streaming
 
+        reporter = progress_reporter(file.filepath, payload_size, "upload")
         body, content_type = _build_multipart_streaming(
             payload_path,
             {"path": ctx.relpath, "metadata": json.dumps(metadata)},
             boundary=uuid4().hex,
             filename="delta.bin",
+            on_progress=reporter.update if reporter is not None else None,
         )
         headers["Content-Type"] = content_type
         response = post(

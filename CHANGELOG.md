@@ -26,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The sending peer always reports transfer progress now: the delta upload
+  streams its literal payload with its own samples, and a p2p upload no longer
+  depends on the receiver's delivery echo (the control WebSocket opens only after
+  the initial sync), so a first-cycle or delta transfer leaves its planned status
+  and shows a bar instead of staying at "To sync".
+- An in-flight transfer row is closed by a `401`/`403` upload answer, an
+  arbitration rejection (`superseded`, `conflict_lost`, `destination_changed`),
+  and a rejected received body (checksum, duplicate identity, exception), so no
+  row stays in flight until the panel's stale-row re-check.
 - An inbound rename that changes only the case of a path now applies reliably on
   case-insensitive filesystems, and an inbound rename whose destination already
   holds local content is left to the causal reconcile instead of overwriting it.

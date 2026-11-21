@@ -46,6 +46,7 @@ class TestMasterProgressEvents:
         (Path(p2p_slave_dir) / "pushed.bin").write_bytes(pushed)
 
         events_path = str(tmp_path / "master-events.jsonl")
+        slave_events_path = str(tmp_path / "slave-events.jsonl")
         master = _p2p_start(
             p2p_master_dir,
             p2p_bucket,
@@ -54,7 +55,13 @@ class TestMasterProgressEvents:
         )
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
-            slave = _p2p_start(p2p_slave_dir, p2p_bucket, never_master=True, extra_args=("--once",))
+            slave = _p2p_start(
+                p2p_slave_dir,
+                p2p_bucket,
+                never_master=True,
+                extra_args=("--once",),
+                events_path=slave_events_path,
+            )
             try:
                 assert _wait_for_file(str(Path(p2p_slave_dir) / "served.bin"), timeout=60)
                 assert _wait_for_file(str(Path(p2p_master_dir) / "pushed.bin"), timeout=60), (
@@ -70,8 +77,15 @@ class TestMasterProgressEvents:
                             for e in _events(events_path)
                             if e.get("event") == "transfer"
                         }
+                        and any(
+                            e.get("event") == "transfer" and e.get("op") == "upload"
+                            for e in _events(slave_events_path)
+                        )
                     )
-                ), f"missing terminal events: {_events(events_path)[-5:]}"
+                ), (
+                    f"missing terminal events: {_events(events_path)[-5:]} / "
+                    f"{_events(slave_events_path)[-5:]}"
+                )
             finally:
                 _terminate(slave)
 
@@ -82,13 +96,14 @@ class TestMasterProgressEvents:
             served = [e for e in progress if e.get("file", "").endswith("served.bin")]
             assert served, "the master must report progress for a file it serves"
             assert all(e["op"] == "upload" for e in served)
-            # Two honest scales are possible for the last sample: the receiver's
-            # echo (file size) when it lands before the row closes, or the
-            # master's own wire counter for a compressed serve, which reports an
-            # unknown total (a negative value, rendered as an indeterminate bar).
-            # The terminal ``transfer`` event below is what closes the row.
+            # The serving side always reports a determinate wire percentage; the
+            # receiving slave's echo (the file scale) may supersede it once its
+            # control WebSocket is up. Either way the last sample is a determinate
+            # figure that never over-reports, and the terminal ``transfer`` event
+            # below carries the file size that closes the row.
             last = served[-1]
-            assert last["total"] < 0 or last["transferred"] == last["total"] == len(content)
+            assert last["total"] > 0, served[-3:]
+            assert 0 < last["transferred"] <= last["total"], served[-3:]
 
             served_terminal = [
                 e
@@ -110,5 +125,35 @@ class TestMasterProgressEvents:
             ]
             assert received_terminal, "the received file must end with a transfer event"
             assert all(e["size"] == len(pushed) for e in received_terminal)
+
+            # The sender side must report its own upload too: the first cycle
+            # runs before the control WebSocket is up, so no delivery echo
+            # exists yet and the local counter is the only source of progress.
+            slave_events = _events(slave_events_path)
+            slave_progress = [
+                e
+                for e in slave_events
+                if e.get("event") == "progress" and e.get("file", "").endswith("pushed.bin")
+            ]
+            assert slave_progress, (
+                "the uploading peer must report in-flight progress for the first cycle"
+            )
+            assert all(e["op"] == "upload" for e in slave_progress)
+            positions = [e["transferred"] for e in slave_progress]
+            assert positions == sorted(positions)
+            # A compressed upload reports its wire payload (the default config
+            # enables compression); the receiver's echo would upgrade it to the
+            # file scale, but the first cycle has no echo. Either way the last
+            # sample is determinate and never exceeds the file.
+            last_slave = slave_progress[-1]
+            assert last_slave["total"] > 0
+            assert 0 < last_slave["transferred"] <= last_slave["total"] <= len(pushed)
+            slave_transfers = [
+                e
+                for e in slave_events
+                if e.get("event") == "transfer" and e.get("file", "").endswith("pushed.bin")
+            ]
+            assert [e["op"] for e in slave_transfers] == ["upload"]
+            assert [e["size"] for e in slave_transfers] == [len(pushed)]
         finally:
             _terminate(master)

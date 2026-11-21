@@ -79,6 +79,7 @@ from hsync_client.compression import (
 from hsync_client.config import CONFIG
 from hsync_client.progress import (
     emit_completed_transfer,
+    emit_failed_transfer,
     progress_reporter,
 )
 from hsync_client.utils.fs_ops import replace_with_retry
@@ -97,6 +98,40 @@ _MAX_SIG_BODY_BYTES = 50 * 1024 * 1024
 
 # Sub-limit for CPU-bound delta work inside the global thread cap.
 _delta_compute_sem = threading.Semaphore(4)
+
+
+def delta_metadata_dict(raw: object) -> dict | None:
+    """Parse the delta-apply ``metadata`` form field into a mapping, or ``None``.
+
+    The field precedes the multipart file part, so the streaming side can read
+    the declared payload size before the first byte is written; the apply
+    validation re-reads the same mapping.
+    """
+    if not isinstance(raw, str):
+        return None
+    try:
+        meta = json.loads(raw)
+    except ValueError:
+        return None
+    return meta if isinstance(meta, dict) else None
+
+
+def delta_metadata_payload_size(meta: object) -> int | None:
+    """The literal payload's declared byte count, or ``None`` when malformed.
+
+    ``payload_size`` is the wire total both ends report progress on: the sender
+    streams exactly that many literal bytes and the receiving side writes the
+    same count into its temp file. It is part of the delta-apply contract (a
+    missing or non-numeric value is a malformed request), so both the streaming
+    reporter and the apply validation read it through this function.
+    """
+    if not isinstance(meta, dict):
+        return None
+    value = meta.get("payload_size")
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        return None
+    return value
+
 
 # Cap on concurrently live download tokens. The TTL is the shared SSOT
 # (``hsync_common.constants.DELTA_TOKEN_TTL``) so a client and a server of the
@@ -405,6 +440,11 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
     if not isinstance(meta, dict):
         handler._send_error_response(_HTTP_BAD_REQUEST, "Invalid metadata")
         return
+    # The literal's declared size is part of the contract: the reporter used it
+    # while streaming and the sender reports progress on the same scale.
+    if delta_metadata_payload_size(meta) is None:
+        handler._send_error_response(_HTTP_BAD_REQUEST, "Invalid payload_size in delta metadata")
+        return
 
     base_sha256 = meta.get("base_sha256")
     new_sha256 = meta.get("new_sha256")
@@ -577,12 +617,18 @@ def handle_delta_data(handler, bucket: str, token: str) -> None:
             handler.send_header("Content-Encoding", CONTENT_ENCODING_ZSTD)
         handler.end_headers()
         sent = 0
-        with open(payload_file, "rb") as f:
-            while chunk := f.read(64 * 1024):
-                handler.wfile.write(chunk)
-                sent += len(chunk)
-                if reporter is not None:
-                    reporter.update(sent)
+        try:
+            with open(payload_file, "rb") as f:
+                while chunk := f.read(64 * 1024):
+                    handler.wfile.write(chunk)
+                    sent += len(chunk)
+                    if reporter is not None:
+                        reporter.update(sent)
+        except OSError as exc:
+            # The peer went away mid-payload: close this node's row now (the
+            # terminal-event contract) instead of leaving it at its last sample.
+            emit_failed_transfer("upload", served_path, f"delta payload serve failed: {exc}")
+            return
         # Payload fully served: the peer can rebuild the file, so publish the
         # logical transfer — the file size, like the full-file serve — which is
         # what closes the Desktop row and counts the file as sent.

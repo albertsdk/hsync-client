@@ -82,6 +82,7 @@ class TestP2PDeltaApplyHappy:
                 "new_size": len(v2),
                 "block_size": block_size,
                 "compressed": False,
+                "payload_size": len(literals),
                 "ops": [op.to_dict() for op in ops],
             }
             r = _delta_apply(base_url, p2p_bucket, filename, metadata, literals)
@@ -111,6 +112,7 @@ class TestP2PDeltaApplyNegative:
                 "new_size": 1,
                 "block_size": 4096,
                 "compressed": False,
+                "payload_size": 1,
                 "ops": [{"type": "data", "offset": 0, "length": 1, "data_offset": 0}],
             }
 

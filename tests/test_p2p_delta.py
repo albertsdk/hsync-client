@@ -311,7 +311,9 @@ def apply_handler(tmp_path):
     return handler
 
 
-def _valid_metadata(base: bytes, new: bytes, ops: list[dict] | None = None) -> dict:
+def _valid_metadata(
+    base: bytes, new: bytes, ops: list[dict] | None = None, payload_size: int = 0
+) -> dict:
     return {
         "cid": "SlaveCid1234567890abc",
         "base_sha256": sha256(base).hexdigest(),
@@ -319,6 +321,7 @@ def _valid_metadata(base: bytes, new: bytes, ops: list[dict] | None = None) -> d
         "new_size": len(new),
         "block_size": BLOCK,
         "compressed": False,
+        "payload_size": payload_size,
         "ops": ops if ops is not None else [],
     }
 
@@ -360,6 +363,8 @@ class TestApplyValidation:
             ("new_sha256", "not-hex"),
             ("new_size", -1),
             ("new_size", "big"),
+            ("payload_size", -1),
+            ("payload_size", "big"),
         ],
     )
     def test_invalid_metadata_fields_are_400(self, p2p_config, apply_handler, field, value):

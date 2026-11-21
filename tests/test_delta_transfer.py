@@ -242,6 +242,75 @@ class TestUploadDelta:
         # streamed from a file object rather than passed as a bytes body.
         assert calls["post_payload_is_stream"] is True
         assert len(calls["post_payload"]) < len(new) // 3
+        # The wire literal's size travels with the metadata: both ends report
+        # progress on it.
+        assert metadata["payload_size"] == len(calls["post_payload"])
+
+    @pytest.mark.parametrize("p2p_mode", [False, True])
+    def test_the_streamed_delta_upload_reports_its_payload(
+        self, client_config, tmp_path, monkeypatch, p2p_mode
+    ):
+        """The delta body is reported on the sender's own row.
+
+        The delta-apply endpoint has no delivery echo (the receiving master
+        counts the same literal bytes), so without a local reporter the sender's
+        row stays at its planned status for the whole transfer — the Desktop
+        shows "To sync" with no bar. This must hold in both transports.
+        """
+        monkeypatch.setitem(client_config, "P2P_MODE", p2p_mode)
+        base = _base_bytes()
+        new = bytearray(base)
+        new[100:200] = b"Z" * 100
+        new.extend(b"GROW")
+        abs_path = _mk_file(tmp_path, "big.bin", bytes(new))
+        base_hash = sha256(base).hexdigest()
+        _FAKE_BASE_HASHES[abs_path] = base_hash
+
+        server_base = tmp_path / "server-base.bin"
+        server_base.write_bytes(base)
+        sigs = compute_signatures(str(server_base), BLOCK)
+        payloads: list[int] = []
+
+        def fake_get(uri, **kwargs):
+            return _response(
+                200,
+                {
+                    "block_size": BLOCK,
+                    "file_size": len(base),
+                    "sha256": base_hash,
+                    "signatures": [s.to_dict() for s in sigs],
+                },
+            )
+
+        def fake_post(uri, **kwargs):
+            body = kwargs["data"]
+            content_type = kwargs["headers"]["Content-Type"]
+            _fields, payload = _parse_streaming_multipart(body, content_type)
+            payloads.append(len(payload))
+            return _response(
+                200, {"status": "ok", "sha256": sha256(bytes(new)).hexdigest(), "size": len(new)}
+            )
+
+        monkeypatch.setattr(dt, "get", fake_get)
+        monkeypatch.setattr(dt, "post", fake_post)
+        samples: list[dict] = []
+        monkeypatch.setattr(
+            "hsync_client.progress.emit_progress",
+            lambda name, **payload: samples.append(payload),
+        )
+
+        f = File(filepath=abs_path, size=len(new), sha256sum=sha256(bytes(new)).hexdigest())
+        ctx = prepare_delta_upload(f, "big.bin")
+        assert ctx is not None
+        upload_file_delta(f, ctx)
+
+        assert payloads and payloads[0] > 0
+        assert samples, "a delta upload must report in-flight progress"
+        assert all(s["op"] == "upload" for s in samples)
+        assert all(s["file"] == abs_path for s in samples)
+        assert all(s["total"] == payloads[0] for s in samples)
+        # The final sample is flushed when the payload is fully handed over.
+        assert samples[-1]["transferred"] == payloads[0]
 
     def test_signatures_404_is_recoverable(self, client_config, tmp_path, monkeypatch):
         abs_path = _mk_file(tmp_path, "big.bin", _base_bytes())
@@ -725,6 +794,7 @@ class TestP2PDelta:
             "new_size": len(new),
             "block_size": BLOCK,
             "compressed": False,
+            "payload_size": len(literals),
             "ops": [op.to_dict() for op in ops],
         }
         lit = tmp_path / "lit.bin"
@@ -751,6 +821,7 @@ class TestP2PDelta:
             "new_size": len(base) + 1,
             "block_size": BLOCK,
             "compressed": False,
+            "payload_size": 0,
             "ops": [],
         }
         lit = tmp_path / "lit.bin"
