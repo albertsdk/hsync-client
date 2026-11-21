@@ -44,6 +44,7 @@ from loguru import logger as log
 
 from hsync_client.config import CONFIG, deletions_are_kept
 from hsync_client.constants import HSYNCKEEP_FILENAME
+from hsync_client.deletions import covered_by_tree_delete
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.p2p_inventory import NOOP_INVENTORY_OBSERVER, InventoryObserver
 from hsync_client.p2p_sources import P2PSourceResolver
@@ -132,6 +133,12 @@ class EventDispatchContext:
             ``deleted`` events for every descendant; the callback lets the
             caller recognise those echoes as benign (same pattern as the
             inbound-rename echo cache).
+        record_inbound_dir: Optional callback invoked with the confined
+            absolute path of every directory this node *materialised* on behalf
+            of an inbound event. The watcher's ``created`` event for that mkdir
+            lands after the apply returned, so without this record the applying
+            peer would announce the peer's own directory back to it as a local
+            create (and, for a stale event, ratify a resurrection).
         recover_on_missing_rename_src: If ``True`` and a rename's source
             does not exist locally, the destination is materialised
             (downloaded or resynced) instead of being silently dropped.
@@ -148,6 +155,7 @@ class EventDispatchContext:
     unmark_receiving: Callable[[str], None] | None = None
     record_inbound_rename: Callable[[str, str], None] | None = None
     record_inbound_delete: Callable[[str], None] | None = None
+    record_inbound_dir: Callable[[str], None] | None = None
     recover_on_missing_rename_src: bool = False
     dir_dedup: _DirDedup | None = field(default_factory=lambda: _DirDedup())
     inventory_observer: InventoryObserver = NOOP_INVENTORY_OBSERVER
@@ -328,6 +336,15 @@ async def _apply_add_or_modify(
     src: dict, ctx: EventDispatchContext, event_name: object, origin_cid: object = None
 ) -> None:
     """Materialise an added/modified directory or file locally."""
+    # A subtree the serving peer is removing right now is closed to
+    # materialisation: an event landing inside it recreates content the caller
+    # asked to delete, and the removal then fails with ENOTEMPTY (abandoned
+    # half done). Checked here rather than in the dispatcher so every caller is
+    # covered, including the `--subdir` branch that synthesises an add.
+    inside = _path_inside_tree_delete(src)
+    if inside:
+        log.debug(f'{_tag("SKIP")} Inside an in-flight delete: "{inside}"')
+        return
     if "path" in src:
         # Always resolve the absolute local path: it keys the dedup cache
         # consistently with the delete/rename invalidation (which uses the
@@ -364,10 +381,22 @@ async def _apply_add_or_modify(
             # update_dir succeeds: a security-rejected path (symlink escape)
             # returns None and is logged by update_dir itself as [SECURITY],
             # so we must not pre-log it here as [CREATE]/[MODIFY] (misleading).
-            result = await asyncio.to_thread(update_dir, src)
+            #
+            # Only `added` may materialise: a `modified` presupposes the
+            # directory exists, so a stale one (the IN_ATTRIB burst a deletion
+            # emits on every directory it empties) must not bring a removed
+            # tree back.
+            result = await asyncio.to_thread(
+                update_dir, src, create=event_name == EventName.added.value
+            )
         finally:
             if target:
                 _unmark(ctx, target)
+        if result is not None and pre_dir is None and abs_local and ctx.record_inbound_dir:
+            # The watcher's `created` for this mkdir lands after the apply
+            # returned: record it so the creating peer's own directory is not
+            # announced back to it as a local create.
+            ctx.record_inbound_dir(abs_local)
         if result is not None:
             label = "CREATE" if event_name == EventName.added.value else "MODIFY"
             # Already-converged no-op: the directory existed before the apply
@@ -411,6 +440,12 @@ async def _apply_add_or_modify(
         await _update_file_with_echo(ctx, src, target)
 
 
+def _path_inside_tree_delete(payload: dict) -> str | None:
+    """Return the event's local path when it sits inside an in-flight delete."""
+    target = _resolve_local_path(payload, "path" if "path" in payload else "filepath")
+    return target if target and covered_by_tree_delete(target) else None
+
+
 def _resolve_local_path(src: dict, key: str) -> str | None:
     """Return the LOCAL_BUCKET-prefixed path for ``src``, or ``None`` on failure."""
     bucket = CONFIG.get("LOCAL_BUCKET")
@@ -427,6 +462,11 @@ async def _apply_rename(
     """Apply a rename event for either a directory or a file."""
     if not dst:
         log.warning("Rename event missing 'dst' field")
+        return
+
+    destination = _path_inside_tree_delete(dst)
+    if destination:
+        log.debug(f'{_tag("SKIP")} Rename into an in-flight delete: "{destination}"')
         return
 
     if "path" in src:
@@ -635,6 +675,9 @@ async def _apply_symlink(src: dict, ctx: EventDispatchContext, origin_cid: objec
     # symlink to arbitrary local files (e.g. /etc/passwd).
     local = _confined_local(link.filepath, EventName.symlink.value, resolve_final=False)
     if local is None:
+        return
+    if covered_by_tree_delete(local):
+        log.debug(f'{_tag("SKIP")} Symlink inside an in-flight delete: "{local}"')
         return
     target = link.target
     if not target:

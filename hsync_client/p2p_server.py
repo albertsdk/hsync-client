@@ -100,6 +100,7 @@ from hsync_client.compression import (
 )
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNCKEEP_FILENAME, ActionLabel
+from hsync_client.deletions import begin_tree_delete, covered_by_tree_delete, end_tree_delete
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.multipart import (
     _MULTIPART_BOUNDARY_RE,
@@ -542,6 +543,10 @@ else:  # pragma: no cover - runtime shim, never instantiated on its own
 # ``hsync_common.protocol.p2p``), served by the unified listener on the same TLS
 # port as the REST data plane.
 WS_EVENTS_PATH = P2P_WS_EVENTS_PATH
+
+
+class _PathDeletingError(Exception):
+    """An upload targeted a subtree an in-flight recursive delete owns (409)."""
 
 
 @dataclass
@@ -1329,6 +1334,9 @@ class P2PEndpointMixin(_HTTPTransportBase):
             self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
             return
 
+        if self._reject_inside_tree_delete(dst_path):
+            return
+
         # Dangling links are real entries: Path.exists() follows the link and
         # would report a dangling rename source as missing. Recognize both.
         src = Path(src_path)
@@ -1438,8 +1446,6 @@ class P2PEndpointMixin(_HTTPTransportBase):
         if self._reject_duplicate_cid(_first(query, "cid")):
             return
 
-        from shutil import rmtree
-
         rel_path = _first(query, "path")
         is_dir = _first(query, "is_dir", "false").lower() == "true"
 
@@ -1486,7 +1492,16 @@ class P2PEndpointMixin(_HTTPTransportBase):
                 # tree. A file-symlink is structurally a link too.
                 os.remove(full_path)
             elif is_dir:
-                rmtree(full_path, ignore_errors=False)
+                # A recursive delete is authoritative for its whole subtree:
+                # until it completes, no concurrent create/upload/event may
+                # materialise anything inside it (see hsync_client.deletions),
+                # or the rmtree would fail with ENOTEMPTY and leave the tree
+                # half present.
+                begin_tree_delete(full_path)
+                try:
+                    self._rmtree_converging(full_path)
+                finally:
+                    end_tree_delete(full_path)
             else:
                 os.remove(full_path)
                 parent = str(Path(full_path).parent)
@@ -1502,6 +1517,33 @@ class P2PEndpointMixin(_HTTPTransportBase):
         except Exception as e:
             log.error(f"Error deleting {full_path}: {e}")
             self._send_error_response(HTTP_INTERNAL_ERROR, f"Delete error: {e}")
+
+    @staticmethod
+    def _rmtree_converging(full_path: str, attempts: int = 3) -> None:
+        """Remove a tree even when content is written into it mid-removal.
+
+        ``rmtree`` walks depth-first and raises ``ENOTEMPTY`` when an entry
+        appears inside a directory after its children were removed. The
+        in-flight registry keeps new materialisation out, but a writer already
+        past that gate can still land one; the delete is the user's intent, so
+        retry instead of reporting a half-deleted tree as an error.
+        """
+        from shutil import rmtree
+
+        for attempt in range(attempts):
+            try:
+                rmtree(full_path, ignore_errors=False)
+                return
+            except FileNotFoundError:
+                # A concurrent request removed the tree (or part of it) first.
+                return
+            except OSError:
+                if attempt == attempts - 1 or not Path(full_path).exists():
+                    raise
+                log.debug(
+                    f"[TREE-DELETE] Retrying a recursive delete after a concurrent write: "
+                    f'"{full_path}"'
+                )
 
     @staticmethod
     def _ensure_sentinel_in_parent(path: str) -> None:
@@ -1532,6 +1574,22 @@ class P2PEndpointMixin(_HTTPTransportBase):
         if safe_rmdir_if_empty(dir_path):
             log.debug(f'Removed empty directory "{dir_path}"')
 
+    def _reject_inside_tree_delete(self, full_path: str) -> bool:
+        """Refuse to materialise anything inside a subtree being deleted (409).
+
+        A ``DELETE … is_dir=true`` closes its tree for the whole duration of the
+        removal (``hsync_client.deletions``). A concurrent create, upload or
+        rename into it would recreate what the caller asked to remove: the
+        rmtree would then fail with ENOTEMPTY and the deletion would never
+        converge. Refusing is safe — the peer that still holds the content
+        re-offers it on the next reconcile, after the delete finished.
+        """
+        if not covered_by_tree_delete(full_path):
+            return False
+        log.debug(f'[TREE-DELETE] Refused a write inside an in-flight delete: "{full_path}"')
+        self._send_error_response(HTTP_CONFLICT, "Path is being deleted")
+        return True
+
     def _handle_create_dir(self, query: dict) -> None:
         """Handle directory creation from a slave peer.
 
@@ -1554,6 +1612,9 @@ class P2PEndpointMixin(_HTTPTransportBase):
         if resolved is None:
             return
         full_path, local_bucket = resolved
+
+        if self._reject_inside_tree_delete(full_path):
+            return
 
         origin_cid = self._valid_origin(query)
         authenticated = bool(CONFIG.get("P2P_KEY"))
@@ -1654,6 +1715,9 @@ class P2PEndpointMixin(_HTTPTransportBase):
         if resolved is None:
             return
         full_path, local_bucket = resolved
+
+        if self._reject_inside_tree_delete(full_path):
+            return
 
         # The target must stay inside the bucket (an escaping target would
         # plant a symlink to arbitrary local files on the master).
@@ -2321,6 +2385,10 @@ class P2PEndpointMixin(_HTTPTransportBase):
         dest_path_local = resolve_within(local_bucket, rel_dest)
         if dest_path_local is None:
             raise PermissionError("Access denied")
+        if covered_by_tree_delete(dest_path_local):
+            # The destination's tree is being removed right now: writing the
+            # file would resurrect it inside the remove (see _handle_delete).
+            raise _PathDeletingError(dest_path_local)
         Path(dest_path_local).parent.mkdir(parents=True, exist_ok=True)
 
         ctx.dest_path = dest_path_local
@@ -2746,6 +2814,12 @@ class P2PEndpointMixin(_HTTPTransportBase):
             self._send_error_response_safe(HTTP_FORBIDDEN, "Access denied")
             ctx.response_sent = True
             ctx.fail_reason = "access denied"
+        except _PathDeletingError as e:
+            self._discard_temp_artifact(ctx.tmp_path, ctx.out_file, ctx.raw_file)
+            log.debug(f'[TREE-DELETE] Refused an upload inside an in-flight delete: "{e}"')
+            self._send_error_response_safe(HTTP_CONFLICT, "Path is being deleted")
+            ctx.response_sent = True
+            ctx.fail_reason = "path is being deleted"
         except ValueError as e:
             # Malformed upload metadata (e.g. missing size on a compressed
             # upload) or decompressed bytes beyond the declared size.
@@ -2875,6 +2949,11 @@ class P2PEndpointMixin(_HTTPTransportBase):
             # A delta upload is a write: refuse a duplicated device identity.
             cid = form_fields.get("cid", "")
             if self._reject_duplicate_cid(cid):
+                return
+
+            rel = form_fields.get("path", "")
+            dest = resolve_within(CONFIG.get("LOCAL_BUCKET", ""), rel) if rel else None
+            if dest and self._reject_inside_tree_delete(dest):
                 return
 
             handle_delta_apply(self, form_fields, literal_path)

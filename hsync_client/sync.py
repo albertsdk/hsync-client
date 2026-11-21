@@ -3276,7 +3276,7 @@ def _save_conflict_copy(file: File) -> str | None:
         return None
 
 
-def update_dir(data: dict) -> Dir | None:
+def update_dir(data: dict, *, create: bool = True) -> Dir | None:
     """
     Update a local directory based on remote event data.
 
@@ -3285,9 +3285,14 @@ def update_dir(data: dict) -> Dir | None:
 
     Args:
         data: Dictionary with directory metadata from remote event.
+        create: Whether a missing directory may be materialised. Callers pass
+            ``False`` for a ``modified`` event: it presupposes the directory
+            exists, so a stale one (the ``IN_ATTRIB`` burst a deletion emits on
+            each directory it empties) must never bring back a removed tree.
 
     Returns:
-        Dir object representing the local directory, or None if invalid.
+        Dir object representing the local directory, or None if invalid or
+        absent while ``create`` is False.
     """
     # Remote event data is untrusted input: refuse unsafe paths.
     if validate_remote_relpath(str(data.get("path", ""))) is None:
@@ -3313,6 +3318,12 @@ def update_dir(data: dict) -> Dir | None:
             dir.permissions = dir_data.permissions
             set_permissions_on_dir(dir.path, dir.permissions)
     else:
+        if not create:
+            log.debug(
+                f"{ActionLabel.SKIP} Directory absent, not re-created by a modification: "
+                f'"{data.get("path")}"'
+            )
+            return None
         # Directory doesn't exist - create it
         dir = Dir.from_dict(data, CONFIG["LOCAL_BUCKET"])
         if dir.path:

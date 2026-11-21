@@ -407,18 +407,19 @@ class BaseFileEventHandler(FileSystemEventHandler):
         been buffered.  During an inbound delete (applied via ``rmtree``),
         inotify delivers ``IN_ATTRIB`` (modify) *before* ``IN_DELETE_SELF``
         (delete), so the path is not yet buffered.  The descendant check
-        covers this by recognising that a directory whose *children* are
-        pending deletion is itself being emptied by the same recursive delete:
-        any ``IN_ATTRIB`` on it is noise, not a metadata change.
+        covers this by recognising that a directory from which entries are
+        *already* buffered for deletion is itself being emptied by the same
+        recursive delete: any ``IN_ATTRIB`` on it is noise, not a change.
 
         Instead of scanning every pending delete (O(n) per MODIFY event,
         O(n+m) in the worst case), the ancestor path walk is O(depth) ≈ O(1)
         and the descendant prefix check iterates the small set of buffered
-        directory paths (m = number of distinct directories in the coalescing
-        window, bounded by DELETE_COALESCE_WINDOW)."""
+        paths (m items, bounded by DELETE_COALESCE_WINDOW).
+        """
         norm = path.rstrip("/")
         with self._delete_lock:
             dir_paths = self._pending_delete_dir_paths
+            pending_paths = [p.rstrip("/") for p, _ in self._pending_delete_set] + list(dir_paths)
         # Walk ancestors bottom-up: /a/b/c/d → /a/b/c → /a/b → /a
         while True:
             if norm in dir_paths:
@@ -427,11 +428,13 @@ class BaseFileEventHandler(FileSystemEventHandler):
             if idx <= 0:
                 break
             norm = norm[:idx]
-        # Descendant check: if any buffered directory delete starts with this
-        # path + "/", then this path is an ancestor of a pending delete and
-        # its IN_ATTRIB events are noise from the ongoing recursive removal.
+        # Descendant check: if *any* buffered delete — a directory or one of the
+        # files inside it — starts with this path + "/", the path is being
+        # emptied by the same removal and its IN_ATTRIB events are noise. The
+        # file half matters: a recursive delete removes the children first, so a
+        # directory losing its files has no pending entry of its own yet.
         prefix = path.rstrip("/") + "/"
-        return any(d.startswith(prefix) for d in dir_paths)
+        return any(p.startswith(prefix) for p in pending_paths)
 
     @staticmethod
     def _stat_key(st: os.stat_result) -> tuple[int, int, int]:

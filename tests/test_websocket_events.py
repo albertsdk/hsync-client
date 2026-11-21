@@ -70,7 +70,7 @@ class TestProcessWebsocketEvents:
         ):
             with contextlib.suppress(_StopLoop):
                 await _process_remote_events(websocket, "testbucket")
-            mock_update.assert_called_once_with(message["src"])
+            mock_update.assert_called_once_with(message["src"], create=True)
 
     @pytest.mark.asyncio
     async def test_processes_added_file_event(self):
@@ -280,7 +280,7 @@ class TestProcessWebsocketEvents:
         ):
             with contextlib.suppress(_StopLoop):
                 await _process_remote_events(websocket, "testbucket")
-            mock_update.assert_called_once_with(message["src"])
+            mock_update.assert_called_once_with(message["src"], create=False)
 
     @pytest.mark.asyncio
     async def test_processes_modified_file_event(self):
@@ -423,7 +423,7 @@ class TestProcessWebsocketEvents:
 
             # The malformed frame was skipped and the subsequent valid event
             # was still processed: the loop survived.
-            mock_update.assert_called_once_with(message["src"])
+            mock_update.assert_called_once_with(message["src"], create=True)
 
 
 class TestResync:

@@ -462,6 +462,50 @@ class TestSlaveFileEventHandler:
         sentinel = test_dir / ".hsynckeep"
         assert sentinel.exists()
 
+    def test_on_created_announces_a_genuine_directory(self, handler, tmp_path):
+        """A directory the user created here is propagated to the master."""
+        test_dir = tmp_path / "newdir"
+        test_dir.mkdir()
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+            "REMOTE_BUCKET": "test-bucket",
+        }
+
+        with (
+            patch("hsync_client.p2p_websocket.CONFIG", config),
+            patch.object(handler, "_start_operation") as start,
+        ):
+            handler.on_created(DirCreatedEvent(str(test_dir)))
+
+        start.assert_called_once()
+        assert start.call_args.kwargs["target"] == handler._create_dir_on_master
+
+    def test_on_created_does_not_announce_an_applied_directory(self, handler, tmp_path):
+        """Regression: a directory materialised by an inbound event is the
+        master's, so echoing it back must not happen — for a stale directory
+        event that echo is what ratified a deleted tree's resurrection."""
+        test_dir = tmp_path / "newdir"
+        test_dir.mkdir()
+        handler.record_inbound_dir_created(str(test_dir))
+        config = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "SYNC_DIRECTION": "bidirectional",
+            "REMOTE_BUCKET": "test-bucket",
+        }
+
+        with (
+            patch("hsync_client.p2p_websocket.CONFIG", config),
+            patch.object(handler, "_start_operation") as start,
+            patch("hsync_client.p2p_websocket.emit_event") as emit,
+        ):
+            handler.on_created(DirCreatedEvent(str(test_dir)))
+
+        start.assert_not_called()
+        # Local housekeeping still runs: the empty-dir marker and its verdict.
+        assert (test_dir / ".hsynckeep").exists()
+        assert emit.call_args.kwargs == {"path": str(test_dir), "state": "synced"}
+
     def test_on_deleted_download_only_mode(self, handler, tmp_path):
         """Test that deletions are not propagated in download-only mode."""
         test_file = tmp_path / "deleted.txt"
@@ -661,14 +705,40 @@ class TestSlaveFileEventHandler:
             mock_del.assert_called_once()
 
     def test_delete_on_master_failure_status(self, handler):
-        """Test _delete_on_master logs warning on bad status."""
+        """A transient 5xx is retried; a persistent one is reported, not dropped."""
         config = {"LOCAL_BUCKET": "/bucket", "REMOTE_BUCKET": "remote"}
         with (
             patch("hsync_client.p2p_websocket.CONFIG", config),
             patch("hsync_client.utils.http_delete") as mock_del,
+            patch("time.sleep"),
         ):
             mock_del.return_value = MagicMock(status_code=500)
             handler._delete_on_master("/bucket/file.txt")  # no raise
+            assert mock_del.call_count == 3
+
+    def test_delete_on_master_retries_then_succeeds(self, handler):
+        """Regression: one 500 must not abandon the user's deletion."""
+        config = {"LOCAL_BUCKET": "/bucket", "REMOTE_BUCKET": "remote"}
+        with (
+            patch("hsync_client.p2p_websocket.CONFIG", config),
+            patch("hsync_client.utils.http_delete") as mock_del,
+            patch("time.sleep"),
+        ):
+            mock_del.side_effect = [MagicMock(status_code=500), MagicMock(status_code=200)]
+            handler._delete_on_master("/bucket/file.txt", is_dir=True)
+            assert mock_del.call_count == 2
+
+    def test_delete_on_master_does_not_retry_a_client_error(self, handler):
+        """A 4xx is not transient: retrying it would only add latency."""
+        config = {"LOCAL_BUCKET": "/bucket", "REMOTE_BUCKET": "remote"}
+        with (
+            patch("hsync_client.p2p_websocket.CONFIG", config),
+            patch("hsync_client.utils.http_delete") as mock_del,
+            patch("time.sleep"),
+        ):
+            mock_del.return_value = MagicMock(status_code=403)
+            handler._delete_on_master("/bucket/file.txt")
+            assert mock_del.call_count == 1
 
     def test_delete_on_master_exception(self, handler):
         """Test _delete_on_master logs error on exception."""

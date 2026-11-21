@@ -113,6 +113,14 @@ ran is therefore never resurrected or clobbered by the commit; a marker already
 present at the snapshot and left unchanged does not block the commit (the plan
 may legitimately override it, e.g. a peer re-created the file).
 
+**A directory name carries no marker**, so a removed folder is protected by the
+event contract instead of a clock: a `modified` never materialises a directory,
+and a materialising event landing inside an in-flight recursive delete is
+dropped (see [sync-core.md](modules/sync-core.md#event_dispatchpy--apply-inbound-events)).
+The window itself is a transient module-level registry
+(`hsync_client/deletions.py::begin_tree_delete`) that is never persisted: it
+lives exactly as long as the removal it guards.
+
 ## Runtime config models
 
 `HsyncConfig` / `ApiEndpoints` TypedDicts and the global `CONFIG`

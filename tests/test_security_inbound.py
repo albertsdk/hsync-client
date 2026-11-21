@@ -196,10 +196,10 @@ class TestInboundEventPathValidation:
     async def test_duplicate_directory_event_not_relogged(self, tmp_path):
         """Regression: a duplicate added/modified directory burst is not re-logged.
 
-        mkdir on a peer produces several near-identical added/modified
-        directory events ~1ms apart (inotify fires several IN_ATTRIB per
-        operation). The second identical event degrades to the converged
-        no-op DEBUG line (the directory already exists with the same
+        mkdir on a peer produces one ``added`` followed by several
+        near-identical ``modified`` directory events ~1ms apart (inotify fires
+        several IN_ATTRIB per operation). The duplicate degrades to the
+        converged no-op DEBUG line (the directory already exists with the same
         permissions), while a genuine change (different permissions) must
         still be logged at INFO.
         """
@@ -220,18 +220,25 @@ class TestInboundEventPathValidation:
                 patch("hsync_client.event_dispatch.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
                 patch("hsync_client.sync.CONFIG", {"LOCAL_BUCKET": str(tmp_path)}),
             ):
+                # A modification presupposes existence: the create is `added`.
+                added = {"name": "added", "src": {"path": "d", "permissions": "755"}}
+                await apply_inbound_event(added, ctx)  # created + logged
                 event = {"name": "modified", "src": {"path": "d", "permissions": "755"}}
-                await apply_inbound_event(event, ctx)  # first: applied + logged
                 await apply_inbound_event(event, ctx)  # converged echo: suppressed
+                await apply_inbound_event(event, ctx)  # duplicate burst: suppressed
                 # A genuine change (different permissions) must still log.
                 changed = {"name": "modified", "src": {"path": "d", "permissions": "700"}}
                 await apply_inbound_event(changed, ctx)
         finally:
             logger.remove(handler_id)
 
-        info_modify = [m for m in captured if "[REMOTE MODIFY]" in m and "INFO" in m]
-        # exactly two INFO lines: the first apply and the permission change
-        assert len(info_modify) == 2, captured
+        info_lines = [
+            m
+            for m in captured
+            if "INFO" in m and ("[REMOTE CREATE]" in m or "[REMOTE MODIFY]" in m)
+        ]
+        # exactly two INFO lines: the create and the permission change
+        assert len(info_lines) == 2, captured
         assert any("[REMOTE MODIFY]" in m and "Already converged" in m for m in captured)
 
     async def test_dir_dedup_invalidated_on_delete(self, tmp_path):

@@ -1994,6 +1994,7 @@ def _build_p2p_dispatch_ctx(
         unmark_receiving=slave_handler.unmark_receiving if slave_handler else None,
         record_inbound_rename=(slave_handler.record_inbound_rename if slave_handler else None),
         record_inbound_delete=(slave_handler.record_inbound_delete if slave_handler else None),
+        record_inbound_dir=(slave_handler.record_inbound_dir_created if slave_handler else None),
         recover_on_missing_rename_src=False,
         inventory_observer=inventory_observer,
         source_resolver=source_resolver,
@@ -2127,6 +2128,13 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
         # cached directory delete is recognised as a benign echo (same
         # `/`-suffix guard as the rename descendant match).
         self._inbound_deletes: _TtlMap[str] = _TtlMap(10.0)
+        # Track directories this slave just materialised on behalf of an
+        # inbound event. The watcher's `created` for that mkdir arrives after
+        # the apply returned (and after `mark_receiving` was released), so
+        # without this record the slave would announce the master's own
+        # directory back to it as a local create — and a *stale* directory
+        # event would thereby ratify the resurrection of a removed tree.
+        self._applied_dirs: _TtlMap[str] = _TtlMap(10.0)
         # Track pending operations (rename, upload, delete) for graceful
         # shutdown.  Each entry is ``(future, bytes_estimate)`` so that
         # ``wait_pending`` can derive a timeout proportional to the volume
@@ -2184,6 +2192,15 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
         will not match.
         """
         self._inbound_renames.record((src, dst))
+
+    def record_inbound_dir_created(self, path: str) -> None:
+        """Record a directory this slave materialised for an inbound event.
+
+        The watcher's ``created`` for that mkdir lands after the apply released
+        its echo-suppression mark, so ``on_created`` consults this record to
+        skip announcing the peer's own directory back to it.
+        """
+        self._applied_dirs.record(path)
 
     def is_inbound_rename_echo(self, src: str, dst: str) -> bool:
         """Return True if ``(src, dst)`` matches a recent inbound rename.
@@ -2524,17 +2541,42 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
             )
 
     def _delete_on_master(self, filepath: str, is_dir: bool = False) -> None:
-        """Notify master about a file/directory deletion."""
+        """Notify master about a file/directory deletion.
+
+        A 5xx is transient by contract (the master could not complete the
+        removal — e.g. content appeared inside a tree it was removing), so it
+        is retried a bounded number of times instead of dropping the user's
+        deletion: one lost DELETE leaves the two sides diverged until the next
+        reconcile, which then re-downloads what should have been removed.
+        """
+        from time import sleep
+
         from hsync_client.utils import http_delete
 
+        attempts = 3
         try:
             params = self._master_params(
                 path=self._rel_in_bucket(filepath), is_dir=str(is_dir).lower()
             )
             log.info(f'{ActionLabel.LOCAL_DELETE} "{filepath}"')
-            response = self._call_master(http_delete, REST_FILES_SUFFIX, params)
-            if response.status_code not in (200, 204, 404):
-                log.warning(f"Delete request failed: {response.status_code}")
+            for attempt in range(attempts):
+                response = self._call_master(http_delete, REST_FILES_SUFFIX, params)
+                if response.status_code in (200, 204, 404):
+                    return
+                transient = response.status_code >= 500
+                if not transient or attempt == attempts - 1:
+                    level = "ERROR" if transient else "WARNING"
+                    log.log(
+                        level,
+                        f"Delete request failed: {response.status_code}"
+                        + (f" (gave up after {attempts} attempts)" if transient else ""),
+                    )
+                    return
+                log.debug(
+                    f"Delete request failed: {response.status_code}, retrying "
+                    f'({attempt + 1}/{attempts}): "{filepath}"'
+                )
+                sleep(0.2 * (attempt + 1))
         except Exception as e:
             log.error(f"Failed to delete on master: {e}")
 
@@ -2575,13 +2617,21 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
             # Create a .hsynckeep sentinel so the empty directory is
             # synced to the master.  The watchdog will pick up the new
             # file and trigger an upload via on_closed / on_modified.
-            log.debug(f'{ActionLabel.LOCAL_CREATE} "{src_path}" (dir)')
             # A subdirectory is content for its parent, exactly as a file is: a
             # marker the parent still carries from a momentary emptiness is stale.
             from hsync_client.sync import prune_parent_sentinel
 
             prune_parent_sentinel(src_path, label=ActionLabel.LOCAL_KEEP)
             self._ensure_sentinel(src_path)
+            if self._applied_dirs.get_live(src_path):
+                # Materialised by an inbound event a moment ago: the master
+                # owns this directory, and announcing it back would report a
+                # create nobody asked for — for a stale event, the very
+                # creation that ratifies a resurrection.
+                log.debug(f'{ActionLabel.SKIP} Applied directory, not announced: "{src_path}"')
+                emit_event(UiEventName.dir_status, path=src_path, state="synced")
+                return
+            log.debug(f'{ActionLabel.LOCAL_CREATE} "{src_path}" (dir)')
             # Notify the master to create the directory (and any missing
             # parents) so it is propagated to other slaves.  The sentinel
             # upload is skipped by _handle_file_upload, so the directory

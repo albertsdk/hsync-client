@@ -535,6 +535,26 @@ Path resolution: `_resolve_local_path` (`hsync_client/event_dispatch.py::_resolv
 so consumers that read the destination from the filesystem (e.g. the desktop's
 modified-date column) never observe a transiently missing file.
 
+Two rules keep a directory event from resurrecting a removed tree, and they are
+the receiver's guarantee (the sender cannot provide it: an encrypted `$HOME`
+delivers the `IN_ATTRIB` of a move-out while the vacated path is still
+`stat`-able):
+
+- **A `modified` never materialises a directory.** `update_dir`
+  (`hsync_client/sync.py::update_dir`) takes `create=`, which the directory
+  branch of `_apply_add_or_modify` passes only for `added`. A `modified` for an
+  absent directory is a DEBUG skip: the metadata burst a deletion emits on every
+  directory it empties must not recreate the tree.
+- **An in-flight recursive delete owns its subtree.** Every materialising event
+  (`added`/`modified`/`symlink`, plus a rename's destination) is dropped when it
+  lands inside a tree an open `delete` window owns
+  (`hsync_client/deletions.py::covered_by_tree_delete`).
+
+A directory this node materialised is reported through
+`EventDispatchContext.record_inbound_dir`
+(`hsync_client/event_dispatch.py::EventDispatchContext`), so the watcher does not
+announce it back to the peer that owns it.
+
 Each event is applied to completion by the dispatcher: the `added`/`modified` file
 branch awaits `update_file` on a worker thread with the **mark/unmark** echo
 suppression bracketing the write. Scheduling, per-path ordering and the

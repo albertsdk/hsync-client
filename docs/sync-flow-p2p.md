@@ -93,12 +93,33 @@ one" applies it as a local move, so no peer downloads the file either. The
 master's watcher records the vacated path's deletion marker and its version
 store carries the clock to the new path — a rename is not a content edit.
 
-## 6. Periodic Resync
+## 6. Deleting a folder
+
+Removing a folder on one peer removes it everywhere, and the removal is
+**authoritative**: a recursive delete outranks anything that would recreate
+content inside the tree while it is being removed.
+
+Two consequences a user observes:
+
+- **The folder stays deleted.** A peer that is told to delete a tree closes that
+  subtree until the removal completes, so a concurrent create, upload or
+  directory event cannot land inside it and leave the tree half present.
+- **A folder is never re-created by a mere modification.** A directory
+  "modified" event means *this directory changed*, never *create this
+  directory*: a delayed metadata event from a folder that was just removed
+  cannot bring it back. Only a real create (a directory event announcing a new
+  folder) materialises one, and the reconcile recovers a lost create.
+
+Moving a folder to the system trash counts as a deletion (the folder leaves the
+synced tree), so a folder restored from the trash is a new creation on every
+peer.
+
+## 7. Periodic Resync
 
 As a safety net against missed inotify events, the slave runs a full resync at
 the configured `HSYNC_RESYNC` interval.
 
-## 7. Conflict Handling
+## 8. Conflict Handling
 
 The master is a **transport hub, not an authority**: it serves bytes and
 relays events but never decides conflicts by role. Every peer applies the same
