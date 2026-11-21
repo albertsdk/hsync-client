@@ -107,6 +107,7 @@ from hsync_client.multipart import (
     _StreamingMultipartParser,
 )
 from hsync_client.net_utils import normalize_peer_ip
+from hsync_client.p2p_link import note_master_datapath_activity
 from hsync_client.progress import (
     ProgressReporter,
     ProgressWriter,
@@ -783,6 +784,13 @@ class P2PEndpointMixin(_HTTPTransportBase):
         """Handle GET requests."""
         if not self._check_auth():
             return
+        # An authorized peer request is a live link *for the serving role*: the
+        # master reports "connected" from here on, even before that peer's
+        # control WebSocket is up (see ``hsync_client/p2p_link.py``). A seeder
+        # keeps its own link status (the one of its master session), so serving a
+        # download from it must not claim one.
+        if not self._is_seeder():
+            note_master_datapath_activity()
 
         parsed = urlparse(self.path)
         path = parsed.path
@@ -886,6 +894,9 @@ class P2PEndpointMixin(_HTTPTransportBase):
         if self._is_seeder():
             self._send_method_not_allowed()
             return
+        # Same evidence as GET: a peer posting to the serving port is using the
+        # data plane, so the link is live whether or not its socket is up yet.
+        note_master_datapath_activity()
         parsed = urlparse(self.path)
         path = parsed.path
 

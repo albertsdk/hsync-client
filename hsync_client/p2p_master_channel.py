@@ -11,6 +11,7 @@ events and ``_MasterChannel`` (the master's stdin command loop) extracted from
 import threading
 
 from hsync_client.master_status import MasterSyncStatus
+from hsync_client.p2p_link import master_link_status
 from hsync_client.p2p_peers import PeerManager
 from hsync_client.p2p_server import P2PServer
 from hsync_client.p2p_websocket import P2PWebSocketServer
@@ -19,13 +20,15 @@ from hsync_client.stdin_commands import StdinCommandHandler
 
 
 def _p2p_status(connected_clients: int) -> str:
-    """p2p link status: an active peer connection is required to be "connected".
+    """p2p link status: an active peer is required to be "connected".
 
-    A serving master with no connected slave is ``waiting`` for a device, not a
-    live link (so the status bar stays honest and no "connection lost" fires when
-    nobody was ever connected).
+    A live WebSocket client counts, and so does a peer that used the data plane
+    within ``MASTER_LINK_HOLD_SECONDS``: a slave syncs over HTTPS before it opens
+    its socket (and after every reconnect), so a serving master must not report
+    "waiting" — which the front-end shows as a lost link — while it is plainly
+    serving a peer. A master nobody talks to stays ``waiting`` for a device.
     """
-    return "connected" if connected_clients > 0 else "waiting"
+    return master_link_status(connected_clients)
 
 
 def _emit_master_presence(count: int, peer_manager: "PeerManager") -> None:

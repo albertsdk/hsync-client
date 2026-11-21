@@ -24,6 +24,21 @@ from .p2p_helpers import (  # noqa: F401
 
 
 @pytest.fixture(autouse=True)
+def _reset_p2p_link_activity():
+    """Give every test a fresh serving-master link stamp (test isolation).
+
+    ``hsync_client.p2p_link`` holds the data-plane evidence process-wide: a test
+    that runs a serving server must not leave a "connected" verdict behind for
+    the next test's link-status assertions.
+    """
+    from hsync_client import p2p_link
+
+    p2p_link.reset_master_datapath_activity()
+    yield
+    p2p_link.reset_master_datapath_activity()
+
+
+@pytest.fixture(autouse=True)
 def _reset_realtime_pools():
     """Give every test a fresh realtime/transfer pool (test isolation).
 

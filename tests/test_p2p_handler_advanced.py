@@ -1467,6 +1467,8 @@ class TestMasterElection:
 
         mock_p2p_server = MagicMock()
         mock_ws_server = MagicMock()
+        # The serving status reads the live client count on every re-entry.
+        mock_ws_server.connected_clients = 0
 
         with (
             patch("hsync_client.p2p_rendezvous_mdns.MdnsRendezvous", return_value=mock_p2p_sync),
@@ -1607,6 +1609,29 @@ class TestP2PStatus:
 
         assert _p2p_status(1) == "connected"
         assert _p2p_status(3) == "connected"
+
+    def test_a_master_serving_a_slave_before_its_socket_is_connected(self):
+        """The data plane is the link too: no WS client, but a peer is using it.
+
+        A slave syncs over HTTPS before it opens its control WebSocket (and tears
+        that socket down on every reconnect), so keying the master's status on
+        the socket alone reported "waiting" — a lost link, in the front-end —
+        for the whole sync.
+        """
+        import time
+
+        from hsync_client import p2p_link
+        from hsync_client.p2p_handler import _p2p_status
+
+        now = time.monotonic()
+        with patch("hsync_client.p2p_link.set_link_status"):
+            p2p_link.note_master_datapath_activity(now=now)
+
+        # ``_p2p_status`` reads the real clock, which is ~now.
+        assert _p2p_status(0) == "connected"
+        # The hold expires: a master nobody talks to waits for a device again.
+        expired = now + p2p_link.MASTER_LINK_HOLD_SECONDS + 1
+        assert p2p_link.master_link_status(0, now=expired) == "waiting"
 
 
 class TestEmitMasterPresence:

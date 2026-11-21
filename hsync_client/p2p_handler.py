@@ -338,6 +338,11 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
 
                 p2p_sync.set_connected_clients_provider(ws_connected_count)
                 p2p_ws_server.set_clients_changed_callback(on_clients_changed)
+                # Re-evaluate on every re-entry (the loop re-enters ~1/s once the
+                # serving stint yields): the data-plane hold expires on its own,
+                # so this is what returns a master nobody is talking to to
+                # "waiting for a device" instead of leaving it "connected".
+                set_link_status(_p2p_status(p2p_ws_server.connected_clients))
 
                 p2p_server, p2p_ws_server = _run_as_master(
                     config=config,
@@ -841,14 +846,16 @@ def _run_as_slave(
 
                 def _credit_master() -> None:
                     # The preview-confirm flow's first real sync uses the HTTPS
-                    # data plane: credit the master for presence now (the
-                    # WebSocket opens only after this sync), exactly like the
-                    # direct initial-sync branch below.
+                    # data plane: credit the master for presence and publish the
+                    # link now (the WebSocket opens only after this sync),
+                    # exactly like the direct initial-sync branch below.
                     peer_manager.mark_peer_connected(master.cid)
                     _emit_slave_presence(peer_manager)
+                    set_link_status("connected")
 
                 def _clear_master_credit() -> None:
                     peer_manager.mark_peer_disconnected(master.cid)
+                    set_link_status("connecting")
 
                 applied = run(
                     _run_stdin_wait(
@@ -886,6 +893,12 @@ def _run_as_slave(
             # count — only come up afterwards). Cleared again if the sync fails.
             peer_manager.mark_peer_connected(master.cid)
             _emit_slave_presence(peer_manager)
+            # The link is the data plane: publish it as connected at the same
+            # point, or a long first sync (and every resync after a reconnect)
+            # leaves the front-end on "Connecting…" with no master/slave role
+            # while the transfer is running. The WebSocket handshake below
+            # re-publishes the same state (the publisher dedupes repeats).
+            set_link_status("connected")
 
             def _peer_directions() -> list[tuple[str, str]]:
                 """Every other device in the group and the direction it advertises.
@@ -929,6 +942,10 @@ def _run_as_slave(
                 # the master going offline mid-sync) and re-enter the rendezvous
                 # loop so the master is re-detected or a new one is elected.
                 peer_manager.mark_peer_disconnected(master.cid)
+                # The link that was just published as connected is gone: back to
+                # the pre-connection state, not "waiting" (which the front-end
+                # reports as a lost link and notifies).
+                set_link_status("connecting")
                 if (not one_shot) or wait_indefinitely_for_peer:
                     return True, int(ExitCode.OK)
                 return False, int(ExitCode.FATAL)
@@ -937,6 +954,7 @@ def _run_as_slave(
                 # retryable condition, even in continuous mode: surface it as a
                 # fatal exit instead of looping forever.
                 peer_manager.mark_peer_disconnected(master.cid)
+                set_link_status("connecting")
                 return False, int(ExitCode.FATAL)
             if isinstance(result, SyncCycleResult):
                 exit_code = exit_code_for_result(

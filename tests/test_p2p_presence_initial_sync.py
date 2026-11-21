@@ -105,3 +105,47 @@ def test_failed_initial_sync_clears_the_credit(monkeypatch):
     assert seen["connected_during_sync"] is True
     assert pm.is_wss_connected(MASTER) is False
     assert result == (False, 1)  # ExitCode.FATAL
+
+
+def test_the_link_is_published_before_the_websocket(monkeypatch):
+    """The HTTPS data plane *is* the link, so the status must say so at once.
+
+    The control WebSocket opens only after the initial sync. A slave that
+    waited for it showed "Connecting…" — and no master/slave role, which the
+    front-end toggles on the connected state — for the whole first transfer,
+    while the master was actually serving it.
+    """
+    pm = _manager()
+    seen: dict[str, list[str]] = {}
+    records: list[tuple[int, int]] = []
+    statuses: list[str] = []
+
+    async def fake_sync(**kwargs):
+        seen["during_sync"] = list(statuses)
+        return None
+
+    _patch_plumbing(monkeypatch, fake_sync, records)
+    monkeypatch.setattr(handler, "set_link_status", statuses.append)
+
+    assert _run_as_slave(_config(), _Log(), one_shot=True, peer_manager=pm) == (False, 0)
+    assert seen["during_sync"] == ["connected"]
+
+
+def test_a_failed_sync_returns_to_connecting(monkeypatch):
+    """A link published for the sync is retracted when the sync fails.
+
+    ``waiting`` would make the front-end report (and notify) a lost link, so the
+    retry state is the pre-connection one.
+    """
+    pm = _manager()
+    records: list[tuple[int, int]] = []
+    statuses: list[str] = []
+
+    async def failing_sync(**kwargs):
+        raise handler.NetworkError("master offline")
+
+    _patch_plumbing(monkeypatch, failing_sync, records)
+    monkeypatch.setattr(handler, "set_link_status", statuses.append)
+
+    assert _run_as_slave(_config(), _Log(), one_shot=True, peer_manager=pm) == (False, 1)
+    assert statuses == ["connected", "connecting"]

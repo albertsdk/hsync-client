@@ -155,5 +155,42 @@ class TestMasterProgressEvents:
             ]
             assert [e["op"] for e in slave_transfers] == ["upload"]
             assert [e["size"] for e in slave_transfers] == [len(pushed)]
+
+            # The slave must be "connected" *while* it syncs, not only once its
+            # control WebSocket comes up after the initial sync: the link is the
+            # HTTPS data plane, and waiting for the socket left a long first
+            # transfer showing "Connecting…" with no role.
+            status_idx = next(
+                i
+                for i, e in enumerate(slave_events)
+                if e.get("event") == "status" and e.get("status") == "connected"
+            )
+            terminal_idx = next(
+                i
+                for i, e in enumerate(slave_events)
+                if e.get("event") == "transfer" and e.get("file", "").endswith("pushed.bin")
+            )
+            assert status_idx < terminal_idx, (slave_events[status_idx], terminal_idx)
+
+            # The serving side must report the same link, and for the same
+            # reason: the slave has not opened its control WebSocket yet, so the
+            # HTTPS requests are the only evidence the master has a peer.
+            master_events = _events(events_path)
+            master_status_idx = next(
+                i
+                for i, e in enumerate(master_events)
+                if e.get("event") == "status" and e.get("status") == "connected"
+            )
+            master_terminal_idx = next(
+                i
+                for i, e in enumerate(master_events)
+                if e.get("event") == "transfer"
+                and e.get("op") == "download"
+                and e.get("file", "").endswith("pushed.bin")
+            )
+            assert master_status_idx < master_terminal_idx, (
+                master_events[master_status_idx],
+                master_terminal_idx,
+            )
         finally:
             _terminate(master)

@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The p2p link status follows the data plane: a slave reports `connected` while
+  it syncs (before its control WebSocket opens, and after every reconnect), and
+  a serving master reports it while a peer uses its data plane, so a long first
+  sync or resync no longer shows "Connecting…" (a lost link, in the desktop)
+  with no master/slave role.
 - The sending peer always reports transfer progress now: the delta upload
   streams its literal payload with its own samples, and a p2p upload no longer
   depends on the receiver's delivery echo (the control WebSocket opens only after
