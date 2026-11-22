@@ -294,6 +294,10 @@ so nothing is lost.
   its error right after a successful probe.
 - A clock step (a manual change, a suspended VM, a late time-daemon correction)
   revokes trust immediately; the next `[CLOCK SYNC]` re-establishes it.
+- While the clock is untrusted the device publishes no modification time at all
+  (peers record it as unknown), so a wrong clock cannot leave a lasting bias in
+  the shared history once it recovers.
+
 
 ## The master changed after a network partition
 

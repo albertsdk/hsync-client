@@ -22,7 +22,7 @@ import os
 import threading
 from pathlib import Path
 
-from hsync_common.clock import correct_mtime
+from hsync_common.clock import correct_mtime, offset_store
 from hsync_common.constants import MTIME_PROPAGATION_TOLERANCE_SECONDS
 from hsync_common.models.file import File
 from hsync_common.models.tombstone import relpath_in_bucket
@@ -142,7 +142,16 @@ def flush() -> None:
 
 
 def _corrected_mtime_of(abs_path: str) -> int:
-    """Corrected mtime of the file on disk, or 0 when unreadable/absent."""
+    """Corrected mtime of the file on disk, or 0 when unreadable/absent/untrusted.
+
+    A host that cannot vouch for its clock publishes **no** timestamp: the value
+    would be stored by every peer and would compete again in the tie-break once
+    the clock recovered, so "unknown" is the honest claim and the only one that
+    keeps a stale or stepped clock out of the mesh's recorded history
+    (ADR-0055). Consumers: the self-record and the advertised version.
+    """
+    if not offset_store.is_trusted():
+        return 0
     try:
         return correct_mtime(int(os.stat(abs_path).st_mtime))
     except OSError:
