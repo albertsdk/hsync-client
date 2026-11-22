@@ -11,6 +11,7 @@ and skips when the sibling rendezvous is not built.
 """
 
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,7 @@ from .p2p_helpers import (
     _p2p_start,
     _rendezvous_start,
     _reserve_udp_port,
+    _stderr_text,
     _stop_rendezvous,
     _terminate,
     _wait_for_file,
@@ -192,3 +194,80 @@ class TestRdvRendezvousNat:
         finally:
             mapper.unmap()
         assert mapper.active is False
+
+
+class TestMovedMasterEndpoint:
+    """A master that restarts on a new port must be re-dialed, not spun on."""
+
+    @staticmethod
+    def _tail(proc, offset: int) -> str:
+        return _stderr_text(proc)[offset:]
+
+    @classmethod
+    def _wait_for_tail_text(cls, proc, text: str, offset: int, timeout: float = 120.0) -> bool:
+        """Wait for *text* to appear **after** *offset* (a fresh occurrence)."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if text in cls._tail(proc, offset):
+                return True
+            if proc.poll() is not None:
+                return False
+            time.sleep(0.5)
+        return False
+
+    def test_a_dead_endpoint_does_not_spin_the_loop_and_the_move_is_followed(
+        self, p2p_master_dir, p2p_slave_dir, p2p_bucket, tmp_path
+    ):
+        """The reported "stuck on waiting" case, at the layer that caused it.
+
+        The master restarts (a desktop Stop/Start) and comes back on a new
+        ephemeral port. The slave's peer record still holds the dead one, so
+        every dial is refused: the loop must request a fresh sample and pause
+        between attempts (``RECONNECT_DELAY``) instead of iterating at CPU
+        speed, and it must follow the moved endpoint.
+        """
+        rendezvous_port = _reserve_udp_port()
+        ready_file = tmp_path / "rendezvous.ready"
+        try:
+            rendezvous = _rendezvous_start(rendezvous_port, ready_file)
+        except FileNotFoundError:
+            pytest.skip("hsync-rendezvous is not built (sibling repo venv missing)")
+        args = (
+            "--no-mdns",
+            "--rendezvous-server",
+            f"127.0.0.1:{rendezvous_port}",
+            "--insecure",
+        )
+        try:
+            assert _wait_for_rendezvous(rendezvous, ready_file), "rendezvous did not become ready"
+            master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True, extra_args=args)
+            try:
+                slave = _p2p_start(p2p_slave_dir, p2p_bucket, never_master=True, extra_args=args)
+                try:
+                    assert _wait_for_text_in_stderr(slave, "[READY]", timeout=120), (
+                        "the slave never linked to the first master\n" + _stderr_text(slave)
+                    )
+                    offset = len(_stderr_text(slave))
+                    _terminate(master)
+                    time.sleep(2)
+                    master = _p2p_start(
+                        p2p_master_dir, p2p_bucket, prefer_master=True, extra_args=args
+                    )
+                    # A handful of refusals is expected; one every ~10 ms is the
+                    # busy loop this test exists for.
+                    time.sleep(10)
+                    refusals = self._tail(slave, offset).count("No reachable endpoint for master")
+                    assert refusals <= 12, (
+                        f"the retry loop spun: {refusals} refusals in 10 s\n"
+                        + self._tail(slave, offset)[:4000]
+                    )
+                    assert self._wait_for_tail_text(slave, "Connecting to master", offset, 120), (
+                        "the slave never re-dialed the moved master\n"
+                        + self._tail(slave, offset)[-4000:]
+                    )
+                finally:
+                    _terminate(slave)
+            finally:
+                _terminate(master)
+        finally:
+            _stop_rendezvous(rendezvous)

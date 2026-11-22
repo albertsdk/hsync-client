@@ -2754,7 +2754,19 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
         self._send_json_response(
             HTTP_CREATED,
-            {"info": "File uploaded successfully", "file": dest_path},
+            {
+                "info": "File uploaded successfully",
+                "file": dest_path,
+                # Mirror the server's 201 body (ADR-0023): the uploader records
+                # this clock as its merge base. Without it a peer's base after an
+                # upload carries only its own clock, so a later deletion marker is
+                # concurrent with the version stored here and the file is
+                # re-downloaded instead of deleted.
+                "version": {
+                    "vclock": arb.record_vclock,
+                    "corrected_mtime": arb.record_corrected_mtime,
+                },
+            },
         )
         ctx.response_sent = True
 

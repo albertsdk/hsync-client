@@ -48,6 +48,7 @@ from hsync_common.models.version import (
     SyncDecision,
     VClockOrder,
     compare_vclocks,
+    merge_vclocks,
     parse_version_info,
     resolve_three_way,
 )
@@ -606,11 +607,24 @@ def _collect_listings(
     return local_files, remote_files
 
 
-def _reconcile_tombstones() -> tuple[list[str], dict[str, dict]]:
+def _reconcile_tombstones(
+    remote_files: list[dict] | None = None,
+) -> tuple[list[str], dict[str, dict]]:
     """Merge remote deletion markers, mint offline-deletion markers, push the union.
 
     Returns the ignore-agnostic on-disk path snapshot (used by merge-base
     retention) and the merged marker payload the reconciliation consumes.
+
+    ``remote_files`` is the cycle's remote listing. It lets the offline-deletion
+    mint inherit the clock of the very version this peer deleted: when the peer
+    still advertises the path with **the same content hash as the merge base**,
+    the remote copy is provably the version the deletion descends from, so the
+    marker may carry that clock and dominate it (ADR-0003). This only applies to
+    a base that records **no foreign component** (the defect case: the base was
+    written before the peer's clock was known); a base that already knows the
+    peer is never re-interpreted, and a remote copy that changed keeps the
+    marker's own clock — the peer's newer content wins (add-wins), so a fresh
+    edit is never deleted by a stale marker.
     """
     tombstones = get_tombstones_remote()
 
@@ -664,13 +678,36 @@ def _reconcile_tombstones() -> tuple[list[str], dict[str, dict]]:
     # ``existing_keys`` is computed right before this loop, so it reflects the
     # live filesystem at mint time.
     minted = False
+    # Clock and content the peer still advertises per hashed key: a deleted path
+    # whose remote copy is byte-identical to the merge base is provably the
+    # version the deletion descends from (see the docstring).
+    remote_clock_by_key: dict[str, dict[str, int]] = {}
+    remote_hash_by_key: dict[str, str] = {}
+    for info in remote_files or []:
+        rel = _raw_entry_relpath(info, CONFIG["LOCAL_BUCKET"])
+        sha = str(info.get("sha256sum") or "")
+        if not rel or not sha:
+            continue
+        remote_hash_by_key[tombstone_key(rel)] = sha
+        clock, _corrected = _parse_advertised_version(info.get("version"))
+        if clock:
+            remote_clock_by_key[tombstone_key(rel)] = clock
     # Collect only the deletions first (usually a handful): the previous
     # ``list(iter_merge_bases())`` materialised every merge base as an extra
     # O(N) list on top of the store's own snapshot.
+    local_cid = str(CONFIG.get("CID") or "")
     offline_deletions: list[tuple[str, str, dict[str, int]]] = []
     for key, base_hash, vclock in sync_state.iter_merge_bases():
-        if key and key not in existing_keys:
-            offline_deletions.append((key, base_hash, vclock))
+        if not key or key in existing_keys:
+            continue
+        inherited = vclock
+        if (
+            base_hash
+            and remote_hash_by_key.get(key) == base_hash
+            and (not local_cid or set(vclock) <= {local_cid})
+        ):
+            inherited = merge_vclocks(inherited, remote_clock_by_key.get(key))
+        offline_deletions.append((key, base_hash, inherited))
 
     from hsync_client.tombstones import record_deletion_by_key
 
@@ -1402,7 +1439,7 @@ async def sync(
         local_files, remote_files = _collect_listings(inventory_observer)
         local_files, remote_files = _drop_case_collisions(local_files, remote_files)
 
-        existing_paths, tombstones = _reconcile_tombstones()
+        existing_paths, tombstones = _reconcile_tombstones(remote_files)
 
         # Determine what actions need to be taken
         sync_actions = get_sync_actions(

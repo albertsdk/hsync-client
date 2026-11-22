@@ -134,6 +134,15 @@ line; it fires only after every direct candidate failed and is deduped per maste
 so the rendezvous loop's retries do not repeat it. The structured counterpart goes
 through `hsync_client/events.py::emit_warning`, which the desktop surfaces as a banner.
 
+A failed endpoint selection never re-enters the loop unthrottled: the branch pulls
+a fresh rendezvous sample (`RendezvousPlan.request_sample`, so a master that
+restarted on a new ephemeral port is learned at once) and pauses
+`hsync_client/p2p_handler.py::_endpoint_retry_delay` (`RECONNECT_DELAY`, clamped
+to `[1, 30]`) before returning to the rendezvous loop. Without both halves the
+loop ran one iteration per ~10 ms against the dead endpoint, saturating the log
+and starving the retry that would have used the new address; the recovery is
+covered by `tests/test_bb_p2p_rendezvous_rdv.py::TestMovedMasterEndpoint`.
+
 Serving side, the master's relay listener survives the node dropping it. A
 relayed slave is seen by the master as `127.0.0.1` (the acceptor demultiplexes the
 relayed stream onto the local data plane over loopback, opening a local
@@ -548,7 +557,7 @@ matrix on the wire data.
 | `_handle_create_dir` parent marking | `hsync_client/p2p_server.py::_handle_create_dir` | `mkdir(parents=True)` also creates every missing ancestor of the requested path, and the master's recursive watcher fires a create event for each. `_handle_create_dir` marks **every missing ancestor inside the bucket** (plus the leaf, only when it does not already exist) with `mark_inbound_origin` before the mkdir, so those synthetic create events carry the slave's CID: without it they would be logged/broadcast as local creates and the slave could never echo-suppress them (`[REMOTE CREATE]` lines on the slave side).  Ancestors above the bucket root are never candidates. After the mkdir it also creates the empty-dir sentinel (`ensure_sentinel`) — a master runs no sync cycle, so nothing else would — and emits `dir_status` `synced` for the directory: this request path is the only apply a master performs, and the peers' empty-directory verdict matches that sentinel identity |
 | `_StreamingMultipartParser` | `hsync_client/multipart.py::_StreamingMultipartParser` | streaming upload parsing (extracted to `multipart.py`) |
 | `_handle_upload_status` | `hsync_client/p2p_server.py::_handle_upload_status` | `GET /files/upload-status` — reports `.part` size for resume (mirrors central server `get_upload_status`); returns `complete`/`resumable`/`new` + offset |
-| `_handle_upload` (offset) | `hsync_client/p2p_server.py::_handle_upload` | resumable upload: `offset > 0` appends to `.part` in `"ab"` mode (size validated); incomplete uploads return `202` with the new offset; compressed + offset rejected. The handler is an orchestrator over `_admit_upload` (413 space gate), `_open_upload_destination` (untrusted-path resolution + writer setup), `_close_upload_stream` (zstd flush + fsync), `_maybe_partial_upload_response` (202) and `_finalize_upload` (arbitration + conflict copies + commit + sync-state record + terminal event) |
+| `_handle_upload` (offset) | `hsync_client/p2p_server.py::_handle_upload` | resumable upload: `offset > 0` appends to `.part` in `"ab"` mode (size validated); incomplete uploads return `202` with the new offset; compressed + offset rejected. The handler is an orchestrator over `_admit_upload` (413 space gate), `_open_upload_destination` (untrusted-path resolution + writer setup), `_close_upload_stream` (zstd flush + fsync), `_maybe_partial_upload_response` (202) and `_finalize_upload` (arbitration + conflict copies + commit + sync-state record + terminal event). The `201` body carries `version` (`vclock` + `corrected_mtime`, mirroring the FastAPI server) so the uploader records the accepted clock as its merge base (`hsync_client/transfer.py::_record_201_upload`) instead of only its own |
 | safe download serving | `P2PEndpointMixin._handle_download` / `_serve_open_file` | opens beneath the bucket with component-by-component `O_NOFOLLOW`, hashes and streams the same descriptor, checks identity/size during transfer, emits canonical `X-Checksum-SHA256`, and treats `Content-Length` as wire bytes. Zstd is selected only after explicit negotiation and is staged in a bounded temporary file; ranges are always identity. A bounded checksum cache (512 entries, keyed `(st_dev, st_ino, st_size, st_mtime_ns, st_ctime_ns)`, invalidated via the same `_same_open_file` identity checks) collapses the 2–3 disk passes per download to one pass + send |
 | `_CappedBytesWriter` | `hsync_client/multipart.py::_CappedBytesWriter` | abort uploads whose bytes exceed the effective cap — min(declared size, `MAX_INBOUND_SIZE`) — (decompression-bomb containment) |
 | `p2p_delta.py` | `p2p_delta.py` | the four delta endpoints of the embedded master (`GET/POST /files/delta/signatures`, `POST /files/delta/apply`, `GET /files/delta/data`) as thin shells over `hsync_common.delta` (wire shapes, paths and status codes identical to the FastAPI server, pinned by cross-mode fixtures); signature matching runs under its own sub-semaphore (4) so CPU-bound work cannot occupy the global thread cap. Literal payloads are parked in ONE process-scoped temp dir (`hsync-delta-lan-*`, outside `LOCAL_BUCKET` so the sync engine never sees them) and reached only through tokens (single use; shared registry `hsync-common/hsync_common/delta/token_store.py::DeltaTokenStore`, TTL `hsync-common/hsync_common/constants.py::DELTA_TOKEN_TTL`, max 100 live); the dir is removed at interpreter exit by the `atexit` hook `_discard_payload_dir`. **A new process-scoped temp dir must register the same cleanup** — an unregistered one leaks a directory per run, and `tests/test_p2p_delta.py::TestTokenStore::test_process_scoped_temp_dirs_register_their_cleanup` fails as soon as one appears. `POST /files/delta/apply` resolves its target through the shared `_resolve_servable` gate, so an empty/absent `path` is 400 "Missing path parameter" like the other LAN file endpoints, and re-validates the destination right before the final move (`destination_mutation_since`, see data-models.md): the base-sha race check covers a *changed* base, this covers a base *removed or replaced* during the apply, answered 409 `destination_changed` |
@@ -705,8 +714,8 @@ The reconcile action `transfer.delete_file_remote` speaks **both transports'
 DELETE contracts**: form fields (`filename`, `cid`) against the central server
 and query params (`path`, `is_dir`, `cid`) against the p2p master
 (`p2p_server._handle_delete` reads only the query string). Sending the wrong
-shape made the master answer 400 and left the stale remote copy in place (the
-wire-shape half of the resurrection bug); the branch is driven by
+shape makes the master answer 400 and leaves the stale remote copy in place; the
+branch is driven by
 `CONFIG["P2P_MODE"]` and covered by `tests/test_transfer_delete_remote.py`.
 **Delete/rename/symlink endpoints use `resolve_final=False`**: the final
 component is never dereferenced, so deleting/renaming/replacing a link acts on

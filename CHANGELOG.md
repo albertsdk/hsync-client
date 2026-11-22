@@ -26,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A file deleted while the peer was unreachable is now deleted on the peer
+  instead of being downloaded again: the offline-deletion marker inherits the
+  peer's clock when the remote copy is byte-identical to the deleted version,
+  and the P2P master's `201` carries `version` like the server does, so the
+  uploader records the accepted clock as its merge base.
+- A slave whose master restarted on a new port reconnects instead of spinning
+  the rendezvous loop: a failed endpoint selection now pulls a fresh rendezvous
+  sample and waits `RECONNECT_DELAY` (clamped to 1–30 s) before retrying.
 - The p2p link status follows the data plane: a slave reports `connected` while
   it syncs (before its control WebSocket opens, and after every reconnect), and
   a serving master reports it while a peer uses its data plane, so a long first
