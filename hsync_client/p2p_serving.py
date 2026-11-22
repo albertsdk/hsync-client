@@ -35,6 +35,7 @@ from hsync_client.p2p_rendezvous import (
 )
 from hsync_client.p2p_server import P2PServer, P2PServerMode
 from hsync_client.p2p_websocket import P2PWebSocketServer
+from hsync_client.peer_roles import publish_inventory, serve_blocks
 
 # Bounded wait for live WebSocket clients to finish closing on a role yield,
 # before the shared inventory store is detached and closed (ADR-0027). A peer
@@ -73,18 +74,19 @@ def _start_slave_inventory(
     log,
     p2p_server: P2PServer | None,
 ) -> P2PInventoryPublisher | None:
-    """Start the read-only inventory publisher; serve blocks only when enabled.
+    """Start the two independent peer roles this device is allowed to take.
 
-    Every slave publishes its inventory so the master can classify the share
-    against what each device holds, regardless of dry-run previews or block
-    serving. The seeder role (and its readiness advertisement) is installed only
-    when ``P2P_PEER_DOWNLOAD`` is enabled; an inventory-only publisher never
-    advertises block capacity.
+    The **seeder role** (and its readiness advertisement) is installed only while
+    block serving is enabled: it is what other devices download from. The
+    **read-only inventory publisher** runs only while inventory publishing is
+    enabled: it is what the serving device classifies the share against, and it
+    reveals the file list. One role never implies the other — an inventory-only
+    device advertises no block capacity, and a serving-only device advertises
+    capacity without publishing anything.
     """
     if p2p_server is None:
         return None
-    publisher = P2PInventoryPublisher(config["LOCAL_BUCKET"])
-    if config.get("P2P_PEER_DOWNLOAD", True):
+    if serve_blocks(config):
         p2p_server.configure_role(
             P2PServerMode.seeder,
             bucket=config["REMOTE_BUCKET"],
@@ -102,7 +104,9 @@ def _start_slave_inventory(
                 log.warning(f"Peer seeder readiness cleanup failed: {cleanup_exc}")
             p2p_server.stop_serving()
             log.warning(f"Peer seeder readiness could not be published ({exc}); disabling seeding")
-            return None
+    if not publish_inventory(config):
+        return None
+    publisher = P2PInventoryPublisher(config["LOCAL_BUCKET"])
     set_active_inventory_publisher(publisher)
     return publisher
 
@@ -115,13 +119,16 @@ def _stop_slave_inventory(
 ) -> None:
     """Withdraw read-only serving readiness and detach the inventory publisher.
 
-    Only runs when a publisher was actually started (``publisher`` is set): the
-    master loop calls this every iteration, and an unconditional
-    ``update_endpoint_ready(False)`` would re-register mDNS and clear the
-    master's own ``server_ready`` flag. Readiness is withdrawn only when the
-    stopped publisher was actually serving blocks.
+    Called on every role boundary, not every loop iteration, so it must handle
+    both roles independently: a device that serves blocks but publishes no
+    inventory has no publisher to detach yet still announced its readiness
+    (``serving``), and one that publishes without serving has a publisher but
+    never announced any readiness. An unconditional
+    ``update_endpoint_ready(False)`` on the loop's cadence would re-register mDNS
+    and clear the master's own ``server_ready`` flag, so readiness is withdrawn
+    only for a device that took the serving role.
     """
-    if publisher is None:
+    if publisher is None and not serving:
         return
     if serving:
         try:

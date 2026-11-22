@@ -862,15 +862,15 @@ A/B on the same probe (2500 files / 200 dirs), 3 runs per arm, alternating:
 | arm | files/s (median [min..max]) | slave CPU/file (median [min..max]) |
 | --- | --- | --- |
 | peer offload on | 88.6 [82.3..101.8] | 12.95 ms [11.14..14.06] |
-| `--no-peer-download` | 130.4 [114.2..159.4] | 8.62 ms [6.92..10.05] |
+| `--peer-role off` | 130.4 [114.2..159.4] | 8.62 ms [6.92..10.05] |
 
 +47 % throughput and −33 % CPU/file with the block off; both arms saturate
 ~1.15 cores, so the burst is CPU-bound either way.
 
-**Caveat that must not be lost:** `--no-peer-download` is **not one switch**.
-`_start_slave_seeder` (`p2p_handler.py:68`) skips *both* the slave's own seeder
-`P2PServer` *and* its `P2PInventoryPublisher` when it is off, and the resolver's
-`enabled` turns False. The A/B therefore measures the whole peer-offload block
+**Caveat that must not be lost:** `--peer-role off` is **not one mechanism**. It
+clears the three capabilities at once (`hsync_client/peer_roles.py`), so
+`_start_slave_inventory` skips *both* the slave's own seeder `P2PServer` *and*
+its `P2PInventoryPublisher`, and the resolver's `enabled` turns False. The A/B therefore measures the whole peer-offload block
 (source lookup + inventory publication + seeder + capability advertisement), and
 the 4.3 ms/file must **not** be attributed to any single mechanism inside it.
 
@@ -912,7 +912,7 @@ slave-side inventory/event chain:
   number of times in both arms** (~82 per sampled window) but accumulates
   **~20× more time with the block on** (0.342 s vs 0.018 s cum): with the
   inventory lane live the handler feeds the `P2PInventoryStore`/publisher per
-  event; with `--no-peer-download` the observer is a NOOP.
+  event; with `--peer-role off` the observer is a NOOP.
 - `_publish_deltas`/`_send_with_ack` ran only **4 times per window** — the
   publisher is batched, so the per-frame WSS+ACK cost is amortised, not the
   dominant term the earlier hypothesis assumed.
@@ -938,9 +938,10 @@ therefore not removable per-event computation: it is the resolver's per-file
 lookup POST plus the extra lane threads (seeder HTTPS server, publisher task)
 contending for the GIL with the apply workers. The only per-file reduction
 identified (source-lookup batching) was already measured and reverted; the
-remaining lever is `--no-peer-download` for peers that do not need to serve
-others, and any further gain needs a lane-level redesign (separate process or
-burst-time resolver deferral) with its own freshness/robustness analysis.
+remaining lever is the peer-mesh preset for peers that do not need the peer
+path at all — or `--no-fetch-from-peers` alone when the device must keep
+serving — and any further gain needs a lane-level redesign (separate process
+or burst-time resolver deferral) with its own freshness/robustness analysis.
 
 **Intervention options, judged by sync reliability (2026-09-21).** Three ways to
 recover the block were evaluated; the default stays unchanged:
@@ -951,7 +952,8 @@ recover the block were evaluated; the default stays unchanged:
 - *Move the lane to a separate process*: the only option that removes the GIL
   contention without changing sync semantics, but it adds a process boundary
   (lifecycle, crash, reconnect) and needs an ADR plus review.
-- *Keep the default and expose the lever*: `--no-peer-download` is already the
+- *Keep the default and expose the lever*: `--peer-role off` (or
+  `--no-fetch-from-peers` when the device still serves) is already the
   supported way to trade offload for burst speed; it stays the recommendation
   for single-peer or performance-first deployments.
 Decision: **no default change now** (correctness and fleet robustness over pure

@@ -17,6 +17,7 @@ from hsync_common.permissions import local_permissions_are_lossy
 from hsync_common.protocol.handshake import Capability
 
 from hsync_client.config import CONFIG
+from hsync_client.peer_roles import publish_inventory, serve_blocks
 
 __all__ = ["adopt_remote_capabilities", "local_capabilities"]
 
@@ -25,19 +26,26 @@ def local_capabilities() -> set[Capability]:
     """Capabilities this binary actually supports, derived from its runtime config.
 
     ``vector_clocks`` (causal version metadata, ADR-0022) and ``tombstones``
-    (deletion-marker gossip, ADR-0003) are always implemented by this client, and
-    every node publishes a read-only inventory (``index``) so peers can compute
-    sync status regardless of whether it serves blocks. ``peer_download``,
-    ``compression`` and ``delta`` are feature-toggled. ``readonly_permissions``
-    is advertised only by a lossy host (Windows): the reconciliation then
-    projects permission-only comparisons to the owner-write bit.
+    (deletion-marker gossip, ADR-0003) are always implemented by this client,
+    and ``index`` always advertises the read-only inventory *protocol* every
+    node can speak: a peer that does not publish still has to accept and
+    compare the inventories others publish, and the serving role does. The two
+    participation statements follow their own keys — ``publishes_index`` only
+    while the device publishes its own inventory, ``peer_download`` only while
+    it serves file blocks — so a front-end cannot advertise a role the device
+    refuses. ``compression`` and ``delta`` are feature-toggled too.
+    ``readonly_permissions`` is advertised only by a lossy host (Windows): the
+    reconciliation then projects permission-only comparisons to the owner-write
+    bit.
     """
     caps: set[Capability] = {
         Capability.vector_clocks,
         Capability.tombstones,
         Capability.index,
     }
-    if CONFIG.get("P2P_PEER_DOWNLOAD", True):
+    if publish_inventory(CONFIG):
+        caps.add(Capability.publishes_index)
+    if serve_blocks(CONFIG):
         caps.add(Capability.peer_download)
     if CONFIG.get("COMPRESSION_ENABLED", False):
         caps.add(Capability.compression)

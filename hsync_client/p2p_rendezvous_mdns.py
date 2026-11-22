@@ -58,6 +58,7 @@ from hsync_client.p2p_peers import (
     get_free_port,
 )
 from hsync_client.p2p_rendezvous import RendezvousPlanState
+from hsync_client.peer_roles import serve_blocks
 from hsync_client.presence import record_presence, slave_connected_count
 
 HSYNC_SERVICE_TYPE = "_hsync._tcp.local."
@@ -736,7 +737,7 @@ class MdnsRendezvous(RendezvousPlanState):
         # Add delta transfer capability
         if CONFIG.get("DELTA_ENABLED", False):
             properties["delta"] = "true"
-        if CONFIG.get("P2P_PEER_DOWNLOAD", True):
+        if serve_blocks():
             properties["peer_download"] = "true"
         # Lossy permission model (Windows): peers project permission-only
         # comparisons to the owner-write bit instead of the full POSIX mode.

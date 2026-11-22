@@ -23,7 +23,10 @@ p2p configuration for peer-to-peer synchronization without a central server.
 | `--prefer-master` | Prefer this device as the master | `false` (CLI only) |
 | `--never-master` | Prevent this device from ever becoming master | `false` |
 | `--p2p-trust` | P2P master trust policy: `auto` (stored pin, else pin the first sighting), `ask` (confirm an unknown master on a terminal, fail closed without one), `accept-new` (pin the first sighting silently) or `strict` (require an explicit pin) | `ask` |
-| `--no-peer-download` | Disable peer-assisted downloads for this run; overrides an enabled environment setting | `false` |
+| `--peer-role` | Peer-mesh role preset: `full` (serve, fetch, publish), `leech` (fetch only), `seed` (serve and publish, never fetch), `off` (none) | `full` |
+| `--no-serve-peer-blocks` | Do not serve file blocks to peers for this run; overrides an enabled environment setting | `false` |
+| `--no-fetch-from-peers` | Do not fetch file blocks from peers for this run; overrides an enabled environment setting | `false` |
+| `--no-publish-inventory` | Do not publish this device's inventory to the master for this run; overrides an enabled environment setting | `false` |
 | `--allow-unauthenticated-writes` | Dangerously allow write-capable sync without a shared secret | `false` |
 | `--peer-rendezvous-timeout` | Seconds to wait for p2p peer rendezvous (`0` = wait indefinitely) | `0` (indefinite) |
 
@@ -100,7 +103,9 @@ Both must be explicit: a TTY or `--allow-deletions` never grants them.
 | `HSYNC_P2P_GROUP` | p2p group name (alternative to `--group`) | — |
 | `HSYNC_P2P_PASSPHRASE` | Shared password (**at least 12 characters**); derived to the 64-hex group key with scrypt. The usual choice for end users. Mutually exclusive with `HSYNC_P2P_KEY` | — |
 | `HSYNC_P2P_KEY` | Full raw group key (**at least 32 characters**), used as-is; with a rendezvous, also the key the `bucket_token` is derived from (must match the rendezvous's key for protected/private buckets) | — (reads only unless explicitly opted into unauthenticated writes) |
-| `HSYNC_P2P_PEER_DOWNLOAD` | Ask the master for exact-hash sources and try eligible peers before master full-download fallback | `true` |
+| `HSYNC_P2P_SERVE_BLOCKS` | Serve file blocks to other devices: the device becomes a source candidates can download from | `true` |
+| `HSYNC_P2P_FETCH_FROM_PEERS` | Ask the master for exact-hash sources and try eligible peers before the master full-download fallback | `true` |
+| `HSYNC_P2P_PUBLISH_INVENTORY` | Publish this device's read-only inventory so the master can classify the share against it | `true` |
 | `HSYNC_P2P_PEER_READ_CAP` | Maximum concurrent response bodies served by each continuous slave seeder (announced on the handshake so requesters stay within it) | `2` |
 | `HSYNC_P2P_PEER_SOURCES_MAX` | Maximum unique peer devices attempted per file before master fallback | `3` |
 | `HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES` | Dangerously allow p2p filesystem mutations with no shared key | `false` |
@@ -129,10 +134,13 @@ Both must be explicit: a TTY or `--allow-deletions` never grants them.
 `HSYNC_P2P_MODE` and `HSYNC_P2P_PREFER_MASTER` are **not** read. Enable p2p mode
 with the `p2p` subcommand; prefer a primary with `--prefer-master`.
 
-`--no-peer-download` is a final opt-out: when present, peer downloading stays
-disabled even if `HSYNC_P2P_PEER_DOWNLOAD=true`. One-shot slaves may request
-from peers, but they never advertise or run a seeder. Continuous non-dry-run
-slaves serve only exact-hash `GET` downloads; all mutating routes are disabled.
+The three capabilities are independent, and `--peer-role` only bundles them:
+`leech` is “fetch, do not serve, do not publish”, `seed` is “serve and publish,
+never fetch”, `off` turns all three off. Every `--no-*` flag is a final opt-out:
+when present, that capability stays disabled even if its environment variable is
+`true`. One-shot slaves may request from peers, but they never advertise or run
+a seeder. Continuous non-dry-run slaves serve only exact-hash `GET` downloads;
+all mutating routes are disabled.
 
 ## Environment files
 

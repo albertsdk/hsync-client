@@ -124,6 +124,7 @@ from hsync_client.p2p_inventory import (
 )
 from hsync_client.p2p_inventory_publisher import P2PInventoryPublisher
 from hsync_client.p2p_sources import P2PSourceResolver
+from hsync_client.peer_roles import serve_blocks
 from hsync_client.pools import log_future_error
 from hsync_client.progress import mark_delivery_if_serving, note_delivery_progress
 from hsync_client.upload_scheduler import PerPathUploadScheduler
@@ -1647,7 +1648,7 @@ async def p2p_websocket_client(
     # requesters, which use it as their per-seeder admission limit (ADR-0030).
     # An inventory-only publisher (no block serving) advertises nothing, but it
     # still opens the session so the master can classify its share.
-    serves_blocks = inventory_publisher is not None and bool(CONFIG.get("P2P_PEER_DOWNLOAD", True))
+    serves_blocks = serve_blocks()
     serving_slots = (
         int(CONFIG.get("P2P_PEER_READ_CAP", P2P_PEER_READ_CAP_DEFAULT)) if serves_blocks else None
     )

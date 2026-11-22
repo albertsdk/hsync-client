@@ -126,7 +126,9 @@ class TestEnvSettings:
         assert settings.peer_rendezvous_timeout is None
         assert settings.deletion_policy == "propagate"
         assert settings.compression_enabled is True
-        assert settings.p2p_peer_download is True
+        assert settings.p2p_serve_blocks is True
+        assert settings.p2p_fetch_from_peers is True
+        assert settings.p2p_publish_inventory is True
         assert settings.p2p_peer_read_cap == 2
         assert settings.p2p_allow_unauthenticated_writes is False
         assert settings.p2p_allow_unauthenticated is False
@@ -337,9 +339,10 @@ class TestEnvSettings:
             del os.environ["HSYNC_P2P_KEY"]
             get_env_settings.cache_clear()
 
-    def test_peer_download_and_unauthenticated_write_env_settings(self, monkeypatch):
-        """Peer download policy knobs use the HSYNC_ environment contract."""
-        monkeypatch.setenv("HSYNC_P2P_PEER_DOWNLOAD", "false")
+    def test_peer_role_and_unauthenticated_write_env_settings(self, monkeypatch):
+        """Peer-role policy knobs use the HSYNC_ environment contract."""
+        monkeypatch.setenv("HSYNC_P2P_SERVE_BLOCKS", "false")
+        monkeypatch.setenv("HSYNC_P2P_PUBLISH_INVENTORY", "false")
         monkeypatch.setenv("HSYNC_P2P_PEER_READ_CAP", "7")
         monkeypatch.setenv("HSYNC_P2P_ALLOW_UNAUTHENTICATED_WRITES", "true")
         monkeypatch.setenv("HSYNC_P2P_ALLOW_UNAUTHENTICATED", "true")
@@ -347,7 +350,9 @@ class TestEnvSettings:
         get_env_settings.cache_clear()
         try:
             settings = EnvSettings()
-            assert settings.p2p_peer_download is False
+            assert settings.p2p_serve_blocks is False
+            assert settings.p2p_fetch_from_peers is True
+            assert settings.p2p_publish_inventory is False
             assert settings.p2p_peer_read_cap == 7
             assert settings.p2p_allow_unauthenticated_writes is True
             assert settings.p2p_allow_unauthenticated is True

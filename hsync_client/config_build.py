@@ -32,11 +32,13 @@ from hsync_client.config import (
     get_max_concurrent_transfers,
     get_mdns_enabled,
     get_never_master,
+    get_p2p_fetch_from_peers,
     get_p2p_group,
     get_p2p_listen_port,
-    get_p2p_peer_download,
     get_p2p_peer_read_cap,
     get_p2p_peer_sources_max,
+    get_p2p_publish_inventory,
+    get_p2p_serve_blocks,
     get_p2p_trust,
     get_peer_rendezvous_timeout,
     get_peer_timeout,
@@ -68,6 +70,7 @@ from hsync_client.constants import (
     TRANSFER_RETRY_MAX_WAIT_DEFAULT,
     TRANSFER_RETRY_MIN_WAIT_DEFAULT,
 )
+from hsync_client.peer_roles import peer_role_capabilities
 from hsync_client.run_options import RunOptions
 from hsync_client.server_trust_resolution import (
     _flatten_pins,
@@ -272,7 +275,9 @@ def _build_config(
     delta_enabled = options.transfers.delta_enabled
     delta_min_file_size = options.transfers.delta_min_file_size
     delta_min_file_size_p2p = options.transfers.delta_min_file_size_p2p
-    p2p_peer_download_enabled = options.p2p.p2p_peer_download_enabled
+    role_serve_blocks, role_fetch_from_peers, role_publish_inventory = peer_role_capabilities(
+        options.p2p.peer_role
+    )
     mdns_enabled = options.p2p.mdns_enabled
     rendezvous_server_endpoints = options.endpoints.rendezvous_server_endpoints
     map_data_port = options.endpoints.map_data_port
@@ -377,7 +382,15 @@ def _build_config(
         "P2P_PREFER_MASTER": prefer_master,
         "P2P_NEVER_MASTER": never_master or get_never_master(),
         "P2P_TRUST": resolve_self_signed_policy(p2p_trust, env_default=get_p2p_trust()),
-        "P2P_PEER_DOWNLOAD": p2p_peer_download_enabled and get_p2p_peer_download(),
+        "P2P_SERVE_BLOCKS": (
+            role_serve_blocks and options.p2p.serve_blocks and get_p2p_serve_blocks()
+        ),
+        "P2P_FETCH_FROM_PEERS": (
+            role_fetch_from_peers and options.p2p.fetch_from_peers and get_p2p_fetch_from_peers()
+        ),
+        "P2P_PUBLISH_INVENTORY": (
+            role_publish_inventory and options.p2p.publish_inventory and get_p2p_publish_inventory()
+        ),
         "P2P_PEER_READ_CAP": get_p2p_peer_read_cap(),
         "P2P_PEER_SOURCES_MAX": get_p2p_peer_sources_max(),
         "P2P_ALLOW_UNAUTHENTICATED_WRITES": allow_unauthenticated_p2p_writes,

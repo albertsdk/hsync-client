@@ -617,15 +617,29 @@ class TestTyperCli:
         assert "invalid --p2p-trust" in result.output
 
     @patch("hsync_client.main_logic.run_sync")
-    def test_peer_download_default_and_opt_out(self, mock_run_sync):
-        """Peer downloading is on by default and --no-peer-download is final."""
+    def test_peer_roles_default_and_opt_out(self, mock_run_sync):
+        """Each peer capability is on by default and every --no-* flag is final."""
         result = runner.invoke(app, ["p2p", "-b", "test"])
         assert result.exit_code == 0
-        assert _run_options(mock_run_sync).p2p.p2p_peer_download_enabled is True
+        options = _run_options(mock_run_sync).p2p
+        assert options.serve_blocks is True
+        assert options.fetch_from_peers is True
+        assert options.publish_inventory is True
+        assert options.peer_role is None
 
-        result = runner.invoke(app, ["p2p", "-b", "test", "--no-peer-download"])
+        result = runner.invoke(
+            app,
+            ["p2p", "-b", "test", "--no-serve-peer-blocks", "--no-publish-inventory"],
+        )
         assert result.exit_code == 0
-        assert _run_options(mock_run_sync).p2p.p2p_peer_download_enabled is False
+        options = _run_options(mock_run_sync).p2p
+        assert options.serve_blocks is False
+        assert options.fetch_from_peers is True
+        assert options.publish_inventory is False
+
+        result = runner.invoke(app, ["p2p", "-b", "test", "--peer-role", "leech"])
+        assert result.exit_code == 0
+        assert _run_options(mock_run_sync).p2p.peer_role == "leech"
 
     @patch("hsync_client.main_logic.run_sync")
     def test_no_mdns_sets_the_run_option(self, mock_run_sync):
@@ -1059,7 +1073,10 @@ class TestCapabilitiesJson:
             "--never-master",
             "--prefer-master",
             "--p2p-trust",
-            "--no-peer-download",
+            "--peer-role",
+            "--no-serve-peer-blocks",
+            "--no-fetch-from-peers",
+            "--no-publish-inventory",
             "--allow-unauthenticated-writes",
         ):
             assert flag in doc["cli_options"]["p2p"]

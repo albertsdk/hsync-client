@@ -357,7 +357,9 @@ class TestRunSyncLanPlaceholder:
         decision (ADR-0030)."""
         with (
             patch("hsync_client.runtime_resolvers.get_server_url", return_value=None),
-            patch("hsync_client.config_build.get_p2p_peer_download", return_value=True),
+            patch("hsync_client.config_build.get_p2p_serve_blocks", return_value=True),
+            patch("hsync_client.config_build.get_p2p_fetch_from_peers", return_value=True),
+            patch("hsync_client.config_build.get_p2p_publish_inventory", return_value=True),
             patch("hsync_client.config_build.get_p2p_peer_read_cap", return_value=7),
             patch(
                 "hsync_client.runtime_resolvers.get_p2p_allow_unauthenticated_writes",
@@ -372,24 +374,26 @@ class TestRunSyncLanPlaceholder:
             )
 
         config_arg = mock_p2p.call_args.args[0]
-        assert config_arg["P2P_PEER_DOWNLOAD"] is True
+        assert config_arg["P2P_SERVE_BLOCKS"] is True
+        assert config_arg["P2P_FETCH_FROM_PEERS"] is True
+        assert config_arg["P2P_PUBLISH_INVENTORY"] is True
         assert config_arg["P2P_PEER_READ_CAP"] == 7
         assert config_arg["P2P_ALLOW_UNAUTHENTICATED_WRITES"] is True
 
-    def test_cli_peer_download_opt_out_wins_over_environment(self, tmp_path):
-        """--no-peer-download remains final even when the environment enables peers."""
+    def test_cli_peer_role_opt_out_wins_over_environment(self, tmp_path):
+        """--no-serve-peer-blocks is final even when the environment enables it."""
         with (
             patch("hsync_client.runtime_resolvers.get_server_url", return_value=None),
-            patch("hsync_client.config_build.get_p2p_peer_download", return_value=True),
+            patch("hsync_client.config_build.get_p2p_serve_blocks", return_value=True),
         ):
             mock_p2p, _, _ = self._run_p2p(
                 tmp_path,
                 server_url=None,
                 p2p_mode=True,
-                p2p_peer_download_enabled=False,
+                serve_blocks=False,
             )
 
-        assert mock_p2p.call_args.args[0]["P2P_PEER_DOWNLOAD"] is False
+        assert mock_p2p.call_args.args[0]["P2P_SERVE_BLOCKS"] is False
 
     def test_cli_override_excluded_from_managed_keys(self, tmp_path):
         """--http-timeout 30 must survive the P2P refresh: not autotune-managed."""

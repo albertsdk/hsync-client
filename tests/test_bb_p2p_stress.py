@@ -42,7 +42,7 @@ _K = stress_tree.stress_knobs("p2p")
 
 # Read at import time: the autouse env-isolation fixture scrubs HSYNC_* before
 # each test body, so an os.environ lookup inside the test would always be empty.
-_NO_PEER_DOWNLOAD = os.environ.get("HSYNC_BB_STRESS_NO_PEER_DOWNLOAD") == "1"
+_PEER_ROLE_OFF = os.environ.get("HSYNC_BB_STRESS_PEER_ROLE_OFF") == "1"
 
 # Optional per-thread CPU attribution of the slave across the initial burst
 # (plan §13.13); read at import time for the same env-scrub reason.
@@ -122,7 +122,7 @@ class TestP2PStress:
                 p2p_slave_dir,
                 p2p_bucket,
                 never_master=True,
-                extra_args=("--no-peer-download",) if _NO_PEER_DOWNLOAD else (),
+                extra_args=("--peer-role", "off") if _PEER_ROLE_OFF else (),
             )
             try:
                 assert _wait_for_slave_events(slave, timeout=90), (

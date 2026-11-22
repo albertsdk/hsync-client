@@ -128,7 +128,7 @@ def _snapshot(cid: str, address: str) -> PeerSnapshot:
         use_https=True,
         cert_fingerprint=CERT,
         compression_enabled=True,
-        peer_download_enabled=True,
+        serves_blocks=True,
     )
 
 
@@ -148,7 +148,7 @@ def test_peer_manager_returns_immutable_detached_snapshots() -> None:
             bucket="bucket",
             address="192.168.1.10",
             port=8443,
-            peer_download_enabled=True,
+            serves_blocks=True,
         )
     )
     snapshot = manager.get_alive_peer_snapshots()[0]

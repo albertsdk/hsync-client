@@ -410,7 +410,7 @@ class PeerManager:
                         and (
                             existing.compression_enabled != peer.compression_enabled
                             or existing.delta_enabled != peer.delta_enabled
-                            or existing.peer_download_enabled != peer.peer_download_enabled
+                            or existing.serves_blocks != peer.serves_blocks
                             or existing.readonly_permissions != peer.readonly_permissions
                         )
                     )
@@ -426,7 +426,7 @@ class PeerManager:
                 if take_capabilities:
                     existing.compression_enabled = peer.compression_enabled
                     existing.delta_enabled = peer.delta_enabled
-                    existing.peer_download_enabled = peer.peer_download_enabled
+                    existing.serves_blocks = peer.serves_blocks
                     existing.readonly_permissions = peer.readonly_permissions
                     existing.capabilities_known = peer.capabilities_known
                 if endpoints_changed:
@@ -806,7 +806,7 @@ class PeerManager:
                     use_https=peer.use_https,
                     cert_fingerprint=peer.cert_fingerprint,
                     compression_enabled=peer.compression_enabled,
-                    peer_download_enabled=peer.peer_download_enabled,
+                    serves_blocks=peer.serves_blocks,
                     endpoints=peer.endpoints,
                 )
                 for peer in self._peers.values()

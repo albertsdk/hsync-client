@@ -159,7 +159,7 @@ def make_plan(**overrides):
         "group": "home",
         "cert_fingerprint": FP,
         "p2p_key": "0123456789abcdef0123456789abcdef",
-        "peer_download_enabled": True,
+        "serve_blocks": True,
         "capacity": 7,
         "client_factory": FakeClient,
         "upnp_factory": lambda: fake_upnp,
@@ -212,7 +212,7 @@ class TestLease:
         assert plan._inbound is False
 
     def test_capacity_is_zero_without_peer_download(self):
-        plan, _ = make_plan(peer_download_enabled=False)
+        plan, _ = make_plan(serve_blocks=False)
         plan._publish_endpoint()
         assert plan._client.calls[-1][1]["capacity"] == 0
 

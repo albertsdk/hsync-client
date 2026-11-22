@@ -85,7 +85,7 @@ class PeerSourceSnapshot(Protocol):
     def compression_enabled(self) -> bool: ...
 
     @property
-    def peer_download_enabled(self) -> bool: ...
+    def serves_blocks(self) -> bool: ...
 
     @property
     def endpoints(self) -> tuple[tuple[str, int], ...]: ...
@@ -189,7 +189,7 @@ class P2PSourceService:
             peer.cid not in {requester_cid, master_cid}
             and is_valid_cid(peer.cid)
             and peer.use_https
-            and peer.peer_download_enabled
+            and peer.serves_blocks
             and isinstance(peer.cert_fingerprint, str)
             and is_sha256_hex(peer.cert_fingerprint)
             and peer.cert_fingerprint == peer.cert_fingerprint.lower()

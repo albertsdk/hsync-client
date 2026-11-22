@@ -74,7 +74,8 @@ class TestP2PPeerDownload:
                     str(requester_dir),
                     p2p_bucket,
                     never_master=True,
-                    extra_args=("--once", "-v") + (() if peer_enabled else ("--no-peer-download",)),
+                    extra_args=("--once", "-v")
+                    + (() if peer_enabled else ("--no-serve-peer-blocks",)),
                 )
                 try:
                     requester.wait(timeout=60)

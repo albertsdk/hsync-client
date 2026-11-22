@@ -13,7 +13,7 @@ funnel signature is gone.
 | Symbol | Location | Role |
 | ------ | -------- | ---- |
 | `main` (parent callback) | `hsync_client/cli.py::main` | global options `--version` / `--capabilities-json` / `--help-symbols` (typed before the subcommand); no implicit mode |
-| `p2p` | `hsync_client/cli.py::p2p` | p2p subcommand: shared + p2p-only flags, including final `--no-peer-download` opt-out and dangerous `--allow-unauthenticated-writes`; validates and calls `run_sync` |
+| `p2p` | `hsync_client/cli.py::p2p` | p2p subcommand: shared + p2p-only flags, including the `--peer-role` preset, the three final `--no-*` capability opt-outs and dangerous `--allow-unauthenticated-writes`; validates and calls `run_sync` |
 | `server` | `hsync_client/cli.py::server` | central-server subcommand: `--server-url URL` (a full `https://…[/path]` URL or a bare `HOST[:PORT]`) + shared flags, resolves the server URL eagerly (else `HSYNC_SERVER_URL` from shell or `--env-file`) and fails fast with `typer.BadParameter` when no server can be resolved, then calls `run_sync` |
 | `run` | `hsync_client/cli.py::run` | console-script entry: installs the `SIGTERM`→`KeyboardInterrupt` handler (`hsync_client/cli.py::_install_sigterm_handler`, so a service/desktop stop unwinds like Ctrl+C), maps an operator stop to a clean exit (plain `KeyboardInterrupt`, plus Typer's own `Exit(130)` kept in `hsync_client/cli.py::_INTERRUPTED_EXIT_CODE)`), and in its `finally` drains and closes the log sinks (`hsync_client/logger.py::shutdown_logging`) — the close is what releases the semaphores `resource_tracker` would otherwise report as leaked |
 | `collect_subcommand_options` | `hsync_client/cli.py::collect_subcommand_options` | introspects each subcommand's long flags for the capabilities document |
@@ -142,13 +142,17 @@ port so `a` and `a:443` are one destination.
 `HSYNC_P2P_LISTEN_PORT` sets the master TCP listen port (env for the
 `p2p_listen_port` field; `RENDEZVOUS_DEFAULT_PORT = 443` in `constants.py`).
 
-Peer-download settings are `HSYNC_P2P_PEER_DOWNLOAD=true` and
-`HSYNC_P2P_PEER_READ_CAP=2`. `--no-peer-download` is applied as
-`CLI-enabled AND environment-enabled`, so the CLI opt-out is final. It gates
-**block serving** (the seeder role and its `serve_slots` capacity); the node
-still advertises `index` and publishes its read-only inventory with it disabled,
-so peers can classify its share. The no-key
-write opt-in is `CLI-opt-in OR environment-opt-in` and defaults false.
+The peer-mesh capabilities are three independent keys
+(`hsync_client/peer_roles.py`): `HSYNC_P2P_SERVE_BLOCKS` (egress),
+`HSYNC_P2P_FETCH_FROM_PEERS` (ingress) and `HSYNC_P2P_PUBLISH_INVENTORY`
+(metadata egress), all `true` by default; `HSYNC_P2P_PEER_READ_CAP=2` bounds the
+serving side. Each is built as `role AND CLI AND environment`, where the role
+comes from `--peer-role` (`full`/`leech`/`seed`/`off`, default `full`), so a
+`--no-*` flag is always final and never un-does another capability. `index` is
+advertised unconditionally (it is the inventory *protocol*); `publishes_index`
+follows `P2P_PUBLISH_INVENTORY` and `peer_download` follows `P2P_SERVE_BLOCKS`.
+The no-key write opt-in is `CLI-opt-in OR environment-opt-in` and defaults
+false.
 
 ## Constants & validators
 

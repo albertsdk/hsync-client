@@ -1,7 +1,7 @@
 .\" Man page for HSYNC - file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-11-15" "hsync 1.1.15" "User Commands"
+.TH HSYNC 1 "2026-11-22" "hsync 1.1.15" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -470,9 +470,23 @@ A changed fingerprint is refused under every policy. The pin is stored in
 manage it with
 .BR "hsync trust peer" .
 .TP
-.B \-\-no\-peer\-download
-Disable peer-assisted p2p downloads for this run. By default, large full-file
-downloads may use a verified continuous slave before falling back to the master.
+.BR \-\-peer\-role =\fIROLE\fP
+Set the peer-mesh role preset: IfullP (serve, fetch, publish), IleechP
+(fetch only), IseedP (serve and publish, never fetch) or IoffP (none).
+The preset expands to the three capabilities below; each \-\-no\- flag still
+applies on top of it.
+.TP
+.B \-\-no\-serve\-peer\-blocks
+Do not serve file blocks to other devices for this run. Peers then never use this
+device as a source, and it advertises no seeder capacity.
+.TP
+.B \-\-no\-fetch\-from\-peers
+Do not fetch file blocks from other devices for this run: every transfer comes
+from the elected master.
+.TP
+.B \-\-no\-publish\-inventory
+Do not publish this device's file inventory to the elected master. Serving still
+works; the master simply reports the share without this device's rows.
 .TP
 .B \-\-allow\-unauthenticated\-writes
 Dangerous explicit opt-in: allow LAN mutations when no shared p2p key is
@@ -882,8 +896,16 @@ Trust policy for the elected p2p master: auto, ask (default), accept-new or stri
 (see
 .BR \-\-p2p\-trust ).
 .TP
-.B HSYNC_P2P_PEER_DOWNLOAD
-Enable exact-hash peer-assisted LAN full downloads (default:
+.B HSYNC_P2P_SERVE_BLOCKS
+Serve file blocks to other devices in p2p mode (default:
+.BR true ).
+.TP
+.B HSYNC_P2P_FETCH_FROM_PEERS
+Fetch file blocks from other devices in p2p mode (default:
+.BR true ).
+.TP
+.B HSYNC_P2P_PUBLISH_INVENTORY
+Publish this device's read-only inventory to the elected master (default:
 .BR true ).
 .TP
 .B HSYNC_P2P_PEER_READ_CAP

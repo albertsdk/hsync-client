@@ -48,13 +48,15 @@ from hsync_client.constants import (
     MASS_DELETE_GUARD_DEFAULT,
     MASS_DELETE_PERCENT_DEFAULT,
     MASS_DELETE_THRESHOLD_DEFAULT,
-    P2P_PEER_DOWNLOAD_DEFAULT,
+    P2P_FETCH_FROM_PEERS_DEFAULT,
     P2P_PEER_READ_CAP_DEFAULT,
     P2P_PEER_READ_CAP_MAX,
     P2P_PEER_READ_CAP_MIN,
     P2P_PEER_SOURCES_MAX_DEFAULT,
     P2P_PEER_SOURCES_MAX_MAX,
     P2P_PEER_SOURCES_MAX_MIN,
+    P2P_PUBLISH_INVENTORY_DEFAULT,
+    P2P_SERVE_BLOCKS_DEFAULT,
     PEER_TIMEOUT,
     PEER_TIMEOUT_MAX,
     PEER_TIMEOUT_MIN,
@@ -313,9 +315,17 @@ class EnvSettings(BaseSettings):
             "(pin the first sighting silently) or 'strict' (require an explicit pin)"
         ),
     )
-    p2p_peer_download: bool = Field(
-        default=P2P_PEER_DOWNLOAD_DEFAULT,
-        description="Enable peer-assisted downloads in P2P mode",
+    p2p_serve_blocks: bool = Field(
+        default=P2P_SERVE_BLOCKS_DEFAULT,
+        description="Serve file blocks to other devices in P2P mode",
+    )
+    p2p_fetch_from_peers: bool = Field(
+        default=P2P_FETCH_FROM_PEERS_DEFAULT,
+        description="Fetch file blocks from other devices in P2P mode",
+    )
+    p2p_publish_inventory: bool = Field(
+        default=P2P_PUBLISH_INVENTORY_DEFAULT,
+        description="Publish this device's read-only inventory in P2P mode",
     )
     p2p_peer_read_cap: int = Field(
         default=P2P_PEER_READ_CAP_DEFAULT,
@@ -717,9 +727,19 @@ def get_p2p_trust() -> str:
     return get_env_settings().p2p_trust
 
 
-def get_p2p_peer_download() -> bool:
-    """Get whether P2P peer-assisted download is enabled."""
-    return get_env_settings().p2p_peer_download
+def get_p2p_serve_blocks() -> bool:
+    """Get whether this device serves file blocks to peers (``HSYNC_P2P_SERVE_BLOCKS``)."""
+    return get_env_settings().p2p_serve_blocks
+
+
+def get_p2p_fetch_from_peers() -> bool:
+    """Get whether P2P peer fetching is enabled (``HSYNC_P2P_FETCH_FROM_PEERS``)."""
+    return get_env_settings().p2p_fetch_from_peers
+
+
+def get_p2p_publish_inventory() -> bool:
+    """Get whether P2P inventory publishing is enabled (``HSYNC_P2P_PUBLISH_INVENTORY``)."""
+    return get_env_settings().p2p_publish_inventory
 
 
 def get_p2p_peer_read_cap() -> int:
@@ -968,7 +988,9 @@ class HsyncConfig(TypedDict):
     # P2P master trust policy (ADR-0040; default ask)
     P2P_TRUST: TrustPolicy
     # Peer-assisted download requester/seeder controls
-    P2P_PEER_DOWNLOAD: bool
+    P2P_SERVE_BLOCKS: bool
+    P2P_FETCH_FROM_PEERS: bool
+    P2P_PUBLISH_INVENTORY: bool
     P2P_PEER_READ_CAP: int
     P2P_PEER_SOURCES_MAX: int
     # Rendezvous-server endpoints, ordered, each carrying its own port

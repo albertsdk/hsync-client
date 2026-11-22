@@ -53,6 +53,7 @@ from hsync_client.constants import (
     STABILITY_DELAY_MIN,
     SYNC_DIRECTIONS,
 )
+from hsync_client.peer_roles import PeerRole
 from hsync_client.run_options import (
     EndpointOptions,
     LoggingOptions,
@@ -301,7 +302,10 @@ def _build_run_options(values: Mapping[str, Any], **overrides: Any) -> RunOption
             p2p_allow_unauthenticated_writes=overrides.get(
                 "p2p_allow_unauthenticated_writes", False
             ),
-            p2p_peer_download_enabled=overrides.get("p2p_peer_download_enabled", True),
+            peer_role=overrides.get("peer_role"),
+            serve_blocks=overrides.get("serve_blocks", True),
+            fetch_from_peers=overrides.get("fetch_from_peers", True),
+            publish_inventory=overrides.get("publish_inventory", True),
             mdns_enabled=overrides.get("mdns_enabled", True),
             rendezvous_server_pins=overrides.get("rendezvous_server_pins"),
             rendezvous_server_tofu=overrides.get("rendezvous_server_tofu", False),
@@ -633,12 +637,41 @@ NoDeltaOpt = Annotated[
         rich_help_panel="Sync",
     ),
 ]
-NoPeerDownloadOpt = Annotated[
+NoServePeerBlocksOpt = Annotated[
     bool,
     typer.Option(
-        "--no-peer-download",
-        help="Disable peer-assisted downloads and local read-only seeding in P2P mode.",
+        "--no-serve-peer-blocks",
+        help="Do not serve file blocks to other devices in P2P mode.",
         rich_help_panel="P2P Mode",
+    ),
+]
+NoFetchFromPeersOpt = Annotated[
+    bool,
+    typer.Option(
+        "--no-fetch-from-peers",
+        help="Do not fetch file blocks from other devices in P2P mode.",
+        rich_help_panel="P2P Mode",
+    ),
+]
+NoPublishInventoryOpt = Annotated[
+    bool,
+    typer.Option(
+        "--no-publish-inventory",
+        help="Do not publish this device's file inventory to the serving device.",
+        rich_help_panel="P2P Mode",
+    ),
+]
+PeerRoleOpt = Annotated[
+    PeerRole | None,
+    typer.Option(
+        "--peer-role",
+        help=(
+            "Peer-mesh role preset: full (serve, fetch, publish), leech "
+            "(fetch only), seed (serve and publish, never fetch), off "
+            "(none). The --no-* P2P flags still apply."
+        ),
+        rich_help_panel="P2P Mode",
+        metavar="ROLE",
     ),
 ]
 DeltaMinFileSizeOpt = Annotated[

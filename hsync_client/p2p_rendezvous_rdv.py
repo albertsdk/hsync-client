@@ -244,7 +244,7 @@ class RdvRendezvous(RendezvousPlanState):
         upnp_enabled: bool = False,
         shared_upnp: SharedUpnpMapping | None = None,
         capacity: int = 0,
-        peer_download_enabled: bool = False,
+        serve_blocks: bool = False,
         client_factory: Callable[..., RendezvousClient] = RendezvousClient,
         upnp_factory: Callable[[], UpnpMapper] = UpnpMapper,
         local_ip: str | None = None,
@@ -277,7 +277,9 @@ class RdvRendezvous(RendezvousPlanState):
         self._burst_left = 0
         self._burst_gate = 0.0
         self._upnp_enabled = upnp_enabled
-        self._capacity = capacity if peer_download_enabled else 0
+        # The advertised capacity is the serving verdict itself: a node that
+        # serves no blocks advertises 0 so peers never queue on it.
+        self._capacity = capacity if serve_blocks else 0
         self._local_ip = local_ip
         self._port = port if port != 0 else get_free_port()
 
@@ -1212,7 +1214,7 @@ class RdvRendezvous(RendezvousPlanState):
             group=wire.get("group"),
             use_https=True,
             cert_fingerprint=wire.get("cert_fp"),
-            peer_download_enabled=False,
+            serves_blocks=False,
             server_ready=wire["server_ready"],
             connected=int(wire.get("connected") or 0),
             prefer_master=wire["prefer_master"],

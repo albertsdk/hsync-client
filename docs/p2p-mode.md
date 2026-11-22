@@ -126,7 +126,8 @@ The transfer order is deterministic: master delta first when applicable, then
 ranked peer full-download candidates, then canonical master full-download. An
 interrupted exact body may resume from another source; malformed ranges, wrong
 sizes, or completed hash failures discard the partial body. One-shot slaves can
-request from peers but never seed. Use `--no-peer-download` to disable this path.
+request from peers but never seed. `--peer-role leech` keeps the peer path as a
+consumer only; `--no-fetch-from-peers` removes it altogether.
 Concurrency settings are listed in
 [Configuration — p2p Mode](configuration-p2p.md).
 

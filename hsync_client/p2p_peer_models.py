@@ -90,7 +90,7 @@ class Peer:
     cert_fingerprint: str | None = None
     compression_enabled: bool = False
     delta_enabled: bool = False  # rsync-style delta transfer capability
-    peer_download_enabled: bool = False
+    serves_blocks: bool = False
     readonly_permissions: bool = False  # advisory TXT hint: lossy local modes, never policy
     # Whether the three capability flags above were advertised by the source
     # (the mDNS TXT record carries them; the rendezvous relay does not). When two
@@ -143,7 +143,7 @@ class PeerSnapshot:
     use_https: bool
     cert_fingerprint: str | None
     compression_enabled: bool
-    peer_download_enabled: bool
+    serves_blocks: bool
     # Every data-plane endpoint the peer announced, in advertised order (the
     # union of the discovery sources). A multi-homed peer is discovered on one
     # interface and may open its master session from another, so a consumer

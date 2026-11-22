@@ -1,33 +1,44 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""Capability advertisement: metadata is independent from block serving."""
+"""Capability advertisement: one token per participation statement."""
 
 from __future__ import annotations
 
 from hsync_common.protocol.handshake import Capability
 
 
-def test_inventory_is_advertised_even_without_block_serving(monkeypatch):
+def test_the_inventory_protocol_is_advertised_without_publishing(monkeypatch):
+    """Speaking the protocol and publishing an inventory are two statements."""
     from hsync_client import capabilities
     from hsync_client.config import CONFIG
 
-    monkeypatch.setitem(CONFIG, "P2P_PEER_DOWNLOAD", False)
+    monkeypatch.setitem(CONFIG, "P2P_PUBLISH_INVENTORY", False)
+    monkeypatch.setitem(CONFIG, "P2P_SERVE_BLOCKS", False)
     caps = capabilities.local_capabilities()
 
     assert Capability.index in caps
+    assert Capability.publishes_index not in caps
     assert Capability.peer_download not in caps
 
 
-def test_block_serving_adds_peer_download(monkeypatch):
+def test_each_participation_role_advertises_itself(monkeypatch):
     from hsync_client import capabilities
     from hsync_client.config import CONFIG
 
-    monkeypatch.setitem(CONFIG, "P2P_PEER_DOWNLOAD", True)
+    monkeypatch.setitem(CONFIG, "P2P_PUBLISH_INVENTORY", True)
+    monkeypatch.setitem(CONFIG, "P2P_SERVE_BLOCKS", False)
     caps = capabilities.local_capabilities()
 
-    assert Capability.index in caps
+    assert Capability.publishes_index in caps
+    assert Capability.peer_download not in caps
+
+    monkeypatch.setitem(CONFIG, "P2P_SERVE_BLOCKS", True)
+    monkeypatch.setitem(CONFIG, "P2P_PUBLISH_INVENTORY", False)
+    caps = capabilities.local_capabilities()
+
     assert Capability.peer_download in caps
+    assert Capability.publishes_index not in caps
 
 
 def test_readonly_permissions_is_advertised_by_a_lossy_host(monkeypatch):

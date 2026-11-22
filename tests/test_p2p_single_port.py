@@ -21,7 +21,12 @@ from hsync_client.p2p_server import P2PServer, P2PServerMode
 from hsync_client.p2p_websocket import P2PWebSocketServer, SlaveCidRegistry
 
 CID = "c" * 21
-CONFIG = {"P2P_KEY": None, "P2P_PEER_DOWNLOAD": False}
+CONFIG = {
+    "P2P_KEY": None,
+    "P2P_SERVE_BLOCKS": False,
+    "P2P_FETCH_FROM_PEERS": False,
+    "P2P_PUBLISH_INVENTORY": False,
+}
 
 
 def _start(*, port: int = 0, use_https: bool = False) -> tuple[P2PServer, P2PWebSocketServer]:

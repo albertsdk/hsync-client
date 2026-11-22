@@ -95,7 +95,10 @@ class P2POptions:
     p2p_trust: str | None = None
     p2p_allow_unauthenticated: bool = False
     p2p_allow_unauthenticated_writes: bool = False
-    p2p_peer_download_enabled: bool = True
+    peer_role: str | None = None
+    serve_blocks: bool = True
+    fetch_from_peers: bool = True
+    publish_inventory: bool = True
     # Discover peers over mDNS on the local network (False = discovery servers only)
     mdns_enabled: bool = True
     rendezvous_server_pins: FingerprintPins | None = None

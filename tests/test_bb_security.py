@@ -49,7 +49,13 @@ _MASTER_CID = "m" * 21
 
 
 def _config(bucket: str) -> dict:
-    return {"LOCAL_BUCKET": bucket, "P2P_KEY": _KEY, "P2P_PEER_DOWNLOAD": False}
+    return {
+        "LOCAL_BUCKET": bucket,
+        "P2P_KEY": _KEY,
+        "P2P_SERVE_BLOCKS": False,
+        "P2P_FETCH_FROM_PEERS": False,
+        "P2P_PUBLISH_INVENTORY": False,
+    }
 
 
 @pytest.fixture

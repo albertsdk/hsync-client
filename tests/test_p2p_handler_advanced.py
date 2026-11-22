@@ -406,7 +406,9 @@ class TestRunAsMaster:
         """
         from hsync_client.p2p_handler import _run_as_master
 
-        config = _make_p2p_config(tmp_path, P2P_PEER_DOWNLOAD=True)
+        config = _make_p2p_config(
+            tmp_path, P2P_SERVE_BLOCKS=True, P2P_FETCH_FROM_PEERS=True, P2P_PUBLISH_INVENTORY=True
+        )
         sync = self._mock_sync()
         server, ws = self._mock_servers()
         server.inventory_store = MagicMock()
@@ -761,7 +763,13 @@ class TestRunAsSlave:
         """One-shot slaves can consume peers even though they never seed."""
         from hsync_client.p2p_handler import _run_as_slave
 
-        config = _make_p2p_config(tmp_path, ONE_SHOT=True, P2P_PEER_DOWNLOAD=True)
+        config = _make_p2p_config(
+            tmp_path,
+            ONE_SHOT=True,
+            P2P_SERVE_BLOCKS=True,
+            P2P_FETCH_FROM_PEERS=True,
+            P2P_PUBLISH_INVENTORY=True,
+        )
         peer_mgr = MagicMock()
         peer_mgr.get_master.return_value = _make_master()
         resolver = MagicMock()
@@ -1341,7 +1349,9 @@ class TestSlaveInventoryLifecycle:
         config = _make_p2p_config(
             tmp_path,
             ONE_SHOT=False,
-            P2P_PEER_DOWNLOAD=True,
+            P2P_SERVE_BLOCKS=True,
+            P2P_FETCH_FROM_PEERS=True,
+            P2P_PUBLISH_INVENTORY=True,
             P2P_PEER_READ_CAP=3,
         )
         p2p_sync = MagicMock(port=9443)
@@ -1373,10 +1383,16 @@ class TestSlaveInventoryLifecycle:
         set_active.assert_called_once_with(publisher)
 
     def test_inventory_only_slave_publishes_without_serving(self, tmp_path):
-        """Peer download disabled still publishes the read-only inventory."""
+        """Block serving off still publishes the read-only inventory."""
         from hsync_client.p2p_handler import _start_slave_inventory
 
-        config = _make_p2p_config(tmp_path, ONE_SHOT=False, P2P_PEER_DOWNLOAD=False)
+        config = _make_p2p_config(
+            tmp_path,
+            ONE_SHOT=False,
+            P2P_SERVE_BLOCKS=False,
+            P2P_FETCH_FROM_PEERS=True,
+            P2P_PUBLISH_INVENTORY=True,
+        )
         p2p_sync = MagicMock(port=9443)
         server = MagicMock()
         publisher = MagicMock()
@@ -1390,13 +1406,46 @@ class TestSlaveInventoryLifecycle:
         p2p_sync.update_endpoint_ready.assert_not_called()
         set_active.assert_called_once_with(publisher)
 
+    def test_serving_only_slave_takes_the_role_without_publishing(self, tmp_path):
+        """Publishing off stops the inventory, never the block serving."""
+        from hsync_client.p2p_handler import _start_slave_inventory
+        from hsync_client.p2p_server import P2PServerMode
+
+        config = _make_p2p_config(
+            tmp_path,
+            ONE_SHOT=False,
+            P2P_SERVE_BLOCKS=True,
+            P2P_FETCH_FROM_PEERS=True,
+            P2P_PUBLISH_INVENTORY=False,
+        )
+        p2p_sync = MagicMock(port=9443)
+        server = MagicMock()
+
+        with (
+            patch("hsync_client.p2p_serving.P2PInventoryPublisher") as publisher_cls,
+            patch("hsync_client.p2p_serving.set_active_inventory_publisher") as set_active,
+        ):
+            assert _start_slave_inventory(config, p2p_sync, MagicMock(), server) is None
+
+        publisher_cls.assert_not_called()
+        set_active.assert_not_called()
+        assert server.configure_role.call_args.args[0] is P2PServerMode.seeder
+        p2p_sync.update_endpoint_ready.assert_called_once_with(
+            True, bound_families=server.bound_families
+        )
+
     def test_dry_run_and_one_shot_still_publish(self, tmp_path):
         """The dry-run preview phase must not hide the node from the master."""
         from hsync_client.p2p_handler import _start_slave_inventory
 
         for overrides in ({"ONE_SHOT": True}, {"ONE_SHOT": False, "DRYRUN": True}):
             config = _make_p2p_config(
-                tmp_path, P2P_PEER_DOWNLOAD=True, P2P_PEER_READ_CAP=3, **overrides
+                tmp_path,
+                P2P_SERVE_BLOCKS=True,
+                P2P_FETCH_FROM_PEERS=True,
+                P2P_PUBLISH_INVENTORY=True,
+                P2P_PEER_READ_CAP=3,
+                **overrides,
             )
             p2p_sync = MagicMock(port=9443)
             server = MagicMock()
@@ -1411,16 +1460,21 @@ class TestSlaveInventoryLifecycle:
                 True, bound_families=server.bound_families
             )
 
-    def test_readiness_publish_failure_yields_role(self, tmp_path):
-        """A failed publication withdraws the seeder role before fallback."""
+    def test_readiness_publish_failure_disables_seeding_only(self, tmp_path):
+        """A failed publication withdraws the seeder role, not the publisher."""
         from hsync_client.p2p_handler import _start_slave_inventory
 
         config = _make_p2p_config(tmp_path, ONE_SHOT=False)
         p2p_sync = MagicMock(port=9443)
         p2p_sync.update_endpoint_ready.side_effect = [RuntimeError("mdns failed"), None]
         server = MagicMock()
+        publisher = MagicMock()
 
-        assert _start_slave_inventory(config, p2p_sync, MagicMock(), server) is None
+        with (
+            patch("hsync_client.p2p_serving.P2PInventoryPublisher", return_value=publisher),
+            patch("hsync_client.p2p_serving.set_active_inventory_publisher"),
+        ):
+            assert _start_slave_inventory(config, p2p_sync, MagicMock(), server) is publisher
 
         server.stop_serving.assert_called_once_with()
         assert [call.args[0] for call in p2p_sync.update_endpoint_ready.call_args_list] == [

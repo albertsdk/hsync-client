@@ -82,7 +82,7 @@ Known scaling characteristics:
   row above and the server sweep), so a full first sync drains faster than a
   same-size realtime wave suggests from event-path numbers alone.
 - Peer-to-peer offloading (downloading from another peer instead of the master)
-  adds overhead on the burst path: disabling it with `--no-peer-download`
+  adds overhead on the burst path: disabling it with `--no-fetch-from-peers`
   raises burst throughput by **~44 %** in the same-session A/B probe (188 vs
   130 files/s at the full 6000-file scale).
 

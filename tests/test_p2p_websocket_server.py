@@ -36,7 +36,12 @@ def _start(*, key: str | None = None, master_cid: str = MASTER_CID):
 
 
 def _config(key: str | None) -> dict:
-    return {"P2P_KEY": key, "P2P_PEER_DOWNLOAD": False}
+    return {
+        "P2P_KEY": key,
+        "P2P_SERVE_BLOCKS": False,
+        "P2P_FETCH_FROM_PEERS": False,
+        "P2P_PUBLISH_INVENTORY": False,
+    }
 
 
 def _url(server: P2PServer, cid: str = SLAVE_CID) -> str:

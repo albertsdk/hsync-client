@@ -75,6 +75,7 @@ from hsync_client.p2p_serving import (
 )
 from hsync_client.p2p_sources import P2PSourceResolver, P2PSourceService
 from hsync_client.p2p_websocket import P2PWebSocketServer, SlaveCidRegistry, p2p_websocket_client
+from hsync_client.peer_roles import fetch_from_peers, serve_blocks
 from hsync_client.preview import _run_preview, _run_stdin_wait, _with_stdin_commands
 from hsync_client.sync import SyncCycleResult, log_initial_sync_start, sync
 from hsync_client.utils import http_to_ws
@@ -309,7 +310,7 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
                 _stop_slave_inventory(
                     p2p_sync,
                     inventory_publisher,
-                    serving=bool(config.get("P2P_PEER_DOWNLOAD", True)),
+                    serving=serve_blocks(config),
                 )
                 inventory_publisher = None
                 seeder_attempted = False
@@ -470,7 +471,7 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
         _stop_slave_inventory(
             p2p_sync,
             inventory_publisher,
-            serving=bool(config.get("P2P_PEER_DOWNLOAD", True)),
+            serving=serve_blocks(config),
         )
         p2p_server.stop()
         p2p_sync.stop()
@@ -530,7 +531,7 @@ def _run_as_master(
                 inventory_store=inventory_store,
                 peer_snapshot_provider=peer_manager.get_alive_peer_snapshots,
             )
-            if config.get("P2P_PEER_DOWNLOAD", True)
+            if serve_blocks(config)
             else None
         )
     else:
@@ -829,8 +830,8 @@ def _run_as_slave(
             bucket=config["REMOTE_BUCKET"],
             p2p_key=config["P2P_KEY"],
             local_bucket=config["LOCAL_BUCKET"],
-            enabled=config.get("P2P_PEER_DOWNLOAD", True),
-            master_capable=bool(master.peer_download_enabled),
+            enabled=fetch_from_peers(config),
+            master_capable=bool(master.serves_blocks),
             timeout=float(config.get("HTTP_TIMEOUT", 30)),
         )
 

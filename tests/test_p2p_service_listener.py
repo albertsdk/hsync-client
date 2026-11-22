@@ -80,7 +80,7 @@ class TestRegisterPeerFromInfo:
         assert peer.cert_fingerprint == "ab" * 32
         assert peer.compression_enabled is True
         assert peer.delta_enabled is True
-        assert peer.peer_download_enabled is True
+        assert peer.serves_blocks is True
         assert peer.server_ready is True
         assert peer.prefer_master is True
         assert peer.never_master is False
@@ -103,7 +103,7 @@ class TestRegisterPeerFromInfo:
         assert peer.cert_fingerprint is None
         assert peer.compression_enabled is False
         assert peer.delta_enabled is False
-        assert peer.peer_download_enabled is False
+        assert peer.serves_blocks is False
         assert peer.server_ready is False
         assert peer.prefer_master is False
         assert peer.never_master is False

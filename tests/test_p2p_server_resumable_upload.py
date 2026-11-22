@@ -24,6 +24,22 @@ from hsync_client.p2p_server import P2PServer
 from .p2p_helpers import unauth_write_config
 
 
+def _wait_for_release(part_file) -> bool:
+    """Wait for the handler's ``finally`` to release the artifact.
+
+    The response is sent before the request handler returns, so the client can
+    observe the 201/202 while the server thread is still in its cleanup.
+    """
+    from hsync_client.utils.paths import is_inflight_partial
+
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        if not is_inflight_partial(str(part_file)):
+            return True
+        time.sleep(0.01)
+    return False
+
+
 class TestLANResumableUpload:
     """Tests for resumable upload in P2P master mode."""
 
@@ -240,15 +256,13 @@ class TestLANResumableUpload:
 
         assert resp.status_code == 201, resp.text
         assert registered == [True]
-        assert not is_inflight_partial(str(part_file))
+        assert _wait_for_release(part_file)
 
     def test_a_kept_part_is_released_for_a_later_sweep(self, server, tmp_path, config):
         """A 202 answer keeps the ``.part`` but no writer owns it any more."""
         import hashlib
 
         import requests
-
-        from hsync_client.utils.paths import is_inflight_partial
 
         _, port = server
         chunk = b"first chunk"
@@ -278,7 +292,7 @@ class TestLANResumableUpload:
 
         assert resp.status_code == 202, resp.text
         assert part_file.exists()
-        assert not is_inflight_partial(str(part_file))
+        assert _wait_for_release(part_file)
 
     def test_compressed_offset_rejected(self, server, tmp_path, config):
         """Compressed upload with offset > 0 is rejected."""

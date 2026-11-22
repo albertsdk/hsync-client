@@ -43,6 +43,7 @@ from hsync_client.constants import (
 )
 from hsync_client.net_utils import address_family, get_local_addresses
 from hsync_client.p2p_peers import PeerManager
+from hsync_client.peer_roles import serve_blocks
 from hsync_client.trust_prompt import build_trust_prompt
 
 if TYPE_CHECKING:
@@ -526,7 +527,7 @@ def build_rendezvous_plan(
             upnp_enabled=map_data_port,
             shared_upnp=shared_upnp,
             capacity=config.get("P2P_PEER_READ_CAP", 0),
-            peer_download_enabled=bool(config.get("P2P_PEER_DOWNLOAD", False)),
+            serve_blocks=serve_blocks(config),
             rendezvous_transport=str(config.get("RENDEZVOUS_TRANSPORT") or "auto"),
         )
         for endpoint in endpoints
