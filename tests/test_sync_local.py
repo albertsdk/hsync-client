@@ -1523,6 +1523,97 @@ class TestGetSyncActionsRemoteOnlyTombstones:
         assert result[0].name == SyncActionName.download
 
 
+class TestDeletionWithNoLiveWatcher:
+    """A deletion outside the watcher's lifetime leaves only the base as proof.
+
+    The first cycle of a link runs before the watcher exists, so a file the user
+    removes meanwhile produces no event and no marker. The next cycle must read
+    the merge base against the disk, mint the offline-deletion marker with the
+    clock the remote still advertises (``_reconcile_tombstones``), and delete
+    the remote copy instead of downloading it back.
+    """
+
+    def test_a_tracked_file_removed_off_watcher_is_deleted_remotely(self, tmp_path):
+        import asyncio
+        import contextlib
+
+        from hsync_client.sync import sync
+
+        cid_local = _peer_cid("L")
+        cid_remote = _peer_cid("R")
+        path = tmp_path / "a.txt"
+        path.write_bytes(b"content")
+        file_obj = File.get(str(path))
+        assert file_obj is not None
+
+        cfg = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "CID": cid_local,
+            "SYNC_DIRECTION": "bidirectional",
+        }
+        with patch("hsync_client.state_backend.CONFIG", cfg):
+            ss_mod.record_base(str(path), file_obj.sha256sum)
+            ss_mod.flush()
+            ss_mod._stores.clear()
+            ts_mod._stores.clear()
+
+        # The master still advertises the version this device synced: the marker
+        # inherits its clock, so it dominates instead of colliding (ADR-0003).
+        remote_files = [
+            {
+                "filepath": "a.txt",
+                "sha256sum": file_obj.sha256sum,
+                "mtime": 1,
+                "ctime": 1,
+                "size": 7,
+                "permissions": "644",
+                "version": {
+                    "vclock": {cid_remote: 1},
+                    "version_id": "v1",
+                    "origin_cid": cid_remote,
+                    "ts": 1,
+                },
+            }
+        ]
+        path.unlink()  # the user removed it while no watcher was running
+        deleted: list[str] = []
+        downloads: list[str] = []
+
+        async def _run() -> None:
+            with (
+                patch("hsync_client.sync.CONFIG", cfg),
+                patch("hsync_client.state_backend.CONFIG", cfg),
+                patch("hsync_client.sync.get_files_remote", return_value=remote_files),
+                patch("hsync_client.sync.get_tombstones_remote", return_value={}),
+                patch("hsync_client.sync.push_tombstones_remote"),
+                patch("hsync_client.sync.get_dirs_remote", return_value=None),
+                patch("hsync_client.sync.emit_folder_size"),
+                patch("hsync_client.sync.emit_event"),
+                patch("hsync_client.sync._cleanup_partial_files"),
+                patch("hsync_client.sync.ensure_hsynckeep_files"),
+                patch(
+                    "hsync_client.transfer.delete_file_remote",
+                    side_effect=lambda f: deleted.append(f.filepath),
+                ),
+                patch(
+                    "hsync_client.transfer.download_file",
+                    side_effect=lambda f, **kw: downloads.append(f.filepath),
+                ),
+            ):
+                await sync(p2p_mode=True)
+
+        try:
+            asyncio.run(_run())
+        finally:
+            with contextlib.suppress(Exception):
+                with patch("hsync_client.state_backend.CONFIG", cfg):
+                    ts_mod._stores.clear()
+                    ss_mod._stores.clear()
+
+        assert downloads == [], "the removed file must not be downloaded back"
+        assert deleted == ["a.txt"]
+
+
 class TestCycleResultCounters:
     """The cycle result reports every applied action, not only transferred bytes."""
 
