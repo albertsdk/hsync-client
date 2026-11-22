@@ -749,7 +749,7 @@ def _make_master(**overrides: Any) -> MagicMock:
     master.connected = 0
     master.compression_enabled = False
     master.delta_enabled = False
-    master.peer_download_enabled = True
+    master.serves_blocks = True
     master.get_server_url.return_value = "https://192.168.1.1:9000"
     for key, value in overrides.items():
         setattr(master, key, value)

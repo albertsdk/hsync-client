@@ -406,9 +406,8 @@ def test_requester_batches_once_per_500_and_pins_master_session(tmp_path: Path) 
 def test_eligibility_does_not_depend_on_file_size(tmp_path: Path) -> None:
     """An empty file is as eligible as a large one: capacity decides, not size.
 
-    Regression for the retired ``HSYNC_P2P_PEER_DOWNLOAD_MIN_SIZE`` gate, which
-    routed every file below 1 MiB straight to the master and turned a burst of
-    small files into a master-only workload (ADR-0030).
+    A size threshold would route every small file straight to the master and
+    turn a burst of small files into a master-only workload (ADR-0030).
     """
     resolver = _source_resolver(tmp_path)
     empty = File(filepath="data/a.bin", sha256sum="c" * 64, size=0)
