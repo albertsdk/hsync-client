@@ -1614,6 +1614,145 @@ class TestDeletionWithNoLiveWatcher:
         assert deleted == ["a.txt"]
 
 
+class TestRemovalDuringTheCycle:
+    """A removal the watcher did not see is proved by the cycle's own listings.
+
+    The pass re-reads a remote path from the disk, so a file removed after the
+    local scan looks remote-only. Its listing entry is the witness: the device
+    held the peer's exact content a moment earlier, so the removal is a deletion
+    of that version (ADR-0003) and the remote copy is its stale ancestor.
+    """
+
+    @staticmethod
+    def _remote_entry(digest: str, cid_remote: str, *, permissions: str = "644") -> dict:
+        return {
+            "filepath": "a.txt",
+            "sha256sum": digest,
+            "mtime": 1,
+            "ctime": 1,
+            "size": 7,
+            "permissions": permissions,
+            "version": {
+                "vclock": {cid_remote: 1},
+                "version_id": "v1",
+                "origin_cid": cid_remote,
+                "ts": 1,
+            },
+        }
+
+    @staticmethod
+    def _run_cycle(cfg, *, listing, remote, deleted, downloads) -> None:
+        import asyncio
+
+        from hsync_client.sync import sync
+
+        async def _run() -> None:
+            with (
+                patch("hsync_client.sync.CONFIG", cfg),
+                patch("hsync_client.state_backend.CONFIG", cfg),
+                patch("hsync_client.sync.get_files_local", return_value=list(listing)),
+                patch("hsync_client.sync.get_files_remote", return_value=list(remote)),
+                patch("hsync_client.sync.get_tombstones_remote", return_value={}),
+                patch("hsync_client.sync.push_tombstones_remote"),
+                patch("hsync_client.sync.get_dirs_remote", return_value=None),
+                patch("hsync_client.sync.emit_folder_size"),
+                patch("hsync_client.sync.emit_event"),
+                patch("hsync_client.sync._cleanup_partial_files"),
+                patch("hsync_client.sync.ensure_hsynckeep_files"),
+                patch(
+                    "hsync_client.transfer.delete_file_remote",
+                    side_effect=lambda f: deleted.append(f.filepath),
+                ),
+                patch(
+                    "hsync_client.transfer.download_file",
+                    side_effect=lambda f, **kw: downloads.append(f.filepath),
+                ),
+                patch("hsync_client.transfer.upload_file"),
+                patch("hsync_client.sync.update_file"),
+            ):
+                await sync(p2p_mode=True)
+
+        asyncio.run(_run())
+
+    @pytest.fixture(autouse=True)
+    def _clean_state(self):
+        """The merge bases and markers of this test never leak into the next."""
+        yield
+        ss_mod._stores.clear()
+        ts_mod._stores.clear()
+
+    def test_a_file_removed_after_the_listing_is_deleted_remotely(self, tmp_path):
+        """The listing names the peer's content at the moment the file went away."""
+        from hsync_client.config import CONFIG as global_config
+        from hsync_client.sync import get_files_local
+
+        cid_local, cid_remote = _peer_cid("L"), _peer_cid("R")
+        path = tmp_path / "a.txt"
+        path.write_bytes(b"content")
+        digest = File.get(str(path)).sha256sum
+        cfg = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "CID": cid_local,
+            "SYNC_DIRECTION": "bidirectional",
+        }
+        with patch.dict(global_config, cfg):
+            ss_mod._stores.clear()
+            ts_mod._stores.clear()
+            listing = get_files_local()
+
+        path.unlink()  # the user removes it while the pass is running
+        deleted: list[str] = []
+        downloads: list[str] = []
+        self._run_cycle(
+            cfg,
+            listing=listing,
+            remote=[self._remote_entry(digest, cid_remote)],
+            deleted=deleted,
+            downloads=downloads,
+        )
+
+        assert downloads == [], "the removed file must not be downloaded back"
+        assert deleted == ["a.txt"]
+        with patch("hsync_client.state_backend.CONFIG", cfg):
+            ts_mod._stores.clear()
+            assert tombstone_key("a.txt") in ts_mod.get_payload()
+
+    def test_a_metadata_only_cycle_records_the_base(self, tmp_path):
+        """Identical content agrees even when only the metadata still diverges.
+
+        A fresh device's modes differ from the share's (664 against 644), so the
+        first cycle is a permissions-only upload. The merge base must still be
+        recorded then: it is what lets a later removal be proved.
+        """
+        cid_local, cid_remote = _peer_cid("L"), _peer_cid("R")
+        path = tmp_path / "a.txt"
+        path.write_bytes(b"content")
+        path.chmod(0o664)
+        digest = File.get(str(path)).sha256sum
+        cfg = {
+            "LOCAL_BUCKET": str(tmp_path),
+            "CID": cid_local,
+            "SYNC_DIRECTION": "bidirectional",
+        }
+        with patch("hsync_client.state_backend.CONFIG", cfg):
+            ss_mod._stores.clear()
+            ts_mod._stores.clear()
+        remote = [self._remote_entry(digest, cid_remote, permissions="644")]
+        deleted: list[str] = []
+        downloads: list[str] = []
+        self._run_cycle(cfg, listing=[], remote=remote, deleted=deleted, downloads=downloads)
+
+        with patch("hsync_client.state_backend.CONFIG", cfg):
+            ss_mod._stores.clear()
+            assert ss_mod.get_sync_state_store().base_hash("a.txt") is not None
+
+        path.unlink()
+        self._run_cycle(cfg, listing=[], remote=remote, deleted=deleted, downloads=downloads)
+
+        assert downloads == [], "the removed file must not be downloaded back"
+        assert deleted == ["a.txt"]
+
+
 class TestCycleResultCounters:
     """The cycle result reports every applied action, not only transferred bytes."""
 

@@ -2908,8 +2908,24 @@ def _actions_from_local(
     return actions
 
 
+def _local_hash_index(local_files: list[dict], bucket_root: str) -> dict[str, str]:
+    """``{bucket-relative path: content hash}`` for the cycle's local listing.
+
+    The listing is the witness of what this device held a moment ago: a file it
+    names and the disk no longer has was removed while this pass ran.
+    """
+    index: dict[str, str] = {}
+    for info in local_files:
+        rel = _raw_entry_relpath(info, bucket_root)
+        sha = str(info.get("sha256sum") or "")
+        if rel and sha:
+            index[rel] = sha
+    return index
+
+
 def _actions_from_remote(
     remote_files: list[dict],
+    local_files: list[dict],
     *,
     tombstones: dict[str, dict],
     p2p_mode: bool,
@@ -2922,10 +2938,19 @@ def _actions_from_remote(
     paths (bucket-relative) so the local pass can tell which local entries are
     local-only. The listing is untrusted input: unsafe or malformed entries are
     logged and skipped, never acted on.
+
+    ``local_files`` is this cycle's local listing. A remote entry the disk no
+    longer holds is re-read once (:func:`File.get`) to see its current content,
+    and the listing supplies the content the device held when the pass started:
+    equal hashes prove the copy was the one the peer advertises, so its removal
+    is a deletion that descends from that version (ADR-0003).
     """
     bucket_root = CONFIG["LOCAL_BUCKET"]
     actions: list[SyncAction] = []
     remote_filepaths: set[str] = set()
+    # Built on the first remote-only entry: a cycle where the two listings agree
+    # has none, and the index costs one pass over the local listing.
+    observed_local: dict[str, str] | None = None
 
     # Process remote files
     for remote_file_info in remote_files:
@@ -3061,11 +3086,22 @@ def _actions_from_remote(
             # being overwritten.
             is_conflict = action == SyncActionName.download and timedelta == 0
 
-            # Files already in sync: refresh the merge base with a merged clock
-            # so a later one-sided edit resolves cleanly (convergence invariant, ADR-0022 §5).
+            # Content identity is the agreement proof: whenever both sides hold
+            # the same bytes the merge base is recorded with a merged clock, also
+            # when this cycle still has metadata to converge (the permissions-only
+            # upload/download above). A base written only on a ``nothing`` action
+            # leaves every path whose metadata still differs — a fresh device's
+            # ``664`` against the share's ``644`` — without one, and a later
+            # one-sided edit then cannot resolve causally (ADR-0022 §5) nor can a
+            # deletion prove it descends from the version the peer advertises
+            # (ADR-0003), so the peer's copy would be downloaded back.
             # Skipped in preview mode (persist_state=False) so a dry-run never
             # mutates the persisted installation store.
-            if action == SyncActionName.nothing and local_file.sha256sum and persist_state:
+            if (
+                local_file.sha256sum
+                and local_file.sha256sum == remote_file.sha256sum
+                and persist_state
+            ):
                 sync_state.merge_and_record(abs_local, local_file.sha256sum, remote_vclock)
 
             actions.append(
@@ -3102,8 +3138,35 @@ def _actions_from_remote(
             # ``keep`` never deletes, on either side: a marker (possibly minted
             # before the policy was switched) must not remove the copy that
             # still exists remotely. The additive fallback downloads it here
-            # instead, so the backup converges upward.
-            if causal_match and direction != "download-only" and not deletions_are_kept(CONFIG):
+            # instead, so the backup converges upward. ``download-only`` is a
+            # mirror of the peer: the same rule restores the file.
+            deletions_allowed = direction != "download-only" and not deletions_are_kept(CONFIG)
+            if persist_state and deletions_allowed and not causal_match:
+                # The removal happened while this pass ran: the listing named the
+                # path with the peer's exact content and the disk no longer has
+                # it. Content identity proves the deleted copy is the version the
+                # peer advertises, so the marker may inherit that clock and the
+                # remote copy is its stale ancestor — the outcome the watcher
+                # produces for a deletion it observes, recorded here because the
+                # watcher did not exist yet when the user removed the file.
+                if observed_local is None:
+                    observed_local = _local_hash_index(local_files, bucket_root)
+                removed_hash = observed_local.get(rel)
+                if removed_hash is not None and removed_hash == str(remote_file.sha256sum or ""):
+                    log.info(
+                        f'{ActionLabel.TOMBSTONE} "{rel}" was removed after this cycle '
+                        "listed it; deleting the stale copy on remote"
+                    )
+                    from hsync_client.tombstones import record_deletion_by_key
+
+                    record_deletion_by_key(
+                        tombstone_key(rel),
+                        sha256sum=removed_hash,
+                        origin_cid=_local_cid_or_none(),
+                        prev_vclock=remote_vclock or None,
+                    )
+                    causal_match = True
+            if causal_match and deletions_allowed:
                 log.info(
                     f'{ActionLabel.TOMBSTONE} "{rel}" was deleted locally while offline; '
                     "deleting stale copy on remote"
@@ -3165,6 +3228,7 @@ def get_sync_actions(
     # half of the reconciliation and is unit-testable on its own.
     sync_actions, remote_filepaths = _actions_from_remote(
         remote_files,
+        local_files,
         tombstones=tombstones,
         p2p_mode=p2p_mode,
         persist_state=persist_state,
