@@ -4,11 +4,73 @@
 """Tests for the P2P startup clock-offset probe (ADR-0023)."""
 
 import threading
+import time
 from unittest.mock import patch
 
+import pytest
 from hsync_common.clock import offset_store
 
 from hsync_client import timesync
+
+
+class TestRendezvousClockOffset:
+    """The ack echo is a last-resort time reference (ADR-0055)."""
+
+    @staticmethod
+    def _now_z(offset_seconds: float = 0.0) -> str:
+        from datetime import UTC, datetime
+
+        return datetime.fromtimestamp(time.time() + offset_seconds, UTC).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+
+    def test_establishes_trust_for_a_degraded_host(self):
+        from datetime import UTC, datetime
+
+        offset_store.clear()
+        now = datetime.now(UTC).replace(microsecond=0)
+        recorded = timesync.record_rendezvous_clock_offset(
+            now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            sent_at=now.timestamp(),
+            received_at=now.timestamp() + 0.2,
+        )
+        assert recorded is True
+        assert offset_store.is_trusted() is True
+        assert abs(offset_store.get()) < 2.0
+        # Half the round-trip plus the one-second quantization of the echo.
+        assert offset_store.uncertainty() == pytest.approx(0.6, abs=0.05)
+
+    def test_never_refines_a_better_source(self):
+        offset_store.clear()
+        offset_store.record(0.25, rtt=0.02)
+        assert (
+            timesync.record_rendezvous_clock_offset(
+                self._now_z(), sent_at=time.time(), received_at=time.time()
+            )
+            is False
+        )
+        assert offset_store.get() == 0.25
+
+    def test_implausible_node_clock_is_refused(self):
+        offset_store.clear()
+        assert (
+            timesync.record_rendezvous_clock_offset(
+                "2000-01-01T00:00:00Z", sent_at=time.time(), received_at=time.time()
+            )
+            is False
+        )
+        assert offset_store.is_trusted() is False
+
+    @pytest.mark.parametrize("value", [None, 12.0, "2026-01-01 00:00:00", "garbage"])
+    def test_unusable_timestamp_is_ignored(self, value):
+        offset_store.clear()
+        assert (
+            timesync.record_rendezvous_clock_offset(
+                value, sent_at=time.time(), received_at=time.time()
+            )
+            is False
+        )
+        assert offset_store.is_trusted() is False
 
 
 class TestStartNtpClockOffsetProbe:

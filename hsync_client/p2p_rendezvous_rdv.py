@@ -93,6 +93,7 @@ from hsync_client.rdv_relay import (
     RelayDialer,
 )
 from hsync_client.stun import ObservedAddress, observed_address
+from hsync_client.timesync import record_rendezvous_clock_offset
 from hsync_client.upnp import UpnpMapper
 
 __all__ = ["RdvRendezvous", "SharedUpnpMapping"]
@@ -993,6 +994,7 @@ class RdvRendezvous(RendezvousPlanState):
         local_ips = self._filtered_local_addresses()
         local_ip = local_ips[0] if local_ips else get_local_ip()
         endpoints = self._endpoint_wire(local_ips) if publish_endpoint else []
+        sent_at = time.time()
         ack = self._client.register(
             build_register_frame(
                 cid=self._cid,
@@ -1016,7 +1018,14 @@ class RdvRendezvous(RendezvousPlanState):
                 sync_direction=self._sync_direction,
             )
         )
+        received_at = time.time()
         if ack is not None:
+            # The echo carries the node's clock: a degraded host takes its
+            # reference here, on the same TLS path that already crosses the
+            # NAT (ADR-0055). A better source keeps precedence.
+            record_rendezvous_clock_offset(
+                ack.get("server_time"), sent_at=sent_at, received_at=received_at
+            )
             self._observed = observed_address(ack)
             self._published_endpoints = publish_endpoint
             self._published_local_ip = local_ip if publish_endpoint else None

@@ -74,7 +74,10 @@ component that actually decided it (`hsync_client/p2p_peers.py::PeerManager._ele
 the first key on which the winner beat the runner-up, or its own strongest
 preferred flag when it ran alone) — two peers that both advertise `server_ready`
 are separated by `cid`, so restating `server_ready` there would misdirect
-diagnosis. TXT records advertise `protocol`, `cert_fp`, `sync_direction`,
+diagnosis. A host with no SNTP answer takes a second-resolution reference from the
+rendezvous `ack` echo (`hsync_client/timesync.py::record_rendezvous_clock_offset`,
+ADR-0055), which is TLS-pinned and traverses the same path as the lease.
+TXT records advertise `protocol`, `cert_fp`, `sync_direction`,
 `peer_download` and the election flags.
 
 **`inbound`** is the election input that keeps a relay-only node from winning.

@@ -148,6 +148,16 @@ class FakeUpnp:
         self.unmapped = True
 
 
+@pytest.fixture(autouse=True)
+def _clean_clock():
+    """Every test starts and ends with no measured offset (the lease touches it)."""
+    from hsync_common.clock import offset_store
+
+    offset_store.clear()
+    yield
+    offset_store.clear()
+
+
 def make_plan(**overrides):
     fake_upnp = FakeUpnp()
     kwargs = {
@@ -927,6 +937,34 @@ class TestWaitForRendezvous:
         plan.wait_for_rendezvous(timeout=5.0)
         assert time.monotonic() - start < 1.0, "must wake on the peer-change event"
         assert [c for c in plan._client.calls if c[0] == "query"] == []
+
+
+class TestRendezvousClockEcho:
+    """A degraded host takes its time reference from the lease ack (ADR-0055)."""
+
+    def test_register_records_the_ack_clock_when_untrusted(self, monkeypatch):
+        from datetime import UTC, datetime
+
+        from hsync_common.clock import offset_store
+
+        plan, _ = make_plan()
+        now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        monkeypatch.setattr(plan._client, "register", lambda frame: dict(ACK, server_time=now))
+        assert plan._register(publish_endpoint=False) is True
+        assert offset_store.is_trusted() is True
+        assert abs(offset_store.get()) < 5.0
+
+    def test_a_better_measurement_survives_a_plausible_echo(self, monkeypatch):
+        from datetime import UTC, datetime
+
+        from hsync_common.clock import offset_store
+
+        offset_store.record(0.5, rtt=0.02)
+        plan, _ = make_plan()
+        now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        monkeypatch.setattr(plan._client, "register", lambda frame: dict(ACK, server_time=now))
+        assert plan._register(publish_endpoint=False) is True
+        assert offset_store.get() == 0.5
 
     def test_unreachable_rendezvous_does_not_abort_the_wait(self):
         """The wait never touches the network, so a dead rendezvous cannot break it."""

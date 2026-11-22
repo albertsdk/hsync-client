@@ -286,7 +286,9 @@ so nothing is lost.
   `/api/v1/time`; in p2p mode the SNTP hosts in `HSYNC_NTP_HOSTS` are probed
   (defaults: `pool.ntp.org`, `time.cloudflare.com`, `time.google.com`). A
   network that blocks UDP/123 keeps the host degraded — point it at a reachable
-  SNTP host.
+  SNTP host. A device that can reach a rendezvous node also recovers a coarse
+  reference from it: the node echoes its own clock in every registration
+  answer, and the client uses it when nothing better measured the host.
 - A measurement expires after an hour and is re-taken by the serving node's
   maintenance tick (or at the next start). `[CLOCK SYNC]` reports the offset and
   its error right after a successful probe.

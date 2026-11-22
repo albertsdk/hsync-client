@@ -32,6 +32,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from datetime import UTC, datetime
 from typing import Any
 
 from hsync_common.clock import (
@@ -49,6 +50,14 @@ from hsync_client.utils import get_ssl_verify
 # spawn one probe thread per maintenance tick.
 _PROBE_RETRY_SECONDS = 900.0
 _last_probe_monotonic = 0.0
+
+# ``ack.server_time`` is ``YYYY-MM-DDTHH:MM:SSZ``: the reference truncates to the
+# second, which is the quantization the recorded uncertainty must carry.
+_ACK_TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+_ACK_TIME_QUANTUM_S = 1.0
+# A rendezvous whose clock is off by more than this is not a credible reference
+# (a misconfigured node must not shift the mesh): the host stays degraded.
+_ACK_MAX_OFFSET_S = 3600.0
 
 # Generation of the in-flight P2P NTP probe. A newer start_ntp_clock_offset_probe
 # call invalidates older workers so a slow probe cannot overwrite a fresher result.
@@ -119,6 +128,48 @@ def _mark_probe_attempt() -> None:
     global _last_probe_monotonic
     with _probe_lock:
         _last_probe_monotonic = time.monotonic()
+
+
+def record_rendezvous_clock_offset(
+    server_time: object, *, sent_at: float, received_at: float, logger: Any = log
+) -> bool:
+    """Take the clock offset from a validated ``ack.server_time`` echo.
+
+    The rendezvous is a TLS-pinned control-plane node the client already trusts
+    (ADR-0034) whose answer travels the same QUIC/TLS path that already crosses
+    the NAT, so it is reachable exactly where UDP/123 is filtered. Its timestamp
+    has one-second resolution, so the recorded uncertainty carries that
+    quantization: this measurement can *establish* trust for a degraded host but
+    never refine a better source, and it is therefore taken only while the stored
+    offset is untrusted. Returns whether a measurement was recorded.
+
+    Consumers: ``hsync_client.p2p_rendezvous_rdv.RdvRendezvous._register``.
+    """
+    if offset_store.is_trusted():
+        return False
+    if not isinstance(server_time, str):
+        return False
+    try:
+        parsed = datetime.strptime(server_time, _ACK_TIME_FORMAT).replace(tzinfo=UTC)
+    except ValueError:
+        logger.debug(f"Rendezvous ack carries no usable server_time: {server_time!r}")
+        return False
+    rtt = max(received_at - sent_at, 0.0)
+    # The reference truncates to the second, so its true instant is the value
+    # plus half a quantum on average.
+    offset = parsed.timestamp() + _ACK_TIME_QUANTUM_S / 2 - (sent_at + rtt / 2)
+    if abs(offset) > _ACK_MAX_OFFSET_S:
+        logger.warning(
+            f"{ActionLabel.CLOCK_DEGRADED} rendezvous clock implausible "
+            f"(offset {offset:+.0f}s); corrected mtimes stay unknown"
+        )
+        return False
+    offset_store.record(offset, rtt=rtt + _ACK_TIME_QUANTUM_S)
+    logger.info(
+        f"{ActionLabel.CLOCK_SYNC} rendezvous offset {offset:+.3f}s "
+        f"(±{offset_store.uncertainty():.3f}s)"
+    )
+    return True
 
 
 def maybe_refresh_clock_offset(logger: Any = log) -> None:
