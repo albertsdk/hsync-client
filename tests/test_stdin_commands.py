@@ -9,8 +9,11 @@ import asyncio
 import contextlib
 import os
 import stat
+import subprocess
+import sys
 import threading
 import time
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -458,12 +461,41 @@ class TestStopCommand:
         assert interrupts == [True]
         after.assert_not_called()
 
-    def test_stop_raises_keyboard_interrupt_in_main_thread(self):
-        """End to end: the real interrupt reaches the main thread."""
-        handler = StdinCommandHandler(MagicMock())
-        with pytest.raises(KeyboardInterrupt):
-            handler._dispatch_in_thread(b'{"cmd": "STOP"}\n')
-            time.sleep(1)  # interrupt is delivered at the next bytecode check
+    def test_stop_interrupts_the_process_in_a_subprocess(self):
+        """STOP is a process interrupt: dispatching it ends the interpreter.
+
+        ``interrupt_main`` raises ``KeyboardInterrupt`` in the process main
+        thread, so the check runs in its own interpreter: raising it inside the
+        test runner would deliver a stray SIGINT to whichever test holds the main
+        thread.
+        """
+        script = (
+            "import logging, signal, time\n"
+            "from hsync_client.stdin_commands import StdinCommandHandler\n"
+            # A runner may start its jobs with SIGINT ignored (a background job
+            # in a shell without job control): this process delivers it the
+            # default way, so the check does not depend on the harness.
+            "signal.signal(signal.SIGINT, signal.default_int_handler)\n"
+            "if hasattr(signal, 'pthread_sigmask'):\n"
+            "    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT})\n"
+            "handler = StdinCommandHandler(logging.getLogger('stdin-test'))\n"
+            'handler._dispatch_in_thread(b\'{"cmd": "STOP"}\\n\')\n'
+            "time.sleep(10)\n"
+            "raise SystemExit(3)\n"  # reached only when the interrupt never arrives
+        )
+        env = {k: v for k, v in os.environ.items() if not k.startswith("HSYNC_")}
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+            cwd=str(Path(__file__).resolve().parents[1]),
+        )
+
+        output = result.stdout + result.stderr
+        assert result.returncode not in (0, 3), output
+        assert "KeyboardInterrupt" in output, output
 
 
 class TestThreadReader:
