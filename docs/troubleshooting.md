@@ -61,7 +61,7 @@ version this device synced), the marker inherits the peer's clock, so the
 deletion supersedes the remote copy and is applied on both sides. Folders are
 not versioned like files: a folder follows its content, so when its last file is
 deleted on a peer it is removed there too — keeping it around as an "empty
-folder" is what used to bring it back. A remote copy that changed in the
+folder" is what brings it back. A remote copy that changed in the
 meantime is kept (the newer content wins), and a deletion covering a large share
 of the share (for example every file in it) can still be refused by the
 mass-deletion guard.

@@ -53,8 +53,8 @@ and caveats to watch for.
 ### Caveats
 
 - rsync's `--delete` flag behavior is closest to HSYNC's default bidirectional
-  mode. If you previously used `--delete`, tombstones will handle deletions
-  correctly for offline peers.
+  mode. Deletions travel as causal markers (tombstones), so they also reach a
+  peer that was offline when the file was removed.
 - rsync's `--exclude` patterns translate to `.hsyncignore` rules
   (gitignore syntax).
 - Bandwidth limits: use `--limit-upload` and `--limit-download`

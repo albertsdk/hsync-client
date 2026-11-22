@@ -1006,7 +1006,7 @@ buffering, so the marker does not outlive the deletion it refers to. Because the
 folding prefixes are built from the surviving entries only, a re-created
 directory never swallows the deletes of genuinely removed descendants. The
 existence check is `hsync_client.utils.path_present` (symlink-aware: a dangling
-link is still a directory entry). Regression:
+link is still a directory entry). Guarded by
 `tests/test_file_event_handler_base.py::TestFileEventHandler::test_stale_delete_*`
 and
 `tests/test_p2p_websocket_slave.py::TestSlaveFileEventHandler::test_stale_delete_dropped_when_path_recreated_inside_window`.

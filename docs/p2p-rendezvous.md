@@ -241,7 +241,7 @@ Discovery: mDNS on the local network + discovery server rdv.example.net:443 (cro
 The master additionally logs `[READY]` only once its endpoint has been
 published to the rendezvous (bounded wait), so the readiness line means
 "reachable", not just "started". A rendezvous the client stops using (untrusted
-identity) no longer gates that line.
+identity) does not gate that line.
 
 The **master election is the same one used on a local network**: each device
 publishes its role through the node, so a device that is already serving keeps
