@@ -548,7 +548,7 @@ delivers the `IN_ATTRIB` of a move-out while the vacated path is still
 - **An in-flight recursive delete owns its subtree.** Every materialising event
   (`added`/`modified`/`symlink`, plus a rename's destination) is dropped when it
   lands inside a tree an open `delete` window owns
-  (`hsync_client/deletions.py::covered_by_tree_delete`).
+  (`hsync-common/hsync_common/deletions.py::covered_by_tree_delete`).
 
 A directory this node materialised is reported through
 `EventDispatchContext.record_inbound_dir`

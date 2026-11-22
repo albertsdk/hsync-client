@@ -29,6 +29,7 @@ from os.path import samefile
 from pathlib import Path
 from shutil import rmtree
 
+from hsync_common.deletions import covered_by_tree_delete
 from hsync_common.labels import resolve_label
 from hsync_common.models.dir import Dir
 from hsync_common.models.event import EventName
@@ -44,7 +45,6 @@ from loguru import logger as log
 
 from hsync_client.config import CONFIG, deletions_are_kept
 from hsync_client.constants import HSYNCKEEP_FILENAME
-from hsync_client.deletions import covered_by_tree_delete
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.p2p_inventory import NOOP_INVENTORY_OBSERVER, InventoryObserver
 from hsync_client.p2p_sources import P2PSourceResolver
