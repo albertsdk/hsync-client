@@ -127,6 +127,29 @@ class TestRunAsMaster:
         ws.start.assert_called_once_with(watch_path=str(tmp_path))
         sync.update_server_ready.assert_called_once()
 
+    def test_run_as_master_starts_the_local_pass(self, tmp_path):
+        """The served share's invariants are repaired while the role is held."""
+        from hsync_client.p2p_handler import _run_as_master
+
+        config = _make_p2p_config(tmp_path)
+        sync = self._mock_sync()
+        sync.peer_manager.is_master.return_value = True
+        server, ws = self._mock_servers()
+
+        with (
+            patch("time.sleep"),
+            patch("hsync_client.p2p_handler.start_master_maintenance") as start,
+        ):
+            _run_as_master(
+                config=config,
+                log=MagicMock(),
+                p2p_sync=sync,
+                p2p_server=server,
+                p2p_ws_server=ws,
+            )
+
+        start.assert_called_once_with()
+
     def test_run_as_master_reports_connected_with_a_client(self, tmp_path):
         """Serving as master with a connected slave reports "connected"."""
         from hsync_client.p2p_handler import _run_as_master

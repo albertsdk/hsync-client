@@ -37,6 +37,7 @@ from hsync_client.exceptions import (
     WatcherStartError,
 )
 from hsync_client.exitcodes import ExitCode, exit_code_for_result
+from hsync_client.master_maintenance import start_master_maintenance
 from hsync_client.master_status import NO_DEVICE_MESSAGE
 from hsync_client.p2p_inventory import P2PInventoryStore
 from hsync_client.p2p_inventory_publisher import (
@@ -668,6 +669,11 @@ def _run_as_master(
 
     if first_activation:
         log.info("Press Ctrl+C to stop...")
+    # The served share's own invariants (sentinels, deletion markers, leftover
+    # transfer artifacts) have no other writer while the role is held, so the
+    # local pass runs with the stint. Idempotent: a re-entry keeps the running
+    # thread and replaces one that died.
+    start_master_maintenance()
     # Yield back to the outer rendezvous loop after a short idle window
     # so master/peer election can be re-evaluated.  If we are still
     # master on the next iteration, the outer loop will call us again

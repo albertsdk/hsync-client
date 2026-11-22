@@ -607,6 +607,101 @@ def _collect_listings(
     return local_files, remote_files
 
 
+def mint_missing_base_deletions(
+    remote_files: list[dict] | None = None,
+) -> tuple[list[str], bool]:
+    """Record a marker for every merge-base path the disk no longer has.
+
+    A tracked path whose disk entry is gone was deleted by a writer that recorded
+    no marker of its own: the watcher was inactive (a one-shot run), the event was
+    lost, or the peer that deleted it was offline. The marker is keyed by the
+    last-known content hash so the server can distinguish a true deletion from a
+    path that was merely renamed or moved.
+
+    ``remote_files`` is the cycle's remote listing. A deletion whose remote copy is
+    byte-identical to the merge base is provably the version it descends from, so
+    the marker inherits that copy's clock and dominates it (ADR-0003). This only
+    applies to a base that records **no foreign component** (the base was written
+    before the peer's clock was known); a base that already knows the peer is never
+    re-interpreted, and a remote copy that changed keeps the marker's own clock —
+    the peer's newer content wins (add-wins), so a fresh edit is never deleted by a
+    stale marker. The serving role passes ``None``: it holds the reference copy, so
+    its own clock is the authority.
+
+    Returns:
+        ``(existing_paths, minted)``: the ignore-agnostic on-disk snapshot (the
+        caller's merge-base retention input) and whether anything was recorded.
+
+    Consumers: ``hsync_client.sync._reconcile_tombstones`` (sync cycle) and
+    ``hsync_client.master_maintenance.local_reconcile`` (serving-role pass).
+    """
+    # get_files_local() yields *absolute* filepaths while the store keys hash
+    # *bucket-relative* paths: normalize through relpath_in_bucket (a raw path
+    # hash would never match, mistaking every visible file for a deletion).
+    existing_paths = _existing_file_paths(CONFIG["LOCAL_BUCKET"])
+    existing_keys = {
+        tombstone_key(rp)
+        for p in existing_paths
+        if (rp := relpath_in_bucket(p, CONFIG["LOCAL_BUCKET"]))
+    }
+    # The existence check uses the ignore-agnostic ``existing_keys`` snapshot
+    # only: it is a superset of the syncable ``local_keys`` for on-disk files, so
+    # dropping ``local_keys`` is behaviour-preserving in the steady state. It also
+    # fixes a mid-scan race where the cycle's early listing snapshots a file that
+    # is then deleted while the remote listing retries bridge a transiently
+    # unreachable master: the stale listing would block minting and the file would
+    # be resurrected. ``existing_keys`` is computed immediately before the loop,
+    # so it reflects the live filesystem at mint time.
+    remote_clock_by_key: dict[str, dict[str, int]] = {}
+    remote_hash_by_key: dict[str, str] = {}
+    for info in remote_files or []:
+        rel = _raw_entry_relpath(info, CONFIG["LOCAL_BUCKET"])
+        sha = str(info.get("sha256sum") or "")
+        if not rel or not sha:
+            continue
+        remote_hash_by_key[tombstone_key(rel)] = sha
+        clock, _corrected = _parse_advertised_version(info.get("version"))
+        if clock:
+            remote_clock_by_key[tombstone_key(rel)] = clock
+    # Collect only the deletions first (usually a handful): materialising every
+    # merge base as an extra list would cost O(N) memory on top of the store's own
+    # snapshot.
+    local_cid = str(CONFIG.get("CID") or "")
+    offline_deletions: list[tuple[str, str, dict[str, int]]] = []
+    for key, base_hash, vclock in sync_state.iter_merge_bases():
+        if not key or key in existing_keys:
+            continue
+        inherited = vclock
+        if (
+            base_hash
+            and remote_hash_by_key.get(key) == base_hash
+            and (not local_cid or set(vclock) <= {local_cid})
+        ):
+            inherited = merge_vclocks(inherited, remote_clock_by_key.get(key))
+        offline_deletions.append((key, base_hash, inherited))
+    # ``keep`` never records a deletion: a file the user removed on this device
+    # must not become a marker that makes the peers delete their copy (the live
+    # watcher already returns before recording one).
+    if not offline_deletions or deletions_are_kept(CONFIG):
+        return existing_paths, False
+
+    from hsync_client.tombstones import flush as flush_tombstones
+    from hsync_client.tombstones import record_deletion_by_key
+
+    origin_cid = _local_cid_or_none()
+    for key, base_hash, vclock in offline_deletions:
+        record_deletion_by_key(
+            key,
+            sha256sum=base_hash or None,
+            origin_cid=origin_cid,
+            prev_vclock=vclock,
+            persist=False,
+        )
+    # One SQLite transaction for the whole bulk mint instead of a write per marker.
+    flush_tombstones()
+    return existing_paths, True
+
+
 def _reconcile_tombstones(
     remote_files: list[dict] | None = None,
 ) -> tuple[list[str], dict[str, dict]]:
@@ -615,16 +710,10 @@ def _reconcile_tombstones(
     Returns the ignore-agnostic on-disk path snapshot (used by merge-base
     retention) and the merged marker payload the reconciliation consumes.
 
-    ``remote_files`` is the cycle's remote listing. It lets the offline-deletion
-    mint inherit the clock of the very version this peer deleted: when the peer
-    still advertises the path with **the same content hash as the merge base**,
-    the remote copy is provably the version the deletion descends from, so the
-    marker may carry that clock and dominate it (ADR-0003). This only applies to
-    a base that records **no foreign component** (the defect case: the base was
-    written before the peer's clock was known); a base that already knows the
-    peer is never re-interpreted, and a remote copy that changed keeps the
-    marker's own clock — the peer's newer content wins (add-wins), so a fresh
-    edit is never deleted by a stale marker.
+    The mint itself lives in :func:`mint_missing_base_deletions`, which the
+    serving role's local pass calls without a remote listing. ``remote_files``
+    feeds it the cycle's listing so a deletion whose remote copy is byte-identical
+    to the merge base inherits that copy's clock (ADR-0003).
     """
     tombstones = get_tombstones_remote()
 
@@ -642,97 +731,10 @@ def _reconcile_tombstones(
     push_tombstones_remote(union)
     tombstones = cast("dict[str, dict]", union)
 
-    # Record tombstones for files tracked by the merge base that are no
-    # longer present locally: they were deleted while the peer was offline or
-    # deleted below the watcher's radar (the live watcher records its own
-    # markers, but it is inactive during a one-shot sync, so this scan is the
-    # one-shot catch-all). The tombstone is keyed by the last-known content
-    # hash so the server can distinguish a true deletion from a path that was
-    # merely renamed or moved.
-    # Merge-base keys are hashed (tombstone_key), so compare them against the
-    # hashed local paths — a raw relpath would never match and every tracked
-    # file would be mistaken for deleted. The existence snapshot deliberately
-    # ignores .hsyncignore rules: a file hidden by an ignore pattern is NOT
-    # deleted ("exclude protects, it does not delete"), so it must never mint
-    # a tombstone that would make peers remove their copies.
-    # get_files_local() yields *absolute* filepaths while the store keys hash
-    # *bucket-relative* paths: normalize through relpath_in_bucket (a raw
-    # path hash would never match, mistaking every visible file for a
-    # deletion).
-    existing_paths = _existing_file_paths(CONFIG["LOCAL_BUCKET"])
-    existing_keys = {
-        tombstone_key(rp)
-        for p in existing_paths
-        if (rp := relpath_in_bucket(p, CONFIG["LOCAL_BUCKET"]))
-    }
-    # Causal provenance (ADR-0003): the marker inherits the path's recorded
-    # clock and is ticked by this peer.
-    #
-    # The existence check uses the ignore-agnostic ``existing_keys`` snapshot
-    # only: it is a superset of the syncable ``local_keys`` for on-disk files,
-    # so dropping ``local_keys`` is behaviour-preserving in the steady state.
-    # It fixes a mid-scan race where ``get_files_local`` (run early in the
-    # cycle) snapshots a file that is then deleted while ``get_files_remote``
-    # retries bridge a transiently-unreachable master: the stale
-    # ``local_keys`` would block minting and the file would be resurrected.
-    # ``existing_keys`` is computed right before this loop, so it reflects the
-    # live filesystem at mint time.
-    minted = False
-    # Clock and content the peer still advertises per hashed key: a deleted path
-    # whose remote copy is byte-identical to the merge base is provably the
-    # version the deletion descends from (see the docstring).
-    remote_clock_by_key: dict[str, dict[str, int]] = {}
-    remote_hash_by_key: dict[str, str] = {}
-    for info in remote_files or []:
-        rel = _raw_entry_relpath(info, CONFIG["LOCAL_BUCKET"])
-        sha = str(info.get("sha256sum") or "")
-        if not rel or not sha:
-            continue
-        remote_hash_by_key[tombstone_key(rel)] = sha
-        clock, _corrected = _parse_advertised_version(info.get("version"))
-        if clock:
-            remote_clock_by_key[tombstone_key(rel)] = clock
-    # Collect only the deletions first (usually a handful): the previous
-    # ``list(iter_merge_bases())`` materialised every merge base as an extra
-    # O(N) list on top of the store's own snapshot.
-    local_cid = str(CONFIG.get("CID") or "")
-    offline_deletions: list[tuple[str, str, dict[str, int]]] = []
-    for key, base_hash, vclock in sync_state.iter_merge_bases():
-        if not key or key in existing_keys:
-            continue
-        inherited = vclock
-        if (
-            base_hash
-            and remote_hash_by_key.get(key) == base_hash
-            and (not local_cid or set(vclock) <= {local_cid})
-        ):
-            inherited = merge_vclocks(inherited, remote_clock_by_key.get(key))
-        offline_deletions.append((key, base_hash, inherited))
-
-    from hsync_client.tombstones import record_deletion_by_key
-
-    # ``keep`` never records a deletion: a file the user removed on this
-    # device must not become a marker that makes the peers delete their copy
-    # (the live watcher already returns before recording one).
-    if not deletions_are_kept(CONFIG):
-        for key, base_hash, vclock in offline_deletions:
-            record_deletion_by_key(
-                key,
-                sha256sum=base_hash or None,
-                origin_cid=_local_cid_or_none(),
-                prev_vclock=vclock,
-                persist=False,
-            )
-            minted = True
-    # Persist the minted markers once (one SQLite transaction) and push the
-    # union once after all offline-deletion markers are recorded: the
-    # intermediate per-marker persists/pushes were redundant (the master only
-    # ever consumes the final union, and each push is a full HTTP round-trip /
-    # each persist a SQLite write).
+    existing_paths, minted = mint_missing_base_deletions(remote_files)
     if minted:
-        from hsync_client.tombstones import flush as flush_tombstones
-
-        flush_tombstones()
+        # Push the union once after the bulk mint: the master only ever consumes
+        # the final union, and each push is a full HTTP round-trip.
         union = get_payload()
         push_tombstones_remote(union)
         tombstones = cast("dict[str, dict]", union)

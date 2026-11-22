@@ -1265,8 +1265,10 @@ class P2PMasterFileEventHandler(BaseFileEventHandler):
     def on_created(self, event) -> None:
         """Broadcast a local creation, keeping the empty-dir sentinel in place.
 
-        A master runs no sync cycle, so it is the only place that can keep the
-        markers of the serving share accurate. Without the sentinel the
+        The serving share has no peer to compare with, so this watcher is what
+        keeps its empty-directory markers accurate between the role's local
+        passes (``hsync_client/master_maintenance.py::local_reconcile`` is the
+        periodic safety net). Without the sentinel the
         empty-directory verdict every peer computes (``empty_dir_states`` matches
         the sentinel identity) can never report the folder as synced, and the
         folder row stays pending on the device that created it; without the prune

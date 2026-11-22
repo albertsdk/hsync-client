@@ -123,6 +123,8 @@ from hsync_client.utils import (
     get_throttle_delay,
     inbound_size_cap,
     open_partial_no_follow,
+    register_inflight_partial,
+    unregister_inflight_partial,
 )
 from hsync_client.utils.fs_ops import (
     create_symlink_or_skip,
@@ -576,6 +578,10 @@ class _UploadContext:
     # answer or a committed transfer). The handler's ``finally`` publishes the
     # matching ``transfer_failed`` exactly once.
     fail_reason: str | None = None
+    # The ``.part`` announced to the in-flight registry (``None`` = none open).
+    # Kept apart from ``tmp_path``, which the resume answers clear to keep the
+    # artifact: the registration must not outlive the writer either way.
+    registered_partial: str | None = None
 
 
 _upload_path_locks_guard = threading.Lock()
@@ -1687,12 +1693,13 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
             Path(full_path).mkdir(parents=True, exist_ok=True)
 
-            # The master runs no sync cycle (the periodic reconcile and
-            # ``ensure_hsynckeep_files`` are slave-only), so nothing else would
-            # ever create the empty-directory sentinel here. Without it
-            # ``empty_dir_states`` — which matches the sentinel identity held by
-            # the peers — reports this folder as ``to_upload`` on every device
-            # for good, and the folder row never settles.
+            # The directory itself is born here, so its empty-directory sentinel is
+            # created here too: the serving role's local pass
+            # (``hsync_client/master_maintenance.py::local_reconcile``) creates one
+            # only on its next interval, and until then ``empty_dir_states`` —
+            # which matches the sentinel identity held by the peers — reports this
+            # folder as ``to_upload`` on every device, so the folder row never
+            # settles.
             from hsync_client.sync import ensure_sentinel
 
             ensure_sentinel(full_path)
@@ -2425,6 +2432,12 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
         ctx.dest_path = dest_path_local
         ctx.tmp_path = dest_path_local + PARTIAL_DOWNLOAD_SUFFIX
+        # Announced as in flight: the serving role's local pass sweeps abandoned
+        # ``.part`` artifacts on the resync interval, and this stream's bytes must
+        # survive until it finalizes (a resume keeps them for the peer's next
+        # attempt, so the release is the request's ``finally``, not the rename).
+        register_inflight_partial(ctx.tmp_path)
+        ctx.registered_partial = ctx.tmp_path
         # Serialize per destination path: two concurrent uploads of the same
         # path (a duplicate watcher + full-sync trigger) must not append to the
         # same .part at once — the second writer's preflight offset would go
@@ -2881,6 +2894,9 @@ class P2PEndpointMixin(_HTTPTransportBase):
             # Idempotent safety net for paths that did not go through an
             # error branch (on success ctx tmp_path/raw_file/out_file are None).
             self._discard_temp_artifact(ctx.tmp_path, ctx.out_file, ctx.raw_file)
+            # After the discard, so the sweep never sees the artifact as free
+            # while the bytes are still being removed.
+            self._release_inflight_partial(ctx)
             # Release the per-path serialization lock; the next upload of the
             # same destination may proceed (and re-probe the fresh state).
             lock = ctx.lock
@@ -2894,6 +2910,19 @@ class P2PEndpointMixin(_HTTPTransportBase):
             # a stalled event consumer cannot block the next writer.
             if ctx.fail_reason and not ctx.terminal and ctx.started and ctx.dest_path:
                 emit_failed_transfer("download", ctx.dest_path, ctx.fail_reason)
+
+    @staticmethod
+    def _release_inflight_partial(ctx: _UploadContext) -> None:
+        """Stop protecting this request's ``.part`` from the leftover sweep.
+
+        Once, in the request's ``finally``: every path that ends the artifact's
+        life (the rename, a discard, a resume answer that keeps it) returns
+        through there, so a registration never outlives the writer that owns it —
+        a stale entry would make the sweep skip that path for the process lifetime.
+        """
+        if ctx.registered_partial:
+            unregister_inflight_partial(ctx.registered_partial)
+            ctx.registered_partial = None
 
     @staticmethod
     def _discard_temp_artifact(path: str | None, *files) -> None:

@@ -190,6 +190,96 @@ class TestLANResumableUpload:
             part_file = tmp_path / "resume.txt.part"
             assert not part_file.exists()
 
+    def test_the_streamed_part_is_registered_while_the_upload_runs(self, server, tmp_path, config):
+        """The serving role's sweep must never delete a live upload.
+
+        The local pass runs ``_cleanup_partial_files`` on the resync interval: an
+        inbound upload announces its ``.part`` for the whole request, so the sweep
+        skips it, and the registration does not outlive the writer.
+        """
+        import hashlib
+
+        import requests
+
+        from hsync_client.p2p_server import P2PEndpointMixin
+        from hsync_client.utils.paths import is_inflight_partial
+
+        _, port = server
+        content = b"payload"
+        sha = hashlib.sha256(content).hexdigest()
+        part_file = tmp_path / "inflight.txt.part"
+        registered: list[bool] = []
+        original = P2PEndpointMixin._finalize_upload
+
+        def _spy(handler, ctx, form_fields):
+            registered.append(is_inflight_partial(str(part_file)))
+            return original(handler, ctx, form_fields)
+
+        with (
+            patch("hsync_client.p2p_server.CONFIG", config),
+            patch.object(P2PEndpointMixin, "_finalize_upload", _spy),
+        ):
+            resp = requests.post(
+                self._upload_url(port),
+                files={"file": ("inflight.txt", content)},
+                data={
+                    "cid": "test_cid_12345678901",
+                    "path": "",
+                    "size": str(len(content)),
+                    "sha256sum": sha,
+                    "permissions": "644",
+                    "offset": "0",
+                    "mtime": str(int(time.time())),
+                    "ctime": str(int(time.time())),
+                    "vclock": "",
+                    "version_id": "",
+                    "corrected_mtime": "0",
+                },
+                timeout=5,
+            )
+
+        assert resp.status_code == 201, resp.text
+        assert registered == [True]
+        assert not is_inflight_partial(str(part_file))
+
+    def test_a_kept_part_is_released_for_a_later_sweep(self, server, tmp_path, config):
+        """A 202 answer keeps the ``.part`` but no writer owns it any more."""
+        import hashlib
+
+        import requests
+
+        from hsync_client.utils.paths import is_inflight_partial
+
+        _, port = server
+        chunk = b"first chunk"
+        declared = 1000
+        sha = hashlib.sha256(chunk + b"\x00" * (declared - len(chunk))).hexdigest()
+        part_file = tmp_path / "kept.txt.part"
+
+        with patch("hsync_client.p2p_server.CONFIG", config):
+            resp = requests.post(
+                self._upload_url(port),
+                files={"file": ("kept.txt", chunk)},
+                data={
+                    "cid": "test_cid_12345678901",
+                    "path": "",
+                    "size": str(declared),
+                    "sha256sum": sha,
+                    "permissions": "644",
+                    "offset": "0",
+                    "mtime": str(int(time.time())),
+                    "ctime": str(int(time.time())),
+                    "vclock": "",
+                    "version_id": "",
+                    "corrected_mtime": "0",
+                },
+                timeout=5,
+            )
+
+        assert resp.status_code == 202, resp.text
+        assert part_file.exists()
+        assert not is_inflight_partial(str(part_file))
+
     def test_compressed_offset_rejected(self, server, tmp_path, config):
         """Compressed upload with offset > 0 is rejected."""
         import requests

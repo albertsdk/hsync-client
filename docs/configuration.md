@@ -160,7 +160,7 @@ syncing the file again.
 
 | Variable | Description | Default |
 |---|---|---|
-| `HSYNC_RESYNC` | Periodic full-resync interval (seconds); `0` disables | `300` |
+| `HSYNC_RESYNC` | Periodic full-resync interval (seconds); on the serving device it drives the local repair pass; `0` disables | `300` |
 
 ## Log Rotation
 
@@ -259,7 +259,9 @@ hsync server --env-file ./prod.env server.example.com -b documents -p ~/Document
 
 In continuous mode (the default) the client runs a periodic full sync every
 `HSYNC_RESYNC` seconds (default `300`, set `0` to disable). This is a safety
-net: it recovers any file-system events the watcher may have missed.
+net: it recovers any file-system events the watcher may have missed. The device
+that serves the share runs its local repair pass on the same interval, so one
+setting covers both roles.
 
 On Linux the recursive watcher uses one inotify watch per sub-directory. Large
 trees can exceed `fs.inotify.max_user_watches`: the watcher then degrades to

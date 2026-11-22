@@ -119,6 +119,12 @@ peer.
 As a safety net against missed inotify events, the slave runs a full resync at
 the configured `HSYNC_RESYNC` interval.
 
+The device that serves the share follows the same interval against its own
+tree. It has no peer to compare with, so its resync never transfers anything:
+it restores the empty-directory markers and records the deletions a missed
+event never reported, so the peers stop seeing a folder as empty (or being
+handed a file back) because one event was dropped.
+
 ## 8. Conflict Handling
 
 The master is a **transport hub, not an authority**: it serves bytes and

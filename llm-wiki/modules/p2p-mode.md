@@ -349,6 +349,28 @@ keeps its own. A marker is per-device: neither watcher propagates its deletion
 slave only drops it from the published inventory), because a peer’s
 `.hsynckeep` delete also removes the now-empty directory on a serving master.
 
+On the serving device those watchers are the *only* writer of these invariants, so
+an event the kernel drops (`fs.inotify.max_user_watches` exhaustion, a burst, a
+polling fallback that misses a change) leaves a sentinel or a deletion marker
+stale with nothing to repair it: the slave cycle does not run there, and the peers
+act on what the master advertises. The serving stint therefore runs a purely local
+pass, `hsync_client/master_maintenance.py::local_reconcile`, started by
+`hsync_client/p2p_handler.py::_run_as_master` and stopped by
+`hsync_client/p2p_serving.py::_stop_p2p_serving` (idempotent on both sides, so the
+one-second rendezvous re-entry neither duplicates nor loses it): once at start and
+then every `CONFIG["RESYNC"]` seconds — the `hsync_client/constants.py::RESYNC_DEFAULT`
+safety net the peers honour, so `0` disables local repair everywhere. It transfers
+nothing (no listing comparison, no remote marker fetch) and replays only what a
+cycle keeps true locally: `sync._cleanup_partial_files` for abandoned transfer
+artifacts, `sync.mint_missing_base_deletions` for a tracked path the disk no longer
+has — the marker inherits the base clock and is ticked by this device, so it
+dominates the version the peers pinned, and the sync cycle calls the same mint with
+its remote listing to inherit a peer's clock when that copy is byte-identical to
+the base — `sync._retain_merge_bases` against the ignore-agnostic snapshot, and
+`sync.ensure_hsynckeep_files` for the sentinels. A failing pass is contained (the
+first failure of an episode carries its traceback, the repeats stay at DEBUG) and
+never ends the stint.
+
 **Combined mDNS + rendezvous (`HybridRendezvous`).** With a rendezvous configured
 both sources run against one `PeerManager` (built once via
 `RendezvousPlanState.create_peer_manager` and injected into both plans at
@@ -571,7 +593,7 @@ matrix on the wire data.
 | `_handle_rename` | `p2p_server.py` (PATCH route) | `PATCH /files?src&dst&cid[&expected_sha256&mtime&permissions]` — the zero-byte move, same contract the central server serves (ADR-0044). Confines both endpoints (`resolve_within(..., resolve_final=False)`) and refuses `dst` when it exists (`409`, never an overwrite), an `expected_sha256` that no longer matches the source (`409`, the slave falls back to an upload), an invalid digest/mode/mtime (`400`) and a missing source (`404`). On success the master renames, carries the stored merge base to the new path (`sync_state.move_base`, no clock tick), applies the advertised mode/mtime (far-future clamp), keeps the vacated parent alive with a `.hsynckeep` sentinel (`_ensure_sentinel_in_parent`) and answers `{info, file, version}` (`version_info_for_path`) so the slave records the same base. The source's tombstone is minted by the master's own watcher (`on_moved` → `_on_deleted`) and the `renamed` broadcast carries the slave's CID for echo suppression |
 | `_handle_list_dirs` | `p2p_server.py` (GET route) | `GET /dirs` returns `[{"path", "permissions"}]` for every non-hidden, non-symlink directory (shared `hsync_common.listing.iter_dir_entries`) — mirrors the central server so the client's download-only directory-permission converge (`converge_directory_permissions`) works identically in both modes |
 | `_create_dir_on_master` (permissions param) | `hsync_client/p2p_websocket.py::_create_dir_on_master` | `POST /dirs` gains an optional `permissions` query param: the slave's directory-chmod propagate (`_propagate_dir_permission_change`, `_last_dir_mode` dedup map) reuses the endpoint to push the new mode; the master applies it and re-broadcasts |
-| `_handle_create_dir` parent marking | `hsync_client/p2p_server.py::_handle_create_dir` | `mkdir(parents=True)` also creates every missing ancestor of the requested path, and the master's recursive watcher fires a create event for each. `_handle_create_dir` marks **every missing ancestor inside the bucket** (plus the leaf, only when it does not already exist) with `mark_inbound_origin` before the mkdir, so those synthetic create events carry the slave's CID: without it they would be logged/broadcast as local creates and the slave could never echo-suppress them (`[REMOTE CREATE]` lines on the slave side).  Ancestors above the bucket root are never candidates. After the mkdir it also creates the empty-dir sentinel (`ensure_sentinel`) — a master runs no sync cycle, so nothing else would — and emits `dir_status` `synced` for the directory: this request path is the only apply a master performs, and the peers' empty-directory verdict matches that sentinel identity |
+| `_handle_create_dir` parent marking | `hsync_client/p2p_server.py::_handle_create_dir` | `mkdir(parents=True)` also creates every missing ancestor of the requested path, and the master's recursive watcher fires a create event for each. `_handle_create_dir` marks **every missing ancestor inside the bucket** (plus the leaf, only when it does not already exist) with `mark_inbound_origin` before the mkdir, so those synthetic create events carry the slave's CID: without it they would be logged/broadcast as local creates and the slave could never echo-suppress them (`[REMOTE CREATE]` lines on the slave side).  Ancestors above the bucket root are never candidates. After the mkdir it also creates the empty-dir sentinel (`ensure_sentinel`) — the serving role's local pass reaches it only at the next resync interval — and emits `dir_status` `synced` for the directory: this request path is the only apply a master performs, and the peers' empty-directory verdict matches that sentinel identity |
 | `_StreamingMultipartParser` | `hsync_client/multipart.py::_StreamingMultipartParser` | streaming upload parsing (extracted to `multipart.py`) |
 | `_handle_upload_status` | `hsync_client/p2p_server.py::_handle_upload_status` | `GET /files/upload-status` — reports `.part` size for resume (mirrors central server `get_upload_status`); returns `complete`/`resumable`/`new` + offset |
 | `_handle_upload` (offset) | `hsync_client/p2p_server.py::_handle_upload` | resumable upload: `offset > 0` appends to `.part` in `"ab"` mode (size validated); incomplete uploads return `202` with the new offset; compressed + offset rejected. The handler is an orchestrator over `_admit_upload` (413 space gate), `_open_upload_destination` (untrusted-path resolution + writer setup), `_close_upload_stream` (zstd flush + fsync), `_maybe_partial_upload_response` (202) and `_finalize_upload` (arbitration + conflict copies + commit + sync-state record + terminal event). The `201` body carries `version` (`vclock` + `corrected_mtime`, mirroring the FastAPI server) so the uploader records the accepted clock as its merge base (`hsync_client/transfer.py::_record_201_upload`) instead of only its own |

@@ -21,6 +21,7 @@ from hsync_client.constants import (
     MAX_CONCURRENT_TRANSFERS_RELAY,
     ActionLabel,
 )
+from hsync_client.master_maintenance import stop_master_maintenance
 from hsync_client.p2p_inventory_publisher import (
     P2PInventoryPublisher,
     set_active_inventory_publisher,
@@ -141,6 +142,9 @@ def _stop_p2p_serving(ws_server: P2PWebSocketServer | None, http_server: P2PServ
     callers because they differ between the mastership-loss, role-transition and
     shutdown paths.
     """
+    # The local pass belongs to the stint: stop it before anything else, so no
+    # walk of the share is in flight while the role is torn down.
+    stop_master_maintenance()
     close_future = http_server.stop_serving() if http_server is not None else None
     # The relay listener belongs to the serving role: withdraw it together with
     # the role so a yielded node stops accepting relayed sessions at once.

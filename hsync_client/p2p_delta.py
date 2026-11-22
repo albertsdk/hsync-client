@@ -83,6 +83,10 @@ from hsync_client.progress import (
     progress_reporter,
 )
 from hsync_client.utils.fs_ops import replace_with_retry
+from hsync_client.utils.paths import (
+    register_inflight_partial,
+    unregister_inflight_partial,
+)
 
 # HTTP status codes used here (kept local to avoid a p2p_server import cycle).
 _HTTP_OK = 200
@@ -503,6 +507,9 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
         return
 
     part_path = f"{filepath}{PARTIAL_DELTA_SUFFIX}"
+    # Announced as in flight: the serving role's local pass sweeps abandoned
+    # ``.part`` artifacts on the resync interval, and the rebuild streams here.
+    register_inflight_partial(part_path)
     # Cleanup tracker: cleared once the rebuilt file has been renamed over the
     # base, so the finally block removes only genuine leftovers.
     cleanup_path: str | None = part_path
@@ -573,6 +580,7 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
                     os.remove(leftover)
                 except OSError:
                     pass
+        unregister_inflight_partial(part_path)
 
 
 def handle_delta_data(handler, bucket: str, token: str) -> None:

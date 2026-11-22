@@ -562,6 +562,36 @@ class TestApplyValidation:
         _apply(apply_handler, meta, literals)
         assert apply_handler.sent[0][0] == 200
 
+    def test_the_rebuilt_part_is_registered_while_it_streams(
+        self, p2p_config, apply_handler, tmp_path, monkeypatch
+    ):
+        """The serving role's sweep must never delete the rebuild in flight."""
+        from hsync_client.utils.paths import is_inflight_partial
+
+        base = _base_bytes()
+        new = base + b"tail"
+        target = _master_file(p2p_config, data=base)
+        client_base = tmp_path / "client-base.bin"
+        client_base.write_bytes(base)
+        sigs = compute_signatures(str(client_base), BLOCK)
+        ops, literals = find_matches(new, sigs, BLOCK)
+        meta = _valid_metadata(base, new, ops=[op.to_dict() for op in ops])
+
+        part_path = f"{target}{ld.PARTIAL_DELTA_SUFFIX}"
+        seen: list[bool] = []
+        real_reconstruct = ld.reconstruct_and_verify
+
+        def _spy(*args, **kwargs):
+            seen.append(is_inflight_partial(part_path))
+            return real_reconstruct(*args, **kwargs)
+
+        monkeypatch.setattr(ld, "reconstruct_and_verify", _spy)
+        _apply(apply_handler, meta, literals)
+
+        assert apply_handler.sent[0][0] == 200
+        assert seen == [True]
+        assert not is_inflight_partial(part_path)
+
 
 # ---------------------------------------------------------------------------
 # handle_delta_data
