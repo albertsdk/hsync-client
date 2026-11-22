@@ -42,35 +42,33 @@ class TestPeerManager:
         from hsync_common.protocol.p2p import ElectionCandidate
 
         pm = PeerManager(local_cid="local123", bucket="photos")
-        # Two serving incumbents tie on server_ready: startup_time decides.
-        winner = ElectionCandidate(cid="aaa", server_ready=True, startup_time=100.0)
-        runner = ElectionCandidate(cid="bbb", server_ready=True, startup_time=200.0)
-        assert pm._election_reason([winner, runner]) == "earliest startup"
+        # Two serving incumbents tie on server_ready: the cid decides.
+        winner = ElectionCandidate(cid="aaa", server_ready=True)
+        runner = ElectionCandidate(cid="bbb", server_ready=True)
+        assert pm._election_reason([winner, runner]) == "lowest cid"
 
         # Same server_ready, preference and startup: the cid breaks the tie.
-        w2 = ElectionCandidate(cid="aaa", server_ready=True, startup_time=100.0)
-        r2 = ElectionCandidate(cid="aab", server_ready=True, startup_time=100.0)
+        w2 = ElectionCandidate(cid="aaa", server_ready=True)
+        r2 = ElectionCandidate(cid="aab", server_ready=True)
         assert pm._election_reason([w2, r2]) == "lowest cid"
 
         # A lone bidirectional candidate names the direction preference.
-        lone = ElectionCandidate(cid="aaa", startup_time=100.0)
+        lone = ElectionCandidate(cid="aaa")
         assert pm._election_reason([lone]) == "bidirectional preference"
 
-        # A lone non-preferred, non-bidirectional candidate leaves startup order.
-        lone_upload = ElectionCandidate(cid="aaa", startup_time=100.0, sync_direction="upload-only")
-        assert pm._election_reason([lone_upload]) == "earliest startup"
+        # A lone non-preferred, non-bidirectional candidate leaves the cid.
+        lone_upload = ElectionCandidate(cid="aaa", sync_direction="upload-only")
+        assert pm._election_reason([lone_upload]) == "lowest cid"
 
     def test_inbound_peer_outranks_a_relay_only_peer(self):
         """A confirmed dialable node wins over a relay-only one on equal rank.
 
         Without it the relay-only node (which forces every peer onto the relay)
-        could win on startup_time and split the bucket.
+        could win on policy and split the bucket.
         """
-        pm = PeerManager(local_cid="local123", bucket="photos", startup_time=1.0)
+        pm = PeerManager(local_cid="local123", bucket="photos")
         pm.set_master_candidacy(False)  # isolate the remote candidates
-        pm.add_peer(
-            Peer(cid="relay", bucket="photos", address="1.1.1.1", port=1, startup_time=100.0)
-        )
+        pm.add_peer(Peer(cid="relay", bucket="photos", address="1.1.1.1", port=1))
         assert pm.get_master_cid() == "relay"
 
         pm.add_peer(
@@ -79,17 +77,14 @@ class TestPeerManager:
                 bucket="photos",
                 address="1.1.1.2",
                 port=1,
-                startup_time=200.0,
                 inbound=True,
             )
         )
         assert pm.get_master_cid() == "reachable"
 
     def test_set_local_inbound_re_elects(self):
-        pm = PeerManager(local_cid="mmm333", bucket="photos", startup_time=200.0)
-        pm.add_peer(
-            Peer(cid="aaa999", bucket="photos", address="1.1.1.1", port=1, startup_time=100.0)
-        )
+        pm = PeerManager(local_cid="mmm333", bucket="photos")
+        pm.add_peer(Peer(cid="aaa999", bucket="photos", address="1.1.1.1", port=1))
         assert pm.get_master_cid() == "aaa999"
 
         pm.set_local_inbound(True)
@@ -98,7 +93,7 @@ class TestPeerManager:
 
     def test_inbound_is_or_merged_across_sources(self):
         """mDNS never knows inbound, so it must not clear the rendezvous claim."""
-        pm = PeerManager(local_cid="local123", bucket="photos", startup_time=1.0)
+        pm = PeerManager(local_cid="local123", bucket="photos")
         pm.set_master_candidacy(False)
         pm.add_peer(
             Peer(cid="peer", bucket="photos", address="1.1.1.1", port=1, inbound=True),
@@ -111,25 +106,15 @@ class TestPeerManager:
 
         assert pm._peers["peer"].inbound is True
 
-    def test_startup_time_uses_the_sntp_corrected_clock(self, monkeypatch):
-        import hsync_client.p2p_peers as peers_module
-
-        monkeypatch.setattr(peers_module, "now_corrected", lambda: 1760000999.0)
-
-        pm = PeerManager(local_cid="aaa111", bucket="photos")
-
-        assert pm._startup_time == 1760000999.0
-
     def test_master_election_local_wins(self):
         """Test that local client is elected master when it started earliest."""
-        pm = PeerManager(local_cid="aaa111", bucket="photos", startup_time=100.0)
+        pm = PeerManager(local_cid="aaa111", bucket="photos")
         pm.add_peer(
             Peer(
                 cid="zzz999",
                 bucket="photos",
                 address="192.168.1.100",
                 port=9753,
-                startup_time=200.0,
             )
         )
         assert pm.is_master() is True
@@ -137,14 +122,13 @@ class TestPeerManager:
 
     def test_master_election_remote_wins(self):
         """Test that remote peer is elected master when it started earliest."""
-        pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0)
+        pm = PeerManager(local_cid="zzz999", bucket="photos")
         pm.add_peer(
             Peer(
                 cid="aaa111",
                 bucket="photos",
                 address="192.168.1.100",
                 port=9753,
-                startup_time=100.0,
             )
         )
         assert pm.is_master() is False
@@ -164,7 +148,9 @@ class TestPeerManager:
     def test_master_candidacy_can_be_dropped_and_restored(self):
         """A dry-run node (parked waiting for commands) is not a candidate."""
         pm = PeerManager(
-            local_cid="zzz999", bucket="photos", prefer_master=True, startup_time=100.0
+            local_cid="zzz999",
+            bucket="photos",
+            prefer_master=True,
         )
         pm.add_peer(
             Peer(
@@ -172,7 +158,6 @@ class TestPeerManager:
                 bucket="photos",
                 address="192.168.1.100",
                 port=9753,
-                startup_time=200.0,
             )
         )
         assert pm.is_master() is True
@@ -273,12 +258,11 @@ class TestPeerManager:
         assert elapsed >= 0.15, "heartbeat-only refreshes must not signal waiters"
 
     def test_bidirectional_preferred_over_upload_only(self):
-        """Test that bidirectional peer wins over upload-only with same startup_time."""
+        """Test that a bidirectional peer wins over an upload-only one."""
         # Local is upload-only, remote is bidirectional — remote should win
         pm = PeerManager(
             local_cid="aaa111",
             bucket="photos",
-            startup_time=100.0,
             sync_direction="upload-only",
         )
         pm.add_peer(
@@ -287,7 +271,6 @@ class TestPeerManager:
                 bucket="photos",
                 address="192.168.1.100",
                 port=9753,
-                startup_time=100.0,
                 sync_direction="bidirectional",
             )
         )
@@ -295,11 +278,10 @@ class TestPeerManager:
         assert pm.get_master_cid() == "zzz999"
 
     def test_bidirectional_preferred_over_download_only(self):
-        """Test that bidirectional peer wins over download-only with same startup_time."""
+        """Test that a bidirectional peer wins over a download-only one."""
         pm = PeerManager(
             local_cid="aaa111",
             bucket="photos",
-            startup_time=100.0,
             sync_direction="download-only",
         )
         pm.add_peer(
@@ -308,7 +290,6 @@ class TestPeerManager:
                 bucket="photos",
                 address="192.168.1.100",
                 port=9753,
-                startup_time=100.0,
                 sync_direction="bidirectional",
             )
         )
@@ -321,7 +302,6 @@ class TestPeerManager:
         pm = PeerManager(
             local_cid="zzz999",
             bucket="photos",
-            startup_time=200.0,
             prefer_master=True,
             sync_direction="upload-only",
         )
@@ -331,19 +311,17 @@ class TestPeerManager:
                 bucket="photos",
                 address="192.168.1.100",
                 port=9753,
-                startup_time=100.0,
                 sync_direction="bidirectional",
             )
         )
         assert pm.is_master() is True
         assert pm.get_master_cid() == "zzz999"
 
-    def test_both_non_bidirectional_falls_back_to_startup_time(self):
-        """Test election between two non-bidirectional peers uses startup_time."""
+    def test_both_non_bidirectional_falls_back_to_the_cid(self):
+        """Two non-bidirectional peers are separated by their id."""
         pm = PeerManager(
             local_cid="zzz999",
             bucket="photos",
-            startup_time=100.0,
             sync_direction="upload-only",
         )
         pm.add_peer(
@@ -352,20 +330,18 @@ class TestPeerManager:
                 bucket="photos",
                 address="192.168.1.100",
                 port=9753,
-                startup_time=200.0,
                 sync_direction="download-only",
             )
         )
-        # Local started earlier, so local wins
-        assert pm.is_master() is True
-        assert pm.get_master_cid() == "zzz999"
+        # A full policy tie is broken by the id: the peer sorts first.
+        assert pm.is_master() is False
+        assert pm.get_master_cid() == "aaa111"
 
     def test_non_bidirectional_master_logs_warning(self):
         """Test that a warning is logged when non-bidirectional master is elected."""
         pm = PeerManager(
             local_cid="aaa111",
             bucket="photos",
-            startup_time=100.0,
             sync_direction="upload-only",
         )
         with patch("hsync_client.p2p_peers.log") as mock_log:
@@ -375,7 +351,6 @@ class TestPeerManager:
                     bucket="photos",
                     address="192.168.1.100",
                     port=9753,
-                    startup_time=200.0,
                     sync_direction="download-only",
                 )
             )
@@ -392,7 +367,6 @@ class TestPeerManager:
         pm = PeerManager(
             local_cid="zzz999",
             bucket="photos",
-            startup_time=200.0,
             sync_direction="bidirectional",
         )
         pm.add_peer(
@@ -401,7 +375,6 @@ class TestPeerManager:
                 bucket="photos",
                 address="192.168.1.100",
                 port=9753,
-                startup_time=100.0,
                 sync_direction="upload-only",
             )
         )
@@ -443,25 +416,23 @@ class TestPeerManager:
         from hsync_client.p2p_peers import PeerManager
 
         pm = PeerManager(
-            local_cid="local",
+            local_cid="zzz999",
             bucket="photos",
             prefer_master=True,
-            startup_time=100.0,
         )
         # Add another prefer_master peer that started later
         with patch("hsync_client.p2p_peers.log") as mock_log:
             pm.add_peer(
                 Peer(
-                    cid="remote",
+                    cid="aaa111",
                     bucket="photos",
                     address="192.168.1.100",
                     port=9753,
                     prefer_master=True,
-                    startup_time=50.0,
                 )
             )
-            # Remote started earlier, so local should become client
-            assert pm.get_master_cid() == "remote"
+            # The peer sorts first, so local becomes client
+            assert pm.get_master_cid() == "aaa111"
             # Should have logged a conflict warning
             warning_calls = [
                 call for call in mock_log.warning.call_args_list if "MASTER CONFLICT" in str(call)
@@ -476,7 +447,6 @@ class TestPeerManager:
             local_cid="local",
             bucket="photos",
             prefer_master=False,
-            startup_time=100.0,
         )
         # First become master
         pm.add_peer(
@@ -486,7 +456,6 @@ class TestPeerManager:
                 address="192.168.1.100",
                 port=9753,
                 prefer_master=False,
-                startup_time=200.0,
             )
         )
         assert pm.get_master_cid() == "local"
@@ -500,7 +469,6 @@ class TestPeerManager:
                     address="192.168.1.101",
                     port=9753,
                     prefer_master=True,
-                    startup_time=50.0,
                 )
             )
             # New prefer_master should take over
@@ -519,7 +487,6 @@ class TestPeerManager:
             local_cid="local",
             bucket="photos",
             prefer_master=True,
-            startup_time=10.0,
         )
         # A remote peer is already serving (incumbent master)
         pm.add_peer(
@@ -529,7 +496,6 @@ class TestPeerManager:
                 address="192.168.1.100",
                 port=9753,
                 server_ready=True,
-                startup_time=200.0,
             )
         )
         # Despite local prefer_master and earlier startup, the incumbent wins
@@ -542,7 +508,6 @@ class TestPeerManager:
         pm = PeerManager(
             local_cid="local",
             bucket="photos",
-            startup_time=100.0,
         )
         # Local becomes master and starts serving
         pm.set_local_server_ready(True)
@@ -556,7 +521,6 @@ class TestPeerManager:
                 address="192.168.1.101",
                 port=9753,
                 prefer_master=True,
-                startup_time=50.0,
             )
         )
         # Local incumbent keeps the master role (no takeover, no split-brain)
@@ -570,7 +534,6 @@ class TestPeerManager:
             local_cid="local",
             bucket="photos",
             prefer_master=True,
-            startup_time=100.0,
         )
         with patch("hsync_client.p2p_peers.log") as mock_log:
             pm.add_peer(
@@ -579,7 +542,6 @@ class TestPeerManager:
                     bucket="photos",
                     address="192.168.1.100",
                     port=9753,
-                    startup_time=200.0,
                 )
             )
             # Local should win due to prefer_master
@@ -597,18 +559,16 @@ class TestPeerManager:
         from hsync_client.p2p_peers import PeerManager
 
         pm = PeerManager(
-            local_cid="local",
+            local_cid="zzz999",
             bucket="photos",
-            startup_time=200.0,
         )
         with patch("hsync_client.p2p_peers.log") as mock_log:
             pm.add_peer(
                 Peer(
-                    cid="peer1",
+                    cid="aaa111",
                     bucket="photos",
                     address="192.168.1.100",
                     port=9753,
-                    startup_time=100.0,
                 )
             )
             # Remote should win
@@ -636,7 +596,6 @@ class TestNeverMaster:
         pm = PeerManager(
             local_cid="aaa111",
             bucket="photos",
-            startup_time=100.0,
             never_master=True,
         )
         pm.add_peer(
@@ -645,7 +604,6 @@ class TestNeverMaster:
                 bucket="photos",
                 address="192.168.1.100",
                 port=9753,
-                startup_time=200.0,
             )
         )
         assert pm.is_master() is False
@@ -653,18 +611,17 @@ class TestNeverMaster:
 
     def test_peer_never_master_ignored_in_election(self):
         """A never-master peer is never elected even if it started first."""
-        pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0)
+        pm = PeerManager(local_cid="zzz999", bucket="photos")
         pm.add_peer(
             Peer(
                 cid="aaa111",
                 bucket="photos",
                 address="192.168.1.100",
                 port=9753,
-                startup_time=100.0,
                 never_master=True,
             )
         )
-        # Despite the earlier startup_time, the never-master peer loses;
+        # Despite ranking first on policy, the never-master peer loses;
         # the local client becomes master.
         assert pm.is_master() is True
         assert pm.get_master_cid() == "zzz999"
@@ -689,26 +646,15 @@ class TestPeerManagerProperties:
     """Tests for the simple property accessors."""
 
     def test_flag_properties(self):
-        """prefer_master/never_master/startup_time are exposed as properties."""
+        """prefer_master/never_master are exposed as properties."""
         pm = PeerManager(
             local_cid="local123",
             bucket="photos",
             prefer_master=True,
             never_master=True,
-            startup_time=1234.5,
         )
         assert pm.prefer_master is True
         assert pm.never_master is True
-        assert pm.startup_time == 1234.5
-
-    def test_startup_time_defaults_to_now(self):
-        """A non-positive startup_time is replaced with the current time."""
-        pm = PeerManager(local_cid="local123", bucket="photos", startup_time=0.0)
-        assert pm.startup_time > 0
-
-
-class TestAddPeerFiltering:
-    """Tests for the add_peer gates (bucket/group/self)."""
 
     def test_peer_with_different_bucket_is_ignored(self):
         pm = PeerManager(local_cid="local123", bucket="photos")
@@ -755,7 +701,6 @@ class TestAddPeerUpdate:
                 server_ready=True,
                 prefer_master=True,
                 never_master=False,
-                startup_time=42.0,
                 sync_direction="upload-only",
             )
         )
@@ -771,7 +716,6 @@ class TestAddPeerUpdate:
         assert peer.delta_enabled is True
         assert peer.server_ready is True
         assert peer.prefer_master is True
-        assert peer.startup_time == 42.0
         assert peer.sync_direction == "upload-only"
 
     def test_capability_upgrade_carries_readonly_permissions(self):
@@ -937,7 +881,7 @@ class TestMasterChangeCallback:
     """Tests for the _on_master_change notification."""
 
     def test_callback_receives_remote_master_peer(self):
-        pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0)
+        pm = PeerManager(local_cid="zzz999", bucket="photos")
         callback_calls: list = []
         pm._on_master_change = lambda peer: callback_calls.append(peer)
         pm.add_peer(
@@ -946,14 +890,13 @@ class TestMasterChangeCallback:
                 bucket="photos",
                 address="192.168.1.100",
                 port=9753,
-                startup_time=100.0,
             )
         )
         assert len(callback_calls) == 1
         assert callback_calls[0].cid == "aaa111"
 
     def test_callback_receives_none_when_local_is_master(self):
-        pm = PeerManager(local_cid="aaa111", bucket="photos", startup_time=100.0)
+        pm = PeerManager(local_cid="aaa111", bucket="photos")
         callback_calls: list = []
         pm._on_master_change = lambda peer: callback_calls.append(peer)
         pm.add_peer(
@@ -962,7 +905,6 @@ class TestMasterChangeCallback:
                 bucket="photos",
                 address="192.168.1.100",
                 port=9753,
-                startup_time=200.0,
             )
         )
         assert callback_calls == [None]
@@ -974,7 +916,10 @@ class TestMasterChangeCallback:
         pm._on_master_change = lambda peer: callback_calls.append(peer)
         pm.add_peer(
             Peer(
-                cid="peer1", bucket="photos", address="192.168.1.100", port=9753, startup_time=100.0
+                cid="peer1",
+                bucket="photos",
+                address="192.168.1.100",
+                port=9753,
             )
         )
         assert callback_calls[0].cid == "peer1"
@@ -986,7 +931,6 @@ class TestMasterChangeCallback:
                 bucket="photos",
                 address="192.168.1.100",
                 port=9753,
-                startup_time=100.0,
                 never_master=True,
             )
         )
@@ -1002,7 +946,6 @@ class TestPreferMasterConflictWon:
             local_cid="local",
             bucket="photos",
             prefer_master=True,
-            startup_time=50.0,
         )
         with (
             patch("hsync_client.p2p_peers.log") as mock_log,
@@ -1015,7 +958,6 @@ class TestPreferMasterConflictWon:
                     address="192.168.1.100",
                     port=9753,
                     prefer_master=True,
-                    startup_time=100.0,
                 )
             )
             assert pm.get_master_cid() == "local"
@@ -1041,7 +983,6 @@ class TestRemoteMasterLogging:
         pm = PeerManager(
             local_cid="zzz999",
             bucket="photos",
-            startup_time=200.0,
             sync_direction="download-only",
         )
         with patch("hsync_client.p2p_peers.log") as mock_log:
@@ -1051,7 +992,6 @@ class TestRemoteMasterLogging:
                     bucket="photos",
                     address="192.168.1.100",
                     port=9753,
-                    startup_time=100.0,
                     sync_direction="upload-only",
                 )
             )
@@ -1063,7 +1003,7 @@ class TestRemoteMasterLogging:
 
     def test_remote_prefer_master_logs_reason(self):
         """A remote prefer_master master is logged with the prefer_master reason."""
-        pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0)
+        pm = PeerManager(local_cid="zzz999", bucket="photos")
         with patch("hsync_client.p2p_peers.log") as mock_log:
             pm.add_peer(
                 Peer(
@@ -1071,7 +1011,6 @@ class TestRemoteMasterLogging:
                     bucket="photos",
                     address="192.168.1.100",
                     port=9753,
-                    startup_time=100.0,
                     prefer_master=True,
                 )
             )
@@ -1085,14 +1024,13 @@ class TestRemoteMasterLogging:
 
     def test_master_change_with_peer_missing_from_registry_logs_unknown(self):
         """If the elected master is not found in _peers, log falls back to 'unknown'."""
-        pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0)
+        pm = PeerManager(local_cid="zzz999", bucket="photos")
         pm.add_peer(
             Peer(
                 cid="aaa111",
                 bucket="photos",
                 address="192.168.1.100",
                 port=9753,
-                startup_time=100.0,
             )
         )
         assert pm.get_master_cid() == "aaa111"
@@ -1107,14 +1045,13 @@ class TestRemoteMasterLogging:
         with patch("hsync_client.p2p_peers.log") as mock_log:
             pm.add_peer(
                 Peer(
-                    cid="bbb222",
+                    cid="a00000",
                     bucket="photos",
                     address="192.168.1.101",
                     port=9753,
-                    startup_time=50.0,
                 )
             )
-            assert pm.get_master_cid() == "bbb222"
+            assert pm.get_master_cid() == "a00000"
             info_calls = [
                 c
                 for c in mock_log.info.call_args_list
@@ -1359,14 +1296,13 @@ class TestReconcileStalePeers:
 
     def test_expires_stale_master_and_reelects(self):
         """A master whose heartbeat stopped is demoted and a successor elected."""
-        pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0)
+        pm = PeerManager(local_cid="zzz999", bucket="photos")
         pm.add_peer(
             Peer(
                 cid="aaa111",
                 bucket="photos",
                 address="192.168.1.100",
                 port=9753,
-                startup_time=100.0,
             )
         )
         assert pm.get_master_cid() == "aaa111"
@@ -1396,14 +1332,13 @@ class TestWebSocketLiveness:
         *changes*, so an idle-but-healthy peer goes stale after PEER_TIMEOUT and
         was falsely demoted, producing split-brain elections on every join.
         """
-        pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0)
+        pm = PeerManager(local_cid="zzz999", bucket="photos")
         pm.add_peer(
             Peer(
                 cid="aaa111",
                 bucket="photos",
                 address="192.168.1.100",
                 port=9753,
-                startup_time=100.0,
             )
         )
         assert pm.get_master_cid() == "aaa111"
@@ -1416,14 +1351,13 @@ class TestWebSocketLiveness:
 
     def test_disconnected_peer_is_expired_once_stale(self):
         """Clearing the WSS liveness mark restores mDNS-based staleness."""
-        pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0)
+        pm = PeerManager(local_cid="zzz999", bucket="photos")
         pm.add_peer(
             Peer(
                 cid="aaa111",
                 bucket="photos",
                 address="192.168.1.100",
                 port=9753,
-                startup_time=100.0,
             )
         )
         _age_heartbeat(pm._peers["aaa111"], PEER_TIMEOUT + 1)
@@ -1434,14 +1368,13 @@ class TestWebSocketLiveness:
 
     def test_connected_peer_counts_as_alive_candidate(self):
         """A WSS-connected peer participates in the election despite stale mDNS."""
-        pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0)
+        pm = PeerManager(local_cid="zzz999", bucket="photos")
         pm.add_peer(
             Peer(
                 cid="aaa111",
                 bucket="photos",
                 address="192.168.1.100",
                 port=9753,
-                startup_time=100.0,
             )
         )
         _age_heartbeat(pm._peers["aaa111"], PEER_TIMEOUT + 1)
@@ -1456,7 +1389,6 @@ class TestPeerTimeoutOverride:
         pm = PeerManager(
             local_cid="zzz999",
             bucket="photos",
-            startup_time=200.0,
             peer_timeout=5.0,
         )
         pm.add_peer(
@@ -1465,7 +1397,6 @@ class TestPeerTimeoutOverride:
                 bucket="photos",
                 address="192.168.1.100",
                 port=9753,
-                startup_time=100.0,
             )
         )
         assert pm.get_master_cid() == "aaa111"
@@ -1480,14 +1411,13 @@ class TestMasterReelection:
     """Election determinism when the current master disappears."""
 
     def test_next_ranked_becomes_master_after_master_removed(self):
-        pm = PeerManager(local_cid="ccc333", bucket="photos", startup_time=300.0)
+        pm = PeerManager(local_cid="ccc333", bucket="photos")
         pm.add_peer(
             Peer(
                 cid="aaa111",
                 bucket="photos",
                 address="192.168.1.100",
                 port=9753,
-                startup_time=100.0,
             )
         )
         pm.add_peer(
@@ -1496,7 +1426,6 @@ class TestMasterReelection:
                 bucket="photos",
                 address="192.168.1.101",
                 port=9753,
-                startup_time=200.0,
             )
         )
         assert pm.get_master_cid() == "aaa111"
@@ -1618,7 +1547,7 @@ class TestLivenessSources:
 
     @staticmethod
     def _manager(**kwargs) -> PeerManager:
-        pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0, **kwargs)
+        pm = PeerManager(local_cid="zzz999", bucket="photos", **kwargs)
         pm.register_source(
             TestLivenessSources.SOURCE,
             unit="samples",
@@ -1628,13 +1557,12 @@ class TestLivenessSources:
         return pm
 
     @staticmethod
-    def _peer(cid: str = "aaa111", *, startup_time: float = 100.0) -> Peer:
+    def _peer(cid: str = "aaa111") -> Peer:
         return Peer(
             cid=cid,
             bucket="photos",
             address="192.168.1.100",
             port=9753,
-            startup_time=startup_time,
         )
 
     def test_a_rendezvous_peer_is_not_judged_by_the_heartbeat_window(self):
@@ -1669,7 +1597,7 @@ class TestLivenessSources:
 
     def test_a_live_relay_tunnel_holds_a_peer(self):
         """A paired tunnel is data-plane evidence, like the WebSocket link."""
-        pm = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0)
+        pm = PeerManager(local_cid="zzz999", bucket="photos")
         pm.add_peer(self._peer())
         _age_heartbeat(pm._peers["aaa111"], PEER_TIMEOUT + 1)
 

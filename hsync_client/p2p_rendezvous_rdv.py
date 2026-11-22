@@ -233,7 +233,6 @@ class RdvRendezvous(RendezvousPlanState):
         cert_fingerprint: str | None = None,
         prefer_master: bool = False,
         never_master: bool = False,
-        startup_time: float = 0.0,
         sync_direction: str = "bidirectional",
         peer_timeout: float = PEER_TIMEOUT,
         refresh_interval: float = _DEFAULT_REFRESH_S,
@@ -263,7 +262,6 @@ class RdvRendezvous(RendezvousPlanState):
             cert_fingerprint=cert_fingerprint,
             prefer_master=prefer_master,
             never_master=never_master,
-            startup_time=startup_time,
             sync_direction=sync_direction,
             peer_timeout=peer_timeout,
         )
@@ -1010,7 +1008,6 @@ class RdvRendezvous(RendezvousPlanState):
                 prefer_master=self._prefer_master,
                 never_master=self._never_master,
                 inbound=self._inbound,
-                startup_time=self._startup_time,
                 sync_direction=self._sync_direction,
             )
         )
@@ -1176,7 +1173,7 @@ class RdvRendezvous(RendezvousPlanState):
         ``reachable=false`` entries carry no dialable data-plane endpoint (a
         rendezvous-only register), so they are not peers yet. Every other field —
         including the election advertisement (``server_ready``/``prefer_master``/
-        ``never_master``/``startup_time``/``sync_direction``) — is relayed
+        ``never_master``/``sync_direction``) — is relayed
         verbatim by the node, so a rendezvous-discovered peer enters the shared
         election with the same inputs as a mDNS-discovered one. They are
         unauthenticated claims: the data plane pins the peer certificate before
@@ -1220,7 +1217,6 @@ class RdvRendezvous(RendezvousPlanState):
             prefer_master=wire["prefer_master"],
             never_master=wire["never_master"],
             inbound=wire["inbound"],
-            startup_time=wire["startup_time"],
             sync_direction=wire["sync_direction"],
             endpoints=candidates,
         )

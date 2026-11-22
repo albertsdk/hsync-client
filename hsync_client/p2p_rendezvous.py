@@ -30,7 +30,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from hsync_common.clock import now_corrected
 from hsync_common.protocol.pairing import endpoint_pin_key
 from hsync_common.protocol.tls_trust import TrustPolicy
 from loguru import logger as log
@@ -288,7 +287,6 @@ class RendezvousPlanState:
     # continuous dry-run, see set_master_eligibility) can be undone.
     _configured_prefer_master: bool
     _configured_never_master: bool
-    _startup_time: float
     _sync_direction: str
     _cert_fingerprint: str | None
     _use_https: bool
@@ -308,7 +306,6 @@ class RendezvousPlanState:
         cert_fingerprint: str | None,
         prefer_master: bool,
         never_master: bool,
-        startup_time: float,
         sync_direction: str,
         peer_timeout: float,
     ) -> None:
@@ -326,10 +323,6 @@ class RendezvousPlanState:
         self._configured_never_master = never_master
         self._prefer_master = prefer_master
         self._never_master = never_master
-        # The election compares this value across hosts, so it must be on one
-        # timebase: the SNTP-corrected wall clock, not each host's raw clock
-        # (a slow local clock must not make a peer look like it started first).
-        self._startup_time = startup_time if startup_time > 0 else now_corrected()
         self._sync_direction = sync_direction
         self._peer_timeout = peer_timeout
         self._bound_families = frozenset({4})
@@ -413,7 +406,6 @@ class RendezvousPlanState:
             group=self._group,
             prefer_master=self._prefer_master,
             never_master=self._never_master,
-            startup_time=self._startup_time,
             sync_direction=self._sync_direction,
             local_cert_fingerprint=self._cert_fingerprint,
             local_addresses=self._advertised_local_addresses(),

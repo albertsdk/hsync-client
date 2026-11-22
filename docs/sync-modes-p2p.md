@@ -34,8 +34,7 @@ HSYNC_P2P_PASSPHRASE="a-long-shared-password" hsync p2p -b mybucket -p ~/Sync
 | 1 | `server_ready` (incumbent) | Already-serving master keeps the role |
 | 2 | `prefer_master` flag | Operator-preferred master wins over ordinary peers |
 | 3 | Bidirectional `sync_direction` | Fully bidirectional preferred |
-| 4 | Earliest `startup_time` | Node that started first wins |
-| 5 | Lowest `cid` (lexicographic) | Deterministic tiebreaker |
+| 4 | Lowest `cid` (lexicographic) | Deterministic tiebreaker |
 
 ### Sync Directions
 

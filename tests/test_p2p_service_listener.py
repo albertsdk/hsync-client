@@ -40,7 +40,6 @@ def _full_props(overrides: dict[bytes, bytes] | None = None) -> dict[bytes, byte
         b"server_ready": b"true",
         b"prefer_master": b"true",
         b"never_master": b"false",
-        b"startup_time": b"1234.5",
         b"sync_direction": b"upload-only",
     }
     if overrides:
@@ -84,7 +83,6 @@ class TestRegisterPeerFromInfo:
         assert peer.server_ready is True
         assert peer.prefer_master is True
         assert peer.never_master is False
-        assert peer.startup_time == 1234.5
         assert peer.sync_direction == "upload-only"
 
     def test_minimal_properties_use_defaults(self):
@@ -107,7 +105,6 @@ class TestRegisterPeerFromInfo:
         assert peer.server_ready is False
         assert peer.prefer_master is False
         assert peer.never_master is False
-        assert peer.startup_time == 0.0
         assert peer.sync_direction == "bidirectional"
 
     def test_missing_cid_is_ignored(self):

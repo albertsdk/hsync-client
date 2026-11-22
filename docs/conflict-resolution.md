@@ -14,8 +14,11 @@ On a true divergence (concurrent clocks) a **chronological tie-break**
 original path. The offset is measured against a shared time reference — the
 server in server mode, a list of public SNTP servers (configurable via
 `HSYNC_NTP_HOSTS`) in p2p mode — so raw device-clock skew never decides the
-outcome. When either side does not carry the field (or the two values tie),
-a **deterministic SHA-256 fallback** decides, so every peer still converges.
+outcome. The tie-break requires that measured reference: a device that could
+not reach any time source (offline, air-gapped, filtered UDP/123) treats both
+timestamps as unknown. When either side does not carry the field, the clock
+is untrusted, or the two values tie, a **deterministic SHA-256 fallback**
+decides, so every peer still converges.
 The losing content is preserved as a `_conflicted_copy_` (extrema ratio).
 **No node is authoritative**: the server and the elected p2p master are
 transport hubs only; every node applies the same algorithm, and uploads

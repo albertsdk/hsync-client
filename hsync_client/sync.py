@@ -3255,6 +3255,22 @@ def get_sync_actions(
     return sync_actions
 
 
+def _chronological_inputs(
+    local_corrected_mtime: int, remote_corrected_mtime: int
+) -> tuple[int, int]:
+    """Return the corrected mtimes the chronological tie-break may use.
+
+    A host without a measured clock reference cannot rank two concurrent
+    versions by time, so both values collapse to "unknown" (0) and the
+    deterministic content tie-break decides: the same path an absent mtime
+    takes. The receiver-side clamp already bounds a single peer's value; this
+    one bounds the *comparison* when the local clock is not a reference.
+    """
+    if offset_store.is_trusted():
+        return local_corrected_mtime, remote_corrected_mtime
+    return 0, 0
+
+
 def _compare_files(
     remote_file: File,
     local_file: File,
@@ -3285,6 +3301,9 @@ def _compare_files(
         Tuple of (action, timedelta). ``timedelta == 0`` flags a conflict
         (``conflict_download``: preserve local + download remote).
     """
+    local_corrected_mtime, remote_corrected_mtime = _chronological_inputs(
+        local_corrected_mtime, remote_corrected_mtime
+    )
     decision = resolve_three_way(
         local_file.sha256sum or None,
         local_vclock,
@@ -3496,14 +3515,17 @@ def update_file(
                 eff, base_hash = sync_state.local_version_and_base(file.filepath, file.sha256sum)
                 local_vclock = eff["vclock"] if eff else None
                 local_corrected = eff.get("corrected_mtime", 0) if eff else 0
+            local_corrected, remote_corrected = _chronological_inputs(
+                int(local_corrected), int(remote_corrected)
+            )
             decision = resolve_three_way(
                 file.sha256sum or None,
                 local_vclock,
                 file_data.sha256sum or None,
                 remote_vclock,
                 base_hash,
-                local_corrected_mtime=int(local_corrected),
-                remote_corrected_mtime=int(remote_corrected),
+                local_corrected_mtime=local_corrected,
+                remote_corrected_mtime=remote_corrected,
             )
             # conflict_upload: local wins tie-break — skip the download; the
             # local change is uploaded on the next reconcile. No conflict copy

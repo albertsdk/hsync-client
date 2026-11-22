@@ -15,7 +15,6 @@ peer-to-peer p2p mode.
    - `server_ready` (incumbent) beats newcomers
    - `prefer_master` beats ordinary peers
    - Bidirectional `sync_direction` preferred
-   - Earliest `startup_time` wins
    - Lowest `cid` lexicographically breaks ties
 4. **Role Assignment**: The winner becomes **master**, all others become **slaves**.
 

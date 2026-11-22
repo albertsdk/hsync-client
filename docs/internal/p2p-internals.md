@@ -227,14 +227,11 @@ flowchart TD
     FM -->|"No"| BIDIR{"Any peer with<br/>bidirectional sync?"}
     BIDIR -->|"Yes"| BIDIR_POOL["Filter: bidirectional peers only"]
     BIDIR -->|"No"| ALL_POOL["All peers remain candidates"]
-    BIDIR_POOL --> STARTUP{"Compare<br/>startup_time"}
-    ALL_POOL --> STARTUP
-    STARTUP -->|"Different"| EARLIEST["Earliest startup wins"]
-    STARTUP -->|"Same"| CID["Lowest CID wins"]
+    BIDIR_POOL --> CID["Lowest CID wins"]
+    ALL_POOL --> CID
 
     style SR_WIN fill:#e8f5e9,stroke:#2e7d32
     style FM_WIN fill:#e8f5e9,stroke:#2e7d32
-    style EARLIEST fill:#e8f5e9,stroke:#2e7d32
     style CID fill:#e8f5e9,stroke:#2e7d32
 ```
 
@@ -548,14 +545,14 @@ p2p mode uses mDNS (Multicast DNS) for peer rendezvous:
 - **TXT Records**: the canonical key set of the
   [p2p protocol](https://github.com/albertsdk/hsync-common/blob/main/docs/p2p-protocol.md)
   (`P2P_TXT_KEYS`) — `cid`, `bucket`, `version`, `cert_fp`, `sync_direction`,
-  `server_ready`, `prefer_master`, `never_master`, `startup_time`, `group`,
-  `delta`, `peer_download`, `readonly_permissions`, `connected`,
-  `compression`, `https` — boolean flags
+  `server_ready`, `prefer_master`, `never_master`, `group`, `delta`,
+  `peer_download`, `readonly_permissions`, `connected`, `compression`,
+  `https` — boolean flags
   only when true
 - **Dependency**: `zeroconf` (Python library for mDNS/DNS-SD)
 
 When the group uses a rendezvous instead, the same election inputs (`server_ready`,
-`prefer_master`, `never_master`, `startup_time`, `sync_direction`) travel in the
+`prefer_master`, `never_master`, `sync_direction`) travel in the
 `register` frame and come back on every relayed peer of a `query`, so the master
 election is identical whether mDNS runs alone or alongside the rendezvous. They are
 unauthenticated hints, exactly like the TXT flags: the data plane pins the peer

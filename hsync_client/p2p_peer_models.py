@@ -110,7 +110,6 @@ class Peer:
     evidence: dict[str, float] = field(default_factory=dict)
     prefer_master: bool = False  # True if peer wants to prefer master role
     never_master: bool = False  # True if peer refuses to ever be master
-    startup_time: float = 0.0  # Unix timestamp when peer started
     sync_direction: str = "bidirectional"  # bidirectional | upload-only | download-only
     # Every dialable (host, port) candidate the peer advertised for its data
     # plane, in advertised order. The two sources are merged (stable union): the
@@ -161,6 +160,5 @@ _ELECTION_REASON_LABELS = (
     "prefer_master",
     "inbound reachability",
     "bidirectional preference",
-    "earliest startup",
     "lowest cid",
 )

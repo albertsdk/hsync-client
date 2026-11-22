@@ -301,14 +301,6 @@ class TestMasterFailover:
         master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
         try:
             a = _p2p_start(peer_a, p2p_bucket)
-            # Stagger peer_b so peer_a's startup_time is unambiguously earlier.
-            # The "earliest startup wins" tiebreak samples startup_time in
-            # MdnsRendezvous.__init__, well after process spawn, so two peers spawned
-            # back-to-back race on which one reports the earlier timestamp (and
-            # the CID tiebreak would then flakily elect peer_b instead of
-            # peer_a). A short gap removes the race without changing the
-            # election contract under test.
-            time.sleep(1.5)
             try:
                 b = _p2p_start(peer_b, p2p_bucket)
                 try:
@@ -328,15 +320,21 @@ class TestMasterFailover:
                     master.kill()
                     master.wait()
 
-                    # Then the earliest-started survivor is re-elected and
-                    # resumes serving.
-                    assert _wait_for_text_in_stderr(a, "MASTER", timeout=45), (
-                        "peer_a was not elected master after the crash"
+                    # Then exactly one survivor is re-elected and resumes
+                    # serving: the deterministic election decides by its
+                    # policy components and then by CID, so the test asserts
+                    # that a single successor serves, never which one.
+                    assert _wait_for_text_in_stderr(
+                        a, "MASTER", timeout=20
+                    ) or _wait_for_text_in_stderr(b, "MASTER", timeout=25), (
+                        "no survivor was elected master after the crash"
                     )
+                    promoted = peer_a if "MASTER" in _stderr_text(a) else peer_b
+                    follower = peer_b if promoted == peer_a else peer_a
 
-                    (Path(peer_a) / "after.txt").write_bytes(b"after\n")
-                    assert _wait_for_file(str(Path(peer_b) / "after.txt"), timeout=45), (
-                        "Failover did not resume sync to peer_b"
+                    (Path(promoted) / "after.txt").write_bytes(b"after\n")
+                    assert _wait_for_file(str(Path(follower) / "after.txt"), timeout=45), (
+                        "Failover did not resume sync to the surviving peer"
                     )
                 finally:
                     _terminate(b)

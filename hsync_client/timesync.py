@@ -72,14 +72,14 @@ def probe_server_clock_offset(server_url: str, logger: Any = log) -> None:
         )
     except Exception as exc:
         logger.warning(f"Clock offset probe failed (degraded temporal mode): {exc}")
-        offset_store.record(0.0)
+        offset_store.record(0.0, trusted=False)
         return
     if result is None:
         logger.warning(
             "Server time endpoint unavailable; running in degraded temporal mode "
             "(uncorrected local time)"
         )
-        offset_store.record(0.0)
+        offset_store.record(0.0, trusted=False)
         return
     offset, _rtt = result
     offset_store.record(offset)
@@ -125,7 +125,10 @@ def start_ntp_clock_offset_probe(logger: Any = log) -> threading.Thread:
         with _probe_lock:
             if generation != _probe_generation:
                 return
-            offset_store.record(offset)
+            # ``host is None`` means every probe failed: the local clock stays
+            # uncorrected and is recorded as untrusted, so the election and
+            # the chronological tie-break never treat it as a reference.
+            offset_store.record(offset, trusted=host is not None)
         if host is not None:
             logger.debug(f"Clock offset from {host}: {offset:+.3f}s")
 

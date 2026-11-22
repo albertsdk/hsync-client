@@ -47,7 +47,6 @@ def _make_peers(size: int, start: int) -> list[Peer]:
             port=9000 + i,
             version="1.0.0",
             group=None,
-            startup_time=1_700_000_000.0 + i,
         )
         for i in range(size)
     ]
@@ -57,7 +56,6 @@ def _measure_size(size: int, count: int) -> list[BenchResult]:
     manager = PeerManager(
         local_cid=make_cid(0),
         bucket=_BUCKET,
-        startup_time=1_700_000_000.0,
         peer_timeout=3600.0,
     )
     peers = _make_peers(size, start=1)

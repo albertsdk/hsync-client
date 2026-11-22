@@ -75,7 +75,6 @@ class TestFrameBuilders:
         assert frame["server_ready"] is False
         assert frame["prefer_master"] is False
         assert frame["never_master"] is False
-        assert frame["startup_time"] == 0.0
         assert frame["sync_direction"] == "bidirectional"
 
     def test_register_frame_carries_the_election_advertisement(self):
@@ -86,13 +85,11 @@ class TestFrameBuilders:
             version="1.0.0",
             server_ready=True,
             never_master=True,
-            startup_time=1760000000.5,
             sync_direction="upload-only",
         )
         assert validate_rdv_frame(frame) is not None
         assert frame["server_ready"] is True
         assert frame["never_master"] is True
-        assert frame["startup_time"] == 1760000000.5
         assert frame["sync_direction"] == "upload-only"
 
     def test_refresh_frame_validates(self):

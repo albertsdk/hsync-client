@@ -119,7 +119,6 @@ class MdnsRendezvous(RendezvousPlanState):
         cert_fingerprint: str | None = None,
         prefer_master: bool = False,
         never_master: bool = False,
-        startup_time: float = 0.0,
         sync_direction: str = "bidirectional",
         peer_timeout: float = PEER_TIMEOUT,
         heartbeat_interval: float = HEARTBEAT_INTERVAL,
@@ -135,7 +134,6 @@ class MdnsRendezvous(RendezvousPlanState):
             use_https: Whether to use HTTPS for communication.
             cert_fingerprint: SHA-256 fingerprint of the SSL certificate (if HTTPS).
             prefer_master: If True, this client will always try to be master.
-            startup_time: Unix timestamp when this client started.
             sync_direction: This client's sync direction
                 ("bidirectional", "upload-only", "download-only").
             peer_timeout: Staleness threshold (seconds) for peer liveness,
@@ -154,7 +152,6 @@ class MdnsRendezvous(RendezvousPlanState):
             cert_fingerprint=cert_fingerprint,
             prefer_master=prefer_master,
             never_master=never_master,
-            startup_time=startup_time,
             sync_direction=sync_direction,
             peer_timeout=peer_timeout,
         )
@@ -753,7 +750,6 @@ class MdnsRendezvous(RendezvousPlanState):
         if self._never_master:
             properties["never_master"] = "true"
         # Add startup time for master election (earlier startup wins)
-        properties["startup_time"] = str(self._startup_time)
         # Add sync direction for master election (bidirectional preferred)
         properties["sync_direction"] = self._sync_direction
         # Liveness heartbeat: opaque monotonic counter, re-announced every

@@ -80,7 +80,6 @@ class TestAdvertisedInterfaces:
         plan._cert_fingerprint = None
         plan._prefer_master = False
         plan._never_master = False
-        plan._startup_time = 0.0
         plan._sync_direction = "bidirectional"
         plan._heartbeat_counter = 0
         plan._connected_clients = 0
@@ -138,14 +137,13 @@ class TestRendezvousSampleCadence:
         assert plan._query_interval() == RENDEZVOUS_QUERY_ACTIVE_INTERVAL
 
     def test_a_complete_group_samples_at_the_lease_cadence(self) -> None:
-        manager = PeerManager(local_cid="zzz999", bucket="photos", startup_time=200.0)
+        manager = PeerManager(local_cid="zzz999", bucket="photos")
         manager.add_peer(
             Peer(
                 cid="aaa111",
                 bucket="photos",
                 address="192.168.1.100",
                 port=9753,
-                startup_time=100.0,
             )
         )
         plan = self._plan(manager)

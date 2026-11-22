@@ -362,7 +362,6 @@ class TestRegisterService:
             assert props[b"bucket"] == b"photos"
             assert props[b"protocol"] == PROTOCOL_VERSION_P2P.encode()
             assert props[b"sync_direction"] == b"bidirectional"
-            assert b"startup_time" in props
             assert b"version" in props
             # The liveness heartbeat is always advertised (opaque counter).
             assert props[b"heartbeat"] == b"0"

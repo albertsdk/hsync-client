@@ -64,13 +64,12 @@ def build_register_frame(
     prefer_master: bool = False,
     never_master: bool = False,
     inbound: bool = False,
-    startup_time: float = 0.0,
     sync_direction: str = "bidirectional",
 ) -> RdvRegister:
     """Build a ``register`` frame (validated against the mirror before send).
 
     ``server_ready``/``prefer_master``/``never_master``/``inbound``/
-    ``startup_time``/``sync_direction`` are the election advertisement the node
+    ``sync_direction`` are the election advertisement the node
     relays verbatim in its ``query`` peers (the same values the mDNS TXT record
     carries), so a rendezvous-discovered peer ranks in the master election
     exactly like a LAN-discovered one.
@@ -88,7 +87,6 @@ def build_register_frame(
         prefer_master=prefer_master,
         never_master=never_master,
         inbound=inbound,
-        startup_time=startup_time,
         sync_direction=sync_direction,
     )
     _apply_optional(frame, group=group, bucket_token=bucket_token, connected=connected)

@@ -81,7 +81,6 @@ def relayed_peer(
         "prefer_master": False,
         "never_master": False,
         "inbound": False,
-        "startup_time": 0.0,
         "sync_direction": "bidirectional",
     }
     peer.update(advert)
@@ -101,7 +100,6 @@ RESPONSE = {
             server_ready=True,
             prefer_master=True,
             inbound=True,
-            startup_time=1760000000.5,
             sync_direction="download-only",
         ),
         # Not dialable over the p2p data plane (UDP): skipped.
@@ -353,7 +351,6 @@ class TestPeerFeed:
         assert peers[0].prefer_master is True
         assert peers[0].never_master is False
         assert peers[0].inbound is True
-        assert peers[0].startup_time == 1760000000.5
         assert peers[0].sync_direction == "download-only"
 
     def test_local_cid_is_never_added(self):
@@ -441,7 +438,6 @@ class TestAdvertisement:
     def test_register_carries_the_local_advertisement(self):
         plan, _ = make_plan(
             prefer_master=True,
-            startup_time=1760000001.0,
             sync_direction="upload-only",
         )
         plan._register(publish_endpoint=False)
@@ -450,23 +446,8 @@ class TestAdvertisement:
         assert frame["server_ready"] is False
         assert frame["prefer_master"] is True
         assert frame["never_master"] is False
-        assert frame["startup_time"] == 1760000001.0
         assert frame["sync_direction"] == "upload-only"
         assert validate_rdv_frame(frame) is not None
-
-    def test_startup_time_defaults_to_the_process_start(self):
-        plan, _ = make_plan()
-        assert plan._startup_time > 0
-        plan._register(publish_endpoint=False)
-        assert plan._client.calls[-1][1]["startup_time"] == plan._startup_time
-
-    def test_startup_time_uses_the_sntp_corrected_clock(self, monkeypatch):
-        """The election tie-break must not depend on each host's raw clock."""
-        import hsync_client.p2p_rendezvous as rendezvous_module
-
-        monkeypatch.setattr(rendezvous_module, "now_corrected", lambda: 1760000123.0)
-        plan, _ = make_plan()
-        assert plan._startup_time == 1760000123.0
 
     def test_update_server_ready_marks_the_local_incumbency(self):
         """A serving master must win its own election (regression).
@@ -483,7 +464,6 @@ class TestAdvertisement:
             bucket="shared",
             group="home",
             prefer_master=True,
-            startup_time=plan._startup_time,
         )
         plan._peer_manager = manager
         manager.add_peer(
@@ -496,7 +476,6 @@ class TestAdvertisement:
                 use_https=True,
                 cert_fingerprint=FP,
                 server_ready=True,  # the peer is already serving
-                startup_time=plan._startup_time - 60,  # and started earlier
             )
         )
         # Not serving yet: the incumbent peer outranks the local prefer_master.

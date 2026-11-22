@@ -24,7 +24,6 @@ import time
 from collections.abc import Callable, Iterable, Sequence
 from typing import Literal
 
-from hsync_common.clock import now_corrected
 from hsync_common.protocol.p2p import (
     SYNC_DIRECTION_BIDIRECTIONAL,
     ElectionCandidate,
@@ -123,8 +122,7 @@ class PeerManager:
     Election priority (highest to lowest):
     1. prefer_master flag (if set, that peer wins)
     2. Bidirectional sync_direction preference (bidirectional wins)
-    3. Earliest startup_time (first started wins)
-    4. Lowest CID lexicographically (tiebreaker)
+    3. Lowest CID lexicographically (tiebreaker)
     """
 
     def __init__(
@@ -134,7 +132,6 @@ class PeerManager:
         group: str | None = None,
         prefer_master: bool = False,
         never_master: bool = False,
-        startup_time: float = 0.0,
         sync_direction: str = "bidirectional",
         local_cert_fingerprint: str | None = None,
         local_address: str | None = None,
@@ -151,7 +148,6 @@ class PeerManager:
             prefer_master: If True, this client will always try to be master.
             never_master: If True, this client is excluded from master election
                 and always remains a client/slave.
-            startup_time: Unix timestamp when this client started.
             sync_direction: This client's sync direction
                 ("bidirectional", "upload-only", "download-only").
             local_cert_fingerprint: This node's own certificate fingerprint
@@ -170,9 +166,6 @@ class PeerManager:
         self._group = group
         self._prefer_master = prefer_master
         self._never_master = never_master
-        # Cross-host election timebase: the SNTP-corrected wall clock, not the
-        # raw local clock (see RendezvousPlanState._init_common_fields).
-        self._startup_time = startup_time if startup_time > 0 else now_corrected()
         self._sync_direction = sync_direction
         self._local_cert_fingerprint = local_cert_fingerprint
         # Every address this node announces (one per interface on a multi-homed
@@ -315,11 +308,6 @@ class PeerManager:
         """Get the never_master flag."""
         return self._never_master
 
-    @property
-    def startup_time(self) -> float:
-        """Get the startup timestamp."""
-        return self._startup_time
-
     def _is_group_compatible(self, peer_group: str | None) -> bool:
         """
         Check if a peer's group is compatible with this client's group.
@@ -379,7 +367,6 @@ class PeerManager:
                     existing.server_ready != peer.server_ready
                     or existing.prefer_master != peer.prefer_master
                     or existing.never_master != peer.never_master
-                    or existing.startup_time != peer.startup_time
                     or existing.sync_direction != peer.sync_direction
                     # Inbound is OR-merged across sources (mDNS never knows it),
                     # so it only changes the election when it turns true.
@@ -438,7 +425,6 @@ class PeerManager:
                 existing.prefer_master = peer.prefer_master
                 existing.never_master = peer.never_master
                 existing.inbound = existing.inbound or peer.inbound
-                existing.startup_time = peer.startup_time
                 existing.sync_direction = peer.sync_direction
                 existing.note_evidence(source, self._stamp(source))
                 log.debug(f"Updated peer: {peer.cid}")
@@ -842,7 +828,7 @@ class PeerManager:
 
         Reporting the winner's highest set flag is misleading when several
         candidates share it — two peers both advertising ``server_ready`` are
-        separated by ``startup_time``/``cid``, not by ``server_ready``. The
+        separated by ``cid``, not by ``server_ready``. The
         reason must be the first component on which the winner beat the
         runner-up; a lone candidate has no runner-up, so its own strongest
         preferred flag is named.
@@ -853,7 +839,7 @@ class PeerManager:
             for value, label in zip(winner_key[:3], _ELECTION_REASON_LABELS[:3], strict=True):
                 if value is False:
                     return label
-            # No preferred flag set: the direction preference, else startup order.
+            # No preferred flag set: the direction preference decides, else the cid.
             if winner_key[3] is False:
                 return _ELECTION_REASON_LABELS[3]
             return _ELECTION_REASON_LABELS[4]
@@ -872,8 +858,7 @@ class PeerManager:
            prevents takeover and split-brain for the same bucket)
         2. prefer_master flag (if set, that peer wins)
         3. Bidirectional sync_direction preference (bidirectional wins)
-        4. Earliest startup_time (first started wins)
-        5. Lowest CID lexicographically (tiebreaker)
+        4. Lowest CID lexicographically (tiebreaker)
 
         This includes the local client in the election, unless it (or a peer)
         is marked ``never_master`` — such nodes are excluded from candidacy and
@@ -893,7 +878,6 @@ class PeerManager:
             ElectionCandidate(
                 cid=self._local_cid,
                 prefer_master=self._prefer_master,
-                startup_time=self._startup_time,
                 sync_direction=self._sync_direction,
                 server_ready=self._local_server_ready,
                 never_master=self._never_master or not self._master_candidacy,
@@ -904,7 +888,6 @@ class PeerManager:
             ElectionCandidate(
                 cid=peer.cid,
                 prefer_master=peer.prefer_master,
-                startup_time=peer.startup_time,
                 sync_direction=peer.sync_direction,
                 server_ready=peer.server_ready,
                 never_master=peer.never_master,

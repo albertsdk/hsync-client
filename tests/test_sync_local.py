@@ -44,6 +44,16 @@ def _deterministic_umask():
         os.umask(old)
 
 
+@pytest.fixture(autouse=True)
+def _clean_clock():
+    """Every test starts and ends with no measured offset (clean start/exit)."""
+    from hsync_common.clock import offset_store
+
+    offset_store.clear()
+    yield
+    offset_store.clear()
+
+
 class TestEnsureSentinel:
     """Tests for the shared ``ensure_sentinel`` / ``ensure_hsynckeep_files``."""
 
@@ -2391,6 +2401,12 @@ class TestThreeWayMerge:
         local side wins the original path because its corrected mtime is the
         highest — the matrix never consults the raw wall clock.
         """
+        # The chronological tie-break requires a measured clock reference
+        # (ADR-0054): without one the deterministic content tie-break
+        # would decide instead.
+        from hsync_common.clock import offset_store
+
+        offset_store.record(0.0)
         low_text, high_text = _ordered_texts("alpha", "omega")
         _, result, _ = self._run(
             tmp_path,
@@ -2412,6 +2428,12 @@ class TestThreeWayMerge:
         would make the local side win; the newer remote corrected mtime
         overrides it.
         """
+        # The chronological tie-break requires a measured clock reference
+        # (ADR-0054): without one the deterministic content tie-break
+        # would decide instead.
+        from hsync_common.clock import offset_store
+
+        offset_store.record(0.0)
         low_text, high_text = _ordered_texts("alpha", "omega")
         _, result, _ = self._run(
             tmp_path,

@@ -151,12 +151,12 @@ A deterministic algorithm picks the master based on:
 1. Already-serving incumbent keeps the role
 2. `prefer_master` flag wins over ordinary peers
 3. Bidirectional sync direction is preferred
-4. Earliest startup time wins
-5. Lowest CID lexicographically breaks ties
+4. Lowest CID lexicographically breaks ties
 
 **Q: What happens if the master goes offline?**
-The remaining slaves hold a new election. The slave that started earliest
-becomes the new master. No data is lost — all slaves have a local copy.
+The remaining slaves hold a new election and converge on one successor: the
+serving incumbent keeps the role, then the policy flags decide, and the lowest
+CID breaks a full tie. No data is lost — all slaves have a local copy.
 
 Deletions made while no master is reachable are recorded locally (as causal
 tombstones, see [Conflict Resolution](conflict-resolution.md)): when the

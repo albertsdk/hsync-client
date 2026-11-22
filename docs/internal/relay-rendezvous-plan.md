@@ -36,7 +36,7 @@ must replace with cryptography or accept losing.
 
 | # | Requirement | Where it lives today |
 |---|---|---|
-| 1 | A record per `(cid, bucket, group)`: `endpoints[]`, `cert_fp`, `version`, `capacity`, `connected`, `server_ready`, `prefer_master`, `never_master`, `startup_time`, `sync_direction` | `hsync_common/protocol/rendezvous.py::RdvRegister`, `::RdvPeer` |
+| 1 | A record per `(cid, bucket, group)`: `endpoints[]`, `cert_fp`, `version`, `capacity`, `connected`, `server_ready`, `prefer_master`, `never_master`, `sync_direction` | `hsync_common/protocol/rendezvous.py::RdvRegister`, `::RdvPeer` |
 | 2 | Random-sample query (`limit` 1–50), TTL 60 s, client refresh 30 s | `hsync-rendezvous/protocol-spec/rdv-1.md`; `hsync_client/p2p_rendezvous_rdv.py::RdvRendezvous` |
 | 3 | Echo of the observed public address (`ack.observed_endpoint`) — the STUN-equivalent answer | `hsync_client/stun.py::observed_address`, `hsync_client/nat_traversal.py::candidate_endpoints` |
 | 4 | Bucket authentication: `HMAC-SHA256(key, "rdv/1" \|\| bucket)[:32]` | `hsync_common/protocol/rendezvous.py::derive_bucket_token` |

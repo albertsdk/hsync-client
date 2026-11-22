@@ -49,7 +49,11 @@ and never consults the wall clock.
 
 `_compare_files` calls `hsync_common.models.version.resolve_three_way` with
 hashes, vclocks, `base_hash`, and `local_corrected_mtime` /
-`remote_corrected_mtime` (ADR-0023):
+`remote_corrected_mtime` (ADR-0023). The two timestamps reach it through
+`_chronological_inputs` (`hsync_client/sync.py::_chronological_inputs`), which
+returns `(0, 0)` when no reference measured the local clock
+(`ClockOffsetStore.is_trusted` false): an unsynchronised host cannot rank
+concurrent versions by time, so the SHA-256 fallback decides (ADR-0054).
 
 | Decision | Meaning | Action |
 | -------- | ------- | ------ |
