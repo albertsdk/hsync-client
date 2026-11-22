@@ -14,9 +14,10 @@ requires a P2P key and none is configured) must never reach the threshold:
 readiness is observable and must not be logged prematurely.
 """
 
+import asyncio
 import contextlib
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -24,11 +25,13 @@ import pytest
 class TestP2PWebsocketClientReadiness:
     """The [READY] line marks "watcher active + event channel established"."""
 
-    def _make_socket(self, greeting: str):
+    def _make_socket(self, greeting: str, *, yield_rounds: int = 0):
         """Build a minimal WebSocket double serving one greeting frame.
 
         After the handshake, the async iteration ends cleanly
         (StopAsyncIteration) so the client teardown path runs normally.
+        ``yield_rounds`` hands control back to the loop that many times before
+        ending, so a task the client started after the handshake gets to run.
         """
 
         class _Socket:
@@ -51,14 +54,21 @@ class TestP2PWebsocketClientReadiness:
                 return self
 
             async def __anext__(self):
+                for _ in range(yield_rounds):
+                    await asyncio.sleep(0)
                 raise StopAsyncIteration
 
         return _Socket()
 
     @contextlib.contextmanager
-    def _client_patches(self, tmp_path, mock_log, socket):
-        """Context manager applying the patch stack shared by the scenarios."""
+    def _client_patches(self, tmp_path, mock_log, socket, *, cycle=None):
+        """Context manager applying the patch stack shared by the scenarios.
+
+        ``cycle`` replaces the reconcile cycle the client runs after the
+        handshake: the real one would scan the bucket and reach for the master.
+        """
         import hsync_client.p2p_websocket as ws
+        import hsync_client.sync as sync_module
 
         with (
             patch.dict(
@@ -75,6 +85,7 @@ class TestP2PWebsocketClientReadiness:
             patch.object(ws, "WatcherManager", MagicMock()),
             patch.object(ws, "P2PSlaveFileEventHandler", MagicMock()),
             patch.object(ws, "log", mock_log),
+            patch.object(sync_module, "sync", cycle or AsyncMock()),
             patch("websockets.connect", return_value=socket),
         ):
             yield
@@ -141,3 +152,50 @@ class TestP2PWebsocketClientReadiness:
             await ws.p2p_websocket_client("master.local", 9000)
 
         assert statuses == ["connected", "waiting"]
+
+    @pytest.mark.asyncio
+    async def test_a_catch_up_cycle_runs_once_after_the_handshake(self, tmp_path):
+        """The window the event stream cannot cover is reconciled per link.
+
+        The initial sync lists the master before the socket is admitted, so a
+        change made in between is in neither the listing nor the event stream;
+        one reconcile cycle after ``[READY]`` closes that window.
+        """
+        import hsync_client.p2p_websocket as ws
+
+        socket = self._make_socket(json.dumps({"type": "hello"}), yield_rounds=3)
+        cycles: list[dict] = []
+
+        async def _cycle(**kwargs):
+            cycles.append(kwargs)
+
+        with self._client_patches(tmp_path, MagicMock(), socket, cycle=_cycle):
+            await ws.p2p_websocket_client("master.local", 9000)
+
+        assert len(cycles) == 1
+        assert cycles[0]["p2p_mode"] is True
+
+    @pytest.mark.asyncio
+    async def test_no_catch_up_when_the_handshake_is_refused(self, tmp_path):
+        """A link that never became an event stream has no window to close."""
+        from hsync_common.protocol.handshake import PROTOCOL_VERSION_P2P
+
+        import hsync_client.p2p_websocket as ws
+
+        greeting = json.dumps(
+            {
+                "type": "auth_required",
+                "protocol_version": PROTOCOL_VERSION_P2P,
+                "capabilities": [],
+            }
+        )
+        socket = self._make_socket(greeting, yield_rounds=3)
+        cycles: list[dict] = []
+
+        async def _cycle(**kwargs):
+            cycles.append(kwargs)
+
+        with self._client_patches(tmp_path, MagicMock(), socket, cycle=_cycle):
+            await ws.p2p_websocket_client("master.local", 9000)
+
+        assert cycles == []

@@ -71,8 +71,12 @@ def log_future_error(future: Future, *, label: str) -> None:
 
     Transfer helpers handle their own transport errors (log + ``transfer_failed``
     event); this done-callback (attach via ``functools.partial``) only catches
-    programming bugs that would otherwise vanish silently inside the Future.
+    programming bugs that would otherwise vanish silently inside the Future. A
+    cancelled Future reports nothing: cancellation is a request, not a failure
+    (``Future.exception()`` raises instead of returning in that state).
     """
+    if future.cancelled():
+        return
     exc = future.exception()
     if exc is not None:
         log.error(f"{label}: {escape_loguru_markup(str(exc))}")

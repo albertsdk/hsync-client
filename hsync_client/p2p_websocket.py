@@ -1707,6 +1707,9 @@ async def p2p_websocket_client(
     # the connection failed before the dispatch context was built.
     ctx: EventDispatchContext | None = None
     inbound: InboundEventQueue | None = None
+    # The one-shot reconcile that closes the window between the initial-sync
+    # listing and this event stream (see the READY block below).
+    catchup_task: asyncio.Task[None] | None = None
     # Tracks whether the slave→master link was established, so the teardown can
     # report the drop back to the UI (continuous mode reconnects afterwards).
     connected = False
@@ -1858,6 +1861,19 @@ async def p2p_websocket_client(
             set_link_status("connected")
             connected = True
 
+            # The initial sync listed the master before this socket was admitted,
+            # so a change that landed in between is in neither: not in the
+            # listing this slave compared, and not an event the socket could
+            # carry. Close that window with one reconcile cycle now, instead of
+            # waiting for the periodic safety net; it runs as a task, so the
+            # reader keeps draining events while it compares (the engine runs
+            # both concurrently, exactly as with ``periodic_resync``).
+            log.info("Catch-up sync: reconciling changes made while the link was establishing")
+            catchup_task = asyncio.create_task(
+                _p2p_catchup_sync(inventory_publisher, source_resolver)
+            )
+            catchup_task.add_done_callback(partial(log_future_error, label="Catch-up sync failed"))
+
             # Re-establish the link the moment the local network changes: the
             # task closes this socket on the monitor's notification, so the
             # ``async for`` below ends and the caller reconnects on the fresh
@@ -1930,6 +1946,12 @@ async def p2p_websocket_client(
             resync_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await resync_task
+        if catchup_task is not None:
+            # A catch-up still comparing belongs to this link: it must not keep
+            # transferring (or read a CONFIG the next attempt re-binds) after it.
+            catchup_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await catchup_task
         if inventory_publisher is not None:
             await inventory_publisher.stop()
         # Drain the pending inbound mutations before returning to the rendezvous
@@ -1966,6 +1988,31 @@ async def _p2p_periodic_resync(
     from hsync_client.sync import periodic_resync
 
     await periodic_resync(
+        p2p_mode=True,
+        inventory_observer=inventory_observer,
+        source_resolver=source_resolver,
+    )
+
+
+async def _p2p_catchup_sync(
+    inventory_observer: InventoryObserver | None = None,
+    source_resolver: P2PSourceResolver | None = None,
+) -> None:
+    """One reconcile cycle right after the event channel is admitted.
+
+    The initial sync compares the master's listing from *before* this socket
+    existed: a change made in between is neither in that listing nor carried by
+    an event, so it would wait for the periodic safety net. This pass runs the
+    same cycle the net does, once per link. It yields to a cycle already in
+    progress (the flag is advisory): two concurrent cycles would fight over the
+    same paths.
+    """
+    from hsync_client.sync import is_sync_cycle_active, sync
+
+    if is_sync_cycle_active():
+        log.debug("Catch-up sync skipped: a sync cycle is already running")
+        return
+    await sync(
         p2p_mode=True,
         inventory_observer=inventory_observer,
         source_resolver=source_resolver,

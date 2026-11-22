@@ -156,6 +156,25 @@ class TestPoolsFactory:
         assert "op failed" in messages[0]
         assert "boom" in messages[0]
 
+    def test_log_future_error_ignores_a_cancelled_future(self):
+        """Cancellation is a request, not a failure: nothing is logged."""
+        from concurrent.futures import Future
+
+        from loguru import logger as log
+
+        from hsync_client import pools
+
+        messages: list[str] = []
+        sink_id = log.add(messages.append, level="ERROR")
+        try:
+            cancelled = Future()
+            assert cancelled.cancel() is True
+            pools.log_future_error(cancelled, label="op failed")
+        finally:
+            log.remove(sink_id)
+
+        assert messages == []
+
 
 class TestCompressToTempFile:
     def test_roundtrip_and_cleanup(self, tmp_path):
