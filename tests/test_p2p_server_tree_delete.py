@@ -18,8 +18,8 @@ import shutil
 from unittest.mock import patch
 
 import pytest
+from hsync_common import deletions
 
-from hsync_client import deletions
 from hsync_client.p2p_peers import get_free_port
 from hsync_client.p2p_server import P2PEndpointMixin, P2PServer
 

@@ -61,6 +61,7 @@ from hsync_common.constants import (
     MTIME_PROPAGATION_TOLERANCE_SECONDS,
     PARTIAL_DOWNLOAD_SUFFIX,
 )
+from hsync_common.deletions import begin_tree_delete, covered_by_tree_delete, end_tree_delete
 from hsync_common.disk import check_free_space
 from hsync_common.hashing import compute_sha256, is_sha256_hex
 from hsync_common.ids import is_valid_cid
@@ -100,7 +101,6 @@ from hsync_client.compression import (
 )
 from hsync_client.config import CONFIG
 from hsync_client.constants import HSYNCKEEP_FILENAME, ActionLabel
-from hsync_client.deletions import begin_tree_delete, covered_by_tree_delete, end_tree_delete
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.multipart import (
     _MULTIPART_BOUNDARY_RE,
@@ -1494,7 +1494,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
             elif is_dir:
                 # A recursive delete is authoritative for its whole subtree:
                 # until it completes, no concurrent create/upload/event may
-                # materialise anything inside it (see hsync_client.deletions),
+                # materialise anything inside it (see hsync_common.deletions),
                 # or the rmtree would fail with ENOTEMPTY and leave the tree
                 # half present.
                 begin_tree_delete(full_path)
@@ -1578,7 +1578,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
         """Refuse to materialise anything inside a subtree being deleted (409).
 
         A ``DELETE … is_dir=true`` closes its tree for the whole duration of the
-        removal (``hsync_client.deletions``). A concurrent create, upload or
+        removal (``hsync_common.deletions``). A concurrent create, upload or
         rename into it would recreate what the caller asked to remove: the
         rmtree would then fail with ENOTEMPTY and the deletion would never
         converge. Refusing is safe — the peer that still holds the content

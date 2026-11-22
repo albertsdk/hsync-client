@@ -17,8 +17,8 @@ to materialisation entirely.
 from unittest.mock import patch
 
 import pytest
+from hsync_common import deletions
 
-from hsync_client import deletions
 from hsync_client.event_dispatch import apply_inbound_event
 from hsync_client.remote_websocket import REMOTE_DISPATCH_CTX
 
