@@ -142,8 +142,10 @@ class InboundEventQueue:
                 current = asyncio.current_task()
                 if current is not None and current.cancelling():
                     raise
-            except Exception:
-                pass
+            except Exception as exc:
+                # The predecessor reported its own failure; this line records the
+                # causal link, so a later event's outcome is explainable.
+                log.debug(f"Predecessor event failed, applying anyway: {type(exc).__name__}: {exc}")
 
     def _finish(self, task: asyncio.Task[None], keys: tuple[str, ...]) -> None:
         """Drop a completed task and its path registrations."""

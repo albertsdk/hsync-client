@@ -21,6 +21,7 @@ from hsync_common.protocol.peer_download import (
     build_p2p_inventory_ack,
     build_p2p_inventory_frame,
 )
+from loguru import logger
 
 from hsync_client.p2p_inventory import P2PInventoryStore
 from hsync_client.p2p_inventory_publisher import P2PInventoryPublisher
@@ -181,6 +182,55 @@ def test_duplicate_terminal_snapshot_requires_identical_payload(tmp_path: Path) 
     assert store.apply_frame(CID_A, token, altered)["status"] == "resync"
     assert store.holders_for(_query("one.txt", DIGEST_A))[("one.txt", DIGEST_A)]
     store.close()
+
+
+def test_a_failing_change_hook_is_reported_and_never_breaks_a_frame(
+    tmp_path: Path,
+) -> None:
+    """A broken serving hook is visible once, and the frame still commits.
+
+    The hook runs on the frame path, so it may never propagate — that would
+    reject an inventory frame the peer published correctly. Hiding it entirely is
+    the other extreme: the serving role silently stops re-classifying.
+    """
+    store = P2PInventoryStore(tmp_path / "inventory.sqlite3", "bucket")
+    store.activate()
+    token = store.begin_session(CID_A, serve_slots=2)
+    terminal = build_p2p_inventory_frame(
+        gen=1,
+        seq=0,
+        mode="snapshot",
+        more=False,
+        entries=[{"path": "one.txt", "sha256": DIGEST_A, "size": 1}],
+    )
+    reported: list[str] = []
+    repeated: list[str] = []
+    error_sink = logger.add(
+        lambda message: reported.append(str(message)), level="ERROR", format="{message}"
+    )
+    debug_sink = logger.add(
+        lambda message: repeated.append(str(message)), level="DEBUG", format="{message}"
+    )
+
+    def _broken() -> None:
+        raise RuntimeError("hook exploded")
+
+    try:
+        store.set_change_callback(_broken)
+        # The identical terminal frame applies twice: one episode, one report.
+        assert store.apply_frame(CID_A, token, terminal)["status"] == "ok"
+        assert store.apply_frame(CID_A, token, terminal)["status"] == "ok"
+        # Arming the hook again opens a new episode.
+        store.set_change_callback(_broken)
+        assert store.apply_frame(CID_A, token, terminal)["status"] == "ok"
+    finally:
+        store.set_change_callback(None)
+        logger.remove(error_sink)
+        logger.remove(debug_sink)
+        store.close()
+
+    assert len([line for line in reported if "Inventory change callback failed" in line]) == 2
+    assert len([line for line in repeated if "failed again" in line]) == 1
 
 
 def test_store_quota_counts_only_net_delta_rows_and_rejection_preserves_commit(

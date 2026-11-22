@@ -194,6 +194,9 @@ class P2PInventoryStore:
         # Serving-role hook: the master re-classifies its share when a device
         # joins, leaves or republishes its inventory (see master_status).
         self._change_callback: Callable[[], None] | None = None
+        # The hook's failure episode: the first raise is reported, the repeats
+        # (one per frame) stay at DEBUG (see ``_notify_changed``).
+        self._change_callback_failed = False
 
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with contextlib.suppress(OSError):
@@ -952,15 +955,34 @@ class P2PInventoryStore:
         """
         with self._lock:
             self._change_callback = callback
+            # A different hook starts a different failure episode.
+            self._change_callback_failed = False
 
     def _notify_changed(self) -> None:
+        """Tell the serving role the committed inventory set moved.
+
+        A raise here never breaks the inventory frame the peer published
+        correctly, but it may not disappear either: a hook that keeps failing
+        leaves the serving role unclassified, so the first failure of an episode
+        is reported with its traceback, the repeats (one per frame) stay at
+        DEBUG, and the next success opens a new episode.
+        """
         callback = self._change_callback
         if callback is None:
             return
         try:
             callback()
-        except Exception:  # never let a UI hook break an inventory frame
-            pass
+        except Exception:
+            with self._lock:
+                repeated = self._change_callback_failed
+                self._change_callback_failed = True
+            if repeated:
+                log.opt(exception=True).debug("Inventory change hook failed again")
+            else:
+                log.exception("Inventory change callback failed")
+        else:
+            with self._lock:
+                self._change_callback_failed = False
 
     def holders_for(
         self, files: Iterable[P2PSourceFile]
