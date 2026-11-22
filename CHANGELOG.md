@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `--peer-role full|leech|seed|off` plus `--no-serve-peer-blocks`,
+  `--no-fetch-from-peers` and `--no-publish-inventory`: the three peer-mesh capabilities
+  as independent keys.
+- A degraded host recovers a coarse clock offset from the rendezvous `ack` echo
+  (TLS-pinned, crosses the NAT), and the log reports `[CLOCK SYNC]` / `[CLOCK
+  DEGRADED]`.
 - Cross-platform synchronisation parity on Windows and macOS: a lossy host
   advertises `readonly_permissions`, so permission-only changes are compared on
   the owner-write bit instead of re-applying POSIX modes, and filesystem
@@ -24,6 +30,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carries the families the listener actually bound (an IPv4-only host or network
   keeps working unchanged).
 
+### Changed
+
+- The serving role runs its own maintenance pass (partial files, minted deletions, merge
+  bases, `.hsynckeep`) at role start and on every resync.
+- A compressed download is streamed instead of staged, so the 256 MB cap and the
+  temporary full copy are gone.
+- Election: no clock; the leadership term decides between two serving masters, so a
+  partition heal has a deterministic winner.
+- A host that cannot vouch for its clock publishes no modification time until it can,
+  and a conflict whose timestamps differ by less than the measurement error is resolved
+  by content.
 ### Fixed
 
 - A folder emptied by a peer's deletion no longer comes back: the emptied
