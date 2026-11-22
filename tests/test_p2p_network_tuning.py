@@ -380,6 +380,45 @@ class TestRunSyncLanPlaceholder:
         assert config_arg["P2P_PEER_READ_CAP"] == 7
         assert config_arg["P2P_ALLOW_UNAUTHENTICATED_WRITES"] is True
 
+    def test_the_role_preset_sets_the_three_keys(self, tmp_path):
+        """--peer-role expands to the three capabilities in one place."""
+        with (
+            patch("hsync_client.runtime_resolvers.get_server_url", return_value=None),
+            patch("hsync_client.config_build.get_p2p_serve_blocks", return_value=True),
+            patch("hsync_client.config_build.get_p2p_fetch_from_peers", return_value=True),
+            patch("hsync_client.config_build.get_p2p_publish_inventory", return_value=True),
+        ):
+            mock_p2p, _, _ = self._run_p2p(
+                tmp_path,
+                server_url=None,
+                p2p_mode=True,
+                peer_role="leech",
+            )
+
+        config_arg = mock_p2p.call_args.args[0]
+        assert config_arg["P2P_SERVE_BLOCKS"] is False
+        assert config_arg["P2P_FETCH_FROM_PEERS"] is True
+        assert config_arg["P2P_PUBLISH_INVENTORY"] is False
+
+    def test_a_no_flag_wins_over_the_role_preset(self, tmp_path):
+        """The preset names the defaults; an explicit --no-* is final."""
+        with (
+            patch("hsync_client.runtime_resolvers.get_server_url", return_value=None),
+            patch("hsync_client.config_build.get_p2p_fetch_from_peers", return_value=True),
+        ):
+            mock_p2p, _, _ = self._run_p2p(
+                tmp_path,
+                server_url=None,
+                p2p_mode=True,
+                peer_role="full",
+                fetch_from_peers=False,
+            )
+
+        config_arg = mock_p2p.call_args.args[0]
+        assert config_arg["P2P_SERVE_BLOCKS"] is True
+        assert config_arg["P2P_FETCH_FROM_PEERS"] is False
+        assert config_arg["P2P_PUBLISH_INVENTORY"] is True
+
     def test_cli_peer_role_opt_out_wins_over_environment(self, tmp_path):
         """--no-serve-peer-blocks is final even when the environment enables it."""
         with (

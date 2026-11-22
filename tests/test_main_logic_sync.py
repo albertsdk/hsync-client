@@ -509,6 +509,7 @@ def _default_run_sync_kwargs(tmp_path: object, **overrides: Any) -> RunOptions:
             p2p_group=defaults["p2p_group"],
             prefer_master=defaults["prefer_master"],
             never_master=defaults["never_master"],
+            peer_role=defaults.get("peer_role"),
             serve_blocks=defaults.get("serve_blocks", True),
             fetch_from_peers=defaults.get("fetch_from_peers", True),
             publish_inventory=defaults.get("publish_inventory", True),
