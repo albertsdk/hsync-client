@@ -13,6 +13,7 @@ peer-to-peer p2p mode.
 2. **Peer Rendezvous**: `Peermanager` collects all visible peers in the same group.
 3. **Master Election**: A deterministic algorithm selects the master:
    - `server_ready` (incumbent) beats newcomers
+   - the higher leadership term wins between two serving masters
    - `prefer_master` beats ordinary peers
    - Bidirectional `sync_direction` preferred
    - Lowest `cid` lexicographically breaks ties

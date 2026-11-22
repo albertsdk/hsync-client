@@ -58,11 +58,14 @@ configured `HybridRendezvous` runs **both** over one shared `PeerManager`:
 
 Election is delegated to the common SSOT: `PeerManager._elect_master` builds
 `ElectionCandidate`s and calls `hsync_common.protocol.p2p.elect_master`
-(`election_sort_key`: `server_ready`, then `prefer_master`, then `inbound`, then
-bidirectional `sync_direction`, then lowest `cid`; `--prefer-master`/`--never-master`
-honored). No component reads a clock: two hosts share no timebase they can trust
-without an external reference, so a start-time rule would hand mastership to
-whichever clock runs fastest (ADR-0054). Each rendezvous plan calls
+(`election_sort_key`: `server_ready`, then the highest `epoch` (leadership term),
+then `prefer_master`, then `inbound`, then bidirectional `sync_direction`, then
+lowest `cid`; `--prefer-master`/`--never-master` honored). No component reads a
+clock: two hosts share no timebase they can trust without an external reference,
+so a start-time rule would hand mastership to whichever clock runs fastest
+(ADR-0054). `PeerManager.set_local_server_ready(True)` opens a term one above
+every term seen, and the record it advertises carries it, so a partition heal
+keeps the newest mandate (ADR-0055). Each rendezvous plan calls
 `PeerManager.elect()` once at start, so a node with no peers yet still resolves
 its role (a lone `--prefer-master` node serves immediately, which is what lets a
 joining slave connect) — the election otherwise runs only on peer add/remove, a

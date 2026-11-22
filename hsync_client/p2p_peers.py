@@ -206,6 +206,10 @@ class PeerManager:
         self._duplicate_identity_seen: dict[str, None] = {}
         self._master_cid: str | None = None
         self._local_server_ready = False
+        # Leadership term (ADR-0055): a Lamport counter, opened when this node
+        # starts serving. Every rendezvous source advertises it through this one
+        # manager, so both records always carry the same value.
+        self._epoch = 0
         self._local_inbound = False
         self._master_candidacy = True
         self._on_master_change: Callable[[Peer | None], None] | None = None
@@ -222,14 +226,40 @@ class PeerManager:
 
         A node that is already serving its bucket wins master election over
         newcomers (even ``prefer_master`` ones), preventing takeover and
-        split-brain for the same bucket.
+        split-brain for the same bucket. Starting to serve also opens a new
+        leadership term (ADR-0055): the term becomes one higher than any term
+        seen for the bucket, so after a partition heal the most recent mandate
+        keeps the role and the other side yields.
         """
         with self._lock:
             if self._local_server_ready == ready:
                 return
+            if ready:
+                self._epoch = self._next_term_locked()
             self._local_server_ready = ready
             self._elect_master()
             self._signal_change()
+
+    def note_serving(self) -> int:
+        """Mark this node serving (opening a term once) and return the term.
+
+        A rendezvous source that advertises readiness before notifying the
+        manager calls this, so the record it is about to build already carries
+        the new term; the following ``set_local_server_ready(True)`` is then a
+        no-op and the term is never bumped twice for one acquisition.
+        """
+        self.set_local_server_ready(True)
+        return self.epoch
+
+    def _next_term_locked(self) -> int:
+        """Next leadership term: one above every term seen (lock held)."""
+        return max([self._epoch, *(peer.epoch for peer in self._peers.values())]) + 1
+
+    @property
+    def epoch(self) -> int:
+        """This node's leadership term, advertised on every rendezvous source."""
+        with self._lock:
+            return self._epoch
 
     def set_local_inbound(self, inbound: bool) -> None:
         """Mark the local node as having a confirmed dialable inbound endpoint.
@@ -836,13 +866,17 @@ class PeerManager:
         winner = ranked[0]
         winner_key = election_sort_key(winner)
         if len(ranked) < 2:
-            for value, label in zip(winner_key[:3], _ELECTION_REASON_LABELS[:3], strict=True):
-                if value is False:
+            if winner_key[0] is False:
+                return _ELECTION_REASON_LABELS[0]
+            if winner_key[1] != 0:
+                return _ELECTION_REASON_LABELS[1]
+            for index, label in zip((2, 3), _ELECTION_REASON_LABELS[2:4], strict=True):
+                if winner_key[index] is False:
                     return label
-            # No preferred flag set: the direction preference decides, else the cid.
-            if winner_key[3] is False:
-                return _ELECTION_REASON_LABELS[3]
-            return _ELECTION_REASON_LABELS[4]
+            # No policy flag set: the direction preference decides, else the cid.
+            if winner_key[4] is False:
+                return _ELECTION_REASON_LABELS[4]
+            return _ELECTION_REASON_LABELS[5]
         runner_key = election_sort_key(ranked[1])
         for index, label in enumerate(_ELECTION_REASON_LABELS):
             if winner_key[index] != runner_key[index]:
@@ -880,6 +914,7 @@ class PeerManager:
                 prefer_master=self._prefer_master,
                 sync_direction=self._sync_direction,
                 server_ready=self._local_server_ready,
+                epoch=self._epoch,
                 never_master=self._never_master or not self._master_candidacy,
                 inbound=self._local_inbound,
             )
@@ -890,6 +925,7 @@ class PeerManager:
                 prefer_master=peer.prefer_master,
                 sync_direction=peer.sync_direction,
                 server_ready=peer.server_ready,
+                epoch=peer.epoch,
                 never_master=peer.never_master,
                 inbound=peer.inbound,
             )

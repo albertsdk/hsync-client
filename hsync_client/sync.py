@@ -3257,18 +3257,20 @@ def get_sync_actions(
 
 def _chronological_inputs(
     local_corrected_mtime: int, remote_corrected_mtime: int
-) -> tuple[int, int]:
-    """Return the corrected mtimes the chronological tie-break may use.
+) -> tuple[int, int, int]:
+    """Return the corrected mtimes the tie-break may use, and their error bound.
 
     A host without a measured clock reference cannot rank two concurrent
     versions by time, so both values collapse to "unknown" (0) and the
     deterministic content tie-break decides: the same path an absent mtime
-    takes. The receiver-side clamp already bounds a single peer's value; this
-    one bounds the *comparison* when the local clock is not a reference.
+    takes. A trusted measurement still has an error (half the probe
+    round-trip), doubled here because the peer measured its own clock with a
+    similar probe: a difference inside that bound is not an order
+    (ADR-0055).
     """
-    if offset_store.is_trusted():
-        return local_corrected_mtime, remote_corrected_mtime
-    return 0, 0
+    if not offset_store.is_trusted():
+        return 0, 0, 0
+    return local_corrected_mtime, remote_corrected_mtime, 2 * round(offset_store.uncertainty())
 
 
 def _compare_files(
@@ -3301,7 +3303,7 @@ def _compare_files(
         Tuple of (action, timedelta). ``timedelta == 0`` flags a conflict
         (``conflict_download``: preserve local + download remote).
     """
-    local_corrected_mtime, remote_corrected_mtime = _chronological_inputs(
+    local_corrected_mtime, remote_corrected_mtime, mtime_uncertainty = _chronological_inputs(
         local_corrected_mtime, remote_corrected_mtime
     )
     decision = resolve_three_way(
@@ -3312,6 +3314,7 @@ def _compare_files(
         base_hash,
         local_corrected_mtime=local_corrected_mtime,
         remote_corrected_mtime=remote_corrected_mtime,
+        mtime_uncertainty=mtime_uncertainty,
     )
     if decision is SyncDecision.in_sync:
         return SyncActionName.nothing, 0
@@ -3515,7 +3518,7 @@ def update_file(
                 eff, base_hash = sync_state.local_version_and_base(file.filepath, file.sha256sum)
                 local_vclock = eff["vclock"] if eff else None
                 local_corrected = eff.get("corrected_mtime", 0) if eff else 0
-            local_corrected, remote_corrected = _chronological_inputs(
+            local_corrected, remote_corrected, mtime_uncertainty = _chronological_inputs(
                 int(local_corrected), int(remote_corrected)
             )
             decision = resolve_three_way(
@@ -3526,6 +3529,7 @@ def update_file(
                 base_hash,
                 local_corrected_mtime=local_corrected,
                 remote_corrected_mtime=remote_corrected,
+                mtime_uncertainty=mtime_uncertainty,
             )
             # conflict_upload: local wins tie-break — skip the download; the
             # local change is uploaded on the next reconcile. No conflict copy

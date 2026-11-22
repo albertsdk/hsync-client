@@ -138,6 +138,13 @@ class HsyncServiceListener(ServiceListener):
             readonly_permissions = _tx_bool(properties, b"readonly_permissions")
             # Server ready flag (indicates HTTP server is listening)
             server_ready = _tx_bool(properties, b"server_ready")
+            # Leadership term: a Lamport counter, 0 when the peer never
+            # served. A malformed value advertises no mandate, never a crash.
+            epoch_bytes = properties.get(b"epoch", b"")
+            try:
+                epoch = int(epoch_bytes.decode("utf-8")) if epoch_bytes else 0
+            except (UnicodeDecodeError, ValueError):
+                epoch = 0
             # Prefer master flag (for master election)
             prefer_master = _tx_bool(properties, b"prefer_master")
             # Never-master flag (peer refuses to ever be master)
@@ -224,6 +231,7 @@ class HsyncServiceListener(ServiceListener):
                 readonly_permissions=readonly_permissions,
                 capabilities_known=True,
                 server_ready=server_ready,
+                epoch=epoch,
                 connected=connected,
                 prefer_master=prefer_master,
                 never_master=never_master,

@@ -98,6 +98,7 @@ class Peer:
     # must not clear the ones another source advertised.
     capabilities_known: bool = False
     server_ready: bool = False  # True when HTTP server is listening
+    epoch: int = 0  # leadership term (TXT/rdv `epoch`)
     # True when the peer advertised a confirmed externally dialable endpoint
     # (rendezvous) — it can serve every peer without the relay, so it out-ranks
     # a relay-only peer in the election. mDNS sources never know it (False).
@@ -157,6 +158,7 @@ class PeerSnapshot:
 # election instead of restating the winner's highest flag.
 _ELECTION_REASON_LABELS = (
     "server_ready",
+    "epoch",
     "prefer_master",
     "inbound reachability",
     "bidirectional preference",

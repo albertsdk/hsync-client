@@ -267,7 +267,46 @@ without waiting for the next resync cycle. If the source never stops changing,
 the transfer keeps deferring; re-run the sync after the writing process
 finishes.
 
-## A folder keeps re-syncing or reports phantom conflicts
+## Conflicts are resolved by content, not by time
+
+**Symptom.** Two devices edit the same file while apart; after they reconnect the
+version that keeps the original name is not the one edited later, and the log
+contains `[CLOCK DEGRADED]`.
+
+**Cause.** The chronological tie-break runs only when the host can trust its
+clock, that is when a time reference measured it recently. Without a reference,
+or when the two edits are closer together than the measurement error (half the
+probe round-trip, doubled for the peer), the deterministic content tie-break
+decides instead. The losing version is still preserved as a `_conflicted_copy_`,
+so nothing is lost.
+
+**Remedy.**
+
+- Let the device reach a time source: in server mode the server answers
+  `/api/v1/time`; in p2p mode the SNTP hosts in `HSYNC_NTP_HOSTS` are probed
+  (defaults: `pool.ntp.org`, `time.cloudflare.com`, `time.google.com`). A
+  network that blocks UDP/123 keeps the host degraded — point it at a reachable
+  SNTP host.
+- A measurement expires after an hour and is re-taken by the serving node's
+  maintenance tick (or at the next start). `[CLOCK SYNC]` reports the offset and
+  its error right after a successful probe.
+- A clock step (a manual change, a suspended VM, a late time-daemon correction)
+  revokes trust immediately; the next `[CLOCK SYNC]` re-establishes it.
+
+## The master changed after a network partition
+
+**Symptom.** A network split leaves both sides serving; when they reconnect one
+device logs `[MASTER YIELD]` and becomes a client.
+
+**Cause.** This is the designed convergence. No quorum is used — a lone survivor
+must keep serving — so a split can briefly yield two masters. On the heal the
+higher leadership term keeps the role (the side that took over most recently)
+and the other yields.
+
+**Remedy.** None needed. To pin which device should serve, set
+`--prefer-master` on it; the preference applies whenever neither side is
+currently serving.
+
 
 **Symptom.** The same files keep flipping between devices, deletions come back,
 or the client reports conflicts on files nobody edited. The log may show a

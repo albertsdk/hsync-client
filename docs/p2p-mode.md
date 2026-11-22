@@ -43,7 +43,7 @@ flowchart TB
 |---------|-------------|
 | **Zero Configuration** | Automatic peer rendezvous via mDNS/Bonjour |
 | **No Server Required** | Works without internet or central server |
-| **Automatic Master Election** | Priority: `server_ready` (incumbent) > `prefer_master` > bidirectional preference > lowest CID |
+| **Automatic Master Election** | Priority: `server_ready` (incumbent) > leadership term > `prefer_master` > directional preference > lowest CID |
 | **Passive Peers** | `--never-master` keeps a peer out of the election; it syncs but never becomes master |
 | **Real-Time Sync** | WebSocket-based instant event propagation (implicit; continuous mode is the default) |
 | **Bidirectional Sync** | Any peer can create/modify/delete files |
@@ -357,9 +357,10 @@ The master is elected using a **multi-criteria priority system**. Each peer inde
 | Priority | Criterion | Description |
 |----------|-----------|-------------|
 | 1 | `server_ready` (incumbent) | An already-serving master keeps the role, so a newcomer never disrupts it |
-| 2 | `prefer_master` | An operator-preferred master wins over ordinary peers (but **not** over a serving incumbent) |
-| 3 | **Bidirectional preference** | Peers with `bidirectional` sync direction are preferred over `upload-only` or `download-only` |
-| 4 | **Lowest CID** | Final tiebreaker: lexicographic comparison of Client IDs |
+| 2 | **Leadership term** | Between two serving masters (a network partition that heals) the most recently acquired term keeps the role; the other yields |
+| 3 | `prefer_master` | An operator-preferred master wins over ordinary peers (but **not** over a serving incumbent) |
+| 4 | **Bidirectional preference** | Peers with `bidirectional` sync direction are preferred over `upload-only` or `download-only` |
+| 5 | **Lowest CID** | Final tiebreaker: lexicographic comparison of Client IDs |
 
 > **Note**: Peers running with `--never-master` are **excluded from the candidate pool** before any of the criteria above are applied. They never win the election, regardless of their CID.
 

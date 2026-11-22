@@ -697,6 +697,12 @@ class MdnsRendezvous(RendezvousPlanState):
         :meth:`_refresh_service` (in-place update), so both paths advertise the
         exact same property set for a given ``server_ready`` value.
         """
+        # A record that announces readiness opens the term before it is
+        # serialized, so the value it carries is the one this mandate owns.
+        # ``_peer_manager`` exists only once the plan has been started.
+        manager = getattr(self, "_peer_manager", None)
+        if server_ready and manager is not None:
+            manager.note_serving()
         # The addresses advertised for this node (kept current by the
         # network-change recovery in __init__/start, so the record never
         # advertises a dead endpoint). Every active interface is published so a
@@ -749,7 +755,8 @@ class MdnsRendezvous(RendezvousPlanState):
         # Add never_master flag so other peers never elect this node
         if self._never_master:
             properties["never_master"] = "true"
-        # Add startup time for master election (earlier startup wins)
+        # Leadership term: peers compare it between two serving incumbents.
+        properties["epoch"] = str(manager.epoch if manager is not None else 0)
         # Add sync direction for master election (bidirectional preferred)
         properties["sync_direction"] = self._sync_direction
         # Liveness heartbeat: opaque monotonic counter, re-announced every

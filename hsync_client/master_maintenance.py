@@ -27,6 +27,7 @@ import threading
 from loguru import logger as log
 
 from hsync_client.config import CONFIG
+from hsync_client.timesync import maybe_refresh_clock_offset
 
 __all__ = ["local_reconcile", "start_master_maintenance", "stop_master_maintenance"]
 
@@ -77,6 +78,10 @@ def _loop(interval: float, stop_event: threading.Event) -> None:
     global _failure_reported
     while not stop_event.is_set():
         try:
+            # The serving node is the mesh's time authority: a measurement
+            # that expired, or a clock step that revoked it, is re-established
+            # here rather than only at process start (ADR-0055).
+            maybe_refresh_clock_offset(log)
             local_reconcile()
         except Exception:  # a maintenance pass must never kill the role
             with _lock:

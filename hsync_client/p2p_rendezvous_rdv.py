@@ -1008,6 +1008,11 @@ class RdvRendezvous(RendezvousPlanState):
                 prefer_master=self._prefer_master,
                 never_master=self._never_master,
                 inbound=self._inbound,
+                epoch=(
+                    getattr(self, "_peer_manager", None).epoch
+                    if getattr(self, "_peer_manager", None)
+                    else 0
+                ),
                 sync_direction=self._sync_direction,
             )
         )
@@ -1213,6 +1218,7 @@ class RdvRendezvous(RendezvousPlanState):
             cert_fingerprint=wire.get("cert_fp"),
             serves_blocks=False,
             server_ready=wire["server_ready"],
+            epoch=int(wire.get("epoch") or 0),
             connected=int(wire.get("connected") or 0),
             prefer_master=wire["prefer_master"],
             never_master=wire["never_master"],

@@ -149,9 +149,10 @@ node's [FAQ](https://github.com/albertsdk/hsync-rendezvous/blob/main/docs/faq.md
 **Q: How does master election work?**
 A deterministic algorithm picks the master based on:
 1. Already-serving incumbent keeps the role
-2. `prefer_master` flag wins over ordinary peers
-3. Bidirectional sync direction is preferred
-4. Lowest CID lexicographically breaks ties
+2. The higher leadership term wins between two serving masters
+3. `prefer_master` flag wins over ordinary peers
+4. Bidirectional sync direction is preferred
+5. Lowest CID lexicographically breaks ties
 
 **Q: What happens if the master goes offline?**
 The remaining slaves hold a new election and converge on one successor: the

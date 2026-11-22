@@ -51,9 +51,11 @@ and never consults the wall clock.
 hashes, vclocks, `base_hash`, and `local_corrected_mtime` /
 `remote_corrected_mtime` (ADR-0023). The two timestamps reach it through
 `_chronological_inputs` (`hsync_client/sync.py::_chronological_inputs`), which
-returns `(0, 0)` when no reference measured the local clock
+returns `(0, 0, 0)` when no reference measured the local clock
 (`ClockOffsetStore.is_trusted` false): an unsynchronised host cannot rank
-concurrent versions by time, so the SHA-256 fallback decides (ADR-0054).
+concurrent versions by time, so the SHA-256 fallback decides (ADR-0054). The
+third value is the combined error bound (`2 * ClockOffsetStore.uncertainty`):
+a difference inside it is not an order either (ADR-0055).
 
 | Decision | Meaning | Action |
 | -------- | ------- | ------ |

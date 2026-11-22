@@ -78,6 +78,7 @@ def relayed_peer(
         "capacity": capacity,
         "reachable": reachable,
         "server_ready": False,
+        "epoch": 0,
         "prefer_master": False,
         "never_master": False,
         "inbound": False,
@@ -98,6 +99,7 @@ RESPONSE = {
             port=8443,
             capacity=4,
             server_ready=True,
+            epoch=5,
             prefer_master=True,
             inbound=True,
             sync_direction="download-only",
@@ -348,6 +350,7 @@ class TestPeerFeed:
         # "reachable ⇒ serving master" mapping that let a read-only seeder
         # outrank a prefer-master node and made a never-master peer electable.
         assert peers[0].server_ready is True
+        assert peers[0].epoch == 5
         assert peers[0].prefer_master is True
         assert peers[0].never_master is False
         assert peers[0].inbound is True

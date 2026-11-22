@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from typing import Any
 
 from hsync_common.clock import (
@@ -39,9 +40,15 @@ from hsync_common.clock import (
     offset_store,
     parse_ntp_targets,
 )
+from hsync_common.labels import ActionLabel
 from loguru import logger as log
 
 from hsync_client.utils import get_ssl_verify
+
+# Retry floor for :func:`maybe_refresh_clock_offset`: an offline host must not
+# spawn one probe thread per maintenance tick.
+_PROBE_RETRY_SECONDS = 900.0
+_last_probe_monotonic = 0.0
 
 # Generation of the in-flight P2P NTP probe. A newer start_ntp_clock_offset_probe
 # call invalidates older workers so a slow probe cannot overwrite a fresher result.
@@ -71,37 +78,69 @@ def probe_server_clock_offset(server_url: str, logger: Any = log) -> None:
             timeout=10,
         )
     except Exception as exc:
-        logger.warning(f"Clock offset probe failed (degraded temporal mode): {exc}")
+        logger.warning(f"{ActionLabel.CLOCK_DEGRADED} clock probe failed: {exc}")
         offset_store.record(0.0, trusted=False)
         return
     if result is None:
         logger.warning(
-            "Server time endpoint unavailable; running in degraded temporal mode "
-            "(uncorrected local time)"
+            f"{ActionLabel.CLOCK_DEGRADED} server time endpoint unavailable; "
+            "corrected mtimes are unknown and conflicts resolve by content"
         )
         offset_store.record(0.0, trusted=False)
         return
-    offset, _rtt = result
-    offset_store.record(offset)
-    logger.debug(f"Clock offset from server: {offset:+.3f}s")
+    offset, rtt = result
+    offset_store.record(offset, rtt=rtt)
+    logger.info(f"{ActionLabel.CLOCK_SYNC} server offset {offset:+.3f}s (±{rtt / 2:.3f}s)")
 
 
-def _measure_ntp_offset(logger: Any) -> tuple[float, str | None]:
-    """Probe SNTP hosts; return ``(offset, host)`` (host is None when offline)."""
+def _measure_ntp_offset(logger: Any) -> tuple[float, float | None, str | None]:
+    """Probe SNTP hosts; return ``(offset, rtt, host)`` (host None when offline)."""
     targets = _ntp_targets()
     try:
         result = measure_clock_offset_ntp_multi(targets)
     except Exception as exc:
-        logger.warning(f"NTP offset probe failed (degraded temporal mode): {exc}")
+        logger.warning(f"{ActionLabel.CLOCK_DEGRADED} NTP probe failed: {exc}")
         result = None
     if result is None:
         logger.warning(
-            f"No NTP answer from {', '.join(h for h, _ in targets)}; running "
-            "in degraded temporal mode (offset 0, uncorrected local time)"
+            f"{ActionLabel.CLOCK_DEGRADED} no NTP answer from "
+            f"{', '.join(h for h, _ in targets)}; corrected mtimes are unknown "
+            "and conflicts resolve by content"
         )
-        return 0.0, None
-    offset, _rtt, host = result
-    return offset, host
+        _mark_probe_attempt()
+        return 0.0, None, None
+    offset, rtt, host = result
+    _mark_probe_attempt()
+    return offset, rtt, host
+
+
+def _mark_probe_attempt() -> None:
+    """Record when a probe finished, for the retry floor of the maintenance tick."""
+    global _last_probe_monotonic
+    with _probe_lock:
+        _last_probe_monotonic = time.monotonic()
+
+
+def maybe_refresh_clock_offset(logger: Any = log) -> None:
+    """Re-measure when the offset in force is no longer a reference.
+
+    Called from the maintenance tick. A measurement expires (age) or is revoked
+    (a clock step the store observed), and the host silently drops to degraded
+    temporal mode; this re-establishes it instead of leaving the mesh without a
+    time authority until the next restart. ``_PROBE_RETRY_SECONDS`` bounds the
+    retries so an offline host does not spawn a probe per tick.
+    """
+    if offset_store.is_trusted():
+        return
+    with _probe_lock:
+        since_last = time.monotonic() - _last_probe_monotonic
+    if since_last < _PROBE_RETRY_SECONDS:
+        return
+    logger.info(
+        f"{ActionLabel.CLOCK_DEGRADED} offset expired or revoked "
+        f"(age {offset_store.age():.0f}s); re-probing"
+    )
+    start_ntp_clock_offset_probe(logger)
 
 
 def start_ntp_clock_offset_probe(logger: Any = log) -> threading.Thread:
@@ -121,16 +160,18 @@ def start_ntp_clock_offset_probe(logger: Any = log) -> threading.Thread:
         generation = _probe_generation
 
     def _run() -> None:
-        offset, host = _measure_ntp_offset(logger)
+        offset, rtt, host = _measure_ntp_offset(logger)
         with _probe_lock:
             if generation != _probe_generation:
                 return
             # ``host is None`` means every probe failed: the local clock stays
             # uncorrected and is recorded as untrusted, so the election and
             # the chronological tie-break never treat it as a reference.
-            offset_store.record(offset, trusted=host is not None)
+            offset_store.record(offset, trusted=host is not None, rtt=rtt)
         if host is not None:
-            logger.debug(f"Clock offset from {host}: {offset:+.3f}s")
+            logger.info(
+                f"{ActionLabel.CLOCK_SYNC} {host} offset {offset:+.3f}s (±{(rtt or 0.0) / 2:.3f}s)"
+            )
 
     thread = threading.Thread(target=_run, daemon=True, name="hsync-ntp-probe")
     thread.start()
