@@ -35,6 +35,7 @@ from .p2p_helpers import (
     _wait_for_file,
     _wait_for_file_gone,
     _wait_for_master,
+    _wait_for_slave_events,
 )
 
 _P2P_ENABLED = os.environ.get("HSYNC_BB_P2P") == "1"
@@ -72,6 +73,11 @@ class TestTreeDeleteConverges:
             try:
                 synced = Path(p2p_master_dir) / "Peter Gabriel" / "i_o" / "1-01 Panopticom.mp3"
                 assert _wait_for_file(str(synced), timeout=60), _stderr_text(master)
+                # A local change is only propagated by the watcher, which the
+                # slave starts once it reaches its event loop (after the
+                # initial sync). The master holding the file does not prove
+                # that; waiting for the slave's ready marker does.
+                assert _wait_for_slave_events(slave), _stderr_text(slave)
 
                 # Everything from here on happened after the delete.
                 before = _stderr_text(slave)
