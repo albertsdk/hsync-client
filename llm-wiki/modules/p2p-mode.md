@@ -954,13 +954,18 @@ multi-line recovery block in the log
 (`hsync_client/p2p_rendezvous_rdv.py::_token_required_guidance`); `rate_limited`
 and `overloaded` stay log-only.
 
-Known limitation:
-`update_endpoint_ready(False)` (the seeder role stopping) does not re-`register`
-without `endpoints[]`/`capacity`, so the relayed endpoint can linger on the
-rendezvous record until the next full `register` or the 60 s TTL. The advertised
-`server_ready=false` still keeps it from being ranked as an incumbent master,
-and the lane is a candidate-only advertisement; a peer that dials it gets a
-refusal from the unified listener and retries.
+Retraction is a wire action. `register` replaces the whole record
+(`hsync_rendezvous.routing.PeerRecord.from_register`), so when the unified
+listener stops serving — the seeder role ends, or the mastership is yielded — the
+lease loop sends one frame without `endpoints[]` and with `capacity` 0
+(`hsync_client/p2p_rendezvous_rdv.py::RdvRendezvous._retract_endpoint`; the loop
+compares `RdvRendezvous._advertises_endpoints` with the published state, and a
+role change goes through `RdvRendezvous._republish_advert`, which makes the same
+choice). The relayed `reachable` flag turns false immediately instead of at the
+record TTL, the `inbound` advertisement is cleared, and the UPnP mapping that
+pointed at the port nothing serves any more is dropped; a failed round is retried
+on the next wake. A node with neither readiness flag is not dialable, so its lease
+expires while it keeps querying the node for peers.
 
 `leave` has **no response frame** (spec): the client writes it and closes the
 stream without waiting for a reply.

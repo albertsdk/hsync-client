@@ -493,7 +493,14 @@ class RdvRendezvous(RendezvousPlanState):
     def update_endpoint_ready(
         self, ready: bool, *, bound_families: frozenset[int] | None = None
     ) -> None:
-        """Publish (or retract) this node's data-plane endpoint."""
+        """Publish (or retract) this node's data-plane endpoint.
+
+        Retracting is a wire action: the node relays the candidates of the last
+        ``register`` until a frame replaces that record, so the lease loop sends
+        one without ``endpoints[]``/``capacity`` after the transition
+        (``_retract_endpoint``). Peers therefore stop dialling an endpoint this
+        node no longer serves instead of waiting for the record to expire.
+        """
         self._apply_bound_families(bound_families)
         self._endpoint_ready = ready
         self._wake.set()
@@ -623,6 +630,15 @@ class RdvRendezvous(RendezvousPlanState):
         local_ips = self._filtered_local_addresses()
         return _wire_signature(self._endpoint_wire(local_ips, include_observed=False))
 
+    def _advertises_endpoints(self) -> bool:
+        """Whether this node has a data plane a peer could dial right now.
+
+        The unified listener carries both roles (a seeder's blocks and a master's
+        control plane), so either readiness flag validates the advertised
+        candidates; with neither, the record must carry none.
+        """
+        return self._endpoint_ready or self._server_ready
+
     def _republish_stale_endpoint(self) -> bool:
         """Invalidate the published endpoints when the address or list changed.
 
@@ -633,7 +649,9 @@ class RdvRendezvous(RendezvousPlanState):
         list (a new/removed interface, or the test file seam) is republished the
         same way. Returns ``True`` when the caller must publish again.
         """
-        if not (self._endpoint_ready or self._server_ready or self._published_endpoints):
+        if not self._advertises_endpoints():
+            # Nothing to replace: the lease loop retracts the record instead
+            # (``_retract_endpoint``).
             return False
         if self._published_local_ip is None:
             return False
@@ -695,9 +713,14 @@ class RdvRendezvous(RendezvousPlanState):
                     # advertising a stale role until the next full register.
                     action = "republish"
                     self._republish_advert()
-                elif (self._endpoint_ready or self._server_ready) and not self._published_endpoints:
+                elif self._advertises_endpoints() and not self._published_endpoints:
                     action = "publish endpoint"
                     self._publish_endpoint()
+                elif self._published_endpoints and not self._advertises_endpoints():
+                    # The record mirrors the data plane: a node that stopped
+                    # serving stops being dialled now, not at the record TTL.
+                    action = "retract endpoint"
+                    self._retract_endpoint()
                 elif self._server_ready or self._published_endpoints:
                     action = "refresh"
                     self._refresh()
@@ -870,15 +893,17 @@ class RdvRendezvous(RendezvousPlanState):
         """Re-``register`` with the current advertisement (role changed).
 
         ``register`` is the only frame that carries the advertisement, so a
-        promotion/yield republishes through it (with the endpoint/capacity state
-        unchanged). The sent marker is updated by :meth:`_register` only after the
-        node acknowledged the frame, so a transient failure retries on the next
-        wake instead of stranding a stale role.
+        promotion/yield republishes through it. The frame also mirrors the data
+        plane: a node that still serves publishes its candidates, a yielded one
+        that does not retracts them (``_retract_endpoint`` semantics). The sent
+        marker is updated by :meth:`_register` only after the node acknowledged
+        the frame, so a transient failure retries on the next wake instead of
+        stranding a stale role.
         """
-        if self._endpoint_ready or self._server_ready or self._published_endpoints:
+        if self._advertises_endpoints():
             self._publish_endpoint()
         else:
-            self._register(publish_endpoint=False)
+            self._retract_endpoint()
 
     def _disable_source(self, message: str, *, guidance: str | None = None) -> None:
         """Stop this rendezvous source for the rest of the run.
@@ -940,13 +965,18 @@ class RdvRendezvous(RendezvousPlanState):
                 return self._connected_clients
         return self._connected_clients
 
-    def _register(self, *, publish_endpoint: bool) -> None:
+    def _register(self, *, publish_endpoint: bool) -> bool:
         """Send ``register`` with the current lease + election advertisement.
 
         The advertisement is read once, before the frame is built, and recorded
         as *sent* only after the node acknowledged it: a role flip landing
         mid-exchange leaves the generation unsent, so the lease loop republishes
         on the next wake instead of advertising a stale role indefinitely.
+
+        Returns whether the node acknowledged the frame. The published markers
+        follow what this frame carried, because ``register`` replaces the whole
+        record (``hsync_rendezvous.routing.PeerRecord.from_register``): a frame
+        without ``endpoints[]`` also retracts the ones a previous one published.
         """
         cert_fp = self._cert_fingerprint
         if not cert_fp:
@@ -954,7 +984,7 @@ class RdvRendezvous(RendezvousPlanState):
             # full SHA-256 digest or it is not sent at all (an empty/placeholder
             # value would be an invalid frame — and a pin nobody can compare).
             log.warning("Rendezvous register skipped: no local certificate fingerprint yet")
-            return
+            return False
         generation = self._advert_generation
         # Sample the addresses once: they build the endpoint candidates and the
         # default-route address records what this publication carries, so the
@@ -984,24 +1014,43 @@ class RdvRendezvous(RendezvousPlanState):
         )
         if ack is not None:
             self._observed = observed_address(ack)
-            if publish_endpoint:
-                self._published_endpoints = True
-                self._published_local_ip = local_ip
-                self._published_endpoints_sig = _wire_signature(
-                    self._endpoint_wire(local_ips, include_observed=False)
-                )
+            self._published_endpoints = publish_endpoint
+            self._published_local_ip = local_ip if publish_endpoint else None
+            self._published_endpoints_sig = (
+                _wire_signature(self._endpoint_wire(local_ips, include_observed=False))
+                if publish_endpoint
+                else None
+            )
             self._sent_advert_generation = generation
             log.debug(
                 "Rendezvous register ok: observed "
                 f"{format_authority(self._observed.host, self._observed.port)}, "
                 f"ttl {ack['ttl']}s"
             )
+        return ack is not None
 
     def _publish_endpoint(self) -> None:
         if self._shared_upnp is not None:
             self._external_port = self._shared_upnp.external_port(self._port)
         self._set_inbound(self._external_port is not None)
         self._register(publish_endpoint=True)
+
+    def _retract_endpoint(self) -> None:
+        """Re-``register`` without candidates so the node stops relaying them.
+
+        The unified listener stopped serving (the seeder role ended, or the
+        mastership was yielded), so the candidates a previous ``register``
+        published are dead: a peer dialling them only learns what the record TTL
+        would have said anyway. ``register`` replaces the whole record, so this
+        frame carries no ``endpoints[]`` and ``capacity`` 0, which also turns the
+        peer's relayed ``reachable`` flag false immediately. The UPnP mapping
+        pointed at the port nothing serves any more, so it goes with it.
+        """
+        self._set_inbound(False)
+        if self._shared_upnp is not None:
+            self._shared_upnp.unmap()
+            self._external_port = None
+        self._register(publish_endpoint=False)
 
     def _set_inbound(self, inbound: bool) -> None:
         """Record whether this node has a confirmed externally dialable endpoint.

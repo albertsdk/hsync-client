@@ -252,6 +252,88 @@ class TestEndpointPublication:
 
         assert MdnsRendezvous(cid=CID, bucket="shared").endpoint_published() is True
 
+    def test_withdrawing_the_endpoint_retracts_it_from_the_record(self):
+        """The record follows the data plane: no candidates once it stops.
+
+        ``register`` replaces the whole record, so the retraction is a frame
+        without ``endpoints[]``/``capacity`` — the node's relayed ``reachable``
+        flag turns false immediately instead of at the record TTL.
+        """
+        plan, fake_upnp = make_plan(upnp_enabled=True)
+        plan.update_endpoint_ready(True)
+        plan._publish_endpoint()
+        assert fake_upnp.mapped == [8443]
+        assert plan._published_endpoints is True
+        assert plan._inbound is True
+
+        plan.update_endpoint_ready(False)
+        plan._retract_endpoint()
+
+        kind, frame = plan._client.calls[-1]
+        assert kind == "register"
+        assert frame["endpoints"] == []
+        assert frame["capacity"] == 0
+        assert frame["inbound"] is False
+        assert validate_rdv_frame(frame) is not None
+        assert plan._published_endpoints is False
+        assert plan.endpoint_published() is False
+        assert fake_upnp.unmapped is True, "the mapping pointed at a port nothing serves"
+
+    def test_a_yielded_master_retracts_its_endpoints(self):
+        """A master that stops serving must not stay dial-able on the node."""
+        plan, _ = make_plan()
+        plan.update_server_ready()
+        plan._publish_endpoint()
+        assert plan._published_endpoints is True
+
+        plan.update_server_not_ready()
+        plan._republish_advert()
+
+        _kind, frame = plan._client.calls[-1]
+        assert frame["server_ready"] is False
+        assert frame["endpoints"] == []
+        assert frame["inbound"] is False
+        assert plan._published_endpoints is False
+
+    def test_the_lease_loop_retracts_a_withdrawn_endpoint(self):
+        """A withdrawn endpoint is retracted by the next lease round.
+
+        The lease keeps running after the seeder stops, and a role change must
+        not re-publish candidates either: the round after the withdrawal drops
+        them (see ``_retract_endpoint``).
+        """
+        plan, _ = make_plan(refresh_interval=0.01)
+        plan._running = True
+        plan.update_endpoint_ready(True)
+        thread = threading.Thread(target=plan._lease_loop, name="test-lease", daemon=True)
+        thread.start()
+        try:
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline and not any(
+                kind == "register" and frame["endpoints"] for kind, frame in plan._client.calls
+            ):
+                time.sleep(0.02)
+            assert plan._published_endpoints is True, "the loop never published the endpoint"
+
+            plan.update_endpoint_ready(False)
+            plan._advert_generation += 1  # a role change must not re-publish it
+            seen = len(plan._client.calls)
+            retracted = False
+            while time.monotonic() < deadline:
+                for kind, frame in plan._client.calls[seen:]:
+                    if kind == "register" and frame["endpoints"] == []:
+                        retracted = True
+                if retracted and plan._published_endpoints is False:
+                    break
+                time.sleep(0.02)
+        finally:
+            plan._stop.set()
+            plan._wake.set()
+            thread.join(timeout=5.0)
+        assert not thread.is_alive()
+        assert retracted, "the lease loop never retracted the withdrawn endpoint"
+        assert plan._published_endpoints is False
+
 
 class TestPeerFeed:
     def test_only_reachable_tcp_peers_are_fed(self):
