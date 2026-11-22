@@ -166,3 +166,77 @@ class TestWritesInsideAnInFlightDelete:
 
         assert response.status_code == 201
         assert target.is_dir()
+
+
+class TestARemoteDeleteOfTheLastFile:
+    """A directory emptied by a peer's delete must not survive as a shell.
+
+    ``GET /dirs`` publishes every directory on disk, so a shell left behind here
+    is re-created by the peer that removed the folder — the folder the user
+    deleted comes back. An *intentional* empty directory carries a
+    ``.hsynckeep`` marker, so it is never empty and is left alone.
+    """
+
+    def test_a_peer_delete_prunes_the_emptied_directory(self, server, tmp_path):
+        import requests
+
+        _, port = server
+        tree = tmp_path / "Crono"
+        tree.mkdir()
+        (tree / "01.mp3").write_text("x")
+
+        with patch("hsync_client.p2p_server.CONFIG", unauth_write_config(tmp_path)):
+            response = requests.delete(
+                _files_url(port),
+                params={
+                    "path": "Crono/01.mp3",
+                    "is_dir": "false",
+                    "cid": "TestClientA1234567890",
+                },
+                timeout=5,
+            )
+
+        assert response.status_code == 200
+        assert not (tree / "01.mp3").exists()
+        assert not tree.exists(), "the emptied directory must not survive as a shell"
+
+    def test_a_peer_delete_of_one_of_several_files_keeps_the_directory(self, server, tmp_path):
+        import requests
+
+        _, port = server
+        tree = tmp_path / "Crono"
+        tree.mkdir()
+        (tree / "01.mp3").write_text("x")
+        (tree / "02.mp3").write_text("y")
+
+        with patch("hsync_client.p2p_server.CONFIG", unauth_write_config(tmp_path)):
+            response = requests.delete(
+                _files_url(port),
+                params={
+                    "path": "Crono/01.mp3",
+                    "is_dir": "false",
+                    "cid": "TestClientA1234567890",
+                },
+                timeout=5,
+            )
+
+        assert response.status_code == 200
+        assert tree.is_dir()
+        assert (tree / "02.mp3").exists()
+
+    def test_a_delete_without_an_origin_keeps_the_directory(self, server, tmp_path):
+        """Local tooling keeps the structure it vacated (a ``.hsynckeep``)."""
+        import requests
+
+        _, port = server
+        tree = tmp_path / "Crono"
+        tree.mkdir()
+        (tree / "01.mp3").write_text("x")
+
+        with patch("hsync_client.p2p_server.CONFIG", unauth_write_config(tmp_path)):
+            response = requests.delete(
+                _files_url(port), params={"path": "Crono/01.mp3", "is_dir": "false"}, timeout=5
+            )
+
+        assert response.status_code == 200
+        assert (tree / ".hsynckeep").exists()

@@ -47,23 +47,29 @@ a rendezvous banner), but the peer list stays empty and no sync happens.
   `hsync trust rendezvous-server fingerprint HOST:PORT` and whether the network
   blocks UDP (see [Sync across networks](p2p-rendezvous.md)).
 
-## A file deleted while the link was down came back
+## A file or folder deleted while the link was down came back
 
-**Symptom.** A file or folder was deleted while the other device was unreachable
-(the log later shows `was deleted locally while offline`) and it reappeared on
-the next sync.
+**Symptom.** A file, or the folder that held it, was deleted while the other
+device was unreachable (the log later shows `was deleted locally while offline`)
+and it reappeared on the next sync — often the files inside stayed deleted while
+the empty folder itself came back.
 
 **Cause.** A deletion propagates as a *causal* statement: its marker must prove
 it descends from the version the peer still holds. When the peer still
 advertises exactly the content that was deleted (the same checksum as the last
 version this device synced), the marker inherits the peer's clock, so the
-deletion supersedes the remote copy and is applied on both sides. A remote copy
-that changed in the meantime is kept — the newer content wins — and a deletion
-covering a large share of the share (for example every file in it) can still be
-refused by the mass-deletion guard.
+deletion supersedes the remote copy and is applied on both sides. Folders are
+not versioned like files: a folder follows its content, so when its last file is
+deleted on a peer it is removed there too — keeping it around as an "empty
+folder" is what used to bring it back. A remote copy that changed in the
+meantime is kept (the newer content wins), and a deletion covering a large share
+of the share (for example every file in it) can still be refused by the
+mass-deletion guard.
 
 **Remedy.** Nothing to do: a pending deletion is applied as soon as the peer is
-reachable again, and it survives a restart of either device. If files still come
+reachable again, and it survives a restart of either device. An empty folder you
+*create on purpose* is kept on every device (it carries an internal `.hsynckeep`
+marker), so only folders emptied by a deletion disappear. If content still comes
 back, raise the mass-deletion guard in *Settings → Sync* (or
 `--mass-delete-threshold`) and attach both logs to a report —
 `tests/test_bb_p2p_tombstone_restart.py` covers this sequence for every
