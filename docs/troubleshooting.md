@@ -47,6 +47,28 @@ a rendezvous banner), but the peer list stays empty and no sync happens.
   `hsync trust rendezvous-server fingerprint HOST:PORT` and whether the network
   blocks UDP (see [Sync across networks](p2p-rendezvous.md)).
 
+## A file deleted while the link was down came back
+
+**Symptom.** A file or folder was deleted while the other device was unreachable
+(the log later shows `was deleted locally while offline`) and it reappeared on
+the next sync.
+
+**Cause.** A deletion propagates as a *causal* statement: its marker must prove
+it descends from the version the peer still holds. When the peer still
+advertises exactly the content that was deleted (the same checksum as the last
+version this device synced), the marker inherits the peer's clock, so the
+deletion supersedes the remote copy and is applied on both sides. A remote copy
+that changed in the meantime is kept — the newer content wins — and a deletion
+covering a large share of the share (for example every file in it) can still be
+refused by the mass-deletion guard.
+
+**Remedy.** Nothing to do: a pending deletion is applied as soon as the peer is
+reachable again, and it survives a restart of either device. If files still come
+back, raise the mass-deletion guard in *Settings → Sync* (or
+`--mass-delete-threshold`) and attach both logs to a report —
+`tests/test_bb_p2p_tombstone_restart.py` covers this sequence for every
+supported case.
+
 ## After a network change a device shows "Waiting…"
 
 **Symptom.** The host lost its connection (Wi-Fi reconnect, cable unplugged,

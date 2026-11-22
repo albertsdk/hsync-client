@@ -532,6 +532,12 @@ sequenceDiagram
     B->>M: GET file (download)
 ```
 
+The master's `201` body mirrors the FastAPI server's: besides `info` and `file`
+it carries `version` (`vclock` + `corrected_mtime`), the clock the master
+recorded for the stored copy. The uploader keeps it as its merge base, so a
+later deletion on that device can prove it supersedes that version (ADR-0003)
+instead of being re-downloaded.
+
 ## Technical Details
 
 ### mDNS Service

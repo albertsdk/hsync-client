@@ -677,6 +677,23 @@ def _run_as_master(
     return p2p_server, p2p_ws_server
 
 
+def _endpoint_retry_delay(config: "HsyncConfig") -> float:
+    """Bounded pause before the next rendezvous iteration after a failed link.
+
+    ``RECONNECT_DELAY`` is the operator's own reconnect knob; it is clamped to
+    ``[1, 30]`` so a misconfigured value can neither spin the loop nor park a
+    slave for minutes. The upper bound matches the lease cadence, so a master
+    that moved is retried at least as often as its endpoint can be re-learned.
+    """
+    try:
+        delay = float(config.get("RECONNECT_DELAY") or 0)
+    except (TypeError, ValueError):
+        delay = 0.0
+    if delay <= 0:
+        delay = 5.0
+    return max(1.0, min(delay, 30.0))
+
+
 def _run_as_slave(
     config: "HsyncConfig",
     log,
@@ -748,6 +765,15 @@ def _run_as_slave(
             relayed = endpoint is not None
         if endpoint is None:
             log.warning(f"No reachable endpoint for master {master.cid}; retrying rendezvous.")
+            # A master that restarted moves to a new ephemeral port, so the peer
+            # record still holds a dead endpoint: pull a fresh rendezvous sample
+            # now instead of waiting for the lease cadence. The bounded pause is
+            # what keeps a dead endpoint from spinning this loop at CPU speed
+            # (one iteration per ~10 ms produced thousands of log lines and
+            # starved the retry that would have used the new endpoint).
+            if plan is not None:
+                plan.request_sample()
+            time.sleep(_endpoint_retry_delay(config))
             return (not one_shot) or wait_indefinitely_for_peer, int(ExitCode.OK)
         master_host, master_port = endpoint
         if not relayed:
