@@ -299,7 +299,14 @@ bumps a generation too (`MasterSyncStatus._local_gen` under
 `MasterSyncStatus._local_lock`): `MasterSyncStatus._local_listing` compares it
 after its scan, so a change reported *while* the worker walks the share is not
 answered by the pre-change listing the in-flight scan would otherwise cache — the
-listing stays uncached and the pass that change requested rescans. Passes are
+listing stays uncached and the pass that change requested rescans. Independently
+of those events the worker re-runs a pass every
+`master_status.CLASSIFY_INTERVAL_S` — the same bound as the slave's
+`hsync_client/constants.py::RESYNC_DEFAULT` safety net — while at least one
+session published its inventory (`MasterSyncStatus._has_published_device`), so a
+lost watcher event or inventory frame cannot freeze the reported verdict; with
+nobody published the wake is skipped, because the join itself wakes the role.
+Passes are
 coalesced to one per `master_status.MIN_INTERVAL_S` and executed off the caller's
 thread; the local listing is reused for `master_status.LOCAL_CACHE_TTL_S` between
 changes. A pass **never emits**
@@ -942,7 +949,7 @@ multi-line recovery block in the log
 (`hsync_client/p2p_rendezvous_rdv.py::_token_required_guidance`); `rate_limited`
 and `overloaded` stay log-only.
 
-Known limitation (pre-existing, unchanged by the advertisement work):
+Known limitation:
 `update_endpoint_ready(False)` (the seeder role stopping) does not re-`register`
 without `endpoints[]`/`capacity`, so the relayed endpoint can linger on the
 rendezvous record until the next full `register` or the 60 s TTL. The advertised

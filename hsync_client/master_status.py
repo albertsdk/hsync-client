@@ -17,6 +17,12 @@ pass), then in-memory lookups. ``P2PInventoryStore.holders_for`` is deliberately
 not used here — it runs a JOIN per identity (~185 us/file, ~18 s per 100 000
 files) while the bulk read costs ~0.1 s at the same scale.
 
+A pass runs on every change and, as a safety net, every
+``CLASSIFY_INTERVAL_S`` while a device published its inventory: the role
+classifies only on change, so a lost event would otherwise freeze the reported
+verdict. The safety-net pass pays the same cost, in its stat-only variant once
+the content cache is warm.
+
 The report is **per device**: the union answers "does any device hold this?",
 which hides which device is behind as soon as two are connected, so the pass
 emits one ``device_status`` row per live device and stamps every ``file_status``
@@ -37,6 +43,7 @@ from typing import Any
 from hsync_common.models.sentinel import is_sentinel_file
 
 from hsync_client.config import CONFIG
+from hsync_client.constants import RESYNC_DEFAULT
 from hsync_client.empty_dirs import empty_dir_states
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.sync import _bucket_key, emit_folder_size, get_files_local
@@ -52,6 +59,14 @@ MIN_INTERVAL_S = 1.0
 # How long the local identity list is reused. The pass also runs on connect and
 # on every inventory change, so the TTL only caps repeated full walks.
 LOCAL_CACHE_TTL_S = 5.0
+# Safety net: while at least one device published an inventory, the pass
+# re-runs on this cadence with no change event. A watcher event or an inventory
+# frame lost on the way leaves a serving role with a stale verdict for good,
+# because it classifies only on change; the slave's reconcile has its own safety
+# net (`hsync_client.constants.RESYNC_DEFAULT`), so the two roles share one bound.
+# The pass is read-only and, with the hash cache warm, a stat-only walk, which is
+# why the interval does not follow ``HSYNC_RESYNC`` (a transfer-cost knob).
+CLASSIFY_INTERVAL_S = float(RESYNC_DEFAULT)
 
 # (state, absolute path, size, live devices holding it) as published through the
 # ``file_status`` event; ``holders`` is -1 when no per-device view is available.
@@ -136,8 +151,11 @@ class MasterSyncStatus:
 
     ``store_provider`` returns the live inventory store (``None`` until the
     serving role has one). ``request`` coalesces bursts: one pass per
-    ``min_interval_s``, executed by a short-lived worker thread, so neither the
-    WebSocket handler nor the stdin reader blocks on a large share.
+    ``min_interval_s``, executed by a worker thread, so neither the WebSocket
+    handler nor the stdin reader blocks on a large share. The worker also runs a
+    safety-net pass every ``interval_s`` while a device published its inventory
+    (see ``CLASSIFY_INTERVAL_S``): the role classifies only on change, so a lost
+    event would otherwise leave the front-end on a stale verdict for good.
     """
 
     def __init__(
@@ -149,6 +167,7 @@ class MasterSyncStatus:
         connected_provider: Callable[[], int] | None = None,
         min_interval_s: float = MIN_INTERVAL_S,
         local_cache_ttl_s: float = LOCAL_CACHE_TTL_S,
+        interval_s: float = CLASSIFY_INTERVAL_S,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._store_provider = store_provider
@@ -157,6 +176,7 @@ class MasterSyncStatus:
         self._connected_provider = connected_provider or (lambda: 0)
         self._min_interval_s = min_interval_s
         self._local_cache_ttl_s = local_cache_ttl_s
+        self._interval_s = interval_s
         self._clock = clock
         self._pending = threading.Event()
         self._stopped = threading.Event()
@@ -222,10 +242,17 @@ class MasterSyncStatus:
     # ── pass ─────────────────────────────────────────────────────────────
 
     def _loop(self) -> None:
+        # ``interval_s <= 0`` waits for a request only: the safety net is opt-out
+        # (a front-end-driven role, or a caller that owns the cadence).
+        timeout = self._interval_s if self._interval_s > 0 else None
         while not self._stopped.is_set():
-            if not self._pending.wait(timeout=0.05):
-                if not self._pending.is_set():
-                    return
+            # Wake on a request, or on the safety-net interval so the verdicts
+            # are re-verified even when no change event arrives.
+            requested = self._pending.wait(timeout=timeout)
+            if self._stopped.is_set():
+                return
+            # A request that landed between the wait and this clear still counts.
+            requested = requested or self._pending.is_set()
             self._pending.clear()
             delay = self._min_interval_s - (self._clock() - self._last_run)
             if delay > 0 and self._stopped.wait(timeout=delay):
@@ -233,11 +260,18 @@ class MasterSyncStatus:
             # Coalesce everything that arrived while waiting.
             self._pending.clear()
             try:
-                self.run_now()
+                # A safety-net wake with nobody to compare against has no
+                # verdict to refresh: the device joining wakes the role through
+                # its inventory change callback anyway.
+                if requested or self._has_published_device():
+                    self.run_now()
             except Exception:  # a status pass must never kill the role
                 self._log.exception("master status classification failed")
-            if not self._pending.is_set():
-                return
+
+    def _has_published_device(self) -> bool:
+        """Whether any device published an inventory to compare against."""
+        store = self._store_provider()
+        return store is not None and bool(store.published_session_cids())
 
     def run_now(self) -> None:
         """Classify the local share against the devices and emit the events.

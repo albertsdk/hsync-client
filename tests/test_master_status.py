@@ -432,13 +432,11 @@ class TestMasterSyncStatus:
     def test_a_change_reported_during_the_scan_is_not_cached(self, tmp_path, recorder, monkeypatch):
         """A listing computed across a change must not answer the next pass.
 
-        Regression: the served-share hook drops the cache from the watchdog
-        thread, so a change landing while the worker walks the share was
-        overwritten by the pre-change listing the in-flight scan cached
-        afterwards. The pass that change requested then reused it, and — with
-        nothing else changing on the share — no later pass ever corrected the
-        verdict it emitted (a folder that already held its sentinel stayed
-        ``to_download`` for good).
+        The served-share hook drops the cache from the watchdog thread, i.e.
+        while the worker may be walking the share. The scan's own write must not
+        put that pre-change listing back: the pass the change requested would
+        reuse it, and with nothing else changing on the share nothing later
+        would correct its verdict.
         """
         monkeypatch.setitem(CONFIG, "LOCAL_BUCKET", str(tmp_path))
         store = _store(tmp_path, [{"path": "a.bin", "sha256": DIGEST_A, "size": 4}])
@@ -491,6 +489,70 @@ class TestMasterSyncStatus:
         status.stop()
         store.close()
         assert recorder.states() == [("synced", str(tmp_path / "a.bin"))]
+
+    def test_the_safety_net_pass_repeats_without_a_change(self, tmp_path, recorder, monkeypatch):
+        """A lost event cannot freeze the verdict: the pass re-runs on its own.
+
+        The serving role classifies on change (an inventory frame or a local
+        change) and on the safety-net interval, so an event lost on the way is
+        recovered by the next wake instead of leaving the front-end on a stale
+        verdict.
+        """
+        monkeypatch.setitem(CONFIG, "LOCAL_BUCKET", str(tmp_path))
+        store = _store(tmp_path, [{"path": "a.bin", "sha256": DIGEST_A, "size": 4}])
+        passes: list[int] = []
+        repeated = threading.Event()
+        status = MasterSyncStatus(
+            lambda: store,
+            LOG,
+            local_provider=lambda: [],
+            min_interval_s=0.0,
+            interval_s=0.05,
+        )
+        real_run = status.run_now
+
+        def _run() -> None:
+            passes.append(1)
+            real_run()
+            if len(passes) >= 2:
+                repeated.set()
+
+        monkeypatch.setattr(status, "run_now", _run)
+
+        status.request()  # one pass; nothing else asks for another
+
+        assert repeated.wait(timeout=5.0) is True
+        status.stop()
+        store.close()
+        assert len(passes) >= 2
+
+    def test_no_safety_net_pass_without_a_published_inventory(
+        self, tmp_path, recorder, monkeypatch
+    ):
+        """The safety-net wake is skipped while nobody published an inventory."""
+        monkeypatch.setitem(CONFIG, "LOCAL_BUCKET", str(tmp_path))
+        store = _store(tmp_path, None)  # opened a session, never published
+        passes: list[int] = []
+        status = MasterSyncStatus(
+            lambda: store,
+            LOG,
+            local_provider=lambda: [],
+            min_interval_s=0.0,
+            interval_s=0.05,
+        )
+        real_run = status.run_now
+
+        def _run() -> None:
+            passes.append(1)
+            real_run()
+
+        monkeypatch.setattr(status, "run_now", _run)
+
+        status.request()
+        time.sleep(0.4)  # several safety-net wakes
+        status.stop()
+        store.close()
+        assert len(passes) == 1
 
     def test_stop_ends_the_worker(self, tmp_path, recorder, monkeypatch):
         monkeypatch.setitem(CONFIG, "LOCAL_BUCKET", str(tmp_path))

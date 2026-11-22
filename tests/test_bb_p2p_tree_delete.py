@@ -3,20 +3,16 @@
 
 """Black-box: deleting a whole tree converges on both peers.
 
-The reported scenario: a synced folder is moved to the trash from one client
-(the desktop's *Move to Trash*, i.e. a rename out of the bucket), and the folder
-comes back on both sides — one peer's recursive delete failed with ``ENOTEMPTY``
-after a directory event recreated the tree, the failing DELETE was dropped, and
-the survivor was re-downloaded.
+A folder the user removes on one peer must stay removed on both: neither side
+may keep it, re-create it, or announce it back. Both ways of removing it are
+covered because they emit completely different events: a rename out of the
+bucket (same filesystem, one atomic move — what ``gio trash`` does) and a
+recursive removal (``rm -rf``, or a trash on another filesystem), which fires
+one event per entry.
 
-Two variants of "the user removed the folder" are covered because they emit
-completely different events: a rename out of the bucket (same filesystem, one
-atomic move — what ``gio trash`` does) and a recursive removal (``rm -rf``, or a
-trash on another filesystem), which fires one event per entry.
-
-The wire-level regression for the stale directory event itself lives in
+The wire-level contract for the stale directory event itself lives in
 ``tests/test_event_dispatch_dir_modified.py``: this suite proves the observable
-outcome a user reports.
+outcome.
 
 Requires HSYNC_BB_P2P=1 to run.
 """
