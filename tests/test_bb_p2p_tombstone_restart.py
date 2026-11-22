@@ -84,9 +84,9 @@ def _wait_for_all_on_master(p2p_master_dir: str, slave) -> None:
 def _wait_for_deleted_gone(p2p_master_dir: str, timeout: float = 90) -> bool | None:
     """Wait until every deleted file is gone from the master.
 
-    The *directory* may legitimately survive as an empty shell (the engine keeps
-    a ``.hsynckeep`` sentinel for an empty syncable directory), so the deleted
-    files are what the deletion must remove.
+    The *files* converge first; the folder that held them is asserted separately
+    and must be gone too — an empty shell kept alive by a ``.hsynckeep``
+    sentinel is the directory coming back.
     """
     for rel in DELETED:
         if not _wait_for_file_gone(str(Path(p2p_master_dir) / rel), timeout=timeout):
@@ -226,6 +226,18 @@ def _run_scenario(
                 assert not any(rel in line for line in downloaded), (
                     f"the restarted slave downloaded {rel}\n{slave_tail}"
                 )
+            # The folder itself must stay deleted. An empty shell kept alive by
+            # a `.hsynckeep` sentinel is the directory coming back: the sentinel
+            # declares "this empty directory is intentional", so every peer keeps
+            # re-creating the folder the user removed.
+            assert not (Path(p2p_slave_dir) / TREE).exists(), (
+                f"the deleted directory came back on the restarted slave\n"
+                f"slave:\n{slave_tail}\nmaster:\n{_stderr_text(master)}"
+            )
+            assert not (Path(p2p_master_dir) / TREE).exists(), (
+                f"the deleted directory came back on the master\n"
+                f"master:\n{_stderr_text(master)}\nslave:\n{slave_tail}"
+            )
             # What was kept must still be there: the deletion converged without
             # taking the rest of the share with it.
             for rel in KEPT:

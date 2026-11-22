@@ -1506,10 +1506,23 @@ class P2PEndpointMixin(_HTTPTransportBase):
                 os.remove(full_path)
                 parent = str(Path(full_path).parent)
                 if Path(full_path).name == HSYNCKEEP_FILENAME:
-                    # Sentinel removed — clean up the now-empty directory
-                    self._cleanup_empty_dir(parent)
+                    # Sentinel removed — the directory is no longer an
+                    # intentional empty directory: drop it (and any ancestor the
+                    # removal emptied) instead of leaving a shell behind.
+                    self._prune_empty_ancestors(parent)
+                elif origin_cid:
+                    # A peer deleted this file. When it was the directory's last
+                    # entry, the shell left here is the residue of that deletion,
+                    # not an intentional empty directory: ``GET /dirs`` advertises
+                    # every directory on disk, so keeping it (with or without a
+                    # ``.hsynckeep``) makes the folder the peer removed reappear
+                    # there on its next reconcile. Dropping the shell lets the
+                    # deletion converge. An *intentional* empty directory carries
+                    # a ``.hsynckeep``, so it is never empty and survives this.
+                    self._prune_empty_ancestors(parent)
                 else:
-                    # Regular file removed — preserve directory with sentinel
+                    # No originating peer (local tooling on the endpoint):
+                    # preserve the directory the deletion vacated.
                     self._ensure_sentinel_in_parent(full_path)
 
             self._send_json_response(HTTP_OK, {"info": "Deleted successfully"})
@@ -1573,6 +1586,25 @@ class P2PEndpointMixin(_HTTPTransportBase):
             return
         if safe_rmdir_if_empty(dir_path):
             log.debug(f'Removed empty directory "{dir_path}"')
+
+    def _prune_empty_ancestors(self, dir_path: str) -> None:
+        """Remove *dir_path* and its ancestors while they are empty.
+
+        ``_cleanup_empty_dir`` decides (``rmdir`` is the emptiness test), so a
+        directory that still holds content — or nothing but an intentional
+        ``.hsynckeep`` marker — is left untouched, and the walk never leaves
+        the bucket (its root is never removed).
+        """
+        bucket = str(Path(CONFIG.get("LOCAL_BUCKET", "")))
+        if not bucket:
+            return
+        root = Path(bucket)
+        current = Path(dir_path)
+        while current != root and root in current.parents and current.is_dir():
+            self._cleanup_empty_dir(str(current))
+            if current.exists():
+                return
+            current = current.parent
 
     def _reject_inside_tree_delete(self, full_path: str) -> bool:
         """Refuse to materialise anything inside a subtree being deleted (409).
