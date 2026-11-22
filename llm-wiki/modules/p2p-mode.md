@@ -294,7 +294,12 @@ no peer inventory changes when only the master's folder does. The served-share
 hook drops the cached local listing first (`MasterSyncStatus.invalidate_local`):
 without it the pass would classify a folder up to
 `master_status.LOCAL_CACHE_TTL_S` old and keep reporting the transfers a finished
-cycle already applied, until some unrelated inventory change woke it. Passes are
+cycle already applied, until some unrelated inventory change woke it. The drop
+bumps a generation too (`MasterSyncStatus._local_gen` under
+`MasterSyncStatus._local_lock`): `MasterSyncStatus._local_listing` compares it
+after its scan, so a change reported *while* the worker walks the share is not
+answered by the pre-change listing the in-flight scan would otherwise cache — the
+listing stays uncached and the pass that change requested rescans. Passes are
 coalesced to one per `master_status.MIN_INTERVAL_S` and executed off the caller's
 thread; the local listing is reused for `master_status.LOCAL_CACHE_TTL_S` between
 changes. A pass **never emits**

@@ -429,6 +429,49 @@ class TestMasterSyncStatus:
         store.close()
         assert len(calls) == 1
 
+    def test_a_change_reported_during_the_scan_is_not_cached(self, tmp_path, recorder, monkeypatch):
+        """A listing computed across a change must not answer the next pass.
+
+        Regression: the served-share hook drops the cache from the watchdog
+        thread, so a change landing while the worker walks the share was
+        overwritten by the pre-change listing the in-flight scan cached
+        afterwards. The pass that change requested then reused it, and — with
+        nothing else changing on the share — no later pass ever corrected the
+        verdict it emitted (a folder that already held its sentinel stayed
+        ``to_download`` for good).
+        """
+        monkeypatch.setitem(CONFIG, "LOCAL_BUCKET", str(tmp_path))
+        store = _store(tmp_path, [{"path": "a.bin", "sha256": DIGEST_A, "size": 4}])
+        listings = [[], [_local(str(tmp_path / "a.bin"), DIGEST_A, 4)]]
+        calls: list[int] = []
+        status: MasterSyncStatus
+
+        def _local_provider() -> list[dict]:
+            calls.append(1)
+            if len(calls) == 1:
+                # The watcher reports the new file while this scan runs: the
+                # walk below has already read the directory without it.
+                status.invalidate_local()
+            return list(listings[len(calls) - 1])
+
+        status = MasterSyncStatus(
+            lambda: store,
+            LOG,
+            local_provider=_local_provider,
+            min_interval_s=0.0,
+            local_cache_ttl_s=60.0,
+        )
+
+        status.run_now()  # the scan raced the change
+        status.run_now()  # the pass that change requested
+
+        status.stop()
+        store.close()
+        # The raced pass answers from the pre-change walk, the one the change
+        # requested rescans and settles the verdict.
+        assert len(calls) == 2
+        assert recorder.states()[-1] == ("synced", str(tmp_path / "a.bin"))
+
     def test_request_runs_a_pass_in_the_background(self, tmp_path, recorder, monkeypatch):
         monkeypatch.setitem(CONFIG, "LOCAL_BUCKET", str(tmp_path))
         store = _store(tmp_path, [{"path": "a.bin", "sha256": DIGEST_A, "size": 4}])

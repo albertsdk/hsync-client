@@ -166,6 +166,10 @@ class MasterSyncStatus:
         self._last_run = float("-inf")
         self._local_files: list[dict] | None = None
         self._local_at = float("-inf")
+        # Guards the cached listing and its generation: ``invalidate_local``
+        # runs on the watchdog thread while a pass computes the listing.
+        self._local_lock = threading.Lock()
+        self._local_gen = 0
 
     # ── triggers ─────────────────────────────────────────────────────────
 
@@ -193,9 +197,18 @@ class MasterSyncStatus:
                 worker.start()
 
     def invalidate_local(self) -> None:
-        """Drop the cached local listing (the share changed on disk)."""
-        self._local_files = None
-        self._local_at = float("-inf")
+        """Drop the cached local listing (the share changed on disk).
+
+        Bumps the listing generation as well: the scan runs on the worker
+        thread, so a change reported *while* it walks the share would otherwise
+        be overwritten by the listing the in-flight scan is about to cache —
+        one computed before the change landed — and no later change would
+        correct the verdict it produced.
+        """
+        with self._local_lock:
+            self._local_gen += 1
+            self._local_files = None
+            self._local_at = float("-inf")
 
     def stop(self) -> None:
         """Stop the worker (idempotent)."""
@@ -308,7 +321,19 @@ class MasterSyncStatus:
 
     def _local_listing(self) -> list[dict]:
         now = self._clock()
-        if self._local_files is None or now - self._local_at >= self._local_cache_ttl_s:
-            self._local_files = self._local_provider()
-            self._local_at = now
-        return self._local_files
+        with self._local_lock:
+            cached = self._local_files
+            cached_at = self._local_at
+            generation = self._local_gen
+        if cached is not None and now - cached_at < self._local_cache_ttl_s:
+            return cached
+        files = self._local_provider()
+        with self._local_lock:
+            # A change reported while the provider walked the share may be
+            # missing from *files*: caching it would freeze that gap until the
+            # TTL expires, and the pass the change itself requested would reuse
+            # it. Leave the cache empty so that pass rescans.
+            if self._local_gen == generation:
+                self._local_files = files
+                self._local_at = self._clock()
+        return files
