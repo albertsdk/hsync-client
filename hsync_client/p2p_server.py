@@ -212,11 +212,9 @@ P2P_SERVER_BACKLOG = 256
 # per iteration.
 _P2P_UPLOAD_CHUNK_SIZE = CHUNK_SIZE_SMALL
 
-# Cap (bytes) on the file size the compressed download branch accepts. The
-# branch stages a bounded zstd frame in a temporary file before sending any
-# headers; larger files use identity streaming so resume stays available and
-# temporary-disk use remains bounded.
-P2P_COMPRESSION_MAX_FILE_BYTES = 256 * 1024 * 1024
+
+class _ServedFileChanged(Exception):
+    """The file changed under a serve whose headers were already sent."""
 
 
 def _throttle_upload(nbytes: int) -> None:
@@ -234,8 +232,8 @@ def _write_served_chunk(
 ) -> int:
     """Write one served chunk and report the cumulative bytes to the peer.
 
-    Shared by the three serve loops (range resume, identity, zstd) so the
-    progress accounting cannot drift between them. ``sent`` starts at the
+    Shared by the range-resume and identity serve loops so the progress
+    accounting cannot drift between them. ``sent`` starts at the
     resume offset for a partial request, so the percentage always refers to the
     whole file; ``reporter`` is ``None`` for engine sentinels and when no events
     channel is attached (the reporter itself is a no-op then).
@@ -365,38 +363,6 @@ def _hash_open_file(stream: IO[bytes]) -> str:
         digest.update(chunk)
     stream.seek(0)
     return digest.hexdigest()
-
-
-def _stage_compressed_body(
-    stream: IO[bytes],
-    opened_stat: os.stat_result,
-    expected_sha256: str,
-) -> IO[bytes] | None:
-    """Stream one stable open-file snapshot into a bounded temporary zstd frame."""
-    staged = tempfile.TemporaryFile(mode="w+b")
-    digest = hashlib.sha256()
-    total = 0
-    try:
-        stream.seek(0)
-        compressor = zstd.ZstdCompressor(level=compression_level(is_p2p=True))
-        with compressor.stream_writer(staged, closefd=False) as writer:
-            while chunk := stream.read(_P2P_UPLOAD_CHUNK_SIZE):
-                digest.update(chunk)
-                total += len(chunk)
-                writer.write(chunk)
-        if (
-            total != opened_stat.st_size
-            or not _same_open_file(opened_stat, os.fstat(stream.fileno()))
-            or not hmac.compare_digest(digest.hexdigest(), expected_sha256)
-        ):
-            staged.close()
-            return None
-        staged.flush()
-        staged.seek(0)
-        return staged
-    except Exception:
-        staged.close()
-        raise
 
 
 def _extract_multipart_boundary(content_type: str) -> bytes | None:
@@ -2134,65 +2100,63 @@ class P2PEndpointMixin(_HTTPTransportBase):
                 use_compression = (
                     CONFIG.get("COMPRESSION_ENABLED", False)
                     and should_compress(display_path, file_size, is_p2p=True)
-                    and file_size <= P2P_COMPRESSION_MAX_FILE_BYTES
                     and not identity_only
                     and (not self._is_seeder() or "zstd" in accept_encoding)
                 )
                 if use_compression:
+                    # Stream the frame into the response. A staged frame had to be a
+                    # temporary file, so the branch was bounded by the file size it
+                    # could afford to stage and larger files travelled identity; here
+                    # the body is chunked (its length is unknown up front), memory
+                    # stays at one read chunk and nothing is written to disk, for a
+                    # file of any size. A range request never reaches this branch (it
+                    # is answered above), so a resume still gets byte-addressed
+                    # identity bytes.
+                    self.send_response(HTTP_OK)
+                    self.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
+                    self.send_header("Content-Encoding", CONTENT_ENCODING_ZSTD)
+                    self.send_header("Transfer-Encoding", "chunked")
+                    self.send_header(HEADER_CHECKSUM_SHA256, checksum)
+                    self.send_header("X-Permissions", permissions)
+                    self.end_headers()
+                    response_started = True
+                    # The bar follows the *file*: the source bytes read so far, the
+                    # same quantity the receiver measures once its echo lands. The
+                    # wire count is not a usable total (the frame length is unknown
+                    # until it has been produced), and the receiver's echo upgrades
+                    # the scale anyway.
+                    compressed_reporter = progress_reporter(display_path, file_size, "upload")
+                    compressor = zstd.ZstdCompressor(
+                        level=compression_level(is_p2p=True)
+                    ).compressobj()
+                    sent = 0
+                    stream.seek(0)
                     try:
-                        compressed_body = _stage_compressed_body(stream, opened, checksum)
-                    except (OSError, zstd.ZstdError) as exc:
-                        log.warning(
-                            f'Could not stage compressed P2P download "{display_path}": {exc}; '
-                            "serving identity encoding"
-                        )
-                        stream.seek(0)
-                    else:
-                        if compressed_body is None:
-                            self._send_error_response(HTTP_CONFLICT, "File changed while reading")
-                            return
-                        with compressed_body:
-                            compressed_size = os.fstat(compressed_body.fileno()).st_size
-                            self.send_response(HTTP_OK)
-                            self.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
-                            self.send_header("Content-Length", str(compressed_size))
-                            self.send_header("Content-Encoding", CONTENT_ENCODING_ZSTD)
-                            self.send_header(HEADER_CHECKSUM_SHA256, checksum)
-                            self.send_header("X-Permissions", permissions)
-                            self.end_headers()
-                            response_started = True
-                            remaining = compressed_size
-                            # The wire scale drives the bar as a fallback (the
-                            # receiver's echo upgrades it to the file scale once
-                            # it lands). The control WebSocket is established
-                            # only after the peer's initial sync, so the echo is
-                            # absent for the first cycle: a serving master must
-                            # still show a determinate bar then.
-                            compressed_reporter = progress_reporter(
-                                display_path, compressed_size, "upload"
-                            )
-                            sent = 0
-                            while remaining:
-                                chunk = compressed_body.read(min(_P2P_UPLOAD_CHUNK_SIZE, remaining))
-                                if not chunk:
-                                    self.close_connection = True
-                                    emit_failed_transfer(
-                                        "upload", display_path, "connection lost while serving"
-                                    )
-                                    return
-                                sent = _write_served_chunk(
-                                    self.wfile, chunk, compressed_reporter, sent
-                                )
-                                _throttle_upload(len(chunk))
-                                remaining -= len(chunk)
-                        # One completed serve = one outgoing content transfer:
-                        # report it so the serving side's Sent counter (files and
-                        # bytes) updates, as the upload path already does.
-                        emit_completed_transfer("upload", display_path, file_size)
+                        while chunk := stream.read(_P2P_UPLOAD_CHUNK_SIZE):
+                            if not _same_open_file(opened, os.fstat(stream.fileno())):
+                                raise _ServedFileChanged
+                            payload = compressor.compress(chunk)
+                            if payload:
+                                self._write_chunk(payload)
+                            sent += len(chunk)
+                            if compressed_reporter is not None:
+                                compressed_reporter.update(sent)
+                            _throttle_upload(len(chunk))
+                        if sent != file_size:
+                            raise _ServedFileChanged
+                        tail = compressor.flush()
+                        if tail:
+                            self._write_chunk(tail)
+                        self._end_chunked()
+                    except (_ServedFileChanged, OSError):
+                        # The headers are gone, so a truncated body is the only
+                        # failure signal left: the receiver rejects it on the
+                        # checksum and the next cycle retries the file.
+                        self.close_connection = True
+                        emit_failed_transfer("upload", display_path, "file changed while serving")
                         return
-                    if not _same_open_file(opened, os.fstat(stream.fileno())):
-                        self._send_error_response(HTTP_CONFLICT, "File changed while reading")
-                        return
+                    emit_completed_transfer("upload", display_path, file_size)
+                    return
 
                 self.send_response(HTTP_OK)
                 self.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
@@ -2977,7 +2941,6 @@ class P2PEndpointMixin(_HTTPTransportBase):
             # Park the literal payload in the system temp dir (outside the
             # bucket so it is never picked up by the sync engine), capped at
             # the protocol literal limit (decompression-bomb containment).
-            import tempfile
 
             fd, literal_path = tempfile.mkstemp(prefix="hsync-delta-lit-")
             raw = os.fdopen(fd, "wb")

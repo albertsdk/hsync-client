@@ -257,8 +257,8 @@ final update at completion) from **every** data mover, in both transports:
   `hsync_client/utils/throttle.py::get_throttle_delay`) and the **delta-apply**
   payload (`hsync_client/delta_transfer.py::upload_file_delta`);
 - the P2P server: serving a full file (`hsync_client/p2p_server.py::_write_served_chunk`,
-  against the wire size — the zstd frame when compressed, until the receiver's
-  echo supersedes it), serving a parked delta payload
+  against the file size — the compressed branch counts the source bytes it has
+  read, the same scale the receiver measures), serving a parked delta payload
   (`hsync_client/p2p_delta.py::handle_delta_data`) and receiving a peer's upload or
   delta-apply (`hsync_client/progress.py::ProgressWriter`), the latter against the
   `payload_size` the sender declares in the delta metadata.

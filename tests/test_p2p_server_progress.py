@@ -131,13 +131,12 @@ class TestServeProgress:
         assert transfers[0]["size"] == len(_PAYLOAD)
         assert transfers[0]["file"].endswith("served.bin")
 
-    def test_compressed_serve_reports_the_wire_total(self, server, tmp_path, events):
-        """A compressed serve reports a determinate wire percentage.
+    def test_compressed_serve_reports_the_file_scale(self, server, tmp_path, events):
+        """A streaming compressed serve reports the source bytes it has read.
 
-        The echo of the receiving slave upgrades the row to the file scale while
-        its frames arrive, but the echo needs the peer's control WebSocket (open
-        only after its initial sync): the serving side must never sit without a
-        bar for the whole first cycle.
+        The frame length is unknown until it has been produced, so the file is
+        the only determinate scale: the serving side must never sit without a bar
+        for the whole first cycle, before the receiving peer's echo arrives.
         """
         _, port = server
         (tmp_path / "compressible.txt").write_bytes(_PAYLOAD)
@@ -154,10 +153,11 @@ class TestServeProgress:
         assert decompress_data(body) == _PAYLOAD
         progress = [e for e in events if e["event"] == "progress"]
         assert progress and progress[-1]["op"] == "upload"
-        # The wire total is the staged zstd frame: a determinate percentage that
-        # ends exactly on it.
-        assert all(e["total"] == len(body) for e in progress)
-        assert progress[-1]["transferred"] == len(body)
+        # The file is the total, and the samples end exactly on it.
+        assert all(e["total"] == len(_PAYLOAD) for e in progress)
+        assert progress[-1]["transferred"] == len(_PAYLOAD)
+        positions = [e["transferred"] for e in progress]
+        assert positions == sorted(positions)
         transfers = [e for e in events if e["event"] == "transfer"]
         assert [e["size"] for e in transfers] == [len(_PAYLOAD)]
 

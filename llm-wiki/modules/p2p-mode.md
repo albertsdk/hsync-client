@@ -643,19 +643,16 @@ the same attempt, whose samples re-open the row; only the sender's exhausted
 retries publish the terminal event, and the panel's stale-row re-ask resolves the
 receiver if the fallback never starts.
 
-**A compressed serve reports its wire total** as the fallback scale. When the
-response is zstd-encoded the sender moves the compressed bytes while the
-receiver counts the decompressed file, and zstd emits most of its output early,
-so the two scales diverge. The compressed branch therefore reports the *staged
-frame's* size (`hsync_client/p2p_server.py::P2PEndpointMixin._handle_download`),
-which gives a determinate, monotone percentage that ends exactly on the last
-wire byte; the serving row is an upload, so the Desktop clamps it at 99% and the
-terminal `transfer` event (always the **file** size) closes it. The receiving
-slave's echo, once its control WebSocket is up, supersedes the wire scale with
-the file scale for the rest of the serve; a peer's first cycle has no echo, and
-without the local figure the serving side would show no bar at all. The identity
-and range branches keep reporting the file size (the range one anchors at the
-resume offset), which is the same quantity the receiver measures.
+**A compressed serve streams the frame and reports the file scale.** The branch
+produces the zstd frame straight into a chunked body
+(`hsync_client/p2p_server.py::P2PEndpointMixin._handle_download`): its length is
+unknown until it has been produced, so there is no wire total to report and
+nothing is staged on disk. The bar therefore counts the **source bytes read**,
+which is exactly what the receiver measures once its echo lands; the serving
+row is an upload, so the Desktop clamps it at 99% and the terminal `transfer`
+event (always the **file** size) closes it. A peer's first cycle has no echo,
+and the local figure is what keeps a bar visible then. The identity and range
+branches report the file size too (the range one anchors at the resume offset).
 
 Samples use the best-effort
 non-blocking emitter path (`hsync_client/events.py::EventEmitter.emit_progress`), so a slow

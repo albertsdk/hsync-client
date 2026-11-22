@@ -303,15 +303,14 @@ polling fallback could not start. See
 [The file watcher degrades to polling (inotify limits)](troubleshooting.md) for the
 diagnosis commands and the remedies (raise the limits or free some up).
 
-**Q: Why are very large files transferred uncompressed over the LAN?**
-Compressible files below 256 MB are transferred with zstd compression, but
-above that size the master serves them raw. The compressed branch has to
-buffer the whole file in the master's memory to build the zstd frame, so it
-is capped to protect the master; on a LAN the wire is usually the fast side
-anyway, and the raw path additionally keeps download-resume (`Range`)
-support, which a compressed response cannot offer. If you want large files
-compressed on slow links, use client-server mode (its compression is fully
-streamed with no size cap).
+**Q: Are very large files compressed over the LAN?**
+Yes. A compressible file is served as a zstd frame streamed straight into the
+response, at any size: the master holds one read chunk of memory and writes
+no temporary copy of the frame. The one exception is a **resume**: it asks
+for a byte range (`Range`), and a compressed body cannot be byte-addressed,
+so that request is answered with raw bytes and the rest of the file travels
+uncompressed. Byte-addressed answers also mean the progress bar follows the
+file, not the wire.
 
 **Q: What are the `.hsynckeep` files that keep appearing in my synced folder?**
 HSYNC creates a small, empty (0-byte) file named `.hsynckeep` in every folder
