@@ -28,6 +28,7 @@ from hsync_client.constants import (
 )
 from hsync_client.rdv_client import (
     RendezvousClient,
+    RendezvousUnreachable,
     frame_line,
 )
 
@@ -254,7 +255,8 @@ async def _quic_session(client: RendezvousClient) -> AsyncIterator[Any]:
     """
     configuration = client.relay_configuration()
     last_exc: BaseException | None = None
-    for port in client.candidate_ports():
+    ports = client.candidate_ports()
+    for port in ports:
         connected = False
         try:
             async with connect(
@@ -271,7 +273,16 @@ async def _quic_session(client: RendezvousClient) -> AsyncIterator[Any]:
             if connected:
                 raise
             last_exc = exc
-    log.debug(f"Relay cannot reach the discovery servers: {last_exc}")
+    # Every candidate port failed *before* the handshake. Raise instead of
+    # falling out of the generator: ``async with _relay_session(...)`` would
+    # otherwise surface a bare ``RuntimeError: generator didn't yield`` with no
+    # cause, hiding the real connection failure and its reason.
+    detail = str(last_exc) if last_exc is not None else "no reachable port"
+    log.debug(f"Relay cannot reach the discovery servers: {detail} (tried ports {list(ports)})")
+    raise RendezvousUnreachable(
+        f"relay rendezvous {client.host} unreachable on ports {list(ports)}: {detail}",
+        detail=detail,
+    )
 
 
 def _relay_transport(client: RendezvousClient) -> str:

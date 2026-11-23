@@ -442,6 +442,44 @@ async def test_the_relay_acceptor_stops_when_its_control_stream_dies(monkeypatch
     assert acceptor.active is False
 
 
+async def test_the_quic_relay_session_reports_an_unreachable_node(monkeypatch) -> None:
+    """No candidate port connecting raises a clear error, not "generator didn't yield".
+
+    Regression: ``_quic_session`` used to fall out of the generator when every
+    port failed, so ``async with _relay_session(...)`` raised a bare
+    ``RuntimeError: generator didn't yield`` with no cause — the relay stopped
+    with a message that hid the real connection failure.
+    """
+    import hsync_client.rdv_relay_transport as relay_transport_mod
+    from hsync_client.rdv_client import RendezvousUnreachable
+
+    class _FailingConnect:
+        async def __aenter__(self):
+            raise OSError("no route to host")
+
+        async def __aexit__(self, *exc_info):
+            return False
+
+    monkeypatch.setattr(relay_transport_mod, "connect", lambda *a, **k: _FailingConnect())
+
+    client = type(
+        "_Client",
+        (),
+        {
+            "host": "rdv.example.net",
+            "relay_configuration": lambda self: object(),
+            "candidate_ports": lambda self: (443, 53),
+        },
+    )()
+
+    with pytest.raises(RendezvousUnreachable) as excinfo:
+        async with relay_transport_mod._quic_session(client):
+            pass  # pragma: no cover - the session never yields
+
+    assert "no route to host" in excinfo.value.detail
+    assert "443" in str(excinfo.value)
+
+
 def test_a_live_tunnel_outlives_a_new_plan_for_the_same_master() -> None:
     """The endpoint stays put while the tunnel is alive (no stale pool).
 

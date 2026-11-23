@@ -848,11 +848,22 @@ class RdvRendezvous(RendezvousPlanState):
         authority = format_authority(self._rendezvous_host, self._rendezvous_port)
         detail = getattr(exc, "detail", None) or str(exc)
         message = f"Rendezvous {authority} unreachable: {detail}"
+        # The UI banner keeps the plain message; the log carries one extra clue
+        # for the silent-drop signature (the node answered the handshake but not
+        # the frame). A stale/older node or a client/node version skew drops such
+        # a frame with no reply — the frame models are strict (``extra="forbid"``)
+        # — so the operator sees a plausible cause instead of a bare timeout.
+        hint = (
+            " — the node answered the handshake but not the frame: a stale/older node or a "
+            "version skew can drop it silently (keep client and node versions in lockstep)"
+            if "waiting for an ack" in detail
+            else ""
+        )
         if self._consecutive_failures >= RDV_FAILURE_WARN_AFTER:
-            log.warning(message)
+            log.warning(message + hint)
             emit_warning(message, source="rendezvous", reason="unreachable")
         else:
-            log.info(message)
+            log.info(message + hint)
         self._burst_left = 0
         exponent = min(self._consecutive_failures - 1, 3)
         delay = min(RDV_FAILURE_BACKOFF_BASE_S * (2**exponent), RDV_FAILURE_BACKOFF_MAX_S)
@@ -995,6 +1006,9 @@ class RdvRendezvous(RendezvousPlanState):
         local_ip = local_ips[0] if local_ips else get_local_ip()
         endpoints = self._endpoint_wire(local_ips) if publish_endpoint else []
         sent_at = time.time()
+        # Bind once: mypy cannot narrow two separate ``getattr`` calls, so the
+        # ``epoch`` below would read as ``Any | None`` and reject ``.epoch``.
+        peer_manager = getattr(self, "_peer_manager", None)
         ack = self._client.register(
             build_register_frame(
                 cid=self._cid,
@@ -1010,11 +1024,7 @@ class RdvRendezvous(RendezvousPlanState):
                 prefer_master=self._prefer_master,
                 never_master=self._never_master,
                 inbound=self._inbound,
-                epoch=(
-                    getattr(self, "_peer_manager", None).epoch
-                    if getattr(self, "_peer_manager", None)
-                    else 0
-                ),
+                epoch=peer_manager.epoch if peer_manager is not None else 0,
                 sync_direction=self._sync_direction,
             )
         )
@@ -1152,6 +1162,15 @@ class RdvRendezvous(RendezvousPlanState):
             if peer.cid != self._cid:
                 self._peer_manager.add_peer(peer, source=self._source_name)
         self._track_unpublished_peer(unpublished, now)
+        others = sum(1 for wire_peer in response["peers"] if wire_peer.get("cid") != self._cid)
+        # Forensics for "I do not see the other peer": the drawn count and the
+        # bucket/group tell a config mismatch (a live other peer drawn, or none)
+        # apart from a timeout (no sample at all) without packet captures.
+        log.debug(
+            f"Rendezvous {authority} sample: {len(response['peers'])} drawn, "
+            f"{others} other peer(s), {unpublished} unpublished "
+            f"(bucket {self._bucket}, group {self._group!r})"
+        )
         master = self._peer_manager.get_master_cid()
         if master is not None and master != self._cid and master not in sampled:
             # The elected master was not drawn: forensics for the election, since

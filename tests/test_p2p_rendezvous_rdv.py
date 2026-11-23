@@ -834,6 +834,21 @@ class TestQueryBudget:
         plan._query_peers()
         assert len([c for c in plan._client.calls if c[0] == "query"]) == first + 1
 
+    def test_a_sample_logs_how_many_other_peers_it_drew(self):
+        """The drawn count tells a config mismatch apart from a timeout."""
+        from loguru import logger as log
+
+        plan, _ = make_plan()
+        plan._peer_manager = PeerManager(local_cid=CID, bucket="shared", group="home")
+        messages: list[str] = []
+        sink_id = log.add(messages.append, level="DEBUG", format="{message}")
+        try:
+            plan._query_peers()
+        finally:
+            log.remove(sink_id)
+
+        assert any("sample:" in m and "other peer(s)" in m for m in messages), messages
+
 
 class TestLeaseFailurePolicy:
     """A slow round is not a dead node, and a retry must not hammer one."""
@@ -881,6 +896,24 @@ class TestLeaseFailurePolicy:
         assert warned == [
             "Rendezvous rdv.example.net:443 unreachable: timed out waiting for an ack"
         ]
+
+    def test_the_ack_timeout_hint_names_a_stale_or_skewed_node(self, monkeypatch):
+        """A handshake answered but a frame dropped is the skew/stale-node signature."""
+        from loguru import logger as log
+
+        import hsync_client.p2p_rendezvous_rdv as rdv_module
+
+        monkeypatch.setattr(rdv_module, "emit_warning", lambda *_a, **_k: None)
+        plan, _ = make_plan()
+        messages: list[str] = []
+        sink_id = log.add(messages.append, level="WARNING", format="{message}")
+        try:
+            for _ in range(RDV_FAILURE_WARN_AFTER):
+                plan._record_lease_failure(self._failure())
+        finally:
+            log.remove(sink_id)
+
+        assert any("lockstep" in message for message in messages), messages
 
     def test_the_backoff_doubles_and_is_capped(self, monkeypatch):
         """Un-jittered retries would synchronize the peers behind one NAT."""
