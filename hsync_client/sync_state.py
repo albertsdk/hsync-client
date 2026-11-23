@@ -275,13 +275,22 @@ def _local_compare(
         return entry, stored_base
 
 
-def note_local_edit(abs_path: str, current_hash: str) -> None:
+def note_local_edit(abs_path: str, current_hash: str, *, touch: bool = False) -> None:
     """Persist a self-recorded local edit (anti-aliasing invariant, ADR-0022).
 
     If the current content hash differs from the stored base, the store entry
     is advanced: clock ticked by this node's cid, new version_id, origin_cid
     set to self. Idempotent between the watcher and reconcile (a second call
     with the same hash is a no-op since base_hash now matches).
+
+    ``touch`` records a *metadata-only* change (a bare ``utime``): the content
+    hash still matches the base but the mtime moved, so the change must still
+    mint a new version. Without the tick a content-identical touch carries no
+    claim a peer can order by causality, and a replica that legitimately holds
+    the older value stays equal forever. With a trusted clock ``mtime_diverges``
+    already detects the change; a host with no measured clock advertises
+    ``corrected_mtime = 0`` (ADR-0054) so it cannot tell, and only the caller's
+    ``touch`` signal proves the change.
     """
     relpath = relpath_in_bucket(abs_path, bucket_dir())
     if not relpath or not current_hash:
@@ -294,11 +303,12 @@ def note_local_edit(abs_path: str, current_hash: str) -> None:
         entry = store.get(relpath)
         if entry is not None and entry["base_hash"] == current_hash:
             # Content unchanged. A bare ``touch`` is still a local edit: record
-            # the new on-disk corrected mtime (and tick the clock) so the
-            # change is causally visible and peers converge on it. Without this
-            # the stored entry keeps the old mtime and no peer ever learns of
-            # the touch.
-            if not mtime_diverges(
+            # the new on-disk mtime (and tick the clock) so the change is
+            # causally visible and peers converge on it. Without this the
+            # stored entry keeps the old mtime and no peer ever learns of the
+            # touch. An unknown corrected clock (0/0) makes ``mtime_diverges``
+            # blind to the change, so the explicit ``touch`` signal decides.
+            if not touch and not mtime_diverges(
                 _corrected_mtime_of(abs_path), int(entry.get("corrected_mtime", 0) or 0)
             ):
                 return  # already current — no-op

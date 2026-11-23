@@ -25,6 +25,7 @@ import errno
 import hashlib
 import hmac
 import json
+import math
 import os
 import socket
 import ssl
@@ -180,12 +181,38 @@ P2P_REQUEST_MIN_RATE_BPS = 64.0
 P2P_REQUEST_GRACE_S = 60.0
 
 # Per-IP admissions: at most P2P_REQ_RATE_CAPACITY requests immediately, then
-# refilled at P2P_REQ_RATE_REFILL per window. Generous enough not to throttle a
-# legitimate small-file sync (a few hundred requests in a burst) while still
-# bounding a request flood from one host.
-P2P_REQ_RATE_CAPACITY = 1200
-P2P_REQ_RATE_REFILL = 1200
+# refilled at P2P_REQ_RATE_REFILL per window. This is an anti-flood guard, not a
+# throughput pacer: a legitimate replica issues ~1–2 requests per file and the
+# documented p2p burst converges ~120 files/s, so the old 1200/60s (20 req/s)
+# throttled a healthy 800-file wave into 429 retries. Concurrency is already
+# bounded by P2P_MAX_INFLIGHT_PER_IP and the dispatch pool; the rate ceiling is
+# sized well above the documented burst and can be tuned at deploy time with
+# HSYNC_P2P_REQUEST_RATE_CAPACITY / HSYNC_P2P_REQUEST_RATE_REFILL.
+P2P_REQ_RATE_CAPACITY = 4000
+P2P_REQ_RATE_REFILL = 36000
 P2P_REQ_RATE_WINDOW_S = 60.0
+
+
+def _env_number(name: str, default: float) -> float:
+    """Read a strictly-positive, finite limiter knob (invalid ⇒ default).
+
+    A value that does not parse, is not finite, or is not strictly positive
+    would either silently disable the token bucket (``nan``/``inf`` fail every
+    comparison, so ``allow`` returns True) or raise in the limiter constructor
+    and abort startup, so it is rejected with a warning instead of propagated.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        value = float("nan")
+    if not math.isfinite(value) or value <= 0:
+        log.warning(f"Ignoring invalid {name}={raw!r}; using {default}")
+        return default
+    return value
+
 
 # Per-IP cap on in-flight requests. HTTP/1.1 has no multiplexing, so this also
 # bounds how many of the P2P_SERVER_MAX_THREADS dispatch slots one peer can hold
@@ -1162,7 +1189,9 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
         Metadata-only convergence: the slave declares the bucket-relative
         ``filename``, the desired octal ``permissions`` and/or a corrected
-        ``mtime``; no file bytes cross the wire. Only REGULAR files are handled
+        ``mtime`` — or, from a slave with no measured clock, a raw
+        ``raw_mtime`` applied verbatim — and no file bytes cross the wire. Only
+        REGULAR files are handled
         (directory modes go through the ``/dirs`` surface — a directory chmod
         must keep the owner rwx floor, which the file setter does not apply).
         The new mode is sanitized (special bits stripped) and the mtime applied
@@ -1190,7 +1219,23 @@ class P2PEndpointMixin(_HTTPTransportBase):
             # every tie-break.
             mtime = int(clamp_incoming_corrected_mtime(mtime))
 
-        if not rel_path or (not permissions and mtime <= 0):
+        # A clock-free peer (no reference measured its clock) cannot express a
+        # *corrected* mtime, so it sends the raw on-disk value instead. It is
+        # applied verbatim (clamped), never through the corrected conversion.
+        raw_mtime_raw = _first(query, "raw_mtime")
+        raw_mtime = 0
+        if raw_mtime_raw is not None:
+            try:
+                raw_mtime = int(raw_mtime_raw)
+            except (TypeError, ValueError, OverflowError):
+                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'raw_mtime' parameter")
+                return
+            if raw_mtime <= 0:
+                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'raw_mtime' parameter")
+                return
+            raw_mtime = int(clamp_incoming_raw_mtime(raw_mtime))
+
+        if not rel_path or (not permissions and mtime <= 0 and raw_mtime <= 0):
             self._send_error_response(HTTP_BAD_REQUEST, "Missing 'filename' or metadata to apply")
             return
 
@@ -1244,14 +1289,19 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
             if permissions:
                 set_permissions(full_path, permissions)
+            applied_mtime = 0
             if mtime > 0:
+                # ``mtime`` is an ADR-0023 corrected time: convert it back to the
+                # master's raw clock before writing it, or the next correction
+                # re-adds the offset and the value never matches.
+                applied_mtime = int(uncorrect_mtime(mtime))
+            elif raw_mtime > 0:
+                # Clock-free peer: the value already is the raw mtime.
+                applied_mtime = raw_mtime
+            if applied_mtime > 0:
                 current_mtime = int(target.stat().st_mtime)
-                if abs(current_mtime - mtime) > MTIME_PROPAGATION_TOLERANCE_SECONDS:
-                    # ``mtime`` is an ADR-0023 corrected time: convert it back
-                    # to the master's raw clock before writing it, or the next
-                    # correction re-adds the offset and the value never matches.
-                    raw_mtime = uncorrect_mtime(mtime)
-                    os.utime(full_path, (raw_mtime, raw_mtime))
+                if abs(current_mtime - applied_mtime) > MTIME_PROPAGATION_TOLERANCE_SECONDS:
+                    os.utime(full_path, (applied_mtime, applied_mtime))
         except (OSError, ValueError, OverflowError) as e:
             log.warning(f'Metadata update failed for "{full_path}": {e}')
             self._send_error_response(HTTP_INTERNAL_ERROR, "Metadata update failed")
@@ -1259,7 +1309,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
         log.info(
             f'{ActionLabel.PERMISSION} Metadata updated: "{full_path}" '
-            f"(permissions={permissions}, mtime={mtime})"
+            f"(permissions={permissions}, mtime={mtime or raw_mtime})"
         )
         self._send_json_response(HTTP_OK, {"info": "Metadata updated"})
 
@@ -3382,11 +3432,14 @@ class P2PServer:
         # event loop (_handle_http), so no lock is needed.
         self._ip_inflight: dict[str, int] = {}
         self._request_limiter = TokenBucketLimiter(
-            capacity=P2P_REQ_RATE_CAPACITY,
-            refill=P2P_REQ_RATE_REFILL,
+            capacity=max(
+                1, int(_env_number("HSYNC_P2P_REQUEST_RATE_CAPACITY", P2P_REQ_RATE_CAPACITY))
+            ),
+            refill=_env_number("HSYNC_P2P_REQUEST_RATE_REFILL", P2P_REQ_RATE_REFILL),
             window=P2P_REQ_RATE_WINDOW_S,
             max_keys=P2P_MAX_INFLIGHT_PER_IP * 64,
         )
+        self._rate_limited_total = 0
         self._stop_event: asyncio.Event | None = None
         self._thread: threading.Thread | None = None
         self._ready = threading.Event()
@@ -3730,6 +3783,9 @@ class P2PServer:
         # from one host is refused cheaply, and one host can hold at most
         # P2P_MAX_INFLIGHT_PER_IP of the dispatch slots (fairness).
         if not self._request_limiter.allow(bucket):
+            self._rate_limited_total += 1
+            if self._rate_limited_total == 1 or self._rate_limited_total % 100 == 0:
+                log.warning(f"P2P request rate limited ({self._rate_limited_total}) for {bucket}")
             raise web.HTTPTooManyRequests(text="P2P request rate exceeded")
         inflight = self._ip_inflight.get(bucket, 0)
         # Fair-share the dispatch pool across active peers: as more distinct IPs

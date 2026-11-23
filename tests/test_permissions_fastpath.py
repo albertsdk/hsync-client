@@ -126,6 +126,31 @@ class TestPatchPermissionsRemote:
 
         assert mock_patch.call_args.kwargs["params"]["expected_sha256"] == "b" * 64
 
+    def test_a_raw_mtime_is_sent_only_when_provided(self):
+        from hsync_client import transfer as transfer_mod
+
+        response = MagicMock()
+        response.status_code = 200
+        with (
+            patch.object(transfer_mod, "patch", return_value=response) as mock_patch,
+            patch.object(
+                transfer_mod,
+                "CONFIG",
+                {
+                    "API": {"buckets": "http://srv/api/v1/buckets"},
+                    "REMOTE_BUCKET": "demo",
+                    "REQUEST_HEADERS": {},
+                    "CID": "TestClientX1234567890",
+                    "HTTP_TIMEOUT": 30,
+                },
+            ),
+        ):
+            patch_permissions_remote("doc.txt", "600", raw_mtime=1_700_000_000)
+            assert mock_patch.call_args.kwargs["params"]["raw_mtime"] == "1700000000"
+
+            patch_permissions_remote("doc.txt", "600")
+            assert "raw_mtime" not in mock_patch.call_args.kwargs["params"]
+
     def test_a_stale_content_guard_reports_false_so_the_caller_uploads(self):
         from hsync_client import transfer as transfer_mod
 

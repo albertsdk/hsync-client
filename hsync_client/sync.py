@@ -28,7 +28,12 @@ from time import monotonic
 from traceback import print_tb
 from typing import Any, cast
 
-from hsync_common.clock import clamp_incoming_corrected_mtime, offset_store, uncorrect_mtime
+from hsync_common.clock import (
+    clamp_incoming_corrected_mtime,
+    clamp_incoming_raw_mtime,
+    offset_store,
+    uncorrect_mtime,
+)
 from hsync_common.constants import CORRECTED_MTIME_TIE_BREAK_BOUND_SECONDS, PARTIAL_DOWNLOAD_SUFFIX
 from hsync_common.disk import check_free_space
 from hsync_common.format import format_bytes
@@ -2846,6 +2851,150 @@ def _apply_local_mtime(abs_path: str, corrected_mtime: int) -> None:
         log.debug(f'Could not apply mtime to "{abs_path}": {exc}')
 
 
+def _apply_local_raw_mtime(abs_path: str, raw_mtime: int) -> None:
+    """Mirror a peer's *raw* mtime locally (metadata-only, no clock conversion).
+
+    Used when no reference measured the clocks (``corrected_mtime`` is 0): the
+    replica adopts the source's advertised raw mtime verbatim, exactly as the
+    download path already does with ``utime(file.mtime)`` — never a wall-clock
+    ordering. The value is clamped to a sane upper bound
+    (``clamp_incoming_raw_mtime``, ADR-0023) so a far-future or absurd peer
+    value cannot win every later tie-break nor overflow ``os.utime``.
+    """
+    try:
+        raw = int(clamp_incoming_raw_mtime(raw_mtime))
+        os.utime(abs_path, (raw, raw))
+        log.info(f'[TOUCH] metadata converge (raw mtime): "{abs_path}" ({raw})')
+    except (OSError, ValueError, OverflowError) as exc:
+        log.debug(f'Could not apply raw mtime to "{abs_path}": {exc}')
+
+
+def _raw_local_mtime_diverges(abs_path: str, remote_raw_mtime: int) -> bool:
+    """Whether the on-disk raw mtime differs from the advertised raw mtime."""
+    try:
+        local_raw = int(os.stat(abs_path).st_mtime)
+    except OSError:
+        return False
+    return sync_state.mtime_diverges(local_raw, int(remote_raw_mtime))
+
+
+def _raw_local_mtime(abs_path: str) -> int | None:
+    """On-disk raw mtime, or ``None`` when the path cannot be stat'd."""
+    try:
+        return int(os.stat(abs_path).st_mtime)
+    except OSError:
+        return None
+
+
+def _remote_metadata_wins(
+    *,
+    abs_path: str,
+    remote_raw_mtime: int,
+    local_vclock: dict[str, int] | None,
+    remote_vclock: dict[str, int] | None,
+) -> bool:
+    """Whether a content-identical remote *touch* is adopted (degraded clock).
+
+    The remote wins causally when its vector clock dominates the local one.
+    Otherwise — with no measured clock every replica advertises
+    ``corrected_mtime = 0`` (ADR-0054) and a bare ``touch`` mints no new version
+    (``sync_state.note_local_edit``), so both sides carry the *same* vclock —
+    the advertised raw mtime decides: the greater value wins. That choice is
+    deterministic and symmetric (both replicas pick the same winner from the
+    same pair of claims), so a touch converges with no ping-pong. Content
+    identity is already proven upstream (the hashes match), so this picks a
+    scalar among identical bytes, never a file's name (ADR-0023 is unchanged for
+    real content divergence).
+    """
+    order = compare_vclocks(remote_vclock, local_vclock)
+    if order is VClockOrder.dominates:
+        return True
+    if order is VClockOrder.dominated:
+        return False
+    local_raw = _raw_local_mtime(abs_path)
+    if local_raw is None:
+        return False
+    return int(remote_raw_mtime) > local_raw
+
+
+def _metadata_only_decision(
+    *,
+    direction: str,
+    adopt_on_tie: bool,
+    local_vclock: dict[str, int] | None,
+    remote_vclock: dict[str, int] | None,
+    local_corrected: int,
+    remote_corrected: int,
+    abs_path: str,
+    remote_raw_mtime: int,
+) -> tuple[bool | None, bool]:
+    """Single source of the content-identical metadata-only (``touch``) policy.
+
+    Shared by the reconcile (``_actions_from_remote``) and the realtime event
+    path (``update_file``) so the composition, divergence test and direction
+    handling can never drift apart. Returns ``(adopt_remote, apply_corrected)``:
+    ``(True, True)`` adopt the peer's corrected mtime, ``(True, False)`` adopt
+    its raw mtime, ``(False, _)`` keep local, ``(None, _)`` no divergence.
+
+    ``adopt_on_tie`` resolves a content-identical divergence with *trusted*
+    clocks whose versions are concurrent/equal (neither dominates). It is a
+    property of the caller's role, not a preference: ``update_file`` (the peer
+    just announced a change) adopts the peer's value (True), while the reconcile
+    — where this replica is the local writer — keeps its own and pushes it
+    (False). With an unknown clock (``corrected_mtime = 0``) the winner is
+    causal dominance, else the newer advertised *raw* mtime
+    (``_remote_metadata_wins``), which is already symmetric and needs no flag.
+    """
+    if int(remote_corrected) > 0 and int(local_corrected) > 0:
+        if not sync_state.mtime_diverges(int(local_corrected), int(remote_corrected)):
+            return None, False
+        if direction == "download-only":
+            return True, True
+        if direction == "upload-only":
+            return False, True
+        order = compare_vclocks(local_vclock, remote_vclock)
+        if order is VClockOrder.dominated:
+            return True, True
+        if order is VClockOrder.dominates:
+            return False, True
+        return adopt_on_tie, True
+    remote_raw = int(remote_raw_mtime)
+    # A far-future advertised value is *rejected*, never adopted clamped: the
+    # bound is relative to a moving ``now``, so the clamped value would differ
+    # from the value the peer keeps re-advertising and re-diverge every cycle.
+    if remote_raw > 0 and remote_raw > int(clamp_incoming_raw_mtime(remote_raw)):
+        return None, False
+    if _raw_local_mtime_diverges(abs_path, remote_raw):
+        if direction == "download-only":
+            return True, False
+        if direction == "upload-only":
+            return False, False
+        return (
+            _remote_metadata_wins(
+                abs_path=abs_path,
+                remote_raw_mtime=remote_raw,
+                local_vclock=local_vclock,
+                remote_vclock=remote_vclock,
+            ),
+            False,
+        )
+    return None, False
+
+
+def _apply_decided_metadata(
+    abs_path: str, *, apply_corrected: bool, corrected_mtime: int, raw_mtime: int
+) -> None:
+    """Apply the metadata winner chosen by ``_metadata_only_decision``.
+
+    Shared by the reconcile and the realtime event path so the
+    ``apply_corrected`` flag is interpreted in one place only.
+    """
+    if apply_corrected:
+        _apply_local_mtime(abs_path, corrected_mtime)
+    else:
+        _apply_local_raw_mtime(abs_path, raw_mtime)
+
+
 def _actions_from_local(
     local_files: list[dict],
     remote_filepaths: set[str],
@@ -2930,7 +3079,6 @@ def _actions_from_remote(
     local_files: list[dict],
     *,
     tombstones: dict[str, dict],
-    p2p_mode: bool,
     persist_state: bool,
     direction: str,
 ) -> tuple[list[SyncAction], set[str]]:
@@ -3051,37 +3199,38 @@ def _actions_from_remote(
                         permissions_only = True
 
             # mtime-only divergence: the content hashes match (the causal
-            # matrix resolved to ``nothing``) but the corrected mtimes differ.
-            # A ``touch`` is still metadata that must converge, so the newer
-            # corrected mtime wins (same tie-break philosophy as ADR-0023): the
-            # winner pushes the value (metadata-only upload, no bytes) and the
-            # loser adopts it locally. Unknown mtimes (0) never diverge.
-            if not p2p_mode and action == SyncActionName.nothing and persist_state and abs_local:
-                # Content is identical, so the causal matrix short-circuits; a
-                # divergent on-disk mtime is a ``touch`` that must still
-                # converge. The side whose version is causally ahead made the
-                # change (a touch ticks the local clock in ``sync_state``): the
-                # editor pushes the value (metadata-only upload) and the other
-                # adopts it locally. Ties resolve by sync direction.
-                local_mtime = int(sync_state._corrected_mtime_of(abs_local))
-                remote_mtime = int(remote_corrected)
-                if sync_state.mtime_diverges(local_mtime, remote_mtime):
-                    if direction == "download-only":
-                        adopt_remote = True
-                    elif direction == "upload-only":
-                        adopt_remote = False
-                    else:
-                        # Bidirectional: the side whose version is causally
-                        # ahead made the touch.
-                        adopt_remote = (
-                            compare_vclocks(local_vclock, remote_vclock) is VClockOrder.dominated
+            # matrix resolved to ``nothing``) but the mtimes differ. A ``touch``
+            # is metadata that must converge by *logical version*, never by the
+            # wall clock (ADR-0054): the winning version pushes the value
+            # (metadata-only upload, no bytes) and the other adopts it. The
+            # winner comes from ``_metadata_only_decision``, shared with the
+            # realtime event path so both always agree.
+            if action == SyncActionName.nothing and persist_state and abs_local:
+                adopt_remote, apply_corrected = _metadata_only_decision(
+                    direction=direction,
+                    adopt_on_tie=False,
+                    local_vclock=local_vclock,
+                    remote_vclock=remote_vclock,
+                    local_corrected=int(sync_state._corrected_mtime_of(abs_local)),
+                    remote_corrected=int(remote_corrected),
+                    abs_path=abs_local,
+                    remote_raw_mtime=int(remote_file.mtime or 0),
+                )
+                if adopt_remote:
+                    if local_file.filepath:
+                        _apply_decided_metadata(
+                            local_file.filepath,
+                            apply_corrected=apply_corrected,
+                            corrected_mtime=int(remote_corrected),
+                            raw_mtime=int(remote_file.mtime),
                         )
-                    if adopt_remote:
-                        if local_file.filepath:
-                            _apply_local_mtime(local_file.filepath, remote_mtime)
-                    else:
-                        action = SyncActionName.upload
-                        permissions_only = True
+                elif adopt_remote is False:
+                    # Local wins: push it as a metadata-only upload. It carries
+                    # the corrected value when a clock was measured, else the raw
+                    # on-disk mtime (``_patch_permissions_only``), so a clock-free
+                    # touch converges too.
+                    action = SyncActionName.upload
+                    permissions_only = True
 
             # A download with timedelta == 0 is a conflict_download: the remote
             # won the tie-break, so the local copy must be preserved before
@@ -3232,7 +3381,6 @@ def get_sync_actions(
         remote_files,
         local_files,
         tombstones=tombstones,
-        p2p_mode=p2p_mode,
         persist_state=persist_state,
         direction=_direction,
     )
@@ -3570,23 +3718,34 @@ def update_file(
                 invalidate_sha256_cache(file_data.filepath)
         elif file is not None:
             # Content identical. A plain ``touch`` announced by a peer still
-            # converges: adopt the peer's corrected mtime locally when it
-            # diverges and this side is not causally ahead (an ahead local side
-            # will push its own metadata on the next reconcile instead).
-            remote_vclock, remote_corrected = _parse_advertised_version(data.get("version"))
-            if (
-                remote_corrected > 0
-                and file.filepath
-                and sync_state.mtime_diverges(
-                    int(sync_state._corrected_mtime_of(file.filepath)), int(remote_corrected)
-                )
-            ):
+            # converges by *logical version*, never by the wall clock (ADR-0054):
+            # adopt the peer's mtime when it wins, decided by the same helper as
+            # the reconcile (``_metadata_only_decision``) so the realtime and
+            # reconcile paths never disagree. An ahead local side pushes its own
+            # metadata on the next reconcile.
+            version_payload = data.get("version")
+            remote_vclock, remote_corrected = _parse_advertised_version(version_payload)
+            if file.filepath:
                 local_eff, _base = sync_state.local_version_and_base(file.filepath, file.sha256sum)
-                if (
-                    compare_vclocks(local_eff["vclock"] if local_eff else None, remote_vclock)
-                    is not VClockOrder.dominates
-                ):
-                    _apply_local_mtime(file.filepath, int(remote_corrected))
+                adopt, apply_corrected = _metadata_only_decision(
+                    direction=CONFIG.get("SYNC_DIRECTION", "bidirectional"),
+                    adopt_on_tie=True,
+                    local_vclock=local_eff["vclock"] if local_eff else None,
+                    remote_vclock=remote_vclock,
+                    # The live on-disk corrected mtime is the local claim (the
+                    # stored snapshot can be stale).
+                    local_corrected=int(sync_state._corrected_mtime_of(file.filepath)),
+                    remote_corrected=int(remote_corrected),
+                    abs_path=file.filepath,
+                    remote_raw_mtime=int(file_data.mtime or 0),
+                )
+                if adopt:
+                    _apply_decided_metadata(
+                        file.filepath,
+                        apply_corrected=apply_corrected,
+                        corrected_mtime=int(remote_corrected),
+                        raw_mtime=int(file_data.mtime),
+                    )
                     sync_state.merge_and_record(file.filepath, file.sha256sum, remote_vclock)
                     inventory_observer.upsert(file)
                     return

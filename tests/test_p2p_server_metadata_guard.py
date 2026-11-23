@@ -78,3 +78,38 @@ class TestMetadataContentGuard:
         )
 
         assert response.status_code == 400
+
+
+class TestRawMtime:
+    """A clock-free slave pushes its raw on-disk mtime, not a corrected value."""
+
+    def test_raw_mtime_is_applied_without_a_corrected_value(self, server, tmp_path):
+        path = tmp_path / "raw.bin"
+        path.write_bytes(b"same")
+        target = 1_600_000_000
+
+        response = _patch_permissions(
+            server, filename="raw.bin", permissions="", raw_mtime=str(target)
+        )
+
+        assert response.status_code == 200, response.text
+        assert int(path.stat().st_mtime) == target
+
+    def test_far_future_raw_mtime_is_clamped_not_applied_verbatim(self, server, tmp_path):
+        path = tmp_path / "raw.bin"
+        path.write_bytes(b"same")
+
+        response = _patch_permissions(
+            server, filename="raw.bin", permissions="", raw_mtime=str(10**12)
+        )
+
+        assert response.status_code == 200, response.text
+        assert int(path.stat().st_mtime) < 10**12
+
+    @pytest.mark.parametrize("raw", ["not-int", "0", "-5"])
+    def test_invalid_raw_mtime_is_rejected(self, server, tmp_path, raw):
+        (tmp_path / "raw.bin").write_bytes(b"same")
+
+        response = _patch_permissions(server, filename="raw.bin", permissions="", raw_mtime=raw)
+
+        assert response.status_code == 400

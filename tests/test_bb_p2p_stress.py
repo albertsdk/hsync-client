@@ -24,6 +24,7 @@ import pytest
 
 from . import stress_tree
 from .p2p_helpers import (
+    _p2p_log_path,
     _p2p_start,
     _terminate,
     _wait_for_slave_events,
@@ -43,6 +44,28 @@ _K = stress_tree.stress_knobs("p2p")
 # Read at import time: the autouse env-isolation fixture scrubs HSYNC_* before
 # each test body, so an os.environ lookup inside the test would always be empty.
 _PEER_ROLE_OFF = os.environ.get("HSYNC_BB_STRESS_PEER_ROLE_OFF") == "1"
+# Diagnostic: run both peers with ``-v`` so the debug echo/attribution lines are
+# captured in the per-peer log files. Test-only, opt-in.
+_DEBUG = os.environ.get("HSYNC_BB_STRESS_DEBUG") == "1"
+_DEBUG_ARGS = ("-v",) if _DEBUG else ()
+
+
+def _rate_limited_count(master_local_dir: str) -> int:
+    """Count the master's 429 admissions logged for this replica run.
+
+    The master logs the first rate-limited request and every 100th, so any
+    positive count means a legitimate replica burst was throttled — the
+    regression guard for the per-IP limiter sizing.
+    """
+    path = Path(_p2p_log_path(master_local_dir))
+    if not path.exists():
+        return 0
+    return sum(
+        1
+        for line in path.read_text(errors="replace").splitlines()
+        if "P2P request rate limited" in line
+    )
+
 
 # Optional per-thread CPU attribution of the slave across the initial burst
 # (plan §13.13); read at import time for the same env-scrub reason.
@@ -113,7 +136,7 @@ class TestP2PStress:
         iteration: int,
     ) -> None:
         seed = int(_K["seed"]) + iteration  # derived seed, plan §7
-        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
+        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True, extra_args=_DEBUG_ARGS)
         try:
             assert _wait_for_text_in_stderr(master, "Registered mDNS service", timeout=15), (
                 "Master mDNS service did not register"
@@ -122,7 +145,9 @@ class TestP2PStress:
                 p2p_slave_dir,
                 p2p_bucket,
                 never_master=True,
-                extra_args=("--peer-role", "off") if _PEER_ROLE_OFF else (),
+                extra_args=(
+                    (*_DEBUG_ARGS, "--peer-role", "off") if _PEER_ROLE_OFF else _DEBUG_ARGS
+                ),
             )
             try:
                 assert _wait_for_slave_events(slave, timeout=90), (
@@ -178,6 +203,9 @@ class TestP2PStress:
                     )
                 )
                 _fail_if_mismatched(mismatches, master, slave)
+                assert _rate_limited_count(p2p_master_dir) == 0, (
+                    "the master rate-limited a legitimate replica burst"
+                )
 
                 for wave in range(int(_K["waves"])):
                     manifest, _primitives = stress_tree.apply_mutation(
@@ -214,6 +242,9 @@ class TestP2PStress:
                         )
                     )
                     _fail_if_mismatched(mismatches, master, slave)
+                    assert _rate_limited_count(p2p_master_dir) == 0, (
+                        "the master rate-limited a legitimate replica mutation wave"
+                    )
             finally:
                 _terminate(slave)
         finally:

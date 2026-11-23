@@ -1361,13 +1361,15 @@ class P2PMasterFileEventHandler(BaseFileEventHandler):
         )
         self._ws_server.broadcast_sync(event_dict)
 
-    def _record_local_edit(self, file: File, src_path: str, label: str) -> None:
+    def _record_local_edit(
+        self, file: File, src_path: str, label: str, *, touch: bool = False
+    ) -> None:
         """Persist a local edit before broadcasting (anti-aliasing invariant)."""
         try:
             if peek_inbound_origin(src_path) is None and file.sha256sum:
                 from hsync_client.sync_state import flush, note_local_edit
 
-                note_local_edit(src_path, file.sha256sum)
+                note_local_edit(src_path, file.sha256sum, touch=touch)
                 flush()
         except Exception as e:  # pragma: no cover - defensive
             log.debug(f"Could not self-record {label} for {src_path}: {e}")
@@ -1382,9 +1384,16 @@ class P2PMasterFileEventHandler(BaseFileEventHandler):
             file,
         )
 
-    def _publish_modified(self, file: File, src_path: str, label: str = "local edit") -> None:
-        """Self-record a local edit and broadcast the corresponding event."""
-        self._record_local_edit(file, src_path, label)
+    def _publish_modified(
+        self, file: File, src_path: str, label: str = "local edit", *, touch: bool = False
+    ) -> None:
+        """Self-record a local edit and broadcast the corresponding event.
+
+        ``touch`` marks a bare-``touch`` (content-identical) publication whose
+        self-record must mint a version even with no measured clock (ADR-0054);
+        it is an explicit signal, never inferred from the display ``label``.
+        """
+        self._record_local_edit(file, src_path, label, touch=touch)
         self._broadcast_event(
             self._modified_event(file),
             src_abs_path=src_path,
@@ -1407,7 +1416,7 @@ class P2PMasterFileEventHandler(BaseFileEventHandler):
         the advertised corrected mtime locally without re-downloading bytes
         (see ``update_file``).
         """
-        self._publish_modified(file, src_path, "metadata edit")
+        self._publish_modified(file, src_path, "metadata edit", touch=True)
 
     def _on_file_ready(
         self,
@@ -2865,11 +2874,12 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
         """Push a content-identical local ``touch`` to the master.
 
         Linux fires only IN_ATTRIB for a utime (no close), so the content path
-        never sees it. The slave self-records the edit and sends a metadata-only
-        PATCH (corrected mtime + effective vclock) to the master's
-        ``/files/permissions`` route; the master applies/records it and
-        re-broadcasts to the other slaves. Inbound adoptions run while
-        ``update_file`` holds the receiving mark, so they never echo back here.
+        never sees it. The slave sends a metadata-only PATCH — the corrected
+        mtime plus the effective vclock, or the **raw** mtime when no reference
+        measured the clock — to the master's ``/files/permissions`` route; the
+        master applies it and re-broadcasts to the other slaves. Inbound
+        adoptions run while ``update_file`` holds the receiving mark, so they
+        never echo back here.
         """
         if CONFIG.get("SYNC_DIRECTION") == "download-only":
             return
@@ -2887,6 +2897,10 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
                 resolve_upload_version_fields,
             )
 
+            # No ``touch`` mint here: the master applies the value below and its
+            # own watcher re-broadcasts the ``modified`` event, minting the
+            # master's version when it observes the change. A local mint would
+            # only leave this replica causally ahead of that record.
             note_local_edit(src_path, file_obj.sha256sum)
             flush()
             vclock_json, version_id, corrected_mtime = resolve_upload_version_fields(file_obj)
@@ -2901,6 +2915,16 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
         )
         if corrected_mtime > 0:
             params["mtime"] = str(corrected_mtime)
+        else:
+            # No measured clock: send the raw on-disk mtime so the master can
+            # still apply the touch (the corrected ``mtime`` param would be
+            # interpreted as an ADR-0023 corrected value).
+            try:
+                raw_mtime = int(os.stat(src_path).st_mtime)
+            except OSError:
+                raw_mtime = 0
+            if raw_mtime > 0:
+                params["raw_mtime"] = str(raw_mtime)
         if vclock_json and vclock_json != "{}":
             params["vclock"] = vclock_json
         if version_id:

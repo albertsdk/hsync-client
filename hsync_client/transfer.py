@@ -2189,6 +2189,7 @@ def patch_permissions_remote(
     vclock_json: str = "",
     version_id: str = "",
     expected_sha256: str = "",
+    raw_mtime: int = 0,
 ) -> bool:
     """Apply a metadata-only change on the remote WITHOUT sending file bytes.
 
@@ -2212,6 +2213,9 @@ def patch_permissions_remote(
         vclock_json: JSON-encoded effective vector clock ("" = none).
         version_id: Effective version id ("" = none).
         expected_sha256: Content hash this node compared against ("" = no guard).
+        raw_mtime: Raw on-disk mtime for a node with no measured clock (0 =
+            none). The peer applies it verbatim, clamped, when ``mtime`` is
+            absent.
 
     Returns:
         True when the remote applied the change, False otherwise.
@@ -2226,6 +2230,8 @@ def patch_permissions_remote(
         params["version_id"] = version_id
     if expected_sha256:
         params["expected_sha256"] = expected_sha256
+    if raw_mtime > 0:
+        params["raw_mtime"] = str(raw_mtime)
     own_cid = CONFIG.get("CID")
     if own_cid:
         params["cid"] = own_cid
@@ -2263,6 +2269,14 @@ def _patch_permissions_only(file: File, filename: str) -> bool:
         except Exception as e:  # pragma: no cover - bookkeeping must never break a transfer
             log.debug(f'Could not self-record metadata edit for "{file.filepath}": {e}')
     vclock_json, version_id, corrected_mtime = resolve_upload_version_fields(file)
+    raw_mtime = 0
+    if corrected_mtime <= 0 and abs_path:
+        # No measured clock: carry the raw on-disk mtime so the peer can still
+        # apply the touch (the corrected ``mtime`` param would be absent).
+        try:
+            raw_mtime = int(os.stat(abs_path).st_mtime)
+        except OSError:
+            raw_mtime = 0
     if not patch_permissions_remote(
         filename,
         file.permissions or "",
@@ -2270,6 +2284,7 @@ def _patch_permissions_only(file: File, filename: str) -> bool:
         vclock_json,
         version_id,
         file.sha256sum or "",
+        raw_mtime=raw_mtime,
     ):
         return False
     log.info(f'{ActionLabel.PERMISSION} "{file.filepath}" (metadata updated)')

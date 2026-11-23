@@ -82,13 +82,39 @@ corrected value plus the effective vclock/version id so the server records the
 change as a real version. In p2p mode the master's watcher drives it instead:
 `file_event_handler._on_metadata_changed` is emitted for a content-identical
 mtime change, the master records the touch (`sync_state.note_local_edit`) and
-broadcasts the `File` with the corrected mtime in its `version`
+broadcasts the `File` with the mtime in its `version`
 (`p2p_websocket._attach_effective_version`), and the slave adopts it in
 `sync.update_file`. The reverse direction is symmetric: the slave's `on_modified`
 tracks the mtime alongside the mode and, on a content-identical touch, pushes a
 metadata-only PATCH to the master (`_propagate_metadata_change`); inbound
 adoptions hold the receiving mark so they never echo back. Either way a `touch`
-propagates without transferring bytes. This applies to **files only**:
+propagates without transferring bytes.
+
+**Metadata-only touch with no measured clock.** An untrusted clock (ADR-0054)
+makes every replica advertise `corrected_mtime = 0`, so the corrected-time pass
+cannot order the change. A content-identical `touch` then mints a new *causal*
+version at the touching replica: `sync_state.note_local_edit` takes
+`touch=True` (`p2p_websocket._publish_modified` for a `metadata edit`), because
+`mtime_diverges` on two
+unknown (0) values is blind to the change. The advanced vclock lets the peer
+adopt it by causal dominance in `sync.update_file` /
+`sync._actions_from_remote`. The whole branch — divergence test, direction
+override, corrected-clock tie and raw fallback — is one helper,
+`sync._metadata_only_decision`, shared by both call sites so they never drift.
+With trusted clocks and a non-comparable (equal/concurrent) version the tie
+follows the caller's role (`adopt_on_tie`): the realtime event (`update_file`)
+adopts the peer's value, while the reconcile keeps and pushes the local one.
+With no measured clock the advertised *raw* mtime is the deterministic last
+resort (`sync._remote_metadata_wins`), symmetric on both replicas and clamped
+(`hsync_common.clock::clamp_incoming_raw_mtime`) so a far-future value cannot win
+every tie-break. The local claim compared is the **live on-disk** corrected mtime
+(`sync_state._corrected_mtime_of`), not the stored snapshot, which can be stale.
+A clock-free node that touches a file pushes the value through the metadata
+`PATCH …/files/permissions`: the corrected `mtime` when a clock was measured,
+else the `raw_mtime` field, applied verbatim (clamped) by both
+`p2p_server._handle_patch_permissions` and the central server
+(`hsync_server.api.files.permissions.patch_file_permissions`, which records the
+corrected equivalent so trusted clients keep ordering it). This applies to **files only**:
 directories sync their existence and permissions (`update_dir`), never their
 mtime — a directory's mtime changes on every child create/delete/rename, so
 replicating it would be pure churn (and would echo against the peer's own

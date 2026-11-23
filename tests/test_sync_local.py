@@ -2537,6 +2537,42 @@ class TestClientSyncStateModule:
             assert minted is not None
             assert compare_vclocks(minted, marker) is VClockOrder.dominates
 
+    def test_touch_mints_a_version_with_an_unknown_clock(self, tmp_path):
+        """A bare ``touch`` (same content, moved mtime) must advance the clock.
+
+        Regression: with no measured clock every side advertises
+        ``corrected_mtime = 0`` (ADR-0054), so ``mtime_diverges`` cannot see the
+        change; the store kept the old version and a content-identical touch
+        carried no claim a peer could order, so it never converged in realtime
+        (only the periodic resync, ~300 s, repaired it).
+        """
+        target = tmp_path / "touched.bin"
+        target.write_bytes(b"same")
+        cid = _peer_cid("M")
+        cfg = {"LOCAL_BUCKET": str(tmp_path), "CID": cid}
+        with (
+            patch("hsync_client.state_backend.CONFIG", cfg),
+            patch("hsync_client.sync.CONFIG", {**cfg, "SYNC_DIRECTION": "bidirectional"}),
+        ):
+            digest = hashlib.sha256(b"same").hexdigest()
+            ss_mod.note_local_edit(str(target), digest)
+            before = ss_mod.get_vclock(str(target))
+            assert before == {cid: 1}
+
+            # Same content, moved mtime, no measured corrected clock: the mtime
+            # comparison alone is blind, so the plain call must stay a no-op.
+            ss_mod.note_local_edit(str(target), digest)
+            assert ss_mod.get_vclock(str(target)) == before
+
+            # The explicit touch signal proves the change and mints a new version
+            # the previous one no longer dominates.
+            ss_mod.note_local_edit(str(target), digest, touch=True)
+            after = ss_mod.get_vclock(str(target))
+
+        assert after is not None
+        assert after != before
+        assert compare_vclocks(after, before) is VClockOrder.dominates
+
     def test_no_history_mint_never_reuses_a_published_counter(self, tmp_path):
         """A path that lost its row and marker must not re-mint a published counter.
 

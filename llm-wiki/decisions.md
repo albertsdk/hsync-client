@@ -372,6 +372,26 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   (``touch`` on either side converges the other's mtime without transferring
   bytes).
 
+- **A metadata-only ``touch`` mints a causal version, even with no measured
+  clock**: an untrusted clock (ADR-0054) makes every replica advertise
+  ``corrected_mtime = 0``, so ``mtime_diverges`` cannot see a content-identical
+  change and the corrected-time pass cannot order it. The touching side therefore
+  self-records with ``touch=True`` (``sync_state.note_local_edit``; caller
+  ``p2p_websocket._publish_modified`` for a ``metadata edit``), advancing its
+  vector clock so a peer adopts
+  the touch by dominance in ``sync.update_file`` / ``sync._actions_from_remote``.
+  Both call sites share one comparator, ``sync._metadata_only_decision``
+  (divergence test, direction override, corrected tie, raw fallback); with a
+  trusted clock and a non-comparable version the tie follows ``adopt_on_tie``
+  (the realtime event adopts the peer, the reconcile keeps and pushes local).
+  When two content-identical claims are not causally comparable the advertised
+  *raw* mtime is the deterministic last resort (``sync._remote_metadata_wins``:
+  the greater value wins, so both replicas agree without ping-pong), clamped via
+  ``hsync_common.clock::clamp_incoming_raw_mtime``. The local
+  claim compared is the live on-disk corrected mtime
+  (``sync_state._corrected_mtime_of``), never the stored snapshot, which can be
+  stale (using it dropped server-mode touches into the degraded raw path).
+
 - **One naming rule for destinations, ports and bind addresses**: the sync-server
   endpoint is `--server-url`/`HSYNC_SERVER_URL` (a URL: it may carry a
   reverse-proxy path), the discovery servers are the repeatable
