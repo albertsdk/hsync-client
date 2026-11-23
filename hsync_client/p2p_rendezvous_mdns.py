@@ -354,7 +354,12 @@ class MdnsRendezvous(RendezvousPlanState):
         ``bound_families`` filters the advertised addresses to the bound families.
         """
         self._apply_bound_families(bound_families)
-        self._refresh_service(server_ready=False, endpoint_ready=ready)
+        # Endpoint-material keys only: preserve the incumbent flag. A serving
+        # master also refreshes its seeder endpoint, and passing ``False`` here
+        # demoted it every cycle, so a late/restarted slave waited forever for
+        # a master that had already been ready (see refresh_election_advertisement
+        # for the same invariant).
+        self._refresh_service(server_ready=self._server_ready, endpoint_ready=ready)
         log.info(f"Updated mDNS service: seeder endpoint={'ready' if ready else 'down'}")
 
     def refresh_election_advertisement(self) -> None:

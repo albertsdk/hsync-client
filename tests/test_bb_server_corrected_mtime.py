@@ -30,6 +30,21 @@ def _sha(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
+def _payload_with_higher_hash_than(other: bytes) -> bytes:
+    """A deterministic payload whose SHA-256 sorts *after* ``other``'s.
+
+    Used to prove which rule decided: when the content tie-break runs, the
+    higher hash wins, so a payload that is both older and higher-hash proves the
+    decision came from content identity, not the clock.
+    """
+    reference = _sha(other)
+    for index in range(1000):
+        candidate = f"remote candidate {index}\n".encode()
+        if _sha(candidate) > reference:
+            return candidate
+    raise AssertionError("no higher-hash candidate found")  # pragma: no cover
+
+
 def _server_listing(live_server, bucket: str) -> list[dict]:
     """Full server-side listing via the public REST endpoint."""
     import requests
@@ -186,6 +201,100 @@ class TestBlackBoxCorrectedMtimeServer:
         assert copies, "losing local edit was not preserved as a conflict copy"
         assert any(c.read_bytes() == local_edit for c in copies)
         assert p.read_bytes() == remote_edit
+
+    def test_a_difference_within_one_second_falls_back_to_content(
+        self, live_server, bb_bucket, local_dir, run_sync_once
+    ):
+        """A corrected-mtime difference of at most one second is not an order.
+
+        ADR-0023/0054: inside the fixed one-second guard the deterministic
+        content tie-break decides. The remote is older but carries the higher
+        SHA-256, so it must win: had the clock decided, the newer local edit
+        would have kept the name.
+        """
+        name = f"guard-{uuid.uuid4().hex[:8]}.txt"
+        stem = name.split(".")[0]
+        base_time = 1_700_000_000
+        local_edit = b"local edit inside the guard\n"
+        remote_edit = _payload_with_higher_hash_than(local_edit)
+
+        p = Path(local_dir) / name
+        p.write_bytes(b"shared base\n")
+        os.utime(p, (base_time, base_time))
+        assert run_sync_once(bb_bucket, local_dir).exit_code == 0
+
+        other_cid = "OtherClientGuard00001"
+        # Remote is one second OLDER than the local edit: within the guard.
+        _server_upload_other(
+            live_server,
+            bb_bucket,
+            name,
+            remote_edit,
+            other_cid,
+            {other_cid: 1},
+            corrected_mtime=base_time + 59,
+        )
+        p.write_bytes(local_edit)
+        os.utime(p, (base_time + 60, base_time + 60))
+
+        result = run_sync_once(bb_bucket, local_dir)
+        # The higher hash wins, so the local edit loses this cycle (CONFLICTS=4).
+        assert result.exit_code == 4
+        entry = next(f for f in _server_listing(live_server, bb_bucket) if f["filepath"] == name)
+        assert entry["sha256sum"] == _sha(remote_edit), (
+            "inside the one-second guard content identity must decide, not the clock"
+        )
+        copies = _conflict_copies(local_dir, stem)
+        assert any(c.read_bytes() == local_edit for c in copies), (
+            "the losing local edit was not preserved"
+        )
+        assert p.read_bytes() == remote_edit
+
+    def test_a_difference_above_one_second_orders_by_time(
+        self, live_server, bb_bucket, local_dir, run_sync_once
+    ):
+        """Above the one-second guard the newer corrected mtime wins outright.
+
+        The remote content has the higher hash (so content identity would pick
+        it), but it is three seconds older: the chronological rule must win.
+        """
+        name = f"clock-{uuid.uuid4().hex[:8]}.txt"
+        stem = name.split(".")[0]
+        base_time = 1_700_000_000
+        local_edit = b"local edit above the guard\n"
+        remote_edit = _payload_with_higher_hash_than(local_edit)
+
+        p = Path(local_dir) / name
+        p.write_bytes(b"shared base\n")
+        os.utime(p, (base_time, base_time))
+        assert run_sync_once(bb_bucket, local_dir).exit_code == 0
+
+        other_cid = "OtherClientClock00001"
+        # Three seconds older: safely outside the guard whatever the sub-second
+        # loopback offset truncates.
+        _server_upload_other(
+            live_server,
+            bb_bucket,
+            name,
+            remote_edit,
+            other_cid,
+            {other_cid: 1},
+            corrected_mtime=base_time + 57,
+        )
+        p.write_bytes(local_edit)
+        os.utime(p, (base_time + 60, base_time + 60))
+
+        result = run_sync_once(bb_bucket, local_dir)
+        assert result.exit_code == 0
+        listing = _server_listing(live_server, bb_bucket)
+        entry = next(f for f in listing if f["filepath"] == name)
+        assert entry["sha256sum"] == _sha(local_edit), (
+            "above the guard the newer corrected mtime must win"
+        )
+        server_copies = [
+            f["filepath"] for f in listing if f"{stem}_conflicted_copy_" in f["filepath"]
+        ]
+        assert server_copies, "the losing remote content was not preserved as a copy"
 
 
 class TestBlackBoxNtpUnreachableServer:

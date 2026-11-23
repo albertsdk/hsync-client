@@ -49,7 +49,7 @@ class TestP2PPeerDownload:
         p2p_bucket,
         tmp_path,
     ):
-        """Distinct same-address CIDs seed exact bodies; opt-out remains master-only."""
+        """Distinct same-address CIDs seed exact bodies; a fetch opt-out stays master-only."""
         content = (b"peer-assisted-download\n" * 65536)[: 2 * 1024 * 1024]
         source_path = Path(p2p_master_dir) / "peer-source.bin"
         source_path.write_bytes(content)
@@ -75,7 +75,7 @@ class TestP2PPeerDownload:
                     p2p_bucket,
                     never_master=True,
                     extra_args=("--once", "-v")
-                    + (() if peer_enabled else ("--no-serve-peer-blocks",)),
+                    + (() if peer_enabled else ("--no-fetch-from-peers",)),
                 )
                 try:
                     requester.wait(timeout=60)
