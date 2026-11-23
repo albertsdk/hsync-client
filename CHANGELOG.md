@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A folder emptied by a peer's deletion no longer comes back: the emptied
+  directory is pruned instead of being kept as an intentional empty folder.
 - A file deleted while the peer was unreachable is now deleted on the peer
   instead of being downloaded again: the offline-deletion marker inherits the
   peer's clock when the remote copy is byte-identical to the deleted version,
