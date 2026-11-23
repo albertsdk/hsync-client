@@ -558,6 +558,37 @@ class TestUploadTerminalEvents:
             (transfer_mod.UiEventName.transfer, {"op": "upload", "file": file.filepath, "size": 8})
         ]
 
+    def test_a_conflict_log_line_is_brace_safe(self, tmp_path, monkeypatch):
+        """A JSON error body must survive loguru's dynamic formatter.
+
+        The sink formatter re-applies ``str.format_map`` to the rendered line, so
+        literal braces in a log message are read as format fields and the record
+        is dropped ("key ... not found") unless escaped. This is the 409 conflict
+        path that logs the raw error body.
+        """
+        from hsync_client import transfer as transfer_mod
+
+        file = self._file(tmp_path)
+        response = MagicMock()
+        response.text = (
+            '{"error":"HSYNC-4006","message":"Upload lost a conflict tie-break",'
+            '"details":{"sha256sum":"dfc28705c2bf"},"resolution":"conflict_lost"}'
+        )
+        messages: list[str] = []
+
+        class _Recorder:
+            def info(self, message: str, *args, **kwargs) -> None:
+                messages.append(message)
+
+        monkeypatch.setattr(transfer_mod, "log", _Recorder())
+        monkeypatch.setattr(transfer_mod, "emit_event", lambda *a, **k: None)
+
+        assert transfer_mod._handle_upload_conflict_response(file, response) is True
+        assert messages
+        # Exactly what the sink formatter does: format_map over the rendered line.
+        rendered = messages[0].format_map({})
+        assert '{"error":"HSYNC-4006"' in rendered
+
     def test_a_file_that_disappears_mid_upload_ends_the_row(self, tmp_path, monkeypatch):
         from hsync_client import transfer as transfer_mod
 

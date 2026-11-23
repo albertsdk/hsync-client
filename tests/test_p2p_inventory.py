@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from aiohttp import WSMsgType
 from hsync_common.models.file import File
-from hsync_common.protocol.handshake import build_p2p_hello
+from hsync_common.protocol.handshake import build_p2p_auth, build_p2p_hello
 from hsync_common.protocol.peer_download import (
     build_p2p_inventory_ack,
     build_p2p_inventory_frame,
@@ -417,7 +417,7 @@ async def test_master_wss_routes_inventory_to_store_and_returns_ack(tmp_path: Pa
                     await ws.send_str(
                         json.dumps(
                             build_p2p_hello(
-                                capabilities=["index", "peer_download"],
+                                capabilities=["index", "publishes_index", "peer_download"],
                                 cid=CID_A,
                                 serve_slots=2,
                             )
@@ -432,6 +432,109 @@ async def test_master_wss_routes_inventory_to_store_and_returns_ack(tmp_path: Pa
                     break
                 await asyncio.sleep(0.05)
             assert not store.has_session(CID_A)
+    finally:
+        server.stop()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_master_wss_rejects_inventory_when_slave_does_not_publish(tmp_path: Path) -> None:
+    """A slave advertising only ``index`` (the protocol) but not ``publishes_index``
+    (the participation statement) gets no inventory session: the master rejects its
+    frames with ``unsupported`` and stores nothing (ADR-0052)."""
+    store = P2PInventoryStore(tmp_path / "inventory.sqlite3", "bucket")
+    store.activate()
+    ws_server = P2PWebSocketServer(port=0, inventory_store=store)
+    server = P2PServer(port=0, use_https=False, websocket_server=ws_server)
+    server.start()
+    frame = build_p2p_inventory_frame(
+        gen=1,
+        seq=0,
+        mode="snapshot",
+        more=False,
+        entries=[{"path": "one.txt", "sha256": DIGEST_A, "size": 1}],
+    )
+
+    import aiohttp
+
+    try:
+        with patch("hsync_client.p2p_websocket.CONFIG", {"P2P_KEY": None}):
+            async with aiohttp.ClientSession() as session:
+                url = f"http://127.0.0.1:{server.port}/api/v1/buckets/bucket/events/{CID_A}"
+                async with session.ws_connect(url) as ws:
+                    greeting = json.loads((await ws.receive()).data)
+                    assert greeting["type"] == "hello"
+                    await ws.send_str(
+                        json.dumps(
+                            build_p2p_hello(
+                                capabilities=["index", "peer_download"],
+                                cid=CID_A,
+                                serve_slots=2,
+                            )
+                        )
+                    )
+                    await ws.send_str(json.dumps(frame))
+                    ack = json.loads((await asyncio.wait_for(ws.receive(), timeout=10)).data)
+                    assert ack["type"] == "inventory_ack"
+                    assert ack["status"] == "rejected"
+                    assert ack["reason"] == "unsupported"
+                    assert not store.has_session(CID_A)
+    finally:
+        server.stop()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_master_wss_auth_path_rejects_inventory_when_slave_does_not_publish(
+    tmp_path: Path,
+) -> None:
+    """The authenticated admission path gates on ``publishes_index`` too.
+
+    A slave that authenticates but advertises only ``index`` gets no inventory
+    session and its frames are rejected with ``unsupported`` (ADR-0052). This
+    guards the second ``_admit_slave`` call site, which the hello-path regression
+    does not reach.
+    """
+    store = P2PInventoryStore(tmp_path / "inventory.sqlite3", "bucket")
+    store.activate()
+    ws_server = P2PWebSocketServer(port=0, inventory_store=store)
+    server = P2PServer(port=0, use_https=False, websocket_server=ws_server)
+    server.start()
+    frame = build_p2p_inventory_frame(
+        gen=1,
+        seq=0,
+        mode="snapshot",
+        more=False,
+        entries=[{"path": "one.txt", "sha256": DIGEST_A, "size": 1}],
+    )
+
+    import aiohttp
+
+    try:
+        with patch("hsync_client.p2p_websocket.CONFIG", {"P2P_KEY": "secret"}):
+            async with aiohttp.ClientSession() as session:
+                url = f"http://127.0.0.1:{server.port}/api/v1/buckets/bucket/events/{CID_A}"
+                async with session.ws_connect(url) as ws:
+                    greeting = json.loads((await ws.receive()).data)
+                    assert greeting["type"] == "auth_required"
+                    await ws.send_str(
+                        json.dumps(
+                            build_p2p_auth(
+                                token="secret",
+                                cid=CID_A,
+                                capabilities=["index", "peer_download"],
+                            )
+                        )
+                    )
+                    auth_ok = json.loads((await ws.receive()).data)
+                    assert auth_ok["type"] == "auth"
+                    assert auth_ok["status"] == "ok"
+                    await ws.send_str(json.dumps(frame))
+                    ack = json.loads((await asyncio.wait_for(ws.receive(), timeout=10)).data)
+                    assert ack["type"] == "inventory_ack"
+                    assert ack["status"] == "rejected"
+                    assert ack["reason"] == "unsupported"
+                    assert not store.has_session(CID_A)
     finally:
         server.stop()
         store.close()

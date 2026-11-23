@@ -29,7 +29,7 @@ from traceback import print_tb
 from typing import Any, cast
 
 from hsync_common.clock import clamp_incoming_corrected_mtime, offset_store, uncorrect_mtime
-from hsync_common.constants import PARTIAL_DOWNLOAD_SUFFIX
+from hsync_common.constants import CORRECTED_MTIME_TIE_BREAK_BOUND_SECONDS, PARTIAL_DOWNLOAD_SUFFIX
 from hsync_common.disk import check_free_space
 from hsync_common.format import format_bytes
 from hsync_common.listing import iter_bucket_entries as _iter_bucket_entries
@@ -3258,19 +3258,21 @@ def get_sync_actions(
 def _chronological_inputs(
     local_corrected_mtime: int, remote_corrected_mtime: int
 ) -> tuple[int, int, int]:
-    """Return the corrected mtimes the tie-break may use, and their error bound.
+    """Return the corrected mtimes the tie-break may use, and the shared bound.
 
-    A host without a measured clock reference cannot rank two concurrent
-    versions by time, so both values collapse to "unknown" (0) and the
-    deterministic content tie-break decides: the same path an absent mtime
-    takes. A trusted measurement still has an error (half the probe
-    round-trip), doubled here because the peer measured its own clock with a
-    similar probe: a difference inside that bound is not an order
-    (ADR-0055).
+    A pure comparator: neither side's producer trust is re-evaluated here. The
+    local corrected mtime is already 0 when this host could not vouch for its
+    clock (``sync_state._corrected_mtime_of``), and a peer's wire value is 0 when
+    *it* could not, so an unknown side simply fails the ``> 0`` matrix. The bound
+    is the same fixed guard every replica uses, so two nodes order the same pair
+    identically and converge (ADR-0054); content identity decides within it
+    (ADR-0023).
     """
-    if not offset_store.is_trusted():
-        return 0, 0, 0
-    return local_corrected_mtime, remote_corrected_mtime, 2 * round(offset_store.uncertainty())
+    return (
+        local_corrected_mtime,
+        remote_corrected_mtime,
+        CORRECTED_MTIME_TIE_BREAK_BOUND_SECONDS,
+    )
 
 
 def _compare_files(

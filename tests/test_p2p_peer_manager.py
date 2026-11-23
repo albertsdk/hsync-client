@@ -877,6 +877,38 @@ class TestSetLocalServerReady:
             mock_elect.assert_called_once()
 
 
+class TestLeadershipTerm:
+    """The leadership term (``epoch``) opens on serving, monotonic (ADR-0055)."""
+
+    def test_a_node_that_never_served_advertises_zero(self):
+        pm = PeerManager(local_cid="local123", bucket="photos")
+        assert pm.epoch == 0
+
+    def test_serving_opens_a_term_above_zero(self):
+        pm = PeerManager(local_cid="local123", bucket="photos")
+        pm.set_local_server_ready(True)
+        assert pm.epoch == 1
+
+    def test_the_term_is_one_above_the_highest_seen(self):
+        pm = PeerManager(local_cid="local123", bucket="photos")
+        pm.add_peer(Peer(cid="remote1", bucket="photos", address="192.168.1.5", port=9753, epoch=7))
+        pm.set_local_server_ready(True)
+        assert pm.epoch == 8
+
+    def test_note_serving_returns_the_opened_term(self):
+        pm = PeerManager(local_cid="local123", bucket="photos")
+        term = pm.note_serving()
+        assert term == 1
+        assert pm.epoch == term
+
+    def test_stopping_service_does_not_reset_the_term(self):
+        pm = PeerManager(local_cid="local123", bucket="photos")
+        pm.set_local_server_ready(True)
+        term = pm.epoch
+        pm.set_local_server_ready(False)
+        assert pm.epoch == term
+
+
 class TestMasterChangeCallback:
     """Tests for the _on_master_change notification."""
 

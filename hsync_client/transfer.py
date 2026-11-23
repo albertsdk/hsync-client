@@ -2345,10 +2345,16 @@ def _handle_upload_conflict_response(file: File, response) -> bool:
     body = (response.text or "")[:500]
     lower = body.lower()
     if "superseded" in lower or "conflict_lost" in lower or "destination_changed" in lower:
+        # loguru re-applies ``str.format_map`` to the rendered sink line, so
+        # literal braces in a message (a JSON error body here) are read as format
+        # fields and the record is dropped ("key ... not found") unless doubled.
+        # ``BaseInterceptHandler`` already escapes braces for stdlib records; a
+        # direct loguru call must do the same itself.
+        safe_body = body.replace("{", "{{").replace("}", "}}")
         log.info(
             f'{ActionLabel.CONFLICT} Upload of "{file.filepath}" was '
             f"rejected by the remote arbitration; another cycle must reconcile it "
-            f"({body})"
+            f"({safe_body})"
         )
         emit_event(
             UiEventName.transfer_failed,

@@ -856,7 +856,7 @@ class P2PWebSocketServer:
                     client_addr,
                     websocket,
                     authenticated=True,
-                    publishes_index=Capability.index in slave_caps,
+                    publishes_index=Capability.publishes_index in slave_caps,
                     serve_slots=serve_slots,
                 )
                 if not admitted:
@@ -918,7 +918,7 @@ class P2PWebSocketServer:
                         client_addr,
                         websocket,
                         authenticated=False,
-                        publishes_index=Capability.index in slave_caps,
+                        publishes_index=Capability.publishes_index in slave_caps,
                         serve_slots=serve_slots,
                     )
                     if not admitted:
