@@ -38,7 +38,8 @@ your use case.
 **Q: What happens if two clients modify the same file simultaneously?**
 The server is a transport hub, not an authority. Concurrent edits are
 resolved causally (ADR-0022): the later `corrected_mtime` keeps the original
-path (ADR-0023); SHA-256 is the fallback when that field is missing or tied.
+path when the two differ by more than one second (ADR-0023); SHA-256 is the
+fallback when that field is missing, within one second, or tied.
 The losing version is preserved as a `_conflicted_copy_`. See
 [Conflict Resolution](conflict-resolution.md).
 

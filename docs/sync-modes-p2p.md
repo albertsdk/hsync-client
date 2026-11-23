@@ -84,8 +84,9 @@ The elected master is a **transport hub, not an authority**: it serves bytes and
 relays events but never decides conflicts by role. Conflicts are resolved
 causally on every peer, identically to Server Mode — content identity first,
 then vector-clock dominance, then on true concurrency the later
-`corrected_mtime` (ADR-0023), with SHA-256 only if that field is missing or
-tied. The losing content is preserved as
+`corrected_mtime` (ADR-0023) when the two differ by more than one second, with
+SHA-256 only if that field is missing, within one second, or tied. The losing
+content is preserved as
 `_conflicted_copy_<timestamp>_<cid>`, by whichever side lost (the reconciling
 peer, or the upload arbitration on the master).
 

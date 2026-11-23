@@ -76,7 +76,8 @@ by role: every peer resolves them causally with the same algorithm.
 1. A three-way merge compares the local hash/clock, the remote hash/clock and
    the recorded base state.
 2. On a true concurrent divergence, the later **`corrected_mtime`** keeps the
-   original path; SHA-256 is the fallback when that field is missing or tied.
+   original path when the two differ by more than one second; SHA-256 is the
+   fallback when that field is missing, within one second, or tied.
    The losing content is preserved as a `_conflicted_copy_`.
 3. The conflict is logged so the user can review the preserved copy.
 

@@ -130,7 +130,7 @@ handed a file back) because one event was dropped.
 The master is a **transport hub, not an authority**: it serves bytes and
 relays events but never decides conflicts by role. Every peer applies the same
 causal vector-clock matrix (content identity → causal dominance → later
-`corrected_mtime`, SHA-256 if missing or tied). On a true concurrent divergence, the losing content is
+`corrected_mtime` when they differ by more than one second, SHA-256 otherwise (missing, within one second, or tied). On a true concurrent divergence, the losing content is
 preserved as `_conflicted_copy_<ts>_<cid>` — by the uploader if its upload loses
 the arbitration, or by the reconciling peer if its local content loses the
 tie-break.

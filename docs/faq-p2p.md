@@ -110,7 +110,7 @@ machine-readable form).
 No device is authoritative: HSYNC resolves concurrent edits with a causal
 vector-clock model (ADR-0022). On a true divergence the later
 `corrected_mtime` keeps the original path (ADR-0023); SHA-256 is used only
-when that field is missing or tied. The losing version is preserved as a
+when that field is missing, within one second, or tied. The losing version is preserved as a
 `_conflicted_copy_` so nothing is lost. See
 [Conflict Resolution](conflict-resolution.md).
 

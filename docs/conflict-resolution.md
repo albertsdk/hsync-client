@@ -112,7 +112,7 @@ flowchart TD
     DOM -->|no| DMB{"remote clock dominates ?"}
     DMB -->|yes| DL2["download"]
     DMB -->|no| TIE["true concurrency (or no causal info)<br/>tie-break (ADR-0023)"]
-    TIE --> MT{"both corrected_mtime known<br/>and different?"}
+    TIE --> MT{"both corrected_mtime known<br/>and differ by more than 1 s?"}
     MT -->|yes| NEW{"local corrected_mtime<br/>> remote corrected_mtime ?"}
     NEW -->|yes| CU["conflict_upload<br/>upload; receiver preserves its loser"]
     NEW -->|no| CD["conflict_download<br/>preserve local copy + download"]
@@ -179,6 +179,7 @@ def resolve_three_way(
     *,
     local_corrected_mtime: int = 0,
     remote_corrected_mtime: int = 0,
+    mtime_uncertainty: int = 1,
 ) -> SyncDecision:
 ```
 
@@ -191,17 +192,20 @@ The full matrix, in evaluation order:
 | 3 | `base_hash` set and `remote_hash == base_hash` | `upload` |
 | 4 | local clock **dominates** remote clock | `upload` |
 | 5 | remote clock **dominates** local clock | `download` |
-| 6 | concurrent (or both empty / equal-clock anomaly) **and** both `corrected_mtime` known (> 0) **and** different — higher corrected mtime wins | `conflict_upload` / `conflict_download` |
-| 7 | concurrent (or both empty / equal-clock anomaly) **and** either `corrected_mtime` unknown (0) or the two tie — `local_hash > remote_hash` | `conflict_upload` / `conflict_download` |
+| 6 | concurrent (or both empty / equal-clock anomaly) **and** both `corrected_mtime` known (> 0) **and** differing by more than the 1 s guard — higher corrected mtime wins | `conflict_upload` / `conflict_download` |
+| 7 | concurrent (or both empty / equal-clock anomaly) **and** either `corrected_mtime` unknown (0) or the two within 1 s (a tie) — `local_hash > remote_hash` | `conflict_upload` / `conflict_download` |
 
 Rules 2–3 are the **base fast paths**: knowing the common ancestor decides the
 direction immediately, whatever the clocks say. Rules 4–5 handle the case
 where the base is unknown or neither side matches it: causal dominance alone
-decides. Rules 6–7 are the **true conflict**: first the chronological
-offset-corrected `corrected_mtime` tie-break (ADR-0023) elects the winner, then
-the deterministic SHA-256 fallback covers the cases where a side does not carry
-the field — so every node converges on the same content without coordination,
-and the loser is preserved.
+decides. Rules 6–7 are the **true conflict**: the chronological
+offset-corrected `corrected_mtime` tie-break (ADR-0023) elects the winner when
+the two differ by more than the fixed one-second guard, then the deterministic
+SHA-256 fallback covers a missing field, a difference within one second, or a
+genuine tie — so every node converges on the same content without coordination,
+and the loser is preserved. `corrected_mtime` is `0` when its producer could
+not vouch for its clock (the comparator never re-evaluates that trust), which
+lands on the same SHA-256 path.
 
 ---
 
@@ -305,14 +309,16 @@ losing copy — no conflict copy is made on the client side.
 
 HSYNC uses a **chronological tie-break with preservation**: when both sides
 diverge concurrently, the version whose offset-corrected modification time is
-the most recent keeps the original path. The offset is measured against a
-shared time reference — the server's `/api/v1/time` endpoint in server mode,
-public SNTP servers (configurable via `HSYNC_NTP_HOSTS`) in p2p mode — so a
-skewed device clock cannot decide the winner. When either side lacks the
-field (e.g. a legacy peer or a degraded offline measurement) the higher
-SHA-256 hash (lexicographic) wins instead, so every peer still converges.
-The loser is preserved as a conflicted copy. This is the same "keep both"
-approach as Dropbox/OneDrive.
+the most recent keeps the original path, provided the two differ by more than one
+second. The offset is measured against a shared time reference — the server's
+`/api/v1/time` endpoint in server mode, public SNTP servers (configurable via
+`HSYNC_NTP_HOSTS`) in p2p mode — so a skewed device clock cannot decide the
+winner. When either side lacks the field (0, a degraded offline measurement) or
+the two differ by at most one second, the higher SHA-256 hash (lexicographic)
+wins instead, so every peer still converges. The loser is preserved as a
+conflicted copy. This is the same "keep both" approach as Dropbox/OneDrive; old
+copies can be reclaimed with `hsync-server admin maintenance prune-conflicts
+--older-than-days N` (opt-in, never automatic).
 
 **HSYNC does not perform automatic content merging.** Rationale:
 
