@@ -32,7 +32,6 @@ from __future__ import annotations
 import os
 import threading
 import time
-from datetime import UTC, datetime
 from typing import Any
 
 from hsync_common.clock import (
@@ -42,6 +41,7 @@ from hsync_common.clock import (
     parse_ntp_targets,
 )
 from hsync_common.labels import ActionLabel
+from hsync_common.time_utils import parse_iso_seconds
 from loguru import logger as log
 
 from hsync_client.utils import get_ssl_verify
@@ -51,9 +51,9 @@ from hsync_client.utils import get_ssl_verify
 _PROBE_RETRY_SECONDS = 900.0
 _last_probe_monotonic = 0.0
 
-# ``ack.server_time`` is ``YYYY-MM-DDTHH:MM:SSZ``: the reference truncates to the
-# second, which is the quantization the recorded uncertainty must carry.
-_ACK_TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+# ``ack.server_time`` is the shared one-second ISO wire form
+# (``hsync_common.time_utils.parse_iso_seconds``): the reference truncates to
+# the second, which is the quantization the recorded uncertainty must carry.
 _ACK_TIME_QUANTUM_S = 1.0
 # A rendezvous whose clock is off by more than this is not a credible reference
 # (a misconfigured node must not shift the mesh): the host stays degraded.
@@ -149,9 +149,8 @@ def record_rendezvous_clock_offset(
         return False
     if not isinstance(server_time, str):
         return False
-    try:
-        parsed = datetime.strptime(server_time, _ACK_TIME_FORMAT).replace(tzinfo=UTC)
-    except ValueError:
+    parsed = parse_iso_seconds(server_time)
+    if parsed is None:
         logger.debug(f"Rendezvous ack carries no usable server_time: {server_time!r}")
         return False
     rtt = max(received_at - sent_at, 0.0)

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from hsync_common.endpoint import server_fallback_url
+from hsync_common.endpoint import HostPort, server_fallback_url, url_host_port
 from hsync_common.protocol.rdv_tokens import (
     WeakGroupPassphrase,
     derive_group_key,
@@ -256,8 +256,6 @@ def _resolve_autotune(
     tuning: Any = None  # TuningProfile | None
     if autotune_enabled:
         try:
-            from urllib.parse import urlparse
-
             import hsync_client.autotune as autotune_mod
             from hsync_client.autotune import (
                 ProbeResults,
@@ -269,9 +267,8 @@ def _resolve_autotune(
                 profile_transfer_queue,
             )
 
-            parsed = urlparse(effective_server_url)
-            rtt_host = parsed.hostname or "localhost"
-            rtt_port = parsed.port or (443 if parsed.scheme == "https" else 80)
+            host_port = url_host_port(effective_server_url) or HostPort("localhost", 443)
+            rtt_host, rtt_port = host_port.host, host_port.port
 
             # P2P placeholder: no server to probe yet — defer RTT measurement
             # to the post-rendezvous refresh in p2p_handler (slave role only).

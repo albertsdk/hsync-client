@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import os
 import sqlite3
-import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,6 +28,7 @@ from hsync_common.models.folder import (
     state_db_override,
 )
 from hsync_common.models.sqlstore import StateDb, get_state_db, reset_state_db_cache
+from hsync_common.time_utils import quarantine_timestamp
 
 from hsync_client.identity import InstanceLock, default_device_dir
 
@@ -124,7 +124,7 @@ def resolve_state_db(folder: Path) -> tuple[str, Path] | None:
 
 def _quarantine(db_path: Path) -> Path:
     """Move an unreadable DB (and its WAL sidecars) aside; return the new path."""
-    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+    stamp = quarantine_timestamp()
     target = db_path.with_name(f"{db_path.name}.corrupt-{stamp}")
     for suffix in ("", "-wal", "-shm", "-journal"):
         source = Path(f"{db_path}{suffix}")

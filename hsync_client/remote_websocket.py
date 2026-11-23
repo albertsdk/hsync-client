@@ -28,7 +28,9 @@ from json import JSONDecodeError, dumps, loads
 from random import uniform
 from ssl import Purpose, create_default_context
 from typing import Any, NoReturn, cast
+from urllib.parse import urlsplit
 
+from hsync_common.endpoint import HostPort, url_host_port
 from hsync_common.models.event import Event, EventName
 from hsync_common.models.file import File
 from hsync_common.protocol.handshake import (
@@ -445,8 +447,6 @@ async def _refresh_network_tuning() -> None:
     if not managed:
         return
     try:
-        from urllib.parse import urlparse
-
         import hsync_client.autotune as autotune_mod
         from hsync_client.autotune import (
             measure_bandwidth_active,
@@ -455,9 +455,8 @@ async def _refresh_network_tuning() -> None:
         )
 
         api_url = CONFIG["API"]["buckets"]
-        parsed = urlparse(api_url)
-        rtt_host = parsed.hostname or "localhost"
-        rtt_port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        host_port = url_host_port(api_url) or HostPort("localhost", 443)
+        rtt_host, rtt_port = host_port.host, host_port.port
 
         measured = measure_rtt_tuning(rtt_host, rtt_port, managed)
         if measured is None:
@@ -478,7 +477,8 @@ async def _refresh_network_tuning() -> None:
         # class. Offloaded to a worker thread (blocking HTTP, up to ~10 s) and
         # skipped unless concurrency is autotune-managed.
         if "MAX_CONCURRENT_TRANSFERS" in managed and autotune_mod._bw_ema is None:
-            server_url = f"{parsed.scheme}://{parsed.netloc}"
+            origin = urlsplit(api_url)
+            server_url = f"{origin.scheme}://{origin.netloc}"
             active_mbps = await to_thread(measure_bandwidth_active, server_url)
             if active_mbps:
                 seed_bw_ema(active_mbps)

@@ -28,7 +28,7 @@ from pathlib import Path
 
 from hsync_common.protocol.tls_trust import TrustPolicy, resolve_trust_policy
 from hsync_common.state_paths import state_path
-from hsync_common.tls_context import unverified_ssl_context
+from hsync_common.tls_context import unverified_ssl_context, verified_ssl_context
 
 from hsync_client._trust_store import StoreError
 from hsync_client.known_hosts import KnownHostsStore
@@ -126,7 +126,7 @@ def probe_server_trust(
     so the caller reports that it could not read the fingerprint.
     """
     try:
-        context = ssl.create_default_context(cafile=ca_cert)
+        context = verified_ssl_context(ca_cert)
     except (OSError, ssl.SSLError):
         return None, False
     try:

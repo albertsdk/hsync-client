@@ -12,9 +12,9 @@ import sys
 from asyncio import run
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 from hsync_common.disk import check_free_space
+from hsync_common.endpoint import HostPort, url_host_port
 from hsync_common.format import format_bytes
 from hsync_common.ignore import IgnoreMatcher, set_active_matcher
 from hsync_common.runtime import runtime_summary
@@ -363,9 +363,8 @@ def _run_remote_mode(
     # Server TLS trust (ADR-0036): resolve the pin BEFORE the connectivity
     # probe so chain validation and the pinned fingerprint stay consistent.
     # chain/none -> no pin; a refusal is fatal (fail closed).
-    _server_parts = urlsplit(effective_server_url)
-    server_host = _server_parts.hostname or ""
-    server_port = _server_parts.port or (443 if _server_parts.scheme == "https" else 80)
+    host_port = url_host_port(effective_server_url) or HostPort("", 443)
+    server_host, server_port = host_port.host, host_port.port
     try:
         server_pin = _evaluate_server_trust(config, log, server_host, server_port)
     except ServerTrustError:
