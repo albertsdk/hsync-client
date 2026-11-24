@@ -672,6 +672,11 @@ unlinked, so they stay recoverable (see
 The store is device\-local: nothing in it reaches a peer, and a restored file
 returns to every peer as a new version that supersedes the deletion marker.
 .TP
+.B hsync trash add \-\-folder \fIDIR\fP \fIPATH\fP [\-\-trash\-dir \fIDIR\fP]
+Move one file of the folder into the trash instead of deleting it: the removal
+propagates as a normal deletion, and the same restore brings the file back on
+every device.
+.TP
 .B hsync trash list \-\-folder \fIDIR\fP [\-\-trash\-dir \fIDIR\fP] [\-\-json]
 List the restorable files of one folder, newest first.
 .TP

@@ -28,6 +28,19 @@ a front-end or a script, ask for JSON:
 hsync trash list --folder SYNCED_FOLDER --json
 ```
 
+## Delete a file into the trash
+
+Deleting through the trash keeps the removal recoverable: the bytes leave the
+folder, the deletion still propagates everywhere, and the entry can be restored
+from this device.
+
+```bash
+hsync trash add --folder SYNCED_FOLDER FILE_PATH
+```
+
+Use it from a script or a desktop action instead of removing the file yourself:
+an ordinary `rm` leaves nothing to restore.
+
 ## Restore one file
 
 ```bash

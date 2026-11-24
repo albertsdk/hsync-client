@@ -1121,6 +1121,63 @@ def trash_list(
     typer.echo(f"\n{len(items)} entr{'y' if len(items) == 1 else 'ies'}, {total} B.")
 
 
+@_trash_app.command("add")
+def trash_add(
+    folder: Annotated[
+        str,
+        typer.Option(
+            "--folder",
+            help="Synced folder the file belongs to.",
+            metavar="DIR",
+        ),
+    ],
+    path: Annotated[str, typer.Argument(help="File to move into the trash.")],
+    trash_dir: Annotated[
+        str | None,
+        typer.Option(
+            "--trash-dir",
+            help="Trash store directory (default: state dir).",
+            metavar="DIR",
+        ),
+    ] = None,
+) -> None:
+    """Move one file into the trash instead of deleting it.
+
+    A front-end's "delete" should park the bytes here rather than unlink them:
+    the removal still propagates as a deletion (the watcher records the marker),
+    and the same restore brings the file back on every device. The entry is
+    recorded with origin ``user`` so the trash view can tell the two apart.
+    """
+    from pathlib import Path
+
+    from hsync_common.models.trash import TRASH_ORIGIN_USER
+
+    from hsync_client.exitcodes import ExitCode
+    from hsync_client.logger import setup_logging
+
+    setup_logging(quiet=True)
+    target_folder = Path(folder).expanduser()
+    if not target_folder.is_dir():
+        typer.echo(f"Not a directory: {target_folder}", err=True)
+        raise typer.Exit(code=int(ExitCode.FATAL))
+    candidate = Path(path).expanduser()
+    if not candidate.is_absolute():
+        candidate = target_folder / candidate
+    result = _trash_store(str(target_folder), trash_dir).move(candidate, origin=TRASH_ORIGIN_USER)
+    if result.trashed:
+        typer.echo(f'Moved "{path}" to the trash.')
+        return
+    reasons = {
+        "no-folder-id": "the folder was never synced (no .hsyncfolder marker)",
+        "outside-folder": "the file is not inside the folder",
+        "not-a-regular-file": "only regular files can be moved to the trash",
+        "disabled": "the trash is disabled",
+    }
+    reason = reasons.get(result.reason, result.reason or "the file could not be moved")
+    typer.echo(f'Cannot move "{path}" to the trash: {reason}.', err=True)
+    raise typer.Exit(code=int(ExitCode.FATAL))
+
+
 @_trash_app.command("restore")
 def trash_restore(
     folder: Annotated[

@@ -239,6 +239,77 @@ class TestMaintenance:
         assert [item.entry["relpath"] for item in store.entries()] == ["new.txt"]
 
 
+class TestAdd:
+    """A user deletion parks the bytes with origin ``user``."""
+
+    def test_a_user_file_moves_into_the_store(self, store, folder):
+        from hsync_common.models.trash import TRASH_ORIGIN_USER
+
+        _write(folder, "docs/report.txt", b"bye")
+
+        result = store.move(folder / "docs/report.txt", origin=TRASH_ORIGIN_USER)
+
+        assert result.trashed is True
+        assert not (folder / "docs/report.txt").exists()
+        [item] = store.entries()
+        assert item.entry["origin"] == TRASH_ORIGIN_USER
+        assert item.payload.read_bytes() == b"bye"
+
+    def test_the_restore_works_the_same_way(self, store, folder):
+        from hsync_common.models.trash import TRASH_ORIGIN_USER
+
+        store.move(_write(folder, "docs/report.txt", b"bye"), origin=TRASH_ORIGIN_USER)
+
+        assert store.restore("docs/report.txt").status == "restored"
+        assert (folder / "docs/report.txt").read_bytes() == b"bye"
+
+    def test_a_missing_file_is_refused(self, store, folder):
+        result = store.move(folder / "absent.txt")
+
+        assert (result.trashed, result.reason) == (False, "not-a-regular-file")
+
+
+class TestAddCommand:
+    """``hsync trash add`` is the front-end entry point to the same store."""
+
+    @staticmethod
+    def _run(monkeypatch, tmp_path, folder, *args):
+        from typer.testing import CliRunner
+
+        from hsync_client.cli import app
+
+        monkeypatch.setenv("HSYNC_STATE_DIR", str(tmp_path / "state"))
+        monkeypatch.setenv("HSYNC_TRASH_DIR", str(tmp_path / "trash"))
+        return CliRunner().invoke(app, ["trash", "add", "--folder", str(folder), *args])
+
+    def test_it_moves_the_file_and_reports_it(self, monkeypatch, tmp_path):
+        folder = tmp_path / "shared"
+        folder.mkdir()
+        (folder / ".hsyncfolder").write_text(f"{uuid.uuid4()}\n", encoding="utf-8")
+        _write(folder, "docs/report.txt", b"bye")
+
+        result = self._run(monkeypatch, tmp_path, folder, "docs/report.txt")
+
+        assert result.exit_code == 0, result.output
+        assert "trash" in result.output
+        assert not (folder / "docs/report.txt").exists()
+        store = TrashStore(folder, settings=TrashSettings(enabled=True, root=tmp_path / "trash"))
+        assert [item.entry["relpath"] for item in store.entries()] == ["docs/report.txt"]
+
+    def test_a_path_outside_the_folder_fails(self, monkeypatch, tmp_path):
+        folder = tmp_path / "shared"
+        folder.mkdir()
+        (folder / ".hsyncfolder").write_text(f"{uuid.uuid4()}\n", encoding="utf-8")
+        outside = tmp_path / "outside.txt"
+        outside.write_bytes(b"x")
+
+        result = self._run(monkeypatch, tmp_path, folder, str(outside))
+
+        assert result.exit_code == 1
+        assert "not inside the folder" in result.output
+        assert outside.exists()
+
+
 class TestSyncCycle:
     """The write path: a deletion the cycle applies parks the bytes first."""
 
