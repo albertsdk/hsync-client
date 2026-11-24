@@ -13,6 +13,7 @@ the *client-local* persisted state and how it wraps the common stores.
 | `Dir` / `is_hidden_dir` | `hsync_common.models.dir` | `sync.py` (tree scan) |
 | `SyncAction` / `SyncActionName` | `hsync_common.models.sync_action` | `get_sync_actions` (`hsync_client/sync.py::get_sync_actions`) |
 | `TombstoneEntry` / `TombstoneStore` / `tombstone_key` | `hsync_common.models.tombstone` | `tombstones.py` |
+| `TrashEntry` / `trash_root` / `parse_trash_entry` / `is_safe_relpath` | `hsync_common.models.trash` | `trash.py` (store), `hsync trash list --json` (front-ends) |
 | `SyncStateStore` | `hsync_common.models.version` | `sync_state.py` |
 | `FileVersion` / `VersionInfo` / `SyncDecision` / `resolve_three_way` / `parse_version_info` / `merge_vclocks` / `tick_vclock` | `hsync_common.models.version` | `sync.py`, `transfer.py`, `arbitration.py` (causal three-way merge) |
 | `relpath_in_bucket` | `hsync_common.models.tombstone` | `sync_state.py`, `tombstones.py` |
@@ -74,6 +75,24 @@ Writes are RLock-guarded because transfers record their base from the parallel
 transfer pool; persistence is decoupled from mutation (one flush per sync).
 The store cache (`_stores`) is keyed by folder UUID so tests that switch
 `LOCAL_BUCKET` stay isolated (a new directory gets a new marker).
+
+### trash.py (sync trash)
+
+| Symbol | Location | Role |
+| ------ | -------- | ---- |
+| `TrashStore` | `hsync_client/trash.py::TrashStore` | one folder's view of the device-local store: `move` (park a file the cycle is deleting), `entries`, `restore`, `empty`, `prune`/`prune_if_due` |
+| `trash_settings` | `hsync_client/trash.py::trash_settings` | resolve `TRASH_ENABLED` / `TRASH_DIR` / `TRASH_RETENTION_DAYS` / `TRASH_MAX_SIZE` from `CONFIG` |
+| `TrashSettings.budget` | `hsync_client/trash.py::TrashSettings.budget` | effective byte budget: explicit `--trash-max-size`, else a share of the hosting filesystem with a floor |
+| `folder_id_of` | `hsync_client/trash.py::folder_id_of` | read `.hsyncfolder` read-only (a folder never synced has no trash) |
+| `MoveResult` / `RestoreReport` / `EmptyReport` / `PruneReport` | `hsync_client/trash.py` | outcome records; `RestoreReport.status` is the machine-readable verdict (`restored`, `no-entry`, `destination-exists`, `download-only`, `payload-missing`, `payload-corrupt`, `failed`) |
+
+Layout and the entry contract are SSOT in `hsync_common.models.trash`
+(`TrashEntry`, `trash_root`, `entry_payload_path`, `parse_trash_entry`) — see
+ADR 0056. The store never opens the per-folder state DB: listing and restoring
+work while a sync runs, and the state DB keeps its single writer. A restore is
+therefore a plain file write, and the engine's existing delete-vs-recreate rule
+(`hsync_client/sync_state.py::note_local_edit` minting a clock past the marker)
+is what makes the file propagate again.
 
 ### tombstones.py (deletion markers)
 

@@ -10,10 +10,12 @@ parsed CLI values and never register anything.
 
 import sys
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Annotated, Any, TypedDict, cast
 
 import typer
 import typer.main
+from hsync_common.defaults import TRASH_RETENTION_DAYS_MAX
 from hsync_common.endpoint import (
     HostPort,
     build_https_url,
@@ -192,6 +194,26 @@ def _parse_and_validate_bandwidth(value: str | None, flag: str, label: str) -> i
     return parsed
 
 
+def _parse_trash_max_size(value: str | None) -> int | None:
+    """Parse ``--trash-max-size`` (bytes); ``None`` keeps the env/derived budget.
+
+    ``0`` means "derive it from the hosting filesystem", the same value the
+    environment fallback uses, so an explicit ``--trash-max-size 0`` reads as
+    "auto" on both surfaces.
+    """
+    if value is None:
+        return None
+    # 1 PiB is far above any real volume; the bound only keeps a typo from
+    # turning into an absurd number.
+    return _parse_size_option(
+        value,
+        "--trash-max-size",
+        minimum=0,
+        maximum=1 << 50,
+        default=0,
+    )
+
+
 def _parse_size_option(
     value: str | None,
     flag: str,
@@ -328,6 +350,10 @@ def _build_run_options(values: Mapping[str, Any], **overrides: Any) -> RunOption
             mass_delete_guard=values["mass_delete_guard"],
             mass_delete_threshold=values["mass_delete_threshold"],
             mass_delete_percent=values["mass_delete_percent"],
+            trash_enabled=values["trash_enabled"],
+            trash_dir=values["trash_dir"],
+            trash_retention_days=values["trash_retention_days"],
+            parsed_trash_max_size=_parse_trash_max_size(values["trash_max_size"]),
         ),
         safety=SafetyOptions(
             verify_ssl=not values["insecure"],
@@ -364,6 +390,10 @@ class _SharedValidationValues(TypedDict):
     mass_delete_percent: int | None
     delta_min_file_size: int | None
     delta_min_file_size_p2p: int | None
+    trash_enabled: bool | None
+    trash_dir: str | None
+    trash_retention_days: int | None
+    trash_max_size: str | None
 
 
 # Derived from the TypedDict, so the key tuple and the field types cannot drift.
@@ -472,6 +502,30 @@ def _validate_shared_options(values: Mapping[str, Any]) -> tuple[int | None, int
         raise typer.BadParameter("--delta-min-file-size must be >= 0.")
     if delta_min_file_size_p2p is not None and delta_min_file_size_p2p < 0:
         raise typer.BadParameter("--delta-min-file-size-p2p must be >= 0.")
+
+    # Sync trash (ADR-0056). The store is device-local, so it must stay outside
+    # the synced folder: everything inside it is shared with the peers.
+    trash_retention_days = opts["trash_retention_days"]
+    if trash_retention_days is not None and not (
+        0 <= trash_retention_days <= TRASH_RETENTION_DAYS_MAX
+    ):
+        raise typer.BadParameter(
+            f"--trash-retention must be between 0 and {TRASH_RETENTION_DAYS_MAX} days "
+            "(0 = no time limit)."
+        )
+    trash_dir = opts["trash_dir"]
+    local_path = values["local_path"]
+    if trash_dir and local_path:
+        try:
+            candidate = Path(trash_dir).expanduser().resolve()
+            folder = Path(str(local_path)).expanduser().resolve()
+        except OSError:  # pragma: no cover - unreadable path, let the store fail
+            candidate = folder = Path()
+        if folder == candidate or folder in candidate.parents:
+            raise typer.BadParameter(
+                "--trash-dir must not live inside the synced folder: the trash is "
+                "device-local, and anything inside the folder is shared with the peers."
+            )
 
     return parsed_bw_upload, parsed_bw_download, parsed_min_free_disk_space
 
@@ -765,6 +819,51 @@ MassDeletePercentOpt = Annotated[
         "--mass-delete-percent",
         help="Percentage of local files whose deletion trips the guard (0 = disabled).",
         metavar="PCT",
+        rich_help_panel="Sync",
+    ),
+]
+TrashOpt = Annotated[
+    bool | None,
+    typer.Option(
+        "--trash/--no-trash",
+        help=(
+            "Move applied deletions into the device-local trash so they stay "
+            "recoverable (default: enabled). Nothing is sent to the peers: the "
+            "deletion still propagates as a tombstone."
+        ),
+        rich_help_panel="Sync",
+    ),
+]
+TrashDirOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--trash-dir",
+        help=(
+            "Trash store directory (default: <state dir>/trash). It must stay "
+            "outside the synced folder."
+        ),
+        metavar="DIR",
+        rich_help_panel="Sync",
+    ),
+]
+TrashRetentionOpt = Annotated[
+    int | None,
+    typer.Option(
+        "--trash-retention",
+        help="Days a trashed file is kept before the sweep removes it (default: 30; 0 = forever).",
+        metavar="DAYS",
+        rich_help_panel="Sync",
+    ),
+]
+TrashMaxSizeOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--trash-max-size",
+        help=(
+            "Byte budget for the whole trash store (e.g. '2GB'). 0 = derive it "
+            "from the hosting filesystem (a share of it, with a floor)."
+        ),
+        metavar="SIZE",
         rich_help_panel="Sync",
     ),
 ]

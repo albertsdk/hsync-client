@@ -90,6 +90,10 @@ from hsync_client.cli_options import (
     StabilityDelayOpt,
     SubdirOpt,
     SyncDirectionOpt,
+    TrashDirOpt,
+    TrashMaxSizeOpt,
+    TrashOpt,
+    TrashRetentionOpt,
     UpnpOpt,
     VerboseOpt,
     _build_rendezvous_server_pins,
@@ -328,6 +332,10 @@ def p2p(
     mass_delete_threshold: MassDeleteThresholdOpt = None,
     mass_delete_percent: MassDeletePercentOpt = None,
     min_free_disk_space: MinFreeDiskSpaceOpt = None,
+    trash_enabled: TrashOpt = None,
+    trash_dir: TrashDirOpt = None,
+    trash_retention_days: TrashRetentionOpt = None,
+    trash_max_size: TrashMaxSizeOpt = None,
     max_inbound_size: MaxInboundSizeOpt = MAX_INBOUND_SIZE_MB_DEFAULT,
     ignore_patterns: IgnorePatternOpt = None,
     verbose: VerboseOpt = False,
@@ -827,6 +835,10 @@ def server(
     mass_delete_threshold: MassDeleteThresholdOpt = None,
     mass_delete_percent: MassDeletePercentOpt = None,
     min_free_disk_space: MinFreeDiskSpaceOpt = None,
+    trash_enabled: TrashOpt = None,
+    trash_dir: TrashDirOpt = None,
+    trash_retention_days: TrashRetentionOpt = None,
+    trash_max_size: TrashMaxSizeOpt = None,
     max_inbound_size: MaxInboundSizeOpt = MAX_INBOUND_SIZE_MB_DEFAULT,
     ignore_patterns: IgnorePatternOpt = None,
     verbose: VerboseOpt = False,
@@ -1018,6 +1030,205 @@ def state_reset(
         f"and {report.tombstones_deleted} deletion markers removed. "
         "The next sync will scan every file."
     )
+
+
+# Deleted files stay on this device until the retention sweep (ADR-0056). The
+# store lives in the installation state dir, not in the folder, so these
+# commands work while a sync runs: they never open the state DB.
+_trash_app = typer.Typer(
+    help="Inspect and restore the files kept in the device-local trash.",
+    no_args_is_help=True,
+)
+app.add_typer(_trash_app, name="trash")
+
+
+def _trash_store(folder: str, trash_dir: str | None):
+    """Build the store for *folder*, honouring ``--trash-dir`` and the env."""
+    from pathlib import Path
+
+    from hsync_client.trash import TrashSettings, TrashStore, trash_root, trash_settings
+
+    base = trash_settings()
+    settings = TrashSettings(
+        enabled=True,
+        root=trash_root(trash_dir or None),
+        retention_days=base.retention_days,
+        max_size=base.max_size,
+    )
+    return TrashStore(Path(folder), settings=settings)
+
+
+@_trash_app.command("list")
+def trash_list(
+    folder: Annotated[
+        str,
+        typer.Option(
+            "--folder",
+            help="Synced folder whose trash entries are listed.",
+            metavar="DIR",
+        ),
+    ],
+    trash_dir: Annotated[
+        str | None,
+        typer.Option(
+            "--trash-dir",
+            help="Trash store directory (default: state dir).",
+            metavar="DIR",
+        ),
+    ] = None,
+    as_json: bool = typer.Option(False, "--json", help="Emit the entries as JSON."),
+) -> None:
+    """List the files this device deleted and can still restore."""
+    import time
+    from pathlib import Path
+
+    from hsync_client.exitcodes import ExitCode
+    from hsync_client.logger import setup_logging
+
+    setup_logging(quiet=True)
+    target = Path(folder).expanduser()
+    if not target.is_dir():
+        typer.echo(f"Not a directory: {target}", err=True)
+        raise typer.Exit(code=int(ExitCode.FATAL))
+    items = _trash_store(str(target), trash_dir).entries()
+    if as_json:
+        typer.echo(
+            json.dumps(
+                [
+                    {
+                        "entry_id": item.entry_id,
+                        "path": item.entry["relpath"],
+                        "size": item.entry["size"],
+                        "deleted_at": item.entry["deleted_at"],
+                        "origin": item.entry["origin"],
+                        "cid": item.entry["cid"],
+                        "bucket": item.entry["bucket"],
+                    }
+                    for item in items
+                ],
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
+    if not items:
+        typer.echo(f"No trashed files for {target}.")
+        return
+    for item in items:
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(item.entry["deleted_at"]))
+        typer.echo(f"{when}  {item.entry['size']:>10} B  {item.entry['relpath']}")
+    total = sum(item.entry["size"] for item in items)
+    typer.echo(f"\n{len(items)} entr{'y' if len(items) == 1 else 'ies'}, {total} B.")
+
+
+@_trash_app.command("restore")
+def trash_restore(
+    folder: Annotated[
+        str,
+        typer.Option(
+            "--folder",
+            help="Synced folder the file is restored into.",
+            metavar="DIR",
+        ),
+    ],
+    relpath: Annotated[str, typer.Argument(help="Bucket-relative path to restore.")],
+    trash_dir: Annotated[
+        str | None,
+        typer.Option(
+            "--trash-dir",
+            help="Trash store directory (default: state dir).",
+            metavar="DIR",
+        ),
+    ] = None,
+    direction: Annotated[
+        str,
+        typer.Option(
+            "--direction",
+            help="Sync direction of the folder; a download-only folder refuses the restore.",
+            metavar="DIRECTION",
+        ),
+    ] = "bidirectional",
+) -> None:
+    """Put a trashed file back; the next cycle propagates it again.
+
+    The restore is a plain local write: the engine treats a re-created path as a
+    new version that supersedes the deletion marker, so every peer resurrects
+    it. No lock is taken, so this works while a sync runs.
+    """
+    from pathlib import Path
+
+    from hsync_client.exitcodes import ExitCode
+    from hsync_client.logger import setup_logging
+
+    setup_logging(quiet=True)
+    target = Path(folder).expanduser()
+    if not target.is_dir():
+        typer.echo(f"Not a directory: {target}", err=True)
+        raise typer.Exit(code=int(ExitCode.FATAL))
+    report = _trash_store(str(target), trash_dir).restore(relpath, direction=direction)
+    if report.status == "restored":
+        typer.echo(f'Restored "{report.relpath}" ({report.size} B). The next sync propagates it.')
+        return
+    reasons = {
+        "no-entry": "no trashed file with that path",
+        "destination-exists": "the path already exists in the folder",
+        "download-only": "this folder is download-only, so a restored file would be deleted again",
+        "payload-missing": "the stored copy is gone",
+        "payload-corrupt": "the stored copy does not match its recorded hash",
+    }
+    reason = reasons.get(report.status, report.detail or report.status)
+    typer.echo(f'Cannot restore "{relpath}": {reason}.', err=True)
+    raise typer.Exit(code=int(ExitCode.FATAL))
+
+
+@_trash_app.command("empty")
+def trash_empty(
+    folder: Annotated[
+        str,
+        typer.Option(
+            "--folder",
+            help="Synced folder whose trash is emptied.",
+            metavar="DIR",
+        ),
+    ],
+    trash_dir: Annotated[
+        str | None,
+        typer.Option(
+            "--trash-dir",
+            help="Trash store directory (default: state dir).",
+            metavar="DIR",
+        ),
+    ] = None,
+    older_than: Annotated[
+        int | None,
+        typer.Option(
+            "--older-than",
+            help="Only remove entries older than this many days.",
+            metavar="DAYS",
+        ),
+    ] = None,
+    yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask for confirmation."),
+) -> None:
+    """Delete the folder's trashed files for good."""
+    from pathlib import Path
+
+    from hsync_client.exitcodes import ExitCode
+    from hsync_client.logger import setup_logging
+
+    setup_logging(quiet=True)
+    target = Path(folder).expanduser()
+    if not target.is_dir():
+        typer.echo(f"Not a directory: {target}", err=True)
+        raise typer.Exit(code=int(ExitCode.FATAL))
+    store = _trash_store(str(target), trash_dir)
+    if not store.entries():
+        typer.echo(f"No trashed files for {target}.")
+        return
+    if not yes:
+        typer.confirm(f"Empty the trash of {target}?", abort=True)
+    report = store.empty(older_than_days=older_than)
+    plural = "y" if report.removed == 1 else "ies"
+    typer.echo(f"Removed {report.removed} entr{plural}, {report.freed} B freed.")
 
 
 # What Typer's runner exits with after an interruption (``typer/core.py::main``

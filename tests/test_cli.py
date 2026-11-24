@@ -1106,7 +1106,7 @@ class TestCapabilitiesJson:
         from hsync_client.cli import collect_subcommand_options
 
         options = collect_subcommand_options(typer_app)
-        assert set(options) == {"p2p", "server", "trust", "state", "derive-group-key"}
+        assert set(options) == {"p2p", "server", "trust", "state", "trash", "derive-group-key"}
         for flags in options.values():
             assert flags == sorted(flags)
             assert all(f.startswith("--") for f in flags)
@@ -1442,6 +1442,10 @@ def test_build_run_options_maps_and_normalizes_shared_options():
         "mass_delete_guard": True,
         "mass_delete_threshold": None,
         "mass_delete_percent": None,
+        "trash_enabled": None,
+        "trash_dir": None,
+        "trash_retention_days": None,
+        "trash_max_size": None,
     }
 
     opts = cli._build_run_options(values)
@@ -1452,6 +1456,9 @@ def test_build_run_options_maps_and_normalizes_shared_options():
     assert opts.transfers.compression_enabled is True
     assert opts.transfers.delta_enabled is False
     assert opts.transfers.ignore_patterns == ["a"]
+    # Unset trash options stay None, so the env settings decide.
+    assert opts.transfers.trash_enabled is None
+    assert opts.transfers.parsed_trash_max_size is None
     assert opts.logging.debug is False
 
 

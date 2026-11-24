@@ -104,6 +104,7 @@ from hsync_client.p2p_inventory import NOOP_INVENTORY_OBSERVER, InventoryObserve
 from hsync_client.p2p_sources import P2PCandidateMap, P2PSourceResolver
 from hsync_client.retry import retry_on_network_error
 from hsync_client.state_backend import local_cid
+from hsync_client.trash import TrashStore
 from hsync_client.utils import (
     classify_connection_error,
     get_permissions,
@@ -1117,6 +1118,45 @@ def _apply_offline_renames(
     return downloads, tombstone_deletes, uploads, delete_remotes, renamed
 
 
+# Reasons the store refuses a file without losing anything the user can recover:
+# the opt-out, a folder that was never synced, and entries whose "content" is a
+# target outside the store (symlinks, special files).
+_EXPECTED_TRASH_SKIPS = frozenset(
+    {"disabled", "no-folder-id", "not-a-regular-file", "outside-folder"}
+)
+
+
+def _trash_store_for_current_folder() -> TrashStore | None:
+    """Return the trash store of this run's folder, or None when it has none.
+
+    A folder without ``.hsyncfolder`` was never synced, so it has no trash to
+    extend; the store is built per cycle, not per file.
+    """
+    folder = str(CONFIG.get("LOCAL_BUCKET") or "")
+    if not folder:
+        return None
+    store = TrashStore(folder)
+    return store if store.folder_id is not None else None
+
+
+def _delete_local_file(store: TrashStore | None, filepath: str) -> None:
+    """Remove one local file, parking the bytes in the trash first (ADR-0056).
+
+    The removal always completes. When the store cannot take the file the lost
+    recoverability is logged rather than turned into an aborted deletion: the
+    peer still holds the file, so a refused removal would simply re-appear on
+    every cycle until the failure is fixed.
+    """
+    if store is not None:
+        result = store.move(filepath)
+        if result.trashed:
+            return
+        if result.reason not in _EXPECTED_TRASH_SKIPS:
+            log.warning(f'{ActionLabel.DELETE} "{filepath}" has no trash copy: {result.reason}')
+    if Path(filepath).exists():
+        remove_with_retry(filepath)
+
+
 def _apply_deletions(
     tombstone_deletes: list[File],
     guarded_deletes: list[File],
@@ -1166,12 +1206,17 @@ def _apply_deletions(
     # Merge the surviving deletions back for execution
     deletes = tombstone_deletes + guarded_deletes
 
-    # Handle deletions (files that exist only locally in P2P mode)
+    # Handle deletions (files that exist only locally in P2P mode). Each file is
+    # parked in the device-local trash first (ADR-0056), so a confirmation is no
+    # longer the only way back.
     deleted = 0
+    trash = _trash_store_for_current_folder()
+    if trash is not None:
+        trash.prune_if_due()
     for file in deletes:
         if file.filepath and Path(file.filepath).exists():
             try:
-                remove_with_retry(file.filepath)
+                _delete_local_file(trash, file.filepath)
                 deleted += 1
                 inventory_observer.remove_file(file.filepath)
                 sync_state.clear_base(file.filepath)

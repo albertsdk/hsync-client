@@ -20,6 +20,7 @@ from hsync_common.constants import (
     RDV_TRANSPORT_DEFAULT,
     RDV_TRANSPORTS,
 )
+from hsync_common.disk import BYTES_PER_MB
 from hsync_common.endpoint import (
     HostPort,
     normalize_endpoint_list,
@@ -380,6 +381,36 @@ class EnvSettings(BaseSettings):
     ignore_patterns: str = Field(
         default="",
         description="Comma-separated extra gitignore-style patterns (layered on .hsyncignore)",
+    )
+
+    # Sync Trash (ADR-0056)
+    trash_enabled: bool = Field(
+        default=True,
+        description=(
+            "Move applied deletions into the device-local trash instead of unlinking "
+            "them, so they stay recoverable (0-cost restore; no wire change)"
+        ),
+    )
+    trash_dir: str = Field(
+        default="",
+        description=(
+            "Trash store root; empty means <state dir>/trash. "
+            "Never place it inside a synced folder."
+        ),
+    )
+    trash_retention_days: int = Field(
+        default=hsync_defaults.TRASH_RETENTION_DAYS_DEFAULT,
+        ge=0,
+        le=hsync_defaults.TRASH_RETENTION_DAYS_MAX,
+        description="Days a trashed file is kept before the sweep removes it (0 = no time limit)",
+    )
+    trash_max_size: int = Field(
+        default=hsync_defaults.TRASH_MAX_SIZE_MB_DEFAULT * BYTES_PER_MB,
+        ge=0,
+        description=(
+            "Byte budget for the whole trash store (0 = derive it from the hosting "
+            "filesystem: a share of it, with a floor)"
+        ),
     )
 
     # Transfer Settings
@@ -788,6 +819,26 @@ def get_deletion_policy() -> str:
     return get_env_settings().deletion_policy
 
 
+def get_trash_enabled() -> bool:
+    """Whether applied deletions move into the device-local trash (ADR-0056)."""
+    return get_env_settings().trash_enabled
+
+
+def get_trash_dir() -> str:
+    """Trash store root from the environment (empty = ``<state dir>/trash``)."""
+    return get_env_settings().trash_dir
+
+
+def get_trash_retention_days() -> int:
+    """Retention window of the trash store in days (0 = no time limit)."""
+    return get_env_settings().trash_retention_days
+
+
+def get_trash_max_size() -> int:
+    """Byte budget of the trash store (0 = derived from the hosting filesystem)."""
+    return get_env_settings().trash_max_size
+
+
 def resolve_deletion_policy(value: str | None) -> Literal["propagate", "keep"]:
     """Resolve the effective policy (flag > env > default) and validate it.
 
@@ -1064,6 +1115,11 @@ class HsyncConfig(TypedDict):
     MASS_DELETE_THRESHOLD: int
     # Percentage of local files whose deletion trips the guard (0 = disabled)
     MASS_DELETE_PERCENT: int
+    # Sync trash (ADR-0056): device-local store for the files this cycle deletes
+    TRASH_ENABLED: bool
+    TRASH_DIR: str
+    TRASH_RETENTION_DAYS: int
+    TRASH_MAX_SIZE: int
     # Maximum number of concurrent file transfers (downloads/uploads)
     MAX_CONCURRENT_TRANSFERS: int
     # Per-file transfer retry attempts (default 3, no CLI override in v1)

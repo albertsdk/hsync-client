@@ -416,10 +416,11 @@ The tombstone exemption also plugs into the mass-deletion guard: deletions
 backed by a matching tombstone are never blocked, because the marker is
 positive proof the removal was intentional.
 
-Tombstones are not a recycle bin. They do not store file bytes and there is
-no restore command or API. The default 90-day TTL only garbage-collects the
-marker; after a delete the content is already gone from disk. Keep verified
-backups if undelete is required.
+Tombstones are not a recycle bin: they hold no file bytes, and their TTL only
+garbage-collects the marker. The bytes of a deletion this device applied are kept
+in the local trash instead (ADR-0056), for the retention window
+(`--trash-retention`, 30 days by default) — see [Trash](trash.md). Keep verified
+backups for anything older than that window.
 
 ### Directories: sweep, not tombstones
 

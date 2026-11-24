@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A sync trash: a deletion applied by the cycle moves the file into a
+  device-local store (`<state dir>/trash`, `--trash-dir`) instead of unlinking
+  it, kept for `--trash-retention` days (30 by default) under a
+  `--trash-max-size` budget. `hsync trash list|restore|empty` lists, restores and
+  empties it, and `--no-trash` turns it off.
 - `--peer-role full|leech|seed|off` plus `--no-serve-peer-blocks`,
   `--no-fetch-from-peers` and `--no-publish-inventory`: the three peer-mesh capabilities
   as independent keys.

@@ -16,6 +16,10 @@ Shared configuration options that apply to both Server Mode and p2p Mode.
 | `-i, --interval` | Force full sync every N seconds (continuous mode only) | — |
 | `--sync-direction` | Sync direction: `bidirectional`, `upload-only`, `download-only` | `bidirectional` |
 | `--deletion-policy` | What a deletion does: `propagate` (default: local deletions are applied and propagated) or `keep` (this device never deletes: local deletions are ignored and remote deletions are not applied, an additive backup) | `propagate` |
+| `--trash` / `--no-trash` | Keep the files this device deletes in a local trash instead of unlinking them, so they can be restored | enabled |
+| `--trash-dir` | Trash directory (must stay outside the synced folder) | `<state dir>/trash` |
+| `--trash-retention` | Days a trashed file is kept before the sweep removes it (`0` = forever) | `30` |
+| `--trash-max-size` | Byte budget for the whole trash store, e.g. `2GB` (`0` = a share of the hosting filesystem) | `0` (auto) |
 | `--dry-run` | Dry run: show what would change without applying | `false` |
 
 ## Deletions
