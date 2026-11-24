@@ -33,9 +33,11 @@ import contextlib
 import json
 import os
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -911,3 +913,60 @@ def _stop_rendezvous(proc: subprocess.Popen) -> None:
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait(timeout=5.0)
+
+
+class SntpStub:
+    """A loopback SNTP responder returning the current clock.
+
+    Lets a p2p black-box test anchor the master's clock deterministically
+    (``HSYNC_NTP_HOSTS`` → this ``host:port``) instead of depending on public
+    NTP pools, which the client no longer probes by default (ADR-0055).
+    """
+
+    _NTP_EPOCH_DELTA = 2_208_988_800
+
+    def __init__(self) -> None:
+        self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._socket.bind(("127.0.0.1", 0))
+        self._socket.settimeout(0.2)
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    @property
+    def host_port(self) -> str:
+        host, port = self._socket.getsockname()[:2]
+        return f"{host}:{port}"
+
+    @staticmethod
+    def _reply(server_unix: float) -> bytes:
+        seconds = server_unix + SntpStub._NTP_EPOCH_DELTA
+        whole = int(seconds)
+        fraction = int((seconds - whole) * (1 << 32))
+        header = bytearray(48)
+        header[0] = (4 << 3) | 4  # LI=0, VN=4, server mode
+        header[1] = 2  # stratum
+        header[40:48] = struct.pack("!II", whole, fraction)
+        return bytes(header)
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                _data, peer = self._socket.recvfrom(512)
+            except OSError:
+                continue
+            try:
+                self._socket.sendto(self._reply(time.time()), peer)
+            except OSError:
+                continue
+
+    def start(self) -> "SntpStub":
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._stop.set()
+        try:
+            self._socket.close()
+        except OSError:
+            pass
+        self._thread.join(timeout=2.0)

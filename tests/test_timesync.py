@@ -144,3 +144,311 @@ class TestStartNtpClockOffsetProbe:
                 stale.join(2.0)
                 assert not stale.is_alive()
             assert offset_store.get() == 1.0
+
+
+class _FakeResponse:
+    def __init__(self, status_code: int = 200, payload: object = None) -> None:
+        self.status_code = status_code
+        self._payload = payload
+
+    def json(self):
+        if self._payload is None:
+            raise ValueError("no json body")
+        return self._payload
+
+
+def _patch_authority(
+    monkeypatch,
+    *,
+    master: bool = False,
+    response=None,
+    payload=None,
+    raises=None,
+) -> None:
+    """Patch the authority probe's network/TLS layer for one test.
+
+    ``master`` sets (or clears) the p2p master fingerprint so the probe takes the
+    master trust path; ``payload`` builds a trusted 200 body, while ``response``/
+    ``raises`` inject a raw response or a transport error.
+    """
+    from hsync_client.config import CONFIG
+
+    if master:
+        monkeypatch.setitem(CONFIG, "MASTER_CERT_FINGERPRINT", "f" * 64)
+    else:
+        monkeypatch.delitem(CONFIG, "MASTER_CERT_FINGERPRINT", raising=False)
+    monkeypatch.setattr(timesync, "get_ssl_verify", lambda: True)
+    if raises is not None:
+
+        def _boom(*args, **kwargs):
+            raise raises
+
+        monkeypatch.setattr("hsync_client.utils.http_get", _boom)
+        return
+    if payload is not None:
+        response = _FakeResponse(200, payload)
+    monkeypatch.setattr("hsync_client.utils.http_get", lambda url, **kwargs: response)
+
+
+class TestAuthorityClockOffset:
+    """The authority (server/master) probe and its ``trusted`` contract."""
+
+    def test_the_server_is_trusted_without_a_flag(self, monkeypatch):
+        offset_store.clear()
+        _patch_authority(monkeypatch, response=_FakeResponse(200, {"timestamp": time.time()}))
+        assert timesync.probe_authority_clock_offset(server_url="https://srv") is True
+        assert offset_store.is_trusted() is True
+
+    def test_a_master_must_vouch_for_its_own_clock(self, monkeypatch):
+        offset_store.clear()
+        _patch_authority(
+            monkeypatch,
+            master=True,
+            response=_FakeResponse(200, {"timestamp": time.time(), "trusted": False}),
+        )
+        assert timesync.probe_authority_clock_offset(server_url="https://master") is False
+        assert offset_store.is_trusted() is False
+
+        offset_store.clear()
+        _patch_authority(
+            monkeypatch,
+            master=True,
+            response=_FakeResponse(200, {"timestamp": time.time(), "trusted": True}),
+        )
+        assert timesync.probe_authority_clock_offset(server_url="https://master") is True
+        assert offset_store.is_trusted() is True
+
+    def test_a_master_without_the_flag_is_untrusted(self, monkeypatch):
+        offset_store.clear()
+        _patch_authority(
+            monkeypatch,
+            master=True,
+            response=_FakeResponse(200, {"timestamp": time.time()}),
+        )
+        assert timesync.probe_authority_clock_offset(server_url="https://master") is False
+        assert offset_store.is_trusted() is False
+
+    def test_a_malformed_timestamp_degrades(self, monkeypatch):
+        offset_store.clear()
+        _patch_authority(monkeypatch, response=_FakeResponse(200, {"timestamp": "nope"}))
+        assert timesync.probe_authority_clock_offset(server_url="https://srv") is False
+        assert offset_store.is_trusted() is False
+
+    def test_an_implausible_offset_is_refused(self, monkeypatch):
+        offset_store.clear()
+        _patch_authority(
+            monkeypatch,
+            response=_FakeResponse(200, {"timestamp": time.time() + 99_999}),
+        )
+        assert timesync.probe_authority_clock_offset(server_url="https://srv") is False
+        assert offset_store.is_trusted() is False
+
+
+class TestNtpOptIn:
+    def test_ntp_is_off_without_the_env(self, monkeypatch):
+        monkeypatch.delenv("HSYNC_NTP_HOSTS", raising=False)
+        assert timesync.ntp_configured() is False
+
+    def test_ntp_is_on_when_the_env_is_set(self, monkeypatch):
+        monkeypatch.setenv("HSYNC_NTP_HOSTS", "ntp.local")
+        assert timesync.ntp_configured() is True
+
+    def test_the_master_tick_does_not_probe_without_ntp(self, monkeypatch):
+        monkeypatch.delenv("HSYNC_NTP_HOSTS", raising=False)
+        offset_store.clear()
+        calls = []
+        monkeypatch.setattr(
+            timesync, "start_ntp_clock_offset_probe", lambda *a, **k: calls.append(1)
+        )
+        timesync.maybe_refresh_clock_offset()
+        assert calls == []
+
+
+class TestRefreshAuthorityClockOffset:
+    def test_noop_while_trusted(self, monkeypatch):
+        offset_store.clear()
+        offset_store.record(0.1, rtt=0.02)
+        calls = []
+        monkeypatch.setattr(
+            timesync,
+            "probe_authority_clock_offset",
+            lambda *a, **k: calls.append(1) or True,
+        )
+        timesync.refresh_authority_clock_offset()
+        assert calls == []
+
+    def test_probes_when_untrusted(self, monkeypatch):
+        offset_store.clear()
+        calls = []
+        monkeypatch.setattr(
+            timesync,
+            "probe_authority_clock_offset",
+            lambda *a, **k: calls.append(1) or True,
+        )
+        monkeypatch.setattr(timesync, "_last_authority_probe_monotonic", 0.0)
+        timesync.refresh_authority_clock_offset()
+        assert calls == [1]
+
+    def test_is_throttled_after_a_recent_probe(self, monkeypatch):
+        offset_store.clear()
+        calls = []
+        monkeypatch.setattr(
+            timesync,
+            "probe_authority_clock_offset",
+            lambda *a, **k: calls.append(1) or True,
+        )
+        monkeypatch.setattr(timesync, "_last_authority_probe_monotonic", time.monotonic())
+        timesync.refresh_authority_clock_offset()
+        assert calls == []
+
+
+class TestMasterClobberGuard:
+    """An unanchored p2p master must not replace a better trusted source."""
+
+    def test_an_untrusted_master_keeps_the_trusted_offset(self, monkeypatch):
+        _patch_authority(
+            monkeypatch,
+            master=True,
+            response=_FakeResponse(200, {"timestamp": time.time(), "trusted": False}),
+        )
+        offset_store.clear()
+        offset_store.record(0.42, rtt=0.01)
+        assert timesync.probe_authority_clock_offset(server_url="https://master") is False
+        assert offset_store.is_trusted() is True
+        assert offset_store.get() == pytest.approx(0.42)
+
+    def test_a_failed_master_probe_keeps_the_trusted_offset(self, monkeypatch):
+        _patch_authority(monkeypatch, master=True, raises=OSError("down"))
+        offset_store.clear()
+        offset_store.record(0.42, rtt=0.01)
+        assert timesync.probe_authority_clock_offset(server_url="https://master") is False
+        assert offset_store.is_trusted() is True
+        assert offset_store.get() == pytest.approx(0.42)
+
+    def test_an_untrusted_master_degrades_an_untrusted_host(self, monkeypatch):
+        _patch_authority(
+            monkeypatch,
+            master=True,
+            response=_FakeResponse(200, {"timestamp": time.time(), "trusted": False}),
+        )
+        offset_store.clear()
+        assert timesync.probe_authority_clock_offset(server_url="https://master") is False
+        assert offset_store.is_trusted() is False
+
+
+class TestRefreshNtpFallback:
+    def test_refresh_tries_ntp_even_when_the_authority_is_throttled(self, monkeypatch):
+        offset_store.clear()
+        monkeypatch.setenv("HSYNC_NTP_HOSTS", "ntp.local")
+        calls: list[str] = []
+        monkeypatch.setattr(
+            timesync,
+            "probe_authority_clock_offset",
+            lambda *a, **k: calls.append("authority") or False,
+        )
+        monkeypatch.setattr(
+            timesync, "start_ntp_clock_offset_probe", lambda *a, **k: calls.append("ntp")
+        )
+        monkeypatch.setattr(timesync, "_last_authority_probe_monotonic", time.monotonic())
+        monkeypatch.setattr(timesync, "_last_probe_monotonic", 0.0)
+        timesync.refresh_authority_clock_offset()
+        assert "authority" not in calls
+        assert "ntp" in calls
+
+
+class TestMasterSourceHandling:
+    def test_a_trusted_master_records_its_source(self, monkeypatch):
+        _patch_authority(
+            monkeypatch,
+            master=True,
+            payload={"timestamp": time.time(), "trusted": True},
+        )
+        offset_store.clear()
+        assert timesync.probe_authority_clock_offset(server_url="https://master") is True
+        assert offset_store.source() == "master"
+
+    def test_an_untrusted_master_revokes_a_master_derived_offset(self, monkeypatch):
+        _patch_authority(
+            monkeypatch,
+            master=True,
+            payload={"timestamp": time.time(), "trusted": False},
+        )
+        offset_store.clear()
+        offset_store.record(0.5, rtt=0.01, source="master")
+        assert timesync.probe_authority_clock_offset(server_url="https://master") is False
+        assert offset_store.is_trusted() is False
+
+    def test_an_untrusted_master_keeps_an_ntp_offset(self, monkeypatch):
+        _patch_authority(
+            monkeypatch,
+            master=True,
+            payload={"timestamp": time.time(), "trusted": False},
+        )
+        offset_store.clear()
+        offset_store.record(0.5, rtt=0.01, source="ntp")
+        assert timesync.probe_authority_clock_offset(server_url="https://master") is False
+        assert offset_store.is_trusted() is True
+        assert offset_store.source() == "ntp"
+
+
+class TestAuthorityProbeConcurrency:
+    def test_a_request_during_an_inflight_probe_is_coalesced(self, monkeypatch):
+        calls: list[int | None] = []
+        entered = threading.Event()
+        release = threading.Event()
+
+        def _fake(logger=None, *, server_url=None, generation=None):
+            calls.append(generation)
+            if len(calls) == 1:
+                entered.set()
+                release.wait(5.0)
+            return True
+
+        monkeypatch.setattr(timesync, "probe_authority_clock_offset", _fake)
+        monkeypatch.setattr(timesync, "_authority_probe_inflight", False)
+        monkeypatch.setattr(timesync, "_authority_probe_pending", False)
+        monkeypatch.setattr(timesync, "_authority_probe_generation", 0)
+
+        first = timesync.start_authority_clock_offset_probe()
+        assert first is not None
+        assert entered.wait(2.0)
+        assert timesync.start_authority_clock_offset_probe() is None
+        release.set()
+        first.join(5.0)
+        assert not first.is_alive()
+        assert len(calls) == 2
+        assert calls[1] > calls[0]
+
+    def test_a_stale_generation_is_discarded(self, monkeypatch):
+        _patch_authority(monkeypatch, response=_FakeResponse(200, {"timestamp": time.time()}))
+        monkeypatch.setattr(timesync, "_authority_probe_generation", 5)
+        offset_store.clear()
+        assert timesync.probe_authority_clock_offset(server_url="https://srv", generation=4) is True
+        assert offset_store.get() is None
+
+
+class TestNtpTargetsOptIn:
+    """A malformed explicit source never falls back to the public defaults."""
+
+    def test_a_malformed_explicit_source_yields_no_public_default(self, monkeypatch):
+        monkeypatch.setenv("HSYNC_NTP_HOSTS", "bad:notaport")
+        assert timesync._ntp_targets() == ()
+
+    def test_a_valid_explicit_source_is_parsed(self, monkeypatch):
+        monkeypatch.setenv("HSYNC_NTP_HOSTS", "ntp.local:8123")
+        assert timesync._ntp_targets() == (("ntp.local", 8123),)
+
+    def test_no_public_probe_for_a_malformed_source(self, monkeypatch):
+        monkeypatch.setenv("HSYNC_NTP_HOSTS", "bad:notaport")
+
+        def _no_targets(targets):
+            assert targets == ()
+            return None
+
+        monkeypatch.setattr(timesync, "measure_clock_offset_ntp_multi", _no_targets)
+        offset_store.clear()
+        offset, rtt, host = timesync._measure_ntp_offset(timesync.log)
+        assert offset == 0.0
+        assert rtt is None
+        assert host is None
+        assert offset_store.is_trusted() is False

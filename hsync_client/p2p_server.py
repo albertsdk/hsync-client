@@ -50,6 +50,7 @@ from aiohttp import web
 from hsync_common.clock import (
     clamp_incoming_corrected_mtime,
     clamp_incoming_raw_mtime,
+    offset_store,
     uncorrect_mtime,
 )
 from hsync_common.compression import compression_level
@@ -1841,10 +1842,16 @@ class P2PEndpointMixin(_HTTPTransportBase):
     def _handle_time(self) -> None:
         """Handle time endpoint for clock synchronization.
 
-        Returns the master's current timestamp so slaves can calculate
-        clock offset using round-trip measurement (NTP-like).
+        Returns the master's current timestamp so slaves can calculate clock
+        offset using round-trip measurement (NTP-like). ``trusted`` tells a slave
+        whether this master's own clock is anchored: an unanchored master must
+        not propagate a reference the mesh cannot order by (ADR-0055), so the
+        slave records the offset as untrusted and falls back.
         """
-        self._send_json_response(HTTP_OK, {"timestamp": time.time()})
+        self._send_json_response(
+            HTTP_OK,
+            {"timestamp": time.time(), "trusted": offset_store.is_trusted()},
+        )
 
     def _handle_list_dirs(self) -> None:
         """List directory metadata (path + permissions) inside the bucket.
