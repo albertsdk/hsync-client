@@ -51,6 +51,10 @@ from hsync_client.config import (
     get_server_fingerprints,
     get_server_tofu,
     get_stability_delay,
+    get_trash_dir,
+    get_trash_enabled,
+    get_trash_max_size,
+    get_trash_retention_days,
     resolve_deletion_policy,
 )
 from hsync_client.constants import (
@@ -429,6 +433,24 @@ def _build_config(
         "MASS_DELETE_GUARD": _get_mass_delete_guard_value(mass_delete_guard),
         "MASS_DELETE_THRESHOLD": _get_mass_delete_threshold_value(mass_delete_threshold),
         "MASS_DELETE_PERCENT": _get_mass_delete_percent_value(mass_delete_percent),
+        # Sync trash (ADR-0056): the store is device-local; these bound it.
+        # None = the value came from the environment.
+        "TRASH_ENABLED": (
+            options.transfers.trash_enabled
+            if options.transfers.trash_enabled is not None
+            else get_trash_enabled()
+        ),
+        "TRASH_DIR": options.transfers.trash_dir or get_trash_dir(),
+        "TRASH_RETENTION_DAYS": (
+            options.transfers.trash_retention_days
+            if options.transfers.trash_retention_days is not None
+            else get_trash_retention_days()
+        ),
+        "TRASH_MAX_SIZE": (
+            options.transfers.parsed_trash_max_size
+            if options.transfers.parsed_trash_max_size is not None
+            else get_trash_max_size()
+        ),
         "MAX_CONCURRENT_TRANSFERS": _resolved_max_concurrent,
         "TRANSFER_RETRY_ATTEMPTS": TRANSFER_RETRY_ATTEMPTS_DEFAULT,
         "TRANSFER_RETRY_MIN_WAIT": _resolved_retry_min,

@@ -126,6 +126,11 @@ class TransferOptions:
     mass_delete_guard: bool | None = None
     mass_delete_threshold: int | None = None
     mass_delete_percent: int | None = None
+    # Sync trash (ADR-0056): None = fall back to the env settings.
+    trash_enabled: bool | None = None
+    trash_dir: str | None = None
+    trash_retention_days: int | None = None
+    parsed_trash_max_size: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

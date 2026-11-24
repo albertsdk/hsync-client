@@ -57,6 +57,7 @@ cross-network rendezvous on top of it.
 | Practical recipes (backup, mirror, multi-device, bandwidth) | [Examples](examples.md) → `examples-server.md` / `examples-p2p.md` |
 | Schedule one-shot syncs (cron, systemd, launchd, Task Scheduler, alerts) | [Scheduling](scheduling.md) |
 | Read the client logs | [Log Labels](log-labels.md) |
+| Restore a deleted file | [Trash](trash.md) |
 | Troubleshooting | [Troubleshooting](troubleshooting.md) — [FAQ](faq.md) (common + `faq-server.md` / `faq-p2p.md`) |
 
 ### 6. Understand

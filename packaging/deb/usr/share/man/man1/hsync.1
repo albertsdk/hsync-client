@@ -1,7 +1,7 @@
 .\" Man page for HSYNC - file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-11-22" "hsync 1.1.16" "User Commands"
+.TH HSYNC 1 "2026-11-24" "hsync 1.1.16" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -223,6 +223,29 @@ This device never deletes: local deletions are ignored (no deletion marker is
 recorded) and deletions coming from the other side are not applied, so the
 folder only grows. Use it for an additive backup target.
 .RE
+.TP
+.BR \\-\\-trash / \\-\\-no\\-trash
+Keep the files this device deletes in a local trash instead of unlinking them,
+so a deletion stays recoverable (default: enabled).
+The bytes never leave the device: the deletion itself still propagates as a
+causal deletion marker, and a restored file returns to every peer as a new
+version. Only this device's own deletions are trashed, never the peer's copy.
+.TP
+.BI \\-\\-trash\\-dir\\fP= DIR
+Trash directory (default:
+.IR "<state dir>/trash" ).
+It must stay outside the synced folder, which is shared with the peers.
+.TP
+.BI \\-\\-trash\\-retention\\fP= DAYS
+Days a trashed file is kept before the sweep removes it (default:
+.BR 30 ;
+0 = no time limit).
+.TP
+.BI \\-\\-trash\\-max\\-size\\fP= SIZE
+Byte budget for the whole trash store
+.RI ( e.g. " 2GB ").
+0 (default) derives it from the filesystem that hosts the trash: a share of it,
+with a floor.
 .TP
 .BR \-\-sync\-direction =\fIDIR\fP
 Sync direction. One of:
@@ -642,6 +665,31 @@ the password directly with
 .
 
 .\" ---------------------------------------------------------------------
+.SH TRASH
+Deletions applied by this device are moved into a local trash instead of being
+unlinked, so they stay recoverable (see
+.BR \-\-trash ).
+The store is device\-local: nothing in it reaches a peer, and a restored file
+returns to every peer as a new version that supersedes the deletion marker.
+.TP
+.B hsync trash add \-\-folder \fIDIR\fP \fIPATH\fP [\-\-trash\-dir \fIDIR\fP]
+Move one file of the folder into the trash instead of deleting it: the removal
+propagates as a normal deletion, and the same restore brings the file back on
+every device.
+.TP
+.B hsync trash list \-\-folder \fIDIR\fP [\-\-trash\-dir \fIDIR\fP] [\-\-json]
+List the restorable files of one folder, newest first.
+.TP
+.B hsync trash restore \-\-folder \fIDIR\fP \fIRELPATH\fP [\-\-direction \fIDIRECTION\fP]
+Put one file back. It refuses when the destination exists, and when the folder
+runs
+.IR download\-only
+(the mirror rule would delete the file again).
+.TP
+.B hsync trash empty \-\-folder \fIDIR\fP [\-\-older\-than \fIDAYS\fP] [\-\-yes]
+Remove trashed files for good. Without
+.B \-\-yes
+the command asks for confirmation.
 .SH SYNCHRONISATION DIRECTIONS
 .TP
 .B bidirectional
@@ -940,6 +988,29 @@ What a deletion does: propagate (default) or keep (this device never deletes,
 an additive backup). See
 .BR \-\-deletion\-policy .
 .TP
+.B HSYNC_TRASH_ENABLED
+Keep applied deletions in the local trash instead of unlinking them (default:
+.BR true ).
+See
+.BR \-\-trash .
+.TP
+.B HSYNC_TRASH_DIR
+Trash directory (default:
+.IR "<state dir>/trash" ).
+See
+.BR \-\-trash\-dir .
+.TP
+.B HSYNC_TRASH_RETENTION_DAYS
+Days a trashed file is kept (default:
+.BR 30 ;
+0 = no time limit). See
+.BR \-\-trash\-retention .
+.TP
+.B HSYNC_TRASH_MAX_SIZE
+Byte budget of the trash store (default: 0, derived from the hosting
+filesystem). See
+.BR \-\-trash\-max\-size .
+.TP
 .B HSYNC_COMPRESSION_ENABLED
 Enable zstd compression for file transfers (default:
 .BR true ).
@@ -1137,6 +1208,18 @@ when
 is unset; override with
 .BR HSYNC_SERVER_TRUST_FILE ).
 Known-hosts store for sync\-server certificate fingerprints.
+.TP
+.IR "$XDG_STATE_HOME/hsync/trash" " (or "
+.IR "~/.local/state/hsync/trash" " when "
+.I XDG_STATE_HOME
+is unset; override with
+.BR HSYNC_TRASH_DIR ).
+Files this device deleted, kept for
+.B \-\-trash\-retention
+days so they can be restored. One directory per synced folder, holding the
+bytes plus an
+.I entry.json
+record; nothing in it is ever propagated to a peer.
 .TP
 .IR $XDG_RUNTIME_DIR/hsync/locks
 (or
