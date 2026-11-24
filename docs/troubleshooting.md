@@ -283,15 +283,16 @@ so nothing is lost.
 **Remedy.**
 
 - Let the device reach a time source: in server mode the server answers
-  `/api/v1/time`; in p2p mode the SNTP hosts in `HSYNC_NTP_HOSTS` are probed
-  (defaults: `pool.ntp.org`, `time.cloudflare.com`, `time.google.com`). A
-  network that blocks UDP/123 keeps the host degraded — point it at a reachable
-  SNTP host. A device that can reach a rendezvous node also recovers a coarse
-  reference from it: the node echoes its own clock in every registration
-  answer, and the client uses it when nothing better measured the host.
-- A measurement expires after an hour and is re-taken by the serving node's
-  maintenance tick (or at the next start). `[CLOCK SYNC]` reports the offset and
-  its error right after a successful probe.
+  `/api/v1/time`; in p2p mode the elected **master** is the reference (a slave
+  adopts it only when the master reports `trusted: true`, i.e. its own clock is
+  anchored). When no authority is reachable, point the device at an SNTP source
+  with `HSYNC_NTP_HOSTS` — public SNTP is **not** probed by default. A device that
+  can reach a rendezvous node also recovers a coarse reference from it: the node
+  echoes its own clock in every registration answer, used when nothing better
+  measured the host.
+- A measurement expires after an hour and is re-taken at the start of each sync
+  cycle (server mode and a p2p slave) or by the serving node's maintenance tick.
+  `[CLOCK SYNC]` reports the offset and its error right after a successful probe.
 - A clock step (a manual change, a suspended VM, a late time-daemon correction)
   revokes trust immediately; the next `[CLOCK SYNC]` re-establishes it.
 - While the clock is untrusted the device publishes no modification time at all

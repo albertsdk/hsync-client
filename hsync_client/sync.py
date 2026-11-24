@@ -1485,6 +1485,23 @@ async def sync(
     _sync_cycle_active.set()
     begin_activity()
     try:
+        # Re-anchor an expired measurement before the cycle freezes the offset
+        # (ADR-0055: a long-lived process must not silently degrade). Skipped
+        # when nothing was ever measured, so a caller without a configured
+        # authority (and unit tests) never pays a network round-trip here; the
+        # startup/master/rendezvous probes set it in a real run.
+        if offset_store.get() is not None:
+            from hsync_client.timesync import refresh_authority_clock_offset
+
+            stepped = offset_store.observe()
+            if stepped:
+                emit_warning(
+                    "The system clock changed during the run; timestamps are "
+                    "re-anchored to the time authority.",
+                    source="clock",
+                    reason="skew",
+                )
+            refresh_authority_clock_offset(log, force=stepped)
         offset_store.begin_epoch()
         _cycle_preflight()
 

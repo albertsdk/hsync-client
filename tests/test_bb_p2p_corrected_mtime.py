@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from .p2p_helpers import (
+    SntpStub,
     _conflict_copies,
     _p2p_start,
     _terminate,
@@ -62,9 +63,20 @@ class TestBlackBoxCorrectedMtimeLan:
         (Path(p2p_master_dir) / name).write_bytes(base)
         os.utime(Path(p2p_master_dir) / name, (base_time, base_time))
 
-        master = _p2p_start(p2p_master_dir, p2p_bucket, prefer_master=True)
+        stub = SntpStub().start()
+        master = _p2p_start(
+            p2p_master_dir,
+            p2p_bucket,
+            prefer_master=True,
+            extra_env={"HSYNC_NTP_HOSTS": stub.host_port},
+        )
         try:
             _wait_for_master(master, p2p_slave_dir, p2p_bucket)
+            # The master must be anchored before the divergence, or the slave
+            # (correctly) refuses to adopt its clock (ADR-0055).
+            assert _wait_for_text_in_stderr(master, "offset", timeout=30), (
+                "master never anchored its clock"
+            )
             slave = _p2p_start(p2p_slave_dir, p2p_bucket, never_master=True)
             try:
                 assert _wait_for_text_in_stderr(slave, "Initial sync complete", timeout=30), (
@@ -109,6 +121,72 @@ class TestBlackBoxCorrectedMtimeLan:
                         loser_kept = True
                         break
                 assert loser_kept, "losing content was not preserved as a conflict copy"
+            finally:
+                _terminate(slave)
+        finally:
+            _terminate(master)
+            stub.stop()
+
+    def test_an_unanchored_master_is_not_adopted(self, p2p_master_dir, p2p_slave_dir, p2p_bucket):
+        """A master with no anchored clock must not order the mesh by time.
+
+        The slave refuses the unanchored reference (``trusted: false``), so the
+        divergent edits converge through the deterministic SHA-256 fallback and
+        the loser is preserved as a conflict copy.
+        """
+        name = "shared.txt"
+        stem = name.split(".")[0]
+        base = b"base\n"
+        base_time = 1_700_000_000
+        (Path(p2p_master_dir) / name).write_bytes(base)
+        os.utime(Path(p2p_master_dir) / name, (base_time, base_time))
+
+        # A dead NTP target: the master's clock stays untrusted (the LAN harness
+        # has no rendezvous either).
+        master = _p2p_start(
+            p2p_master_dir,
+            p2p_bucket,
+            prefer_master=True,
+            extra_env={"HSYNC_NTP_HOSTS": _dead_ntp_target()},
+        )
+        try:
+            _wait_for_master(master, p2p_slave_dir, p2p_bucket)
+            slave = _p2p_start(p2p_slave_dir, p2p_bucket, never_master=True)
+            try:
+                assert _wait_for_text_in_stderr(slave, "Initial sync complete", timeout=30), (
+                    "slave never finished its initial sync"
+                )
+                assert _wait_for_slave_events(slave), "slave is not listening for events yet"
+
+                first = b"first edit\n"
+                second = b"second edit\n"
+                (Path(p2p_slave_dir) / name).write_bytes(first)
+                os.utime(Path(p2p_slave_dir) / name, (base_time + 120, base_time + 120))
+                (Path(p2p_master_dir) / name).write_bytes(second)
+                os.utime(Path(p2p_master_dir) / name, (base_time + 5, base_time + 5))
+
+                master_path = Path(p2p_master_dir) / name
+                slave_path = Path(p2p_slave_dir) / name
+                deadline = time.monotonic() + 45
+                while time.monotonic() < deadline:
+                    if (
+                        master_path.read_bytes() == slave_path.read_bytes()
+                        and master_path.read_bytes() in (first, second)
+                    ):
+                        break
+                    time.sleep(0.5)
+                winner = master_path.read_bytes()
+                assert winner == slave_path.read_bytes(), (
+                    "an unanchored master did not converge by content"
+                )
+                assert winner in (first, second)
+                loser = second if winner == first else first
+                copies = _conflict_copies(p2p_master_dir, stem) + _conflict_copies(
+                    p2p_slave_dir, stem
+                )
+                assert any(p.read_bytes() == loser for p in copies), (
+                    "losing content was not preserved as a conflict copy"
+                )
             finally:
                 _terminate(slave)
         finally:

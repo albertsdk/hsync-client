@@ -499,3 +499,15 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   motivating case is `ifaddr`, which picks `_posix`/`_win32` from `os.name` at
   import. The list is guarded by `tests/test_compile_script.py`, which also
   asserts every declared module still resolves in the build environment.
+- **Time authority is the hub, and NTP is opt-in.** The offset used by the
+  chronological tie-break (ADR-0023/0055) is measured against the current
+  authority's `/api/v1/time`: the sync server in server mode, the elected
+  **master** in p2p (a slave adopts it only when the reply says `trusted: true`,
+  i.e. the master is itself anchored; `p2p_server.py::_handle_time` emits it). A
+  slave never overrides a trusted master with its own NTP: an operator who needs
+  a specific source configures it on the serving node/anchor. `HSYNC_NTP_HOSTS`
+  is an **opt-in** deployment override (`timesync.py::ntp_configured`), not a
+  silent public-pool default; the rendezvous `ack.server_time` is the coarse
+  fallback. An expired offset is re-probed for every role (`sync()` for the
+  server and a slave, the maintenance tick for the serving master), so a
+  long-lived process never silently degrades to the SHA-256 fallback.

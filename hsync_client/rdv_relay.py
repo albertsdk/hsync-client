@@ -84,6 +84,14 @@ __all__ = [
 ]
 
 
+async def _write_keepalives(writer: Any, cid: str, bucket: str) -> None:
+    """Send a relay ping every keepalive interval to hold the session open."""
+    while True:
+        await asyncio.sleep(RELAY_KEEPALIVE_INTERVAL)
+        writer.write(frame_line(build_relay_ping_frame(cid=cid, bucket=bucket)))
+        await writer.drain()
+
+
 class RelayDialer:
     """Requester side: one relay tunnel exposed as a loopback TCP endpoint.
 
@@ -431,10 +439,7 @@ class RelayDialer:
 
     async def _keepalive(self, writer: Any) -> None:
         """Keep the QUIC connection (and thus the loopback tunnel) alive."""
-        while True:
-            await asyncio.sleep(RELAY_KEEPALIVE_INTERVAL)
-            writer.write(frame_line(build_relay_ping_frame(cid=self._cid, bucket=self._bucket)))
-            await writer.drain()
+        await _write_keepalives(writer, self._cid, self._bucket)
 
     def _connect_frame(self) -> dict[str, object]:
         """The ``relay_connect`` frame for this tunnel's target, built once."""
@@ -732,10 +737,7 @@ class RelayAcceptor:
 
     async def _keepalive(self, writer: Any) -> None:
         """Keep the control stream (and therefore the QUIC connection) alive."""
-        while True:
-            await asyncio.sleep(RELAY_KEEPALIVE_INTERVAL)
-            writer.write(frame_line(build_relay_ping_frame(cid=self._cid, bucket=self._bucket)))
-            await writer.drain()
+        await _write_keepalives(writer, self._cid, self._bucket)
 
 
 class FailoverRelayDialer:

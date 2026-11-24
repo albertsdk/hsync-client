@@ -133,9 +133,12 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:
     # runs on a background thread: rendezvous and the first sync never wait on
     # an external time source, and failures degrade to offset 0 (uncorrected
     # local time) without blocking anything.
-    from hsync_client.timesync import start_ntp_clock_offset_probe
+    from hsync_client.timesync import ntp_configured, start_ntp_clock_offset_probe
 
-    start_ntp_clock_offset_probe(logger=log)
+    # Explicit NTP is an opt-in deployment override (ADR-0055): without it the
+    # offset is anchored by the master and the rendezvous echo.
+    if ntp_configured():
+        start_ntp_clock_offset_probe(logger=log)
 
     one_shot = config.get("ONE_SHOT", False)
     if not one_shot:
@@ -819,6 +822,14 @@ def _run_as_slave(
             log.debug("Master advertises lossy local permissions (advisory TXT hint)")
 
         set_config(config)
+
+        # The elected master is the mesh's time authority (ADR-0055): adopt its
+        # clock (``trusted`` in the reply). Runs on a background thread so the
+        # reconnect loop never blocks on the master's time endpoint; the next
+        # sync cycle sees the result.
+        from hsync_client.timesync import start_authority_clock_offset_probe
+
+        start_authority_clock_offset_probe(log)
 
         if relayed:
             _apply_relay_transfer_tuning(config, log)

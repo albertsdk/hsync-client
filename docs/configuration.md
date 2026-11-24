@@ -194,21 +194,38 @@ When file logging is enabled with `-o/--log-file`:
 Use `--no-autotune` or `HSYNC_AUTOTUNE=false` to disable auto-tuning and use
 built-in static defaults.
 
-## Clock synchronisation (NTP)
+## Clock synchronisation
 
-In p2p mode there is no server at startup, so the client measures its clock
-offset against public SNTP servers. The offset powers the chronological
-conflict tie-break (`corrected_mtime`, see
+The offset powers the chronological conflict tie-break (`corrected_mtime`, see
 [Conflict Resolution](conflict-resolution.md)): the most recent
-offset-corrected edit keeps the original path. The probe runs in the
-background, so rendezvous never waits on an external time source. Each sync
-cycle freezes whatever offset is already known: a probe that finishes during
-the cycle applies only to the next one. When every probe fails the client
-records offset 0 (raw local time) and synchronisation proceeds normally.
+offset-corrected edit keeps the original path. The client measures against the
+current authority:
+
+- **Server mode** — the sync server's `/api/v1/time`.
+- **p2p mode** — the elected **master's** `/api/v1/time`. A slave adopts it only
+  when the master reports `trusted: true` (its own clock is anchored); a host
+  that reaches a rendezvous also gets a coarse one-second reference from the
+  `ack.server_time` echo.
+
+Public SNTP is **not** probed by default: `HSYNC_NTP_HOSTS` is an opt-in
+deployment override (air-gapped/enterprise, or a serving node with no
+rendezvous), tried only as a fallback when no authority reference is available.
+A malformed value yields no probe — it never falls back to the public defaults.
+The probe runs in the background at startup and is re-run (throttled) when the
+offset expires (`CLOCK_OFFSET_MAX_AGE_SECONDS`): the server and a p2p slave at
+the start of each sync cycle, the serving master from its maintenance tick. Each
+cycle freezes whatever offset is already known. When no reference is available
+the client records offset 0 (raw local time), and conflicts resolve by the
+deterministic SHA-256 fallback.
+
+Android p2p has no rendezvous echo and is LAN-only: without an explicit SNTP
+source (`hsync.ntp.hosts` system property or `HSYNC_NTP_HOSTS`) its mesh has no
+trusted reference and resolves conflicts by content. Set the source on the
+serving device to restore chronological ordering.
 
 | Variable | Description | Default |
 |---|---|---|
-| `HSYNC_NTP_HOSTS` | Comma-separated SNTP servers, tried in order; entries may carry a port override (`host:port`) | `pool.ntp.org,time.cloudflare.com,time.google.com` |
+| `HSYNC_NTP_HOSTS` | Optional SNTP servers (deployment override), tried in order; entries may carry a port override (`host:port`). Unset = no public time servers. | unset |
 
 ## State directory
 

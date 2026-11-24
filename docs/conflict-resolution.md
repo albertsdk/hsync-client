@@ -12,9 +12,11 @@ On a true divergence (concurrent clocks) a **chronological tie-break**
 (ADR-0023) picks the winner: the version with the most recent
 *clock-offset-corrected* modification time (`corrected_mtime`) keeps the
 original path. The offset is measured against a shared time reference — the
-server in server mode, a list of public SNTP servers (configurable via
-`HSYNC_NTP_HOSTS`) in p2p mode — so raw device-clock skew never decides the
-outcome. The tie-break requires that measured reference: a device that could
+server in server mode, the elected **master** in p2p mode (a slave adopts it only
+when the master reports its own clock is anchored), or an **opt-in** SNTP source
+(`HSYNC_NTP_HOSTS`, never probed by default) when no authority is reachable —
+so raw device-clock skew never decides the outcome. The tie-break requires that
+measured reference: a device that could
 not reach any time source (offline, air-gapped, filtered UDP/123) treats both
 timestamps as unknown. When either side does not carry the field, the clock
 is untrusted, or the two values tie, a **deterministic SHA-256 fallback**
@@ -311,9 +313,10 @@ HSYNC uses a **chronological tie-break with preservation**: when both sides
 diverge concurrently, the version whose offset-corrected modification time is
 the most recent keeps the original path, provided the two differ by more than one
 second. The offset is measured against a shared time reference — the server's
-`/api/v1/time` endpoint in server mode, public SNTP servers (configurable via
-`HSYNC_NTP_HOSTS`) in p2p mode — so a skewed device clock cannot decide the
-winner. When either side lacks the field (0, a degraded offline measurement) or
+`/api/v1/time` endpoint in server mode, the elected **master** in p2p mode (a
+slave adopts it only when the master reports `trusted: true`), or an opt-in SNTP
+source (`HSYNC_NTP_HOSTS`, not probed by default) — so a skewed device clock
+cannot decide the winner. When either side lacks the field (0, a degraded offline measurement) or
 the two differ by at most one second, the higher SHA-256 hash (lexicographic)
 wins instead, so every peer still converges. The loser is preserved as a
 conflicted copy. This is the same "keep both" approach as Dropbox/OneDrive; old
