@@ -48,7 +48,7 @@ from hsync_common.defaults import (
     TRASH_QUOTA_PERCENT_DEFAULT,
     TRASH_RETENTION_DAYS_DEFAULT,
 )
-from hsync_common.disk import BYTES_PER_MB
+from hsync_common.disk import BYTES_PER_MB, share_of_volume_bytes
 from hsync_common.models.folder import read_folder_marker
 from hsync_common.models.trash import (
     TRASH_ORIGIN_SYNC,
@@ -91,7 +91,7 @@ class TrashSettings:
     max_size: int = 0
 
     def budget(self) -> int:
-        """Return the effective size budget in bytes (0 = unlimited).
+        """Return the effective size budget in bytes.
 
         An explicit ``--trash-max-size``/``HSYNC_TRASH_MAX_SIZE`` wins. Otherwise
         the store may use a share of the filesystem that hosts it (the
@@ -100,12 +100,11 @@ class TrashSettings:
         """
         if self.max_size > 0:
             return self.max_size
-        try:
-            total = shutil.disk_usage(self.root if self.root.exists() else self.root.parent).total
-        except OSError:
-            return TRASH_QUOTA_FLOOR_MB_DEFAULT * BYTES_PER_MB
-        share = total * TRASH_QUOTA_PERCENT_DEFAULT // 100
-        return max(share, TRASH_QUOTA_FLOOR_MB_DEFAULT * BYTES_PER_MB)
+        return share_of_volume_bytes(
+            self.root,
+            percent=TRASH_QUOTA_PERCENT_DEFAULT,
+            floor_mb=TRASH_QUOTA_FLOOR_MB_DEFAULT,
+        )
 
 
 def trash_settings(config: dict | None = None) -> TrashSettings:
