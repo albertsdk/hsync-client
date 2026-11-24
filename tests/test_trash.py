@@ -268,6 +268,32 @@ class TestAdd:
 
         assert (result.trashed, result.reason) == (False, "not-a-regular-file")
 
+    def test_a_read_only_source_is_retried_after_clearing_the_flag(
+        self, store, folder, monkeypatch
+    ):
+        """Windows refuses to move a read-only file; POSIX never takes the retry."""
+        import hsync_client.trash as trash_mod
+
+        source = _write(folder, "docs/report.txt", b"bye")
+        real_replace = trash_mod.os.replace
+        failed: set[str] = set()
+
+        def flaky_replace(src, dst):
+            if str(src) == str(source) and str(src) not in failed:
+                failed.add(str(src))
+                raise PermissionError(13, "read-only")
+            return real_replace(src, dst)
+
+        cleared: list[str] = []
+        monkeypatch.setattr(trash_mod.os, "replace", flaky_replace)
+        monkeypatch.setattr(trash_mod, "clear_read_only", lambda path: cleared.append(path))
+
+        result = store.move(source)
+
+        assert result.trashed is True
+        assert cleared == [str(source)]
+        assert [item.entry["relpath"] for item in store.entries()] == ["docs/report.txt"]
+
 
 class TestAddCommand:
     """``hsync trash add`` is the front-end entry point to the same store."""

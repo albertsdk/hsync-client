@@ -62,6 +62,7 @@ from hsync_common.models.trash import (
 )
 
 from hsync_client.config import CONFIG
+from hsync_client.utils.fs_ops import clear_read_only
 
 __all__ = [
     "EmptyReport",
@@ -210,6 +211,23 @@ def _sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _replace(source: Path, destination: Path) -> None:
+    """``os.replace`` that survives the Windows read-only attribute.
+
+    Windows refuses to rename a read-only file (one copied from read-only media,
+    or marked by an application). Clearing the bit and retrying once is what
+    ``clear_read_only`` exists for; on POSIX it is a no-op, so the retry never
+    runs and the first attempt is the only one.
+    """
+    try:
+        os.replace(source, destination)
+    except OSError as exc:
+        if exc.errno not in (errno.EACCES, errno.EPERM):
+            raise
+        clear_read_only(str(source))
+        os.replace(source, destination)
+
+
 def _move_payload(source: Path, destination: Path) -> None:
     """Move *source* to *destination*, surviving a cross-device layout.
 
@@ -220,7 +238,7 @@ def _move_payload(source: Path, destination: Path) -> None:
     """
     destination.parent.mkdir(parents=True, exist_ok=True)
     try:
-        os.replace(source, destination)
+        _replace(source, destination)
         return
     except OSError as exc:
         if exc.errno != errno.EXDEV:
@@ -230,7 +248,8 @@ def _move_payload(source: Path, destination: Path) -> None:
         shutil.copyfileobj(reader, writer, length=1024 * 1024)
         writer.flush()
         os.fsync(writer.fileno())
-    os.replace(partial, destination)
+    _replace(partial, destination)
+    clear_read_only(str(source))
     source.unlink()
 
 
@@ -547,7 +566,7 @@ def _restore_payload(source: Path, destination: Path) -> None:
     sees a half-written file.
     """
     try:
-        os.replace(source, destination)
+        _replace(source, destination)
         return
     except OSError as exc:
         if exc.errno != errno.EXDEV:
@@ -557,7 +576,8 @@ def _restore_payload(source: Path, destination: Path) -> None:
         shutil.copyfileobj(reader, writer, length=1024 * 1024)
         writer.flush()
         os.fsync(writer.fileno())
-    os.replace(partial, destination)
+    _replace(partial, destination)
+    clear_read_only(str(source))
     source.unlink()
 
 

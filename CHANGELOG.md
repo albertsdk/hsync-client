@@ -49,6 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by content.
 ### Fixed
 
+- A read-only file is made writable before it is moved into the trash and back,
+  so Windows (which refuses to rename such a file) can restore it too.
 - A folder emptied by a peer's deletion no longer comes back: the emptied
   directory is pruned instead of being kept as an intentional empty folder.
 - A file deleted while the peer was unreachable is now deleted on the peer
