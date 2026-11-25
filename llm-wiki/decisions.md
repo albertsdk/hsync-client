@@ -510,4 +510,8 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   silent public-pool default; the rendezvous `ack.server_time` is the coarse
   fallback. An expired offset is re-probed for every role (`sync()` for the
   server and a slave, the maintenance tick for the serving master), so a
-  long-lived process never silently degrades to the SHA-256 fallback.
+  long-lived process never silently degrades to the SHA-256 fallback. The retry
+  floor (`timesync.py::_PROBE_RETRY_SECONDS`) only spaces retries after a real
+  attempt — it is measured on `time.monotonic()`, i.e. the host uptime, so the
+  "never probed" sentinel (`timesync.py::_NEVER_PROBED`) keeps the first cycle
+  of a freshly booted host due immediately.

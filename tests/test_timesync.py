@@ -190,6 +190,16 @@ def _patch_authority(
     monkeypatch.setattr("hsync_client.utils.http_get", lambda url, **kwargs: response)
 
 
+def _past_the_floor() -> float:
+    """A monotonic stamp beyond the probe retry floor.
+
+    Anchored to ``time.monotonic()`` on purpose: it returns the host *uptime*, so
+    a literal ``0.0`` still reads as "just probed" on a freshly booted machine
+    (the GitHub runner case).
+    """
+    return time.monotonic() - 2 * timesync._PROBE_RETRY_SECONDS
+
+
 class TestAuthorityClockOffset:
     """The authority (server/master) probe and its ``trusted`` contract."""
 
@@ -285,7 +295,23 @@ class TestRefreshAuthorityClockOffset:
             "probe_authority_clock_offset",
             lambda *a, **k: calls.append(1) or True,
         )
-        monkeypatch.setattr(timesync, "_last_authority_probe_monotonic", 0.0)
+        monkeypatch.setattr(timesync, "_last_authority_probe_monotonic", _past_the_floor())
+        timesync.refresh_authority_clock_offset()
+        assert calls == [1]
+
+    def test_the_first_probe_of_a_process_is_never_throttled(self, monkeypatch):
+        # ``time.monotonic()`` is the host uptime, so the "never probed" sentinel
+        # must sit a whole floor below uptime zero; ``0.0`` throttled a machine
+        # booted seconds ago.
+        assert timesync._NEVER_PROBED + timesync._PROBE_RETRY_SECONDS <= 0.0
+        offset_store.clear()
+        calls = []
+        monkeypatch.setattr(
+            timesync,
+            "probe_authority_clock_offset",
+            lambda *a, **k: calls.append(1) or True,
+        )
+        monkeypatch.setattr(timesync, "_last_authority_probe_monotonic", timesync._NEVER_PROBED)
         timesync.refresh_authority_clock_offset()
         assert calls == [1]
 
@@ -350,7 +376,7 @@ class TestRefreshNtpFallback:
             timesync, "start_ntp_clock_offset_probe", lambda *a, **k: calls.append("ntp")
         )
         monkeypatch.setattr(timesync, "_last_authority_probe_monotonic", time.monotonic())
-        monkeypatch.setattr(timesync, "_last_probe_monotonic", 0.0)
+        monkeypatch.setattr(timesync, "_last_probe_monotonic", _past_the_floor())
         timesync.refresh_authority_clock_offset()
         assert "authority" not in calls
         assert "ntp" in calls

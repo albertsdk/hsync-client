@@ -53,10 +53,15 @@ from hsync_client.utils import get_ssl_verify
 # Retry floor for :func:`maybe_refresh_clock_offset`: an offline host must not
 # spawn one probe thread per maintenance tick.
 _PROBE_RETRY_SECONDS = 900.0
-_last_probe_monotonic = 0.0
+# "Never probed" sentinel for the two floors below. It must not be ``0.0``:
+# ``time.monotonic()`` is the host uptime, not the process age, so right after a
+# boot ``now - 0.0`` is still inside the floor and the first probe of a process
+# would be skipped for up to ``_PROBE_RETRY_SECONDS``.
+_NEVER_PROBED = -math.inf
+_last_probe_monotonic = _NEVER_PROBED
 # Separate floor for the authority probe (server/master): an explicit NTP probe
 # must not throttle the per-cycle authority refresh, and vice versa.
-_last_authority_probe_monotonic = 0.0
+_last_authority_probe_monotonic = _NEVER_PROBED
 
 # ``ack.server_time`` is the shared one-second ISO wire form
 # (``hsync_common.time_utils.parse_iso_seconds``): the reference truncates to
