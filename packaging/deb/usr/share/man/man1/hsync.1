@@ -702,6 +702,13 @@ Without
 .B \-\-yes
 the command asks for confirmation.
 .TP
+.B hsync trash stats [\-\-trash\-dir \fIDIR\fP] [\-\-json]
+Summarize the store: how many entries, how many bytes they take and the budget
+they count against (shared by every share). The
+.B \-\-json
+form also reports the root, the oldest recorded deletion and how many folders the
+entries belong to.
+.TP
 .B hsync trash prune [\-\-trash\-dir \fIDIR\fP] [\-\-json]
 Apply the retention window and the size budget now, over the whole store (the
 budget is shared by every folder). A running client sweeps at most hourly, so a

@@ -76,6 +76,7 @@ __all__ = [
     "MoveResult",
     "PruneReport",
     "RestoreReport",
+    "StoreStats",
     "TrashItem",
     "TrashSettings",
     "TrashStore",
@@ -83,6 +84,7 @@ __all__ = [
     "delete_local_tree",
     "empty_store",
     "prune_store",
+    "stats_store",
     "store_for_folder",
     "trash_settings",
 ]
@@ -324,6 +326,23 @@ class EmptyReport:
 
     removed: int = 0
     freed: int = 0
+
+
+@dataclass(frozen=True)
+class StoreStats:
+    """What the whole trash root holds, as a front-end shows it (ADR-0056).
+
+    The size budget is shared by every share, so the totals are root-wide too:
+    ``folders`` says how many shares' entries they cover and ``oldest`` is the
+    recorded deletion time of the oldest entry (0 when the store is empty).
+    """
+
+    root: str = ""
+    entries: int = 0
+    bytes: int = 0
+    oldest: int = 0
+    budget: int = 0
+    folders: int = 0
 
 
 @dataclass(frozen=True)
@@ -644,6 +663,38 @@ class TrashStore:
             return None
         _last_prune_at = moment
         return self.prune()
+
+
+def stats_store(settings: TrashSettings) -> StoreStats:
+    """Summarize the whole trash root: entries, bytes, oldest, budget.
+
+    Consumers: the ``hsync trash stats`` command and any front-end that shows
+    "X of Y" without listing every entry. It walks the store, never the state DB,
+    so it runs while a sync does.
+    """
+    folders = _trash_folders(settings.root)
+    entries = 0
+    total = 0
+    oldest = 0
+    for folder_dir in folders:
+        for directory in folder_dir.iterdir():
+            if not directory.is_dir() or directory.name.endswith(TRASH_RESTORING_SUFFIX):
+                continue
+            entry = _read_entry(directory)
+            if entry is None:
+                continue
+            entries += 1
+            total += entry["size"]
+            if oldest == 0 or entry["deleted_at"] < oldest:
+                oldest = entry["deleted_at"]
+    return StoreStats(
+        root=str(settings.root),
+        entries=entries,
+        bytes=total,
+        oldest=oldest,
+        budget=settings.budget(),
+        folders=len(folders),
+    )
 
 
 def empty_store(settings: TrashSettings, *, older_than_days: int | None = None) -> EmptyReport:

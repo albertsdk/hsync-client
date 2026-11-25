@@ -1341,6 +1341,41 @@ def trash_empty(
     typer.echo(f"Removed {report.removed} entr{plural}, {report.freed} B freed.")
 
 
+@_trash_app.command("stats")
+def trash_stats(
+    trash_dir: Annotated[
+        str | None,
+        typer.Option(
+            "--trash-dir",
+            help="Trash store directory (default: state dir).",
+            metavar="DIR",
+        ),
+    ] = None,
+    as_json: bool = typer.Option(False, "--json", help="Emit the summary as JSON."),
+) -> None:
+    """Summarize the store: entries, bytes and the budget they count against.
+
+    The figures cover the whole store, not one folder: the size budget is shared
+    by every share. A front-end shows "X of Y" from this call instead of summing
+    the listing.
+    """
+    from dataclasses import asdict
+
+    from hsync_client.logger import setup_logging
+    from hsync_client.trash import stats_store
+
+    setup_logging(quiet=True)
+    report = stats_store(_trash_settings(trash_dir))
+    if as_json:
+        typer.echo(json.dumps(asdict(report), indent=2, sort_keys=True))
+        return
+    plural = "y" if report.entries == 1 else "ies"
+    typer.echo(
+        f"{report.entries} entr{plural}, {report.bytes} B of {report.budget} B "
+        f"in {report.root} ({report.folders} folder(s))."
+    )
+
+
 @_trash_app.command("prune")
 def trash_prune(
     trash_dir: Annotated[

@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--trash-max-size` budget. `hsync trash list|add|restore|empty` lists, parks a
   file chosen by the user, restores and empties it, `--no-trash` turns it off,
   and a store pointed inside the synced folder is refused.
+- `hsync trash stats [--json]`: how many entries the store holds, how many bytes
+  they take and the budget they count against, so a front-end shows "X of Y"
+  without listing every entry.
 - `hsync trash prune [--json]`: applies the retention window and the size budget
   on demand, so a `--once` run or a stopped client does not keep the bytes past
   the window. `restore` and `empty` answer in JSON too, and the `list` entries

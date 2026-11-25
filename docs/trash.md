@@ -91,8 +91,18 @@ device in one call (with the same `--older-than`, `--yes` and `--json`):
 hsync trash empty --all --yes
 ```
 
-## Apply the retention window now
+## How big is the store
 
+```bash
+hsync trash stats
+```
+
+One line per device: how many entries, how many bytes they take and the budget
+they count against (the budget is shared by every share). For a front-end, `--json`
+adds `root`, `oldest` (the oldest recorded deletion) and `folders`, so a view can
+show "X of Y" without listing the entries.
+
+## Apply the retention window now
 A running client sweeps at most hourly; a `--once` run, a stopped client or a NAS
 that was off never reaches that point, so the window and the size budget can be
 applied on demand:

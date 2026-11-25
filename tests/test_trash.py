@@ -18,7 +18,13 @@ import uuid
 import pytest
 from hsync_common.constants import TRASH_ENTRY_FILENAME
 
-from hsync_client.trash import TrashSettings, TrashStore, delete_local_tree, empty_store
+from hsync_client.trash import (
+    TrashSettings,
+    TrashStore,
+    delete_local_tree,
+    empty_store,
+    stats_store,
+)
 
 
 @pytest.fixture
@@ -577,6 +583,35 @@ class TestTreeDelete:
         assert [item.entry["relpath"] for item in store.entries()] == ["tree/real.txt"]
 
 
+class TestStats:
+    """The store summary a front-end shows as "X of Y" (ADR-0056)."""
+
+    def test_an_empty_store_reports_zeros(self, tmp_path):
+        settings = TrashSettings(enabled=True, root=tmp_path / "trash")
+
+        report = stats_store(settings)
+
+        assert (report.entries, report.bytes, report.oldest, report.folders) == (0, 0, 0, 0)
+        assert report.budget > 0, "the auto budget always has a floor"
+
+    def test_the_totals_cover_every_folder(self, folder, tmp_path):
+        other = tmp_path / "other"
+        other.mkdir()
+        (other / ".hsyncfolder").write_text(f"{uuid.uuid4()}\n", encoding="utf-8")
+        settings = TrashSettings(enabled=True, root=tmp_path / "t")
+        TrashStore(folder, settings=settings).move(_write(folder, "a.txt", b"aa"))
+        second = TrashStore(other, settings=settings)
+        second.move(_write(other, "b.txt", b"bbb"))
+        [older] = [item for item in second.entries() if item.entry["relpath"] == "b.txt"]
+        _rewrite_entry(older, deleted_at=int(time.time()) - 3600)
+
+        report = stats_store(settings)
+
+        assert (report.entries, report.bytes, report.folders) == (2, 5, 2)
+        assert report.oldest == int(time.time()) - 3600
+        assert report.root == str(settings.root)
+
+
 class TestCommands:
     """The CLI surface a front-end consumes: every verb can answer in JSON."""
 
@@ -667,6 +702,27 @@ class TestCommands:
 
         assert result.exit_code == 0, result.output
         assert "Expired 0" in result.output
+
+    def test_stats_reports_the_store_against_its_budget(self, monkeypatch, tmp_path):
+        folder = self._folder(tmp_path)
+        self._park(monkeypatch, tmp_path, folder)
+
+        result = self._run(monkeypatch, tmp_path, "stats", "--json")
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert (payload["entries"], payload["bytes"], payload["folders"]) == (1, 3, 1)
+        assert payload["budget"] > 0
+        assert payload["root"] == str(tmp_path / "trash")
+
+    def test_stats_can_answer_for_a_person(self, monkeypatch, tmp_path):
+        folder = self._folder(tmp_path)
+        self._park(monkeypatch, tmp_path, folder)
+
+        result = self._run(monkeypatch, tmp_path, "stats")
+
+        assert result.exit_code == 0, result.output
+        assert "1 entry, 3 B" in result.output
 
     def test_empty_all_clears_every_folder(self, monkeypatch, tmp_path):
         first = self._folder(tmp_path)
