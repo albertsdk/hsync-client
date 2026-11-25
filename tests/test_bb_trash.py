@@ -146,7 +146,7 @@ class TestEmptyAndPrune:
         listed = _run("list", "--folder", str(folder), "--json")
 
         assert emptied.exit_code == 0, emptied.output
-        assert json.loads(emptied.output) == {"freed": 5, "removed": 2}
+        assert json.loads(emptied.output) == {"dry_run": False, "freed": 5, "removed": 2}
         assert json.loads(listed.output) == []
 
     def test_prune_keeps_a_fresh_entry(self, folder):

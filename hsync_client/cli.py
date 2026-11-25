@@ -1298,12 +1298,13 @@ def trash_empty(
     ] = None,
     yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask for confirmation."),
     as_json: bool = typer.Option(False, "--json", help="Emit the outcome as JSON."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report what would be removed."),
 ) -> None:
     """Delete trashed files for good, for one folder or the whole device.
 
     --all empties every folder of this device in one call: the store keeps one
     directory per share, so an operator recovering space must not run the command
-    once per share.
+    once per share. --dry-run reports the same counts without deleting anything.
     """
     from dataclasses import asdict
     from pathlib import Path
@@ -1316,9 +1317,11 @@ def trash_empty(
         raise typer.BadParameter("choose one of --folder DIR or --all.")
     setup_logging(quiet=True)
     if all_stores:
-        if not yes:
+        if not yes and not dry_run:
             typer.confirm("Empty the trash of every folder on this device?", abort=True)
-        report = empty_store(_trash_settings(trash_dir), older_than_days=older_than)
+        report = empty_store(
+            _trash_settings(trash_dir), older_than_days=older_than, dry_run=dry_run
+        )
     else:
         target = Path(str(folder)).expanduser()
         if not target.is_dir():
@@ -1327,18 +1330,21 @@ def trash_empty(
         store = _trash_store(str(target), trash_dir)
         if not store.entries():
             if as_json:
-                typer.echo(json.dumps(asdict(EmptyReport()), indent=2, sort_keys=True))
+                typer.echo(
+                    json.dumps(asdict(EmptyReport(dry_run=dry_run)), indent=2, sort_keys=True)
+                )
                 return
             typer.echo(f"No trashed files for {target}.")
             return
-        if not yes:
+        if not yes and not dry_run:
             typer.confirm(f"Empty the trash of {target}?", abort=True)
-        report = store.empty(older_than_days=older_than)
+        report = store.empty(older_than_days=older_than, dry_run=dry_run)
     if as_json:
         typer.echo(json.dumps(asdict(report), indent=2, sort_keys=True))
         return
     plural = "y" if report.removed == 1 else "ies"
-    typer.echo(f"Removed {report.removed} entr{plural}, {report.freed} B freed.")
+    verb = "Would remove" if report.dry_run else "Removed"
+    typer.echo(f"{verb} {report.removed} entr{plural}, {report.freed} B freed.")
 
 
 @_trash_app.command("stats")
@@ -1387,13 +1393,15 @@ def trash_prune(
         ),
     ] = None,
     as_json: bool = typer.Option(False, "--json", help="Emit the sweep as JSON."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report the sweep without deleting."),
 ) -> None:
     """Apply the retention window and the size budget now.
 
     A running sync sweeps at most hourly (prune_if_due); a --once run, a stopped
     client or a NAS that was off never reaches that gate, so the bound and the
     bytes it frees are applied on demand here. The sweep covers the whole store,
-    not one folder: the budget is shared by every share.
+    not one folder: the budget is shared by every share. --dry-run reports the
+    same figures without deleting anything.
     """
     from dataclasses import asdict
 
@@ -1401,13 +1409,14 @@ def trash_prune(
     from hsync_client.trash import prune_store
 
     setup_logging(quiet=True)
-    report = prune_store(_trash_settings(trash_dir))
+    report = prune_store(_trash_settings(trash_dir), dry_run=dry_run)
     if as_json:
         typer.echo(json.dumps(asdict(report), indent=2, sort_keys=True))
         return
+    verb = "Would remove" if report.dry_run else "Removed"
     typer.echo(
-        f"Expired {report.expired}, evicted {report.evicted}, discarded "
-        f"{report.discarded}, freed {report.freed} B, kept {report.kept}."
+        f"{verb}: expired {report.expired}, evicted {report.evicted}, discarded "
+        f"{report.discarded}; {report.freed} B freed, {report.kept} kept."
     )
 
 

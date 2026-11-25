@@ -696,11 +696,13 @@ prints the report a front-end branches on (its
 .I status
 is the verdict) and keeps a non\-zero exit code on a refusal.
 .TP
-.B hsync trash empty (\-\-folder \fIDIR\fP | \-\-all) [\-\-older\-than \fIDAYS\fP] [\-\-yes] [\-\-json]
+.B hsync trash empty (\-\-folder \fIDIR\fP | \-\-all) [\-\-older\-than \fIDAYS\fP] [\-\-yes] [\-\-dry\-run] [\-\-json]
 Remove trashed files for good, for one folder or every folder of this device.
 Without
 .B \-\-yes
 the command asks for confirmation.
+.B \-\-dry\-run
+reports the same counts and deletes nothing (so it asks nothing).
 .TP
 .B hsync trash stats [\-\-trash\-dir \fIDIR\fP] [\-\-json]
 Summarize the store: how many entries, how many bytes they take and the budget
@@ -709,7 +711,7 @@ they count against (shared by every share). The
 form also reports the root, the oldest recorded deletion and how many folders the
 entries belong to.
 .TP
-.B hsync trash prune [\-\-trash\-dir \fIDIR\fP] [\-\-json]
+.B hsync trash prune [\-\-trash\-dir \fIDIR\fP] [\-\-dry\-run] [\-\-json]
 Apply the retention window and the size budget now, over the whole store (the
 budget is shared by every folder). A running client sweeps at most hourly, so a
 one\-shot run, a stopped client or a NAS that was off uses this command; the

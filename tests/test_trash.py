@@ -682,7 +682,7 @@ class TestCommands:
         )
 
         assert result.exit_code == 0, result.output
-        assert json.loads(result.output) == {"freed": 3, "removed": 1}
+        assert json.loads(result.output) == {"dry_run": False, "freed": 3, "removed": 1}
 
     def test_prune_applies_the_window_without_a_folder(self, monkeypatch, tmp_path):
         """A stopped or ``--once`` client never reaches the hourly gate."""
@@ -701,7 +701,31 @@ class TestCommands:
         result = self._run(monkeypatch, tmp_path, "prune")
 
         assert result.exit_code == 0, result.output
-        assert "Expired 0" in result.output
+        assert "Removed: expired 0" in result.output
+
+    def test_prune_can_report_without_deleting(self, monkeypatch, tmp_path):
+        folder = self._folder(tmp_path)
+        self._park(monkeypatch, tmp_path, folder)
+        store = self._store(folder, tmp_path)
+        _rewrite_entry(store.entries()[0], deleted_at=int(time.time()) - 40 * 86_400)
+
+        result = self._run(monkeypatch, tmp_path, "prune", "--dry-run", "--json")
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert (payload["dry_run"], payload["expired"]) == (True, 1)
+        assert len(store.entries()) == 1, "a dry run must not delete anything"
+
+    def test_empty_can_report_without_asking_or_deleting(self, monkeypatch, tmp_path):
+        folder = self._folder(tmp_path)
+        self._park(monkeypatch, tmp_path, folder)
+        store = self._store(folder, tmp_path)
+
+        result = self._run(monkeypatch, tmp_path, "empty", "--folder", str(folder), "--dry-run")
+
+        assert result.exit_code == 0, result.output
+        assert "Would remove 1 entry" in result.output
+        assert len(store.entries()) == 1, "a dry run must not delete anything"
 
     def test_stats_reports_the_store_against_its_budget(self, monkeypatch, tmp_path):
         folder = self._folder(tmp_path)
@@ -735,7 +759,7 @@ class TestCommands:
         result = self._run(monkeypatch, tmp_path, "empty", "--all", "--yes", "--json")
 
         assert result.exit_code == 0, result.output
-        assert json.loads(result.output) == {"freed": 4, "removed": 2}
+        assert json.loads(result.output) == {"dry_run": False, "freed": 4, "removed": 2}
 
     def test_empty_needs_exactly_one_scope(self, monkeypatch, tmp_path):
         folder = self._folder(tmp_path)

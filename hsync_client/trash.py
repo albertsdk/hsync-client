@@ -322,10 +322,15 @@ class RestoreReport:
 
 @dataclass(frozen=True)
 class EmptyReport:
-    """Outcome of emptying the store (or one folder's part of it)."""
+    """Outcome of emptying the store (or one folder's part of it).
+
+    ``dry_run`` says nothing was removed: the counts describe what a real run
+    would have done.
+    """
 
     removed: int = 0
     freed: int = 0
+    dry_run: bool = False
 
 
 @dataclass(frozen=True)
@@ -360,6 +365,7 @@ class PruneReport:
     discarded: int = 0
     freed: int = 0
     kept: int = 0
+    dry_run: bool = False
 
 
 def _sha256_of(path: Path) -> str:
@@ -634,13 +640,13 @@ class TrashStore:
 
     # ── maintenance ───────────────────────────────────────────────────────
 
-    def empty(self, *, older_than_days: int | None = None) -> EmptyReport:
+    def empty(self, *, older_than_days: int | None = None, dry_run: bool = False) -> EmptyReport:
         """Delete this folder's entries (all of them, or those older than an age)."""
         folder_dir = self._folder_dir()
         folders = [folder_dir] if folder_dir is not None and folder_dir.is_dir() else []
-        return _discard_entries(folders, _age_cutoff(older_than_days))
+        return _discard_entries(folders, _age_cutoff(older_than_days), dry_run=dry_run)
 
-    def prune(self, *, now: int | None = None) -> PruneReport:
+    def prune(self, *, now: int | None = None, dry_run: bool = False) -> PruneReport:
         """Enforce the retention window and the size budget over the whole root.
 
         The budget is shared by every folder (one volume, one budget), so the
@@ -648,7 +654,7 @@ class TrashStore:
         — the ``hsync trash prune`` command applies it without a store, since a
         one-shot or stopped client never reaches the hourly gate.
         """
-        return prune_store(self.settings, now=now)
+        return prune_store(self.settings, now=now, dry_run=dry_run)
 
     def prune_if_due(self, *, interval_seconds: int = 3600) -> PruneReport | None:
         """Run :meth:`prune` at most once per interval; ``None`` when not due.
@@ -697,16 +703,25 @@ def stats_store(settings: TrashSettings) -> StoreStats:
     )
 
 
-def empty_store(settings: TrashSettings, *, older_than_days: int | None = None) -> EmptyReport:
+def empty_store(
+    settings: TrashSettings, *, older_than_days: int | None = None, dry_run: bool = False
+) -> EmptyReport:
     """Delete every entry of a whole trash root (or those older than an age).
+
+    With *dry_run* nothing is removed: the report describes what a real run would
+    have done, which is what an operator checks before emptying a NAS store.
 
     Consumers: the ``hsync trash empty --all`` command, which empties every share
     of one device in a single call. ``TrashStore.empty`` stays per folder.
     """
-    return _discard_entries(_trash_folders(settings.root), _age_cutoff(older_than_days))
+    return _discard_entries(
+        _trash_folders(settings.root), _age_cutoff(older_than_days), dry_run=dry_run
+    )
 
 
-def prune_store(settings: TrashSettings, *, now: int | None = None) -> PruneReport:
+def prune_store(
+    settings: TrashSettings, *, now: int | None = None, dry_run: bool = False
+) -> PruneReport:
     """Enforce the retention window and the size budget over a whole trash root.
 
     The budget is shared by every folder (one volume, one budget), so the sweep
@@ -716,7 +731,8 @@ def prune_store(settings: TrashSettings, *, now: int | None = None) -> PruneRepo
 
     Consumers: ``hsync_client/trash.py::TrashStore.prune`` (the cycle's sweep) and
     the ``hsync trash prune`` command (an operator run, or a one-shot client that
-    never reaches the hourly gate).
+    never reaches the hourly gate). With *dry_run* nothing is removed and the
+    report describes what the sweep would have done.
     """
     moment = int(time.time()) if now is None else now
     cutoff = moment - settings.retention_days * _SECONDS_PER_DAY
@@ -731,12 +747,12 @@ def prune_store(settings: TrashSettings, *, now: int | None = None) -> PruneRepo
             entry = _read_entry(directory)
             if entry is None or not _payload_intact(directory, entry):
                 discarded += 1
-                _discard(directory)
+                _drop(directory, dry_run)
                 continue
             if settings.retention_days > 0 and entry["deleted_at"] < cutoff:
                 expired += 1
                 freed += entry["size"]
-                _discard(directory)
+                _drop(directory, dry_run)
                 continue
             kept.append((entry, directory))
     budget = settings.budget()
@@ -753,13 +769,14 @@ def prune_store(settings: TrashSettings, *, now: int | None = None) -> PruneRepo
             total -= entry["size"]
             freed += entry["size"]
             evicted += 1
-            _discard(directory)
+            _drop(directory, dry_run)
     return PruneReport(
         expired=expired,
         evicted=evicted,
         discarded=discarded,
         freed=freed,
         kept=len(kept) - evicted,
+        dry_run=dry_run,
     )
 
 
@@ -770,7 +787,9 @@ def _age_cutoff(older_than_days: int | None) -> int | None:
     return int(time.time()) - older_than_days * _SECONDS_PER_DAY
 
 
-def _discard_entries(folder_dirs: Iterable[Path], cutoff: int | None) -> EmptyReport:
+def _discard_entries(
+    folder_dirs: Iterable[Path], cutoff: int | None, *, dry_run: bool = False
+) -> EmptyReport:
     """Delete the entries of *folder_dirs*, skipping those at or after *cutoff*."""
     removed = 0
     freed = 0
@@ -780,14 +799,14 @@ def _discard_entries(folder_dirs: Iterable[Path], cutoff: int | None) -> EmptyRe
                 continue
             entry = _read_entry(directory)
             if entry is None:
-                _discard(directory)
+                _drop(directory, dry_run)
                 continue
             if cutoff is not None and entry["deleted_at"] >= cutoff:
                 continue
             removed += 1
             freed += entry["size"]
-            _discard(directory)
-    return EmptyReport(removed=removed, freed=freed)
+            _drop(directory, dry_run)
+    return EmptyReport(removed=removed, freed=freed, dry_run=dry_run)
 
 
 def _payload_intact(directory: Path, entry: TrashEntry) -> bool:
@@ -819,6 +838,12 @@ def _write_entry(directory: Path, entry: TrashEntry) -> None:
     partial = target.with_name(target.name + ".tmp")
     partial.write_text(json.dumps(entry, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(partial, target)
+
+
+def _drop(directory: Path, dry_run: bool) -> None:
+    """Remove an entry directory, or leave it in place for a dry run."""
+    if not dry_run:
+        _discard(directory)
 
 
 def _discard(directory: Path) -> None:

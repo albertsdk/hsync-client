@@ -84,6 +84,13 @@ the recent entries, and `--json` reports `removed` and `freed` bytes:
 hsync trash empty --folder SYNCED_FOLDER --older-than 7 --yes
 ```
 
+`--dry-run` reports the same counts without deleting anything, and skips the
+confirmation because nothing is removed:
+
+```bash
+hsync trash empty --folder SYNCED_FOLDER --dry-run
+```
+
 The store keeps one directory per share, so `--all` empties every share of this
 device in one call (with the same `--older-than`, `--yes` and `--json`):
 
@@ -113,7 +120,8 @@ hsync trash prune
 
 The sweep covers the whole store — the size budget is shared by every share — and
 `--json` reports `expired`, `evicted`, `discarded` (records whose stored bytes
-were unusable), `freed` and `kept`.
+were unusable), `freed` and `kept`. `--dry-run` reports the same figures without
+deleting anything:
 
 ## How long files are kept
 
