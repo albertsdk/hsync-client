@@ -35,6 +35,7 @@ import shutil
 import stat
 import time
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -52,6 +53,7 @@ from hsync_common.disk import BYTES_PER_MB, share_of_volume_bytes
 from hsync_common.models.folder import read_folder_marker
 from hsync_common.models.trash import (
     TRASH_ORIGIN_SYNC,
+    TRASH_ORIGIN_USER,
     TrashEntry,
     entry_dir,
     entry_payload_path,
@@ -78,6 +80,7 @@ __all__ = [
     "TrashSettings",
     "TrashStore",
     "delete_local_file",
+    "empty_store",
     "prune_store",
     "store_for_folder",
     "trash_settings",
@@ -246,7 +249,9 @@ class RestoreReport:
 
     ``status`` is the machine-readable verdict a front-end branches on:
     ``restored``, ``no-entry``, ``destination-exists``, ``download-only``,
-    ``payload-missing`` or ``payload-corrupt``.
+    ``payload-missing`` or ``payload-corrupt``. ``replaced`` says the path
+    already existed and its copy was parked as its own entry first, so the
+    forced restore lost nothing.
     """
 
     folder: str
@@ -256,6 +261,7 @@ class RestoreReport:
     size: int = 0
     destination: str = ""
     detail: str = ""
+    replaced: bool = False
 
     @property
     def restored(self) -> bool:
@@ -461,13 +467,21 @@ class TrashStore:
 
     # ── restore ───────────────────────────────────────────────────────────
 
-    def restore(self, relpath: str, *, direction: str = "bidirectional") -> RestoreReport:
+    def restore(
+        self, relpath: str, *, direction: str = "bidirectional", force: bool = False
+    ) -> RestoreReport:
         """Write a trashed file back into the folder.
 
         The restore is a plain local write on purpose: the engine treats a
         re-created path as a new version that supersedes the deletion marker
         (ADR-0003), so it uploads it and every peer resurrects the path. No
         state-DB write and no lock, which is what lets it run during a sync.
+
+        With *force*, an existing destination is not a dead end: the file there
+        is parked as its own entry first (origin ``user``), so the path ends up
+        with the restored bytes and the copy it replaced stays restorable. A
+        directory is never replaced — nothing of it could be parked under one
+        file entry — so that refusal stands.
         """
         canonical = str(self.folder)
         if not self.settings.enabled:
@@ -479,14 +493,8 @@ class TrashStore:
         item = next((item for item in self.entries() if item.entry["relpath"] == relpath), None)
         if item is None:
             return RestoreReport(folder=canonical, relpath=relpath, status="no-entry")
-        destination = self.folder / relpath
-        if destination.exists() or destination.is_symlink():
-            return RestoreReport(
-                folder=canonical,
-                relpath=relpath,
-                status="destination-exists",
-                entry_id=item.entry_id,
-            )
+        # Integrity first: a corrupt entry must leave the folder untouched, which
+        # matters most under --force (nothing is parked before the bytes check).
         if not item.payload.is_file():
             return RestoreReport(
                 folder=canonical,
@@ -512,6 +520,26 @@ class TrashStore:
                 status="payload-corrupt",
                 entry_id=item.entry_id,
             )
+        destination = self.folder / relpath
+        replaced = False
+        if destination.exists() or destination.is_symlink():
+            if not force:
+                return RestoreReport(
+                    folder=canonical,
+                    relpath=relpath,
+                    status="destination-exists",
+                    entry_id=item.entry_id,
+                )
+            parked = self.move(destination, origin=TRASH_ORIGIN_USER)
+            if not parked.trashed:
+                return RestoreReport(
+                    folder=canonical,
+                    relpath=relpath,
+                    status="destination-exists",
+                    entry_id=item.entry_id,
+                    detail=parked.reason,
+                )
+            replaced = True
         try:
             destination.parent.mkdir(parents=True, exist_ok=True)
             _restore_payload(item.payload, destination)
@@ -532,26 +560,16 @@ class TrashStore:
             entry_id=item.entry_id,
             size=item.entry["size"],
             destination=str(destination),
+            replaced=replaced,
         )
 
     # ── maintenance ───────────────────────────────────────────────────────
 
     def empty(self, *, older_than_days: int | None = None) -> EmptyReport:
         """Delete this folder's entries (all of them, or those older than an age)."""
-        cutoff = (
-            None
-            if older_than_days is None
-            else int(time.time()) - older_than_days * _SECONDS_PER_DAY
-        )
-        removed = 0
-        freed = 0
-        for item in self.entries():
-            if cutoff is not None and item.entry["deleted_at"] >= cutoff:
-                continue
-            removed += 1
-            freed += item.entry["size"]
-            _discard(item.directory)
-        return EmptyReport(removed=removed, freed=freed)
+        folder_dir = self._folder_dir()
+        folders = [folder_dir] if folder_dir is not None and folder_dir.is_dir() else []
+        return _discard_entries(folders, _age_cutoff(older_than_days))
 
     def prune(self, *, now: int | None = None) -> PruneReport:
         """Enforce the retention window and the size budget over the whole root.
@@ -576,6 +594,15 @@ class TrashStore:
             return None
         _last_prune_at = moment
         return self.prune()
+
+
+def empty_store(settings: TrashSettings, *, older_than_days: int | None = None) -> EmptyReport:
+    """Delete every entry of a whole trash root (or those older than an age).
+
+    Consumers: the ``hsync trash empty --all`` command, which empties every share
+    of one device in a single call. ``TrashStore.empty`` stays per folder.
+    """
+    return _discard_entries(_trash_folders(settings.root), _age_cutoff(older_than_days))
 
 
 def prune_store(settings: TrashSettings, *, now: int | None = None) -> PruneReport:
@@ -633,6 +660,33 @@ def prune_store(settings: TrashSettings, *, now: int | None = None) -> PruneRepo
         freed=freed,
         kept=len(kept) - evicted,
     )
+
+
+def _age_cutoff(older_than_days: int | None) -> int | None:
+    """Return the ``deleted_at`` floor for an age filter, or ``None`` for all."""
+    if older_than_days is None:
+        return None
+    return int(time.time()) - older_than_days * _SECONDS_PER_DAY
+
+
+def _discard_entries(folder_dirs: Iterable[Path], cutoff: int | None) -> EmptyReport:
+    """Delete the entries of *folder_dirs*, skipping those at or after *cutoff*."""
+    removed = 0
+    freed = 0
+    for folder_dir in folder_dirs:
+        for directory in folder_dir.iterdir():
+            if not directory.is_dir() or directory.name.endswith(TRASH_RESTORING_SUFFIX):
+                continue
+            entry = _read_entry(directory)
+            if entry is None:
+                _discard(directory)
+                continue
+            if cutoff is not None and entry["deleted_at"] >= cutoff:
+                continue
+            removed += 1
+            freed += entry["size"]
+            _discard(directory)
+    return EmptyReport(removed=removed, freed=freed)
 
 
 def _payload_intact(directory: Path, entry: TrashEntry) -> bool:

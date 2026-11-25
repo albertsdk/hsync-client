@@ -1216,6 +1216,11 @@ def trash_restore(
         ),
     ] = "bidirectional",
     as_json: bool = typer.Option(False, "--json", help="Emit the outcome as JSON."),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Replace an existing file: it is moved to the trash first, so nothing is lost.",
+    ),
 ) -> None:
     """Put a trashed file back; the next cycle propagates it again.
 
@@ -1238,12 +1243,15 @@ def trash_restore(
     if not target.is_dir():
         typer.echo(f"Not a directory: {target}", err=True)
         raise typer.Exit(code=int(ExitCode.FATAL))
-    report = _trash_store(str(target), trash_dir).restore(relpath, direction=direction)
+    report = _trash_store(str(target), trash_dir).restore(relpath, direction=direction, force=force)
     if as_json:
         typer.echo(json.dumps(asdict(report), indent=2, sort_keys=True))
         raise typer.Exit(code=0 if report.restored else int(ExitCode.FATAL))
     if report.status == "restored":
-        typer.echo(f'Restored "{report.relpath}" ({report.size} B). The next sync propagates it.')
+        replaced = " (the file it replaced is in the trash)" if report.replaced else ""
+        typer.echo(
+            f'Restored "{report.relpath}" ({report.size} B){replaced}. The next sync propagates it.'
+        )
         return
     reasons = {
         "no-entry": "no trashed file with that path",
@@ -1260,13 +1268,18 @@ def trash_restore(
 @_trash_app.command("empty")
 def trash_empty(
     folder: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--folder",
             help="Synced folder whose trash is emptied.",
             metavar="DIR",
         ),
-    ],
+    ] = None,
+    all_stores: bool = typer.Option(
+        False,
+        "--all",
+        help="Empty the trash of every folder on this device.",
+    ),
     trash_dir: Annotated[
         str | None,
         typer.Option(
@@ -1286,29 +1299,41 @@ def trash_empty(
     yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask for confirmation."),
     as_json: bool = typer.Option(False, "--json", help="Emit the outcome as JSON."),
 ) -> None:
-    """Delete the folder's trashed files for good."""
+    """Delete trashed files for good, for one folder or the whole device.
+
+    --all empties every folder of this device in one call: the store keeps one
+    directory per share, so an operator recovering space must not run the command
+    once per share.
+    """
     from dataclasses import asdict
     from pathlib import Path
 
     from hsync_client.exitcodes import ExitCode
     from hsync_client.logger import setup_logging
-    from hsync_client.trash import EmptyReport
+    from hsync_client.trash import EmptyReport, empty_store
 
+    if all_stores == (folder is not None):
+        raise typer.BadParameter("choose one of --folder DIR or --all.")
     setup_logging(quiet=True)
-    target = Path(folder).expanduser()
-    if not target.is_dir():
-        typer.echo(f"Not a directory: {target}", err=True)
-        raise typer.Exit(code=int(ExitCode.FATAL))
-    store = _trash_store(str(target), trash_dir)
-    if not store.entries():
-        if as_json:
-            typer.echo(json.dumps(asdict(EmptyReport()), indent=2, sort_keys=True))
+    if all_stores:
+        if not yes:
+            typer.confirm("Empty the trash of every folder on this device?", abort=True)
+        report = empty_store(_trash_settings(trash_dir), older_than_days=older_than)
+    else:
+        target = Path(str(folder)).expanduser()
+        if not target.is_dir():
+            typer.echo(f"Not a directory: {target}", err=True)
+            raise typer.Exit(code=int(ExitCode.FATAL))
+        store = _trash_store(str(target), trash_dir)
+        if not store.entries():
+            if as_json:
+                typer.echo(json.dumps(asdict(EmptyReport()), indent=2, sort_keys=True))
+                return
+            typer.echo(f"No trashed files for {target}.")
             return
-        typer.echo(f"No trashed files for {target}.")
-        return
-    if not yes:
-        typer.confirm(f"Empty the trash of {target}?", abort=True)
-    report = store.empty(older_than_days=older_than)
+        if not yes:
+            typer.confirm(f"Empty the trash of {target}?", abort=True)
+        report = store.empty(older_than_days=older_than)
     if as_json:
         typer.echo(json.dumps(asdict(report), indent=2, sort_keys=True))
         return

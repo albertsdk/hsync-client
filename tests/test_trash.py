@@ -18,7 +18,7 @@ import uuid
 import pytest
 from hsync_common.constants import TRASH_ENTRY_FILENAME
 
-from hsync_client.trash import TrashSettings, TrashStore
+from hsync_client.trash import TrashSettings, TrashStore, empty_store
 
 
 @pytest.fixture
@@ -151,6 +151,44 @@ class TestListAndRestore:
         assert (folder / "docs/report.txt").read_bytes() == b"someone else"
         assert len(store.entries()) == 1
 
+    def test_force_replaces_the_file_and_keeps_the_previous_copy(self, store, folder):
+        """A forced restore never dead-ends: the copy it replaces is parked."""
+        store.move(_write(folder))
+        _write(folder, content=b"someone else")
+
+        report = store.restore("docs/report.txt", force=True)
+
+        assert (report.status, report.replaced) == ("restored", True)
+        assert (folder / "docs/report.txt").read_bytes() == b"hello"
+        [replaced] = store.entries()
+        assert replaced.entry["origin"] == "user"
+        assert replaced.payload.read_bytes() == b"someone else"
+
+    def test_force_cannot_replace_a_directory(self, store, folder):
+        """Nothing of a directory could be parked under one file entry."""
+        store.move(_write(folder, "docs/report.txt", b"payload"))
+        (folder / "docs/report.txt").mkdir()
+        (folder / "docs/report.txt" / "inside.txt").write_bytes(b"x")
+
+        report = store.restore("docs/report.txt", force=True)
+
+        assert report.status == "destination-exists"
+        assert report.detail == "not-a-regular-file"
+        assert (folder / "docs/report.txt" / "inside.txt").exists()
+
+    def test_a_corrupt_entry_leaves_a_forced_destination_untouched(self, store, folder):
+        """The bytes are checked before anything is parked under --force."""
+        store.move(_write(folder))
+        [item] = store.entries()
+        item.payload.write_bytes(b"different")
+        _write(folder, content=b"someone else")
+
+        report = store.restore("docs/report.txt", force=True)
+
+        assert report.status == "payload-corrupt"
+        assert (folder / "docs/report.txt").read_bytes() == b"someone else"
+        assert len(store.entries()) == 1
+
     def test_a_download_only_folder_refuses_the_restore(self, store, folder):
         store.move(_write(folder))
 
@@ -258,6 +296,21 @@ class TestMaintenance:
         assert report.evicted == 1
         assert first.entries() == []
         assert [item.entry["relpath"] for item in second.entries()] == ["new.txt"]
+
+    def test_empty_store_clears_every_folder(self, folder, tmp_path):
+        """--all empties every share of the device, and the budget is shared too."""
+        other = tmp_path / "other"
+        other.mkdir()
+        (other / ".hsyncfolder").write_text(f"{uuid.uuid4()}\n", encoding="utf-8")
+        settings = TrashSettings(enabled=True, root=tmp_path / "t")
+        TrashStore(folder, settings=settings).move(_write(folder, "a.txt", b"aa"))
+        TrashStore(other, settings=settings).move(_write(other, "b.txt", b"bbb"))
+
+        report = empty_store(settings)
+
+        assert (report.removed, report.freed) == (2, 5)
+        assert TrashStore(folder, settings=settings).entries() == []
+        assert TrashStore(other, settings=settings).entries() == []
 
     def test_empty_removes_every_entry(self, store, folder):
         store.move(_write(folder, "a.txt", b"aa"))
@@ -572,6 +625,28 @@ class TestCommands:
 
         assert result.exit_code == 0, result.output
         assert "Expired 0" in result.output
+
+    def test_empty_all_clears_every_folder(self, monkeypatch, tmp_path):
+        first = self._folder(tmp_path)
+        second = tmp_path / "other"
+        second.mkdir()
+        (second / ".hsyncfolder").write_text(f"{uuid.uuid4()}\n", encoding="utf-8")
+        self._park(monkeypatch, tmp_path, first)
+        self._park(monkeypatch, tmp_path, second, "gone2.txt", b"b")
+
+        result = self._run(monkeypatch, tmp_path, "empty", "--all", "--yes", "--json")
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output) == {"freed": 4, "removed": 2}
+
+    def test_empty_needs_exactly_one_scope(self, monkeypatch, tmp_path):
+        folder = self._folder(tmp_path)
+
+        neither = self._run(monkeypatch, tmp_path, "empty", "--yes")
+        both = self._run(monkeypatch, tmp_path, "empty", "--folder", str(folder), "--all", "--yes")
+
+        assert (neither.exit_code, both.exit_code) == (2, 2)
+        assert "choose one of --folder DIR or --all" in neither.output
 
 
 class TestStoreLocation:

@@ -96,6 +96,21 @@ class TestRestore:
         assert json.loads(restored.output)["status"] == "destination-exists"
         assert (folder / "report.txt").read_bytes() == b"back again"
 
+    def test_force_replaces_the_file_and_keeps_the_previous_copy(self, folder):
+        (folder / "report.txt").write_bytes(b"old")
+        _run("add", "--folder", str(folder), "report.txt")
+        (folder / "report.txt").write_bytes(b"new")
+
+        restored = _run("restore", "--folder", str(folder), "report.txt", "--force", "--json")
+        listed = _run("list", "--folder", str(folder), "--json")
+
+        assert restored.exit_code == 0, restored.output
+        report = json.loads(restored.output)
+        assert (report["status"], report["replaced"]) == ("restored", True)
+        assert (folder / "report.txt").read_bytes() == b"old"
+        [kept] = json.loads(listed.output)
+        assert kept["path"] == "report.txt"
+
     def test_a_download_only_folder_refuses(self, folder):
         (folder / "report.txt").write_bytes(b"hello")
         _run("add", "--folder", str(folder), "report.txt")

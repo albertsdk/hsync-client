@@ -683,18 +683,22 @@ List the restorable files of one folder, newest first. With
 each entry carries its path, size, deletion time, origin, cid, bucket and
 .IR payload_present .
 .TP
-.B hsync trash restore \-\-folder \fIDIR\fP \fIRELPATH\fP [\-\-direction \fIDIRECTION\fP] [\-\-json]
+.B hsync trash restore \-\-folder \fIDIR\fP \fIRELPATH\fP [\-\-direction \fIDIRECTION\fP] [\-\-force] [\-\-json]
 Put one file back. It refuses when the destination exists, and when the folder
 runs
 .IR download\-only
 (the mirror rule would delete the file again).
+.B \-\-force
+replaces an existing file by moving it into the trash first, so neither copy is
+lost. A directory is never replaced.
 .B \-\-json
 prints the report a front-end branches on (its
 .I status
 is the verdict) and keeps a non\-zero exit code on a refusal.
 .TP
-.B hsync trash empty \-\-folder \fIDIR\fP [\-\-older\-than \fIDAYS\fP] [\-\-yes] [\-\-json]
-Remove trashed files for good. Without
+.B hsync trash empty (\-\-folder \fIDIR\fP | \-\-all) [\-\-older\-than \fIDAYS\fP] [\-\-yes] [\-\-json]
+Remove trashed files for good, for one folder or every folder of this device.
+Without
 .B \-\-yes
 the command asks for confirmation.
 .TP

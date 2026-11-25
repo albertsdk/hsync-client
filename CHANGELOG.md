@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on demand, so a `--once` run or a stopped client does not keep the bytes past
   the window. `restore` and `empty` answer in JSON too, and the `list` entries
   carry `payload_present`.
+- `hsync trash restore --force` replaces an existing file through the trash
+  instead of refusing the path, and `hsync trash empty --all` empties every
+  share of the device in one call.
 - `--peer-role full|leech|seed|off` plus `--no-serve-peer-blocks`,
   `--no-fetch-from-peers` and `--no-publish-inventory`: the three peer-mesh capabilities
   as independent keys.

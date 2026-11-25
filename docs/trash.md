@@ -55,7 +55,9 @@ hsync trash restore --folder SYNCED_FOLDER FILE_PATH
 The bytes go back with their recorded modification time, and the entry leaves
 the trash. The restore refuses when:
 
-- the path already exists in the folder (nothing is overwritten);
+- the path already exists in the folder (nothing is overwritten). Pass `--force`
+  to replace it instead: the file that is there moves into the trash first, so
+  both copies stay recoverable;
 - the folder runs `download-only`, because the mirror rule would delete the file
   again. Pass the folder's direction with `--direction download-only` to get that
   refusal instead of a silent deletion.
@@ -80,6 +82,13 @@ the recent entries, and `--json` reports `removed` and `freed` bytes:
 
 ```bash
 hsync trash empty --folder SYNCED_FOLDER --older-than 7 --yes
+```
+
+The store keeps one directory per share, so `--all` empties every share of this
+device in one call (with the same `--older-than`, `--yes` and `--json`):
+
+```bash
+hsync trash empty --all --yes
 ```
 
 ## Apply the retention window now
