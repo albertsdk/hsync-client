@@ -1,7 +1,7 @@
 .\" Man page for HSYNC - file synchronization client
 .\" =====================================================================
 
-.TH HSYNC 1 "2026-11-24" "hsync 1.2.0-alpha.1" "User Commands"
+.TH HSYNC 1 "2026-11-25" "hsync 1.2.0-alpha.1" "User Commands"
 .
 .\" ---------------------------------------------------------------------
 .SH NAME
@@ -678,18 +678,50 @@ propagates as a normal deletion, and the same restore brings the file back on
 every device.
 .TP
 .B hsync trash list \-\-folder \fIDIR\fP [\-\-trash\-dir \fIDIR\fP] [\-\-json]
-List the restorable files of one folder, newest first.
+List the restorable files of one folder, newest first. With
+.B \-\-json
+each entry carries its path, size, deletion time, origin, cid, bucket and
+.IR payload_present .
 .TP
-.B hsync trash restore \-\-folder \fIDIR\fP \fIRELPATH\fP [\-\-direction \fIDIRECTION\fP]
+.B hsync trash restore \-\-folder \fIDIR\fP \fIRELPATH\fP [\-\-direction \fIDIRECTION\fP] [\-\-force] [\-\-json]
 Put one file back. It refuses when the destination exists, and when the folder
 runs
 .IR download\-only
 (the mirror rule would delete the file again).
+.B \-\-force
+replaces an existing file by moving it into the trash first, so neither copy is
+lost. A directory is never replaced.
+.B \-\-json
+prints the report a front-end branches on (its
+.I status
+is the verdict) and keeps a non\-zero exit code on a refusal.
 .TP
-.B hsync trash empty \-\-folder \fIDIR\fP [\-\-older\-than \fIDAYS\fP] [\-\-yes]
-Remove trashed files for good. Without
+.B hsync trash empty (\-\-folder \fIDIR\fP | \-\-all) [\-\-older\-than \fIDAYS\fP] [\-\-yes] [\-\-json]
+Remove trashed files for good, for one folder or every folder of this device.
+Without
 .B \-\-yes
 the command asks for confirmation.
+.TP
+.B hsync trash stats [\-\-trash\-dir \fIDIR\fP] [\-\-json]
+Summarize the store: how many entries, how many bytes they take and the budget
+they count against (shared by every share). The
+.B \-\-json
+form also reports the root, the oldest recorded deletion and how many folders the
+entries belong to.
+.TP
+.B hsync trash prune [\-\-trash\-dir \fIDIR\fP] [\-\-json]
+Apply the retention window and the size budget now, over the whole store (the
+budget is shared by every folder). A running client sweeps at most hourly, so a
+one\-shot run, a stopped client or a NAS that was off uses this command; the
+.B \-\-json
+form reports
+.IR expired ,
+.IR evicted ,
+.I discarded
+(records whose stored bytes were unusable),
+.I freed
+and
+.IR kept .
 .SH SYNCHRONISATION DIRECTIONS
 .TP
 .B bidirectional

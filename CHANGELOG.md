@@ -13,8 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   device-local store (`<state dir>/trash`, `--trash-dir`) instead of unlinking
   it, kept for `--trash-retention` days (30 by default) under a
   `--trash-max-size` budget. `hsync trash list|add|restore|empty` lists, parks a
-  file chosen by the user, restores and empties it, and `--no-trash` turns it
-  off.
+  file chosen by the user, restores and empties it, `--no-trash` turns it off,
+  and a store pointed inside the synced folder is refused.
+- `hsync trash stats [--json]`: how many entries the store holds, how many bytes
+  they take and the budget they count against, so a front-end shows "X of Y"
+  without listing every entry.
+- `hsync trash prune [--json]`: applies the retention window and the size budget
+  on demand, so a `--once` run or a stopped client does not keep the bytes past
+  the window. `restore` and `empty` answer in JSON too, and the `list` entries
+  carry `payload_present`.
+- `hsync trash restore --force` replaces an existing file through the trash
+  instead of refusing the path, and `hsync trash empty --all` empties every
+  share of the device in one call.
 - `--peer-role full|leech|seed|off` plus `--no-serve-peer-blocks`,
   `--no-fetch-from-peers` and `--no-publish-inventory`: the three peer-mesh capabilities
   as independent keys.
@@ -38,6 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A removed **directory** keeps the bytes of the files it held: the tree is parked
+  in the trash (up to 1000 files / 1 GiB per removal, with the remainder logged)
+  before it is deleted, so a folder a peer removed is as recoverable as a single
+  file.
+- A deletion applied from a real-time event, or by the p2p master on a peer's
+  request, parks its bytes in the same trash as a cycle deletion; the sweep also
+  drops a record whose payload is gone.
 - The serving role runs its own maintenance pass (partial files, minted deletions, merge
   bases, `.hsynckeep`) at role start and on every resync.
 - A compressed download is streamed instead of staged, so the 256 MB cap and the

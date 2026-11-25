@@ -3,6 +3,7 @@
 
 """Tests for delete handling in the unified ``event_dispatch`` module."""
 
+import uuid
 from unittest.mock import patch
 
 from hsync_client.event_dispatch import apply_inbound_event
@@ -233,3 +234,90 @@ class TestApplyInboundDeleteEvent:
 
         assert not sentinel.exists()
         assert not subdir.exists()
+
+
+class TestApplyInboundDeleteKeepsTheBytes:
+    """A deletion applied in real time is as recoverable as a cycle's (ADR-0056)."""
+
+    @staticmethod
+    def _bucket(tmp_path):
+        bucket = tmp_path / "bucket"
+        bucket.mkdir()
+        (bucket / ".hsyncfolder").write_text(f"{uuid.uuid4()}\n", encoding="utf-8")
+        return bucket
+
+    @staticmethod
+    def _store(bucket, tmp_path):
+        from hsync_client.trash import TrashSettings, TrashStore
+
+        return TrashStore(bucket, settings=TrashSettings(enabled=True, root=tmp_path / "trash"))
+
+    async def test_the_bytes_reach_the_trash(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HSYNC_STATE_DIR", str(tmp_path / "state"))
+        monkeypatch.setenv("HSYNC_TRASH_DIR", str(tmp_path / "trash"))
+        bucket = self._bucket(tmp_path)
+        target = bucket / "gone.txt"
+        target.write_text("bye", encoding="utf-8")
+        event = {
+            "name": "deleted",
+            "src": {
+                "filepath": "gone.txt",
+                "sha256sum": "abc123",
+                "mtime": 1000,
+                "ctime": 1000,
+                "size": 3,
+                "permissions": "644",
+            },
+        }
+
+        with patch("hsync_client.event_dispatch.CONFIG", {"LOCAL_BUCKET": str(bucket)}):
+            await apply_inbound_event(event, REMOTE_DISPATCH_CTX)
+
+        assert not target.exists()
+        assert [item.entry["relpath"] for item in self._store(bucket, tmp_path).entries()] == [
+            "gone.txt"
+        ]
+
+    async def test_the_sentinel_is_unlinked_without_an_entry(self, tmp_path, monkeypatch):
+        """``.hsynckeep`` carries no user bytes: the store must not grow for it."""
+        monkeypatch.setenv("HSYNC_STATE_DIR", str(tmp_path / "state"))
+        monkeypatch.setenv("HSYNC_TRASH_DIR", str(tmp_path / "trash"))
+        bucket = self._bucket(tmp_path)
+        subdir = bucket / "emptydir"
+        subdir.mkdir()
+        (subdir / ".hsynckeep").write_text("", encoding="utf-8")
+        event = {
+            "name": "deleted",
+            "src": {
+                "filepath": "emptydir/.hsynckeep",
+                "sha256sum": "abc123",
+                "mtime": 1000,
+                "ctime": 1000,
+                "size": 0,
+                "permissions": "644",
+            },
+        }
+
+        with patch("hsync_client.event_dispatch.CONFIG", {"LOCAL_BUCKET": str(bucket)}):
+            await apply_inbound_event(event, REMOTE_DISPATCH_CTX)
+
+        assert not subdir.exists()
+        assert self._store(bucket, tmp_path).entries() == []
+
+    async def test_a_deleted_directory_parks_the_files_it_held(self, tmp_path, monkeypatch):
+        """A folder a peer removed must be as recoverable as a single file."""
+        monkeypatch.setenv("HSYNC_STATE_DIR", str(tmp_path / "state"))
+        monkeypatch.setenv("HSYNC_TRASH_DIR", str(tmp_path / "trash"))
+        bucket = self._bucket(tmp_path)
+        (bucket / "album").mkdir()
+        (bucket / "album" / "one.jpg").write_bytes(b"1")
+        (bucket / "album" / "two.jpg").write_bytes(b"22")
+        event = {"name": "deleted", "src": {"path": "album", "permissions": "755"}}
+
+        with patch("hsync_client.event_dispatch.CONFIG", {"LOCAL_BUCKET": str(bucket)}):
+            await apply_inbound_event(event, REMOTE_DISPATCH_CTX)
+
+        assert not (bucket / "album").exists()
+        assert sorted(
+            item.entry["relpath"] for item in self._store(bucket, tmp_path).entries()
+        ) == ["album/one.jpg", "album/two.jpg"]

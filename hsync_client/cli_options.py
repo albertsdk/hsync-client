@@ -10,7 +10,6 @@ parsed CLI values and never register anything.
 
 import sys
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Annotated, Any, TypedDict, cast
 
 import typer
@@ -504,7 +503,10 @@ def _validate_shared_options(values: Mapping[str, Any]) -> tuple[int | None, int
         raise typer.BadParameter("--delta-min-file-size-p2p must be >= 0.")
 
     # Sync trash (ADR-0056). The store is device-local, so it must stay outside
-    # the synced folder: everything inside it is shared with the peers.
+    # the synced folder: everything inside it is shared with the peers. The
+    # *effective* root is checked, not just the flag, because HSYNC_TRASH_DIR (or
+    # a relocated state dir) can point the store inside without a flag on the
+    # line.
     trash_retention_days = opts["trash_retention_days"]
     if trash_retention_days is not None and not (
         0 <= trash_retention_days <= TRASH_RETENTION_DAYS_MAX
@@ -513,18 +515,17 @@ def _validate_shared_options(values: Mapping[str, Any]) -> tuple[int | None, int
             f"--trash-retention must be between 0 and {TRASH_RETENTION_DAYS_MAX} days "
             "(0 = no time limit)."
         )
-    trash_dir = opts["trash_dir"]
     local_path = values["local_path"]
-    if trash_dir and local_path:
-        try:
-            candidate = Path(trash_dir).expanduser().resolve()
-            folder = Path(str(local_path)).expanduser().resolve()
-        except OSError:  # pragma: no cover - unreadable path, let the store fail
-            candidate = folder = Path()
-        if folder == candidate or folder in candidate.parents:
+    if local_path:
+        # Lazy: ``hsync_common.models`` is outside the CLI's import budget
+        # (``tests/test_startup_imports.py``).
+        from hsync_common.models.trash import trash_root, trash_root_inside_folder
+
+        if trash_root_inside_folder(trash_root(opts["trash_dir"] or None), str(local_path)):
             raise typer.BadParameter(
-                "--trash-dir must not live inside the synced folder: the trash is "
-                "device-local, and anything inside the folder is shared with the peers."
+                "the trash store must not live inside the synced folder (--trash-dir / "
+                "HSYNC_TRASH_DIR): the trash is device-local, and anything inside the "
+                "folder is shared with the peers."
             )
 
     return parsed_bw_upload, parsed_bw_download, parsed_min_free_disk_space
