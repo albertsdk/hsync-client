@@ -218,6 +218,47 @@ class TestMaintenance:
         assert store.entries() == []
         assert not item.directory.exists()
 
+    def test_an_entry_without_a_payload_is_discarded(self, store, folder):
+        """A crash between the record and the move must not keep a dead entry."""
+        store.move(_write(folder))
+        [item] = store.entries()
+        item.payload.unlink()
+
+        report = store.prune()
+
+        assert (report.discarded, report.kept) == (1, 0)
+        assert store.entries() == []
+        assert not item.directory.exists()
+
+    def test_an_entry_with_a_truncated_payload_is_discarded(self, store, folder):
+        store.move(_write(folder, "docs/report.txt", b"hello"))
+        [item] = store.entries()
+        item.payload.write_bytes(b"he")
+
+        report = store.prune()
+
+        assert report.discarded == 1
+        assert store.entries() == []
+
+    def test_the_budget_is_shared_by_every_folder(self, folder, tmp_path):
+        """One volume, one budget: a second share must not get its own allowance."""
+        other = tmp_path / "other"
+        other.mkdir()
+        (other / ".hsyncfolder").write_text(f"{uuid.uuid4()}\n", encoding="utf-8")
+        settings = TrashSettings(enabled=True, root=tmp_path / "t", max_size=6)
+        first = TrashStore(folder, settings=settings)
+        second = TrashStore(other, settings=settings)
+        first.move(_write(folder, "old.txt", b"aaaa"))
+        [old] = first.entries()
+        _rewrite_entry(old, deleted_at=int(time.time()) - 3600)
+        second.move(_write(other, "new.txt", b"bbbb"))
+
+        report = first.prune()
+
+        assert report.evicted == 1
+        assert first.entries() == []
+        assert [item.entry["relpath"] for item in second.entries()] == ["new.txt"]
+
     def test_empty_removes_every_entry(self, store, folder):
         store.move(_write(folder, "a.txt", b"aa"))
         store.move(_write(folder, "b.txt", b"bbb"))
@@ -399,3 +440,203 @@ class TestSyncCycle:
         assert not target.exists()
         store = TrashStore(folder, settings=TrashSettings(enabled=True, root=tmp_path / "trash"))
         assert store.entries() == []
+
+    def test_the_entry_records_the_share_name(self, monkeypatch, tmp_path):
+        """A front-end reads the share from the entry, so the cycle fills it in."""
+        folder = tmp_path / "shared"
+        folder.mkdir()
+        (folder / ".hsyncfolder").write_text(f"{uuid.uuid4()}\n", encoding="utf-8")
+        target = _write(folder, "gone.txt", b"bye")
+        from hsync_common.models.file import File
+
+        self._run(
+            monkeypatch,
+            tmp_path,
+            folder,
+            [File(str(target))],
+            config={"REMOTE_BUCKET": "team"},
+        )
+
+        store = TrashStore(folder, settings=TrashSettings(enabled=True, root=tmp_path / "trash"))
+        [item] = store.entries()
+        assert (item.entry["relpath"], item.entry["bucket"]) == ("gone.txt", "team")
+
+    def test_a_store_inside_the_folder_keeps_nothing(self, monkeypatch, tmp_path):
+        """The env can point the store into the shared tree; the cycle refuses it."""
+        folder = tmp_path / "shared"
+        folder.mkdir()
+        (folder / ".hsyncfolder").write_text(f"{uuid.uuid4()}\n", encoding="utf-8")
+        target = _write(folder, "gone.txt", b"bye")
+        from hsync_common.models.file import File
+
+        deleted, _guard = self._run(
+            monkeypatch,
+            tmp_path,
+            folder,
+            [File(str(target))],
+            config={"TRASH_DIR": str(folder / "trash")},
+        )
+
+        assert deleted == 1
+        assert not target.exists()
+        assert not (folder / "trash").exists()
+
+
+class TestCommands:
+    """The CLI surface a front-end consumes: every verb can answer in JSON."""
+
+    @staticmethod
+    def _run(monkeypatch, tmp_path, *args):
+        from typer.testing import CliRunner
+
+        from hsync_client.cli import app
+
+        monkeypatch.setenv("HSYNC_STATE_DIR", str(tmp_path / "state"))
+        monkeypatch.setenv("HSYNC_TRASH_DIR", str(tmp_path / "trash"))
+        return CliRunner().invoke(app, ["trash", *args])
+
+    @staticmethod
+    def _folder(tmp_path):
+        folder = tmp_path / "shared"
+        folder.mkdir()
+        (folder / ".hsyncfolder").write_text(f"{uuid.uuid4()}\n", encoding="utf-8")
+        return folder
+
+    def _park(self, monkeypatch, tmp_path, folder, relpath="gone.txt", content=b"bye"):
+        _write(folder, relpath, content)
+        result = self._run(monkeypatch, tmp_path, "add", "--folder", str(folder), relpath)
+        assert result.exit_code == 0, result.output
+
+    def _store(self, folder, tmp_path):
+        return TrashStore(folder, settings=TrashSettings(enabled=True, root=tmp_path / "trash"))
+
+    def test_list_json_flags_a_missing_payload(self, monkeypatch, tmp_path):
+        folder = self._folder(tmp_path)
+        self._park(monkeypatch, tmp_path, folder)
+        self._store(folder, tmp_path).entries()[0].payload.unlink()
+
+        result = self._run(monkeypatch, tmp_path, "list", "--folder", str(folder), "--json")
+
+        assert result.exit_code == 0, result.output
+        [entry] = json.loads(result.output)
+        assert (entry["path"], entry["payload_present"]) == ("gone.txt", False)
+
+    def test_restore_json_reports_the_outcome(self, monkeypatch, tmp_path):
+        folder = self._folder(tmp_path)
+        self._park(monkeypatch, tmp_path, folder)
+
+        result = self._run(
+            monkeypatch, tmp_path, "restore", "--folder", str(folder), "gone.txt", "--json"
+        )
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["status"] == "restored"
+        assert (folder / "gone.txt").read_bytes() == b"bye"
+
+    def test_restore_json_keeps_a_failure_non_zero(self, monkeypatch, tmp_path):
+        folder = self._folder(tmp_path)
+
+        result = self._run(
+            monkeypatch, tmp_path, "restore", "--folder", str(folder), "missing.txt", "--json"
+        )
+
+        assert result.exit_code == 1
+        assert json.loads(result.output)["status"] == "no-entry"
+
+    def test_empty_json_reports_the_count(self, monkeypatch, tmp_path):
+        folder = self._folder(tmp_path)
+        self._park(monkeypatch, tmp_path, folder)
+
+        result = self._run(
+            monkeypatch, tmp_path, "empty", "--folder", str(folder), "--yes", "--json"
+        )
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output) == {"freed": 3, "removed": 1}
+
+    def test_prune_applies_the_window_without_a_folder(self, monkeypatch, tmp_path):
+        """A stopped or ``--once`` client never reaches the hourly gate."""
+        folder = self._folder(tmp_path)
+        self._park(monkeypatch, tmp_path, folder)
+        store = self._store(folder, tmp_path)
+        _rewrite_entry(store.entries()[0], deleted_at=int(time.time()) - 40 * 86_400)
+
+        result = self._run(monkeypatch, tmp_path, "prune", "--json")
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["expired"] == 1
+        assert store.entries() == []
+
+    def test_prune_reports_its_verdict_for_a_person(self, monkeypatch, tmp_path):
+        result = self._run(monkeypatch, tmp_path, "prune")
+
+        assert result.exit_code == 0, result.output
+        assert "Expired 0" in result.output
+
+
+class TestStoreLocation:
+    """The store never lands inside the shared folder (ADR-0056)."""
+
+    @staticmethod
+    def _frame(folder, trash_dir):
+        """A ``p2p``/``server`` option frame with everything validation reads."""
+        from hsync_client.cli_options import _SHARED_VALIDATION_KEYS
+
+        frame = dict.fromkeys(_SHARED_VALIDATION_KEYS)
+        frame.update(
+            max_wait_timeout=120,
+            sync_direction="bidirectional",
+            max_inbound_size=10240,
+            trash_dir=trash_dir,
+            local_path=str(folder),
+        )
+        return frame
+
+    @staticmethod
+    def _validate(frame):
+        from hsync_client.cli_options import _validate_shared_options
+
+        return _validate_shared_options(frame)
+
+    def test_the_flag_inside_the_folder_is_refused(self, tmp_path, monkeypatch):
+        import typer
+
+        monkeypatch.delenv("HSYNC_TRASH_DIR", raising=False)
+        monkeypatch.setenv("HSYNC_STATE_DIR", str(tmp_path / "state"))
+        folder = tmp_path / "shared"
+        folder.mkdir()
+
+        with pytest.raises(typer.BadParameter, match="must not live inside the synced folder"):
+            self._validate(self._frame(folder, str(folder / "trash")))
+
+    def test_the_environment_directory_inside_the_folder_is_refused(self, tmp_path, monkeypatch):
+        """The same rule holds without a flag: HSYNC_TRASH_DIR cannot bypass it."""
+        import typer
+
+        monkeypatch.setenv("HSYNC_STATE_DIR", str(tmp_path / "state"))
+        folder = tmp_path / "shared"
+        folder.mkdir()
+        monkeypatch.setenv("HSYNC_TRASH_DIR", str(folder / ".trash"))
+
+        with pytest.raises(typer.BadParameter, match="must not live inside the synced folder"):
+            self._validate(self._frame(folder, None))
+
+    def test_a_state_dir_inside_the_folder_is_refused(self, tmp_path, monkeypatch):
+        """The default store follows the state dir, so relocating it is covered too."""
+        import typer
+
+        monkeypatch.delenv("HSYNC_TRASH_DIR", raising=False)
+        folder = tmp_path / "shared"
+        folder.mkdir()
+        monkeypatch.setenv("HSYNC_STATE_DIR", str(folder / ".state"))
+
+        with pytest.raises(typer.BadParameter, match="must not live inside the synced folder"):
+            self._validate(self._frame(folder, None))
+
+    def test_a_store_outside_the_folder_is_accepted(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("HSYNC_TRASH_DIR", raising=False)
+        monkeypatch.setenv("HSYNC_STATE_DIR", str(tmp_path / "state"))
+        folder = tmp_path / "shared"
+        folder.mkdir()
+
+        self._validate(self._frame(folder, str(tmp_path / "trash")))

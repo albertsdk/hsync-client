@@ -81,6 +81,9 @@ The store cache (`_stores`) is keyed by folder UUID so tests that switch
 | Symbol | Location | Role |
 | ------ | -------- | ---- |
 | `TrashStore` | `hsync_client/trash.py::TrashStore` | one folder's view of the device-local store: `move` (park a file the cycle is deleting), `entries`, `restore`, `empty`, `prune`/`prune_if_due` |
+| `store_for_folder` | `hsync_client/trash.py::store_for_folder` | the store of one folder, or `None` when it has none to extend; refuses a root inside the synced folder (reported once per process). Shared by the cycle and the realtime delete handlers |
+| `delete_local_file` | `hsync_client/trash.py::delete_local_file` | park the bytes, then remove: the single removal used by the cycle, `event_dispatch` and the p2p master. Engine artifacts and `.hsynckeep` are unlinked without an entry |
+| `prune_store` | `hsync_client/trash.py::prune_store` | the sweep over a whole trash root (one budget for every folder); discards records whose payload is missing or its size differs. `TrashStore.prune` delegates, and `hsync trash prune` calls it without a store |
 | `trash_settings` | `hsync_client/trash.py::trash_settings` | resolve `TRASH_ENABLED` / `TRASH_DIR` / `TRASH_RETENTION_DAYS` / `TRASH_MAX_SIZE` from `CONFIG` |
 | `TrashSettings.budget` | `hsync_client/trash.py::TrashSettings.budget` | effective byte budget: explicit `--trash-max-size`, else a share of the hosting filesystem with a floor |
 | `folder_id_of` | `hsync_client/trash.py::folder_id_of` | read `.hsyncfolder` read-only (a folder never synced has no trash) |

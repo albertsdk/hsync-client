@@ -50,6 +50,7 @@ from hsync_client.p2p_inventory import NOOP_INVENTORY_OBSERVER, InventoryObserve
 from hsync_client.p2p_sources import P2PSourceResolver
 from hsync_client.sync import _in_subdir_rel, update_dir, update_file
 from hsync_client.transfer import download_file
+from hsync_client.trash import delete_local_file, store_for_folder
 from hsync_client.utils import cid_suffix, path_lock, path_present, safe_rmdir_if_empty
 from hsync_client.utils.fs_ops import (
     create_symlink_or_skip,
@@ -59,16 +60,18 @@ from hsync_client.utils.fs_ops import (
 
 
 def _remove_locked(filepath: str) -> bool:
-    """Remove *filepath* under its per-path lock; return True if removed.
+    """Park the bytes of *filepath*, then remove it, under its per-path lock.
 
     Re-checks existence inside the lock so a concurrent transfer that just
     (re)wrote the same path is not torn by the delete. A dangling symlink is
-    a real directory entry and is removed too.
+    a real directory entry and is removed too. The bytes go to the device-local
+    trash first (ADR-0056): a deletion applied from an inbound event must stay as
+    recoverable as one the periodic cycle applies.
     """
     with path_lock(filepath):
         if path_present(filepath):
-            remove_with_retry(filepath)
-            return True
+            folder = str(CONFIG.get("LOCAL_BUCKET") or "")
+            return delete_local_file(store_for_folder(folder), filepath)
     return False
 
 

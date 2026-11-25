@@ -28,6 +28,11 @@ a front-end or a script, ask for JSON:
 hsync trash list --folder SYNCED_FOLDER --json
 ```
 
+Each entry carries `path`, `size`, `deleted_at`, `origin` (`sync` when the cycle
+applied the deletion, `user` when a front-end removed it), `cid`, `bucket` and
+`payload_present` — a record whose stored bytes are gone is listed with
+`payload_present: false` and cannot be restored (the sweep removes it).
+
 ## Delete a file into the trash
 
 Deleting through the trash keeps the removal recoverable: the bytes leave the
@@ -55,31 +60,64 @@ the trash. The restore refuses when:
   again. Pass the folder's direction with `--direction download-only` to get that
   refusal instead of a silent deletion.
 
+For a front-end, `--json` prints the verdict it should branch on — `status` is
+`restored`, `no-entry`, `destination-exists`, `download-only`,
+`payload-missing`, `payload-corrupt` or `failed` — and the exit code stays
+non-zero on a refusal:
+
+```bash
+hsync trash restore --folder SYNCED_FOLDER FILE_PATH --json
+```
+
 ## Remove trashed files for good
 
 ```bash
 hsync trash empty --folder SYNCED_FOLDER
 ```
 
-The command asks for confirmation; `--yes` skips it, and `--older-than DAYS`
-keeps the recent entries:
+The command asks for confirmation; `--yes` skips it, `--older-than DAYS` keeps
+the recent entries, and `--json` reports `removed` and `freed` bytes:
 
 ```bash
 hsync trash empty --folder SYNCED_FOLDER --older-than 7 --yes
 ```
 
+## Apply the retention window now
+
+A running client sweeps at most hourly; a `--once` run, a stopped client or a NAS
+that was off never reaches that point, so the window and the size budget can be
+applied on demand:
+
+```bash
+hsync trash prune
+```
+
+The sweep covers the whole store — the size budget is shared by every share — and
+`--json` reports `expired`, `evicted`, `discarded` (records whose stored bytes
+were unusable), `freed` and `kept`.
+
 ## How long files are kept
 
 30 days by default (`--trash-retention`, `0` = forever). The store also has a
 size budget: a share of the filesystem that hosts it, with a floor, or an
-explicit `--trash-max-size 2GB`. The sweep runs while the client runs and when
-you use these commands.
+explicit `--trash-max-size 2GB`. The sweep runs hourly while the client runs; use
+`hsync trash prune` to apply it immediately.
 
 ## Where the bytes live
 
 `$XDG_STATE_HOME/hsync/trash` (or `~/.local/state/hsync/trash`), one directory
 per folder. Relocate it with `--trash-dir DIR` or `HSYNC_TRASH_DIR`; it must stay
-outside the synced folder, which is shared with the other devices.
+outside the synced folder, which is shared with the other devices, and the client
+refuses to start when it does not.
+
+## What is covered
+
+Every **file** this device removes keeps its bytes — whether the deletion arrives
+from the cycle (the remote listing says the file is gone) or from a real-time
+event (a peer deletes it while both are online).
+
+A removed **directory** is not covered: its removal deletes the files inside it
+without keeping a copy, so only files deleted on their own can be restored.
 
 ## Turn the trash off
 

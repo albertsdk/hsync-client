@@ -22,6 +22,13 @@ Shared configuration options that apply to both Server Mode and p2p Mode.
 | `--trash-max-size` | Byte budget for the whole trash store, e.g. `2GB` (`0` = a share of the hosting filesystem) | `0` (auto) |
 | `--dry-run` | Dry run: show what would change without applying | `false` |
 
+Environment equivalents: `HSYNC_TRASH_ENABLED` (`true` / `false`),
+`HSYNC_TRASH_DIR`, `HSYNC_TRASH_RETENTION_DAYS` (`0` = forever) and
+`HSYNC_TRASH_MAX_SIZE` (bytes). The store is device-local and must stay outside
+the synced folder: a store pointed inside it — by `--trash-dir`, by
+`HSYNC_TRASH_DIR` or by a state dir relocated into the folder — is refused at
+startup. See [Trash](trash.md) for the restore workflow.
+
 ## Deletions
 
 Three independent controls decide whether a file that disappeared on one side

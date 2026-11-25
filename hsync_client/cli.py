@@ -1042,20 +1042,26 @@ _trash_app = typer.Typer(
 app.add_typer(_trash_app, name="trash")
 
 
-def _trash_store(folder: str, trash_dir: str | None):
-    """Build the store for *folder*, honouring ``--trash-dir`` and the env."""
-    from pathlib import Path
-
-    from hsync_client.trash import TrashSettings, TrashStore, trash_root, trash_settings
+def _trash_settings(trash_dir: str | None):
+    """Resolve the store settings of one ``trash`` verb (``--trash-dir`` wins)."""
+    from hsync_client.trash import TrashSettings, trash_root, trash_settings
 
     base = trash_settings()
-    settings = TrashSettings(
+    return TrashSettings(
         enabled=True,
         root=trash_root(trash_dir or None),
         retention_days=base.retention_days,
         max_size=base.max_size,
     )
-    return TrashStore(Path(folder), settings=settings)
+
+
+def _trash_store(folder: str, trash_dir: str | None):
+    """Build the store for *folder*, honouring ``--trash-dir`` and the env."""
+    from pathlib import Path
+
+    from hsync_client.trash import TrashStore
+
+    return TrashStore(Path(folder), settings=_trash_settings(trash_dir))
 
 
 @_trash_app.command("list")
@@ -1103,6 +1109,10 @@ def trash_list(
                         "origin": item.entry["origin"],
                         "cid": item.entry["cid"],
                         "bucket": item.entry["bucket"],
+                        # A record whose payload is gone is not restorable: the
+                        # sweep discards it, and the front-end says so instead of
+                        # offering a restore that can only refuse.
+                        "payload_present": item.payload.is_file(),
                     }
                     for item in items
                 ],
@@ -1205,13 +1215,19 @@ def trash_restore(
             metavar="DIRECTION",
         ),
     ] = "bidirectional",
+    as_json: bool = typer.Option(False, "--json", help="Emit the outcome as JSON."),
 ) -> None:
     """Put a trashed file back; the next cycle propagates it again.
 
     The restore is a plain local write: the engine treats a re-created path as a
     new version that supersedes the deletion marker, so every peer resurrects
     it. No lock is taken, so this works while a sync runs.
+
+    With --json the report a front-end branches on is printed instead: status is
+    restored, no-entry, destination-exists, download-only, payload-missing,
+    payload-corrupt or failed, and the exit code stays non-zero on a refusal.
     """
+    from dataclasses import asdict
     from pathlib import Path
 
     from hsync_client.exitcodes import ExitCode
@@ -1223,6 +1239,9 @@ def trash_restore(
         typer.echo(f"Not a directory: {target}", err=True)
         raise typer.Exit(code=int(ExitCode.FATAL))
     report = _trash_store(str(target), trash_dir).restore(relpath, direction=direction)
+    if as_json:
+        typer.echo(json.dumps(asdict(report), indent=2, sort_keys=True))
+        raise typer.Exit(code=0 if report.restored else int(ExitCode.FATAL))
     if report.status == "restored":
         typer.echo(f'Restored "{report.relpath}" ({report.size} B). The next sync propagates it.')
         return
@@ -1265,12 +1284,15 @@ def trash_empty(
         ),
     ] = None,
     yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask for confirmation."),
+    as_json: bool = typer.Option(False, "--json", help="Emit the outcome as JSON."),
 ) -> None:
     """Delete the folder's trashed files for good."""
+    from dataclasses import asdict
     from pathlib import Path
 
     from hsync_client.exitcodes import ExitCode
     from hsync_client.logger import setup_logging
+    from hsync_client.trash import EmptyReport
 
     setup_logging(quiet=True)
     target = Path(folder).expanduser()
@@ -1279,13 +1301,54 @@ def trash_empty(
         raise typer.Exit(code=int(ExitCode.FATAL))
     store = _trash_store(str(target), trash_dir)
     if not store.entries():
+        if as_json:
+            typer.echo(json.dumps(asdict(EmptyReport()), indent=2, sort_keys=True))
+            return
         typer.echo(f"No trashed files for {target}.")
         return
     if not yes:
         typer.confirm(f"Empty the trash of {target}?", abort=True)
     report = store.empty(older_than_days=older_than)
+    if as_json:
+        typer.echo(json.dumps(asdict(report), indent=2, sort_keys=True))
+        return
     plural = "y" if report.removed == 1 else "ies"
     typer.echo(f"Removed {report.removed} entr{plural}, {report.freed} B freed.")
+
+
+@_trash_app.command("prune")
+def trash_prune(
+    trash_dir: Annotated[
+        str | None,
+        typer.Option(
+            "--trash-dir",
+            help="Trash store directory (default: state dir).",
+            metavar="DIR",
+        ),
+    ] = None,
+    as_json: bool = typer.Option(False, "--json", help="Emit the sweep as JSON."),
+) -> None:
+    """Apply the retention window and the size budget now.
+
+    A running sync sweeps at most hourly (prune_if_due); a --once run, a stopped
+    client or a NAS that was off never reaches that gate, so the bound and the
+    bytes it frees are applied on demand here. The sweep covers the whole store,
+    not one folder: the budget is shared by every share.
+    """
+    from dataclasses import asdict
+
+    from hsync_client.logger import setup_logging
+    from hsync_client.trash import prune_store
+
+    setup_logging(quiet=True)
+    report = prune_store(_trash_settings(trash_dir))
+    if as_json:
+        typer.echo(json.dumps(asdict(report), indent=2, sort_keys=True))
+        return
+    typer.echo(
+        f"Expired {report.expired}, evicted {report.evicted}, discarded "
+        f"{report.discarded}, freed {report.freed} B, kept {report.kept}."
+    )
 
 
 # What Typer's runner exits with after an interruption (``typer/core.py::main``
