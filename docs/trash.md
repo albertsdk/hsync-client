@@ -71,6 +71,29 @@ non-zero on a refusal:
 hsync trash restore --folder SYNCED_FOLDER FILE_PATH --json
 ```
 
+## Restore everything at once
+
+After a bulk deletion the store can hold hundreds of entries, so restoring them
+one command at a time is not an option:
+
+```bash
+hsync trash restore --folder SYNCED_FOLDER --all
+```
+
+The command restores every entry of the folder, newest first, and keeps going
+when one of them cannot come back: that entry stays in the trash and is listed
+with its reason (`destination-exists` for a path that is present again,
+`download-only` for such a folder, `payload-missing`/`payload-corrupt` for a
+stored copy that is unusable). The exit code is non-zero only when an entry is
+unusable, so a folder whose paths reappeared in the meantime is not a failure.
+`--force` applies to every entry, `--json` prints the counts (`restored`,
+`skipped`, `failed`, `bytes`) and the `problems` map, and `--dry-run` reports
+them without writing anything:
+
+```bash
+hsync trash restore --folder SYNCED_FOLDER --all --dry-run
+```
+
 ## Remove trashed files for good
 
 ```bash

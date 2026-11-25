@@ -36,7 +36,7 @@ import stat
 import time
 import uuid
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from hsync_common.constants import (
@@ -75,6 +75,7 @@ __all__ = [
     "EmptyReport",
     "MoveResult",
     "PruneReport",
+    "RestoreAllReport",
     "RestoreReport",
     "StoreStats",
     "TrashItem",
@@ -98,6 +99,10 @@ _last_prune_at = 0.0
 EXPECTED_TRASH_SKIPS = frozenset(
     {"disabled", "no-folder-id", "not-a-regular-file", "outside-folder"}
 )
+# Restore refusals where the entry itself is unusable (the stored bytes are gone
+# or do not match the record): unlike "destination-exists" or "download-only",
+# retrying the same restore cannot succeed.
+UNRECOVERABLE_RESTORE = frozenset({"payload-missing", "payload-corrupt", "failed"})
 # Folder paths already reported for a root inside the shared tree (the realtime
 # handlers build a store per deletion, so the error must not repeat per file).
 _ROOT_INSIDE_FOLDER_REPORTED: set[str] = set()
@@ -318,6 +323,32 @@ class RestoreReport:
     @property
     def restored(self) -> bool:
         return self.status == "restored"
+
+
+@dataclass(frozen=True)
+class RestoreAllReport:
+    """Outcome of restoring every entry of one folder in one call.
+
+    ``status`` is ``ok`` or ``disabled`` (the store is off, so nothing was
+    attempted). The counters split the rest: ``restored`` entries written back,
+    ``skipped`` left in the store for a reason the user can fix (the path
+    already exists, or the folder is download-only) and ``failed`` entries whose
+    stored copy is unusable. ``problems`` maps each of those paths to its
+    refusal, so a front-end shows *which* files were left and why.
+    """
+
+    folder: str
+    status: str = "ok"
+    restored: int = 0
+    skipped: int = 0
+    failed: int = 0
+    bytes: int = 0
+    dry_run: bool = False
+    problems: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def attempted(self) -> int:
+        return self.restored + self.skipped + self.failed
 
 
 @dataclass(frozen=True)
@@ -568,43 +599,12 @@ class TrashStore:
         item = next((item for item in self.entries() if item.entry["relpath"] == relpath), None)
         if item is None:
             return RestoreReport(folder=canonical, relpath=relpath, status="no-entry")
-        # Integrity first: a corrupt entry must leave the folder untouched, which
-        # matters most under --force (nothing is parked before the bytes check).
-        if not item.payload.is_file():
-            return RestoreReport(
-                folder=canonical,
-                relpath=relpath,
-                status="payload-missing",
-                entry_id=item.entry_id,
-            )
-        try:
-            size = item.payload.stat().st_size
-            intact = size == item.entry["size"] and _sha256_of(item.payload) == item.entry["sha256"]
-        except OSError as exc:
-            return RestoreReport(
-                folder=canonical,
-                relpath=relpath,
-                status="failed",
-                entry_id=item.entry_id,
-                detail=str(exc),
-            )
-        if not intact:
-            return RestoreReport(
-                folder=canonical,
-                relpath=relpath,
-                status="payload-corrupt",
-                entry_id=item.entry_id,
-            )
+        refusal = self._preflight(item, direction=direction, force=force)
+        if refusal is not None:
+            return refusal
         destination = self.folder / relpath
         replaced = False
         if destination.exists() or destination.is_symlink():
-            if not force:
-                return RestoreReport(
-                    folder=canonical,
-                    relpath=relpath,
-                    status="destination-exists",
-                    entry_id=item.entry_id,
-                )
             parked = self.move(destination, origin=TRASH_ORIGIN_USER)
             if not parked.trashed:
                 return RestoreReport(
@@ -636,6 +636,85 @@ class TrashStore:
             size=item.entry["size"],
             destination=str(destination),
             replaced=replaced,
+        )
+
+    def _refusal(self, item: TrashItem, status: str, detail: str = "") -> RestoreReport:
+        """A ``RestoreReport`` naming why *item* cannot come back."""
+        return RestoreReport(
+            folder=str(self.folder),
+            relpath=str(item.entry["relpath"]),
+            status=status,
+            entry_id=item.entry_id,
+            detail=detail,
+        )
+
+    def _preflight(self, item: TrashItem, *, direction: str, force: bool) -> RestoreReport | None:
+        """Return why *item* cannot be restored, or None when it can.
+
+        Every check happens before the folder is touched: a corrupt entry must
+        leave the destination alone, which matters most under *force* (nothing
+        is parked before the bytes check) and for the dry run of
+        :meth:`restore_all`, which stops at this verdict.
+        """
+        if direction == "download-only":
+            # A download-only run mirrors the peer and deletes local extras, so
+            # the restored file would be removed again on the next cycle.
+            return self._refusal(item, "download-only")
+        if not item.payload.is_file():
+            return self._refusal(item, "payload-missing")
+        try:
+            size = item.payload.stat().st_size
+            intact = size == item.entry["size"] and _sha256_of(item.payload) == item.entry["sha256"]
+        except OSError as exc:
+            return self._refusal(item, "failed", str(exc))
+        if not intact:
+            return self._refusal(item, "payload-corrupt")
+        relpath = str(item.entry["relpath"])
+        destination = self.folder / relpath
+        if (destination.exists() or destination.is_symlink()) and not force:
+            return self._refusal(item, "destination-exists")
+        return None
+
+    def restore_all(
+        self, *, direction: str = "bidirectional", force: bool = False, dry_run: bool = False
+    ) -> RestoreAllReport:
+        """Restore every entry of this folder, newest first.
+
+        One call instead of one command per file: after a bulk deletion the
+        store holds hundreds of entries and no user repeats the gesture that
+        many times. A refusal never stops the sweep — the entry stays in the
+        store and is named in ``problems``. The dry run returns the same verdicts
+        and writes nothing.
+        """
+        canonical = str(self.folder)
+        if not self.settings.enabled:
+            return RestoreAllReport(folder=canonical, status="disabled", dry_run=dry_run)
+        restored = skipped = failed = total = 0
+        problems: dict[str, str] = {}
+        for item in self.entries():
+            relpath = str(item.entry["relpath"])
+            if dry_run:
+                refusal = self._preflight(item, direction=direction, force=force)
+                status = "restored" if refusal is None else refusal.status
+            else:
+                status = self.restore(relpath, direction=direction, force=force).status
+            if status == "restored":
+                restored += 1
+                total += item.entry["size"]
+            elif status in UNRECOVERABLE_RESTORE:
+                failed += 1
+                problems[relpath] = status
+            else:
+                skipped += 1
+                problems[relpath] = status
+        return RestoreAllReport(
+            folder=canonical,
+            restored=restored,
+            skipped=skipped,
+            failed=failed,
+            bytes=total,
+            dry_run=dry_run,
+            problems=problems,
         )
 
     # ── maintenance ───────────────────────────────────────────────────────

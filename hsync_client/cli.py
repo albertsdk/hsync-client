@@ -1198,7 +1198,10 @@ def trash_restore(
             metavar="DIR",
         ),
     ],
-    relpath: Annotated[str, typer.Argument(help="Bucket-relative path to restore.")],
+    relpath: Annotated[
+        str | None, typer.Argument(help="Bucket-relative path to restore (omit it with --all).")
+    ] = None,
+    all_entries: bool = typer.Option(False, "--all", help="Restore every entry of the folder."),
     trash_dir: Annotated[
         str | None,
         typer.Option(
@@ -1221,12 +1224,20 @@ def trash_restore(
         "--force",
         help="Replace an existing file: it is moved to the trash first, so nothing is lost.",
     ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="With --all, report what would be restored."
+    ),
 ) -> None:
     """Put a trashed file back; the next cycle propagates it again.
 
     The restore is a plain local write: the engine treats a re-created path as a
     new version that supersedes the deletion marker, so every peer resurrects
     it. No lock is taken, so this works while a sync runs.
+
+    --all restores every entry of the folder in one call (newest first), which
+    is what a bulk deletion needs; an entry that cannot come back — its path
+    already exists, or the stored copy is unusable — stays in the store and is
+    reported. --dry-run answers the same question without writing anything.
 
     With --json the report a front-end branches on is printed instead: status is
     restored, no-entry, destination-exists, download-only, payload-missing,
@@ -1243,7 +1254,31 @@ def trash_restore(
     if not target.is_dir():
         typer.echo(f"Not a directory: {target}", err=True)
         raise typer.Exit(code=int(ExitCode.FATAL))
-    report = _trash_store(str(target), trash_dir).restore(relpath, direction=direction, force=force)
+    if all_entries == (relpath is not None):
+        raise typer.BadParameter("choose one of a PATH argument or --all.")
+    if dry_run and not all_entries:
+        raise typer.BadParameter("--dry-run needs --all.")
+    store = _trash_store(str(target), trash_dir)
+    if all_entries:
+        bulk = store.restore_all(direction=direction, force=force, dry_run=dry_run)
+        if as_json:
+            typer.echo(json.dumps(asdict(bulk), indent=2, sort_keys=True))
+            code = int(ExitCode.FATAL) if bulk.failed or bulk.status != "ok" else 0
+            raise typer.Exit(code=code)
+        if bulk.status == "disabled":
+            typer.echo("The trash is disabled.", err=True)
+            raise typer.Exit(code=int(ExitCode.FATAL))
+        if bulk.attempted == 0:
+            typer.echo(f"No trashed files for {target}.")
+            return
+        verb = "Would restore" if bulk.dry_run else "Restored"
+        typer.echo(
+            f"{verb} {bulk.restored} of {bulk.attempted} entries ({bulk.bytes} B) from {target}."
+        )
+        for path, status in sorted(bulk.problems.items()):
+            typer.echo(f"  left in the trash: {path} ({status})")
+        raise typer.Exit(code=0 if bulk.failed == 0 else int(ExitCode.FATAL))
+    report = store.restore(str(relpath), direction=direction, force=force)
     if as_json:
         typer.echo(json.dumps(asdict(report), indent=2, sort_keys=True))
         raise typer.Exit(code=0 if report.restored else int(ExitCode.FATAL))

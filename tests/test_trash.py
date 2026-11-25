@@ -339,6 +339,65 @@ class TestMaintenance:
         assert [item.entry["relpath"] for item in store.entries()] == ["new.txt"]
 
 
+class TestRestoreAll:
+    """One call puts every entry back, which is what a bulk deletion needs."""
+
+    def test_every_entry_comes_back(self, store, folder):
+        store.move(_write(folder, "docs/a.txt", b"aa"))
+        store.move(_write(folder, "docs/b.txt", b"bbb"))
+
+        report = store.restore_all()
+
+        assert (report.restored, report.skipped, report.failed) == (2, 0, 0)
+        assert report.bytes == 5
+        assert (folder / "docs/a.txt").read_bytes() == b"aa"
+        assert (folder / "docs/b.txt").read_bytes() == b"bbb"
+        assert store.entries() == []
+
+    def test_an_existing_path_stays_in_the_store(self, store, folder):
+        store.move(_write(folder, "docs/a.txt", b"aa"))
+        _write(folder, "docs/a.txt", b"newer")
+
+        report = store.restore_all()
+
+        assert (report.restored, report.skipped) == (0, 1)
+        assert report.problems == {"docs/a.txt": "destination-exists"}
+        assert (folder / "docs/a.txt").read_bytes() == b"newer"
+        assert len(store.entries()) == 1
+
+    def test_a_corrupt_entry_is_reported_as_failed(self, store, folder):
+        store.move(_write(folder, "docs/a.txt", b"aa"))
+        store.move(_write(folder, "docs/b.txt", b"bb"))
+        item = next(one for one in store.entries() if one.entry["relpath"] == "docs/a.txt")
+        item.payload.write_bytes(b"x")
+
+        report = store.restore_all()
+
+        assert (report.restored, report.failed) == (1, 1)
+        assert report.problems == {"docs/a.txt": "payload-corrupt"}
+        assert [one.entry["relpath"] for one in store.entries()] == ["docs/a.txt"]
+
+    def test_a_dry_run_reports_and_writes_nothing(self, store, folder):
+        store.move(_write(folder, "docs/a.txt", b"aa"))
+        store.move(_write(folder, "docs/b.txt", b"bb"))
+        _write(folder, "docs/b.txt", b"again")
+
+        report = store.restore_all(dry_run=True)
+
+        assert (report.restored, report.skipped, report.dry_run) == (1, 1, True)
+        assert report.bytes == 2
+        assert not (folder / "docs/a.txt").exists()
+        assert len(store.entries()) == 2
+
+    def test_a_download_only_folder_refuses_them_all(self, store, folder):
+        store.move(_write(folder, "docs/a.txt", b"aa"))
+
+        report = store.restore_all(direction="download-only")
+
+        assert (report.restored, report.skipped) == (0, 1)
+        assert report.problems == {"docs/a.txt": "download-only"}
+
+
 class TestAdd:
     """A user deletion parks the bytes with origin ``user``."""
 
@@ -672,6 +731,65 @@ class TestCommands:
 
         assert result.exit_code == 1
         assert json.loads(result.output)["status"] == "no-entry"
+
+    def test_restore_all_puts_every_entry_back(self, monkeypatch, tmp_path):
+        folder = self._folder(tmp_path)
+        self._park(monkeypatch, tmp_path, folder, "a.txt", b"aa")
+        self._park(monkeypatch, tmp_path, folder, "b.txt", b"bb")
+
+        result = self._run(
+            monkeypatch, tmp_path, "restore", "--folder", str(folder), "--all", "--json"
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert (payload["restored"], payload["skipped"], payload["problems"]) == (2, 0, {})
+        assert (folder / "a.txt").read_bytes() == b"aa"
+        assert (folder / "b.txt").read_bytes() == b"bb"
+
+    def test_restore_all_can_report_without_writing(self, monkeypatch, tmp_path):
+        folder = self._folder(tmp_path)
+        self._park(monkeypatch, tmp_path, folder)
+
+        result = self._run(
+            monkeypatch, tmp_path, "restore", "--folder", str(folder), "--all", "--dry-run"
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "Would restore 1 of 1 entries" in result.output
+        assert not (folder / "gone.txt").exists()
+
+    def test_restore_all_names_the_entries_it_leaves(self, monkeypatch, tmp_path):
+        folder = self._folder(tmp_path)
+        self._park(monkeypatch, tmp_path, folder)
+        (folder / "gone.txt").write_bytes(b"newer")
+
+        result = self._run(monkeypatch, tmp_path, "restore", "--folder", str(folder), "--all")
+
+        assert result.exit_code == 0, result.output
+        assert "left in the trash: gone.txt (destination-exists)" in result.output
+
+    def test_restore_needs_exactly_one_target(self, monkeypatch, tmp_path):
+        folder = self._folder(tmp_path)
+
+        neither = self._run(monkeypatch, tmp_path, "restore", "--folder", str(folder))
+        both = self._run(
+            monkeypatch, tmp_path, "restore", "--folder", str(folder), "gone.txt", "--all"
+        )
+
+        assert neither.exit_code != 0, neither.output
+        assert both.exit_code != 0, both.output
+
+    def test_restore_all_json_reports_the_outcome(self, monkeypatch, tmp_path):
+        folder = self._folder(tmp_path)
+        self._park(monkeypatch, tmp_path, folder)
+
+        result = self._run(
+            monkeypatch, tmp_path, "restore", "--folder", str(folder), "--all", "--json"
+        )
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["status"] == "ok"
 
     def test_empty_json_reports_the_count(self, monkeypatch, tmp_path):
         folder = self._folder(tmp_path)

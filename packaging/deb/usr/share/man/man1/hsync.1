@@ -683,14 +683,21 @@ List the restorable files of one folder, newest first. With
 each entry carries its path, size, deletion time, origin, cid, bucket and
 .IR payload_present .
 .TP
-.B hsync trash restore \-\-folder \fIDIR\fP \fIRELPATH\fP [\-\-direction \fIDIRECTION\fP] [\-\-force] [\-\-json]
-Put one file back. It refuses when the destination exists, and when the folder
+.B hsync trash restore \-\-folder \fIDIR\fP (\fIRELPATH\fP | \-\-all) [\-\-direction \fIDIRECTION\fP] [\-\-force] [\-\-dry\-run] [\-\-json]
+Put one file back, or every entry of the folder with
+.BR \-\-all
+(newest first; an entry that cannot return stays in the trash and is reported).
+It refuses when the destination exists, and when the folder
 runs
 .IR download\-only
 (the mirror rule would delete the file again).
 .B \-\-force
 replaces an existing file by moving it into the trash first, so neither copy is
 lost. A directory is never replaced.
+.B \-\-dry\-run
+(with
+.BR \-\-all )
+reports what would be restored and writes nothing.
 .B \-\-json
 prints the report a front-end branches on (its
 .I status
