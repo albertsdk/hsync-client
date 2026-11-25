@@ -27,7 +27,10 @@ Environment equivalents: `HSYNC_TRASH_ENABLED` (`true` / `false`),
 `HSYNC_TRASH_MAX_SIZE` (bytes). The store is device-local and must stay outside
 the synced folder: a store pointed inside it — by `--trash-dir`, by
 `HSYNC_TRASH_DIR` or by a state dir relocated into the folder — is refused at
-startup. See [Trash](trash.md) for the restore workflow.
+startup. `0` days is **not** "off": it keeps entries until the size budget
+evicts them, and `--no-trash` (`HSYNC_TRASH_ENABLED=false`) is what disables the
+trash (the desktop dialog's `Disabled` entry, which differs only in wording).
+See [Trash](trash.md) for the restore workflow.
 
 ## Deletions
 

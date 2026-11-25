@@ -112,6 +112,11 @@ size budget: a share of the filesystem that hosts it, with a floor, or an
 explicit `--trash-max-size 2GB`. The sweep runs hourly while the client runs; use
 `hsync trash prune` to apply it immediately.
 
+`0` keeps entries until the size budget evicts them; turning the trash off is
+`--no-trash` (`HSYNC_TRASH_ENABLED=false`). The desktop's *Keep deleted files
+for (days)* spin box uses the other vocabulary — its `Disabled` entry is the
+same "off" and it passes `--no-trash` for you.
+
 ## Where the bytes live
 
 `$XDG_STATE_HOME/hsync/trash` (or `~/.local/state/hsync/trash`), one directory
