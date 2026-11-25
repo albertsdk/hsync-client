@@ -80,6 +80,7 @@ __all__ = [
     "TrashSettings",
     "TrashStore",
     "delete_local_file",
+    "delete_local_tree",
     "empty_store",
     "prune_store",
     "store_for_folder",
@@ -98,6 +99,12 @@ EXPECTED_TRASH_SKIPS = frozenset(
 # Folder paths already reported for a root inside the shared tree (the realtime
 # handlers build a store per deletion, so the error must not repeat per file).
 _ROOT_INSIDE_FOLDER_REPORTED: set[str] = set()
+
+# A recursive delete parks the files it removes, but only up to these bounds: a
+# tree of a hundred thousand files would otherwise hash gigabytes on the delete
+# path. What is left behind is reported, never dropped silently.
+TREE_TRASH_MAX_FILES = 1000
+TREE_TRASH_MAX_BYTES = 1024**3  # 1 GiB
 
 
 @dataclass(frozen=True)
@@ -222,6 +229,49 @@ def delete_local_file(store: TrashStore | None, filepath: str | Path) -> bool:
         return False
     remove_with_retry(str(filepath))
     return True
+
+
+def delete_local_tree(store: TrashStore | None, path: str | Path) -> tuple[int, int]:
+    """Park the files of the tree at *path*, returning ``(kept, left_behind)``.
+
+    The caller still removes what remains (the directories): parking first is what
+    makes a recursive deletion — a peer removing a folder, the master applying one
+    — as recoverable as a single file. Symlinks carry no restorable payload and are
+    left to the removal, and the two module caps bound the work this may do on the
+    delete path.
+
+    Consumers: ``hsync_client/event_dispatch.py`` and
+    ``hsync_client/p2p_server.py`` (the recursive delete handlers).
+    """
+    root = Path(path)
+    if store is None or not root.is_dir():
+        return 0, 0
+    kept = 0
+    left = 0
+    budget = TREE_TRASH_MAX_BYTES
+    # ``os.walk`` lists each directory before descending, so moving the files out
+    # of the current one does not disturb the traversal.
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for name in filenames:
+            candidate = Path(dirpath) / name
+            if candidate.is_symlink() or kept >= TREE_TRASH_MAX_FILES or budget <= 0:
+                left += 1
+                continue
+            try:
+                budget -= candidate.stat().st_size
+            except OSError:
+                left += 1
+                continue
+            if store.move(candidate).trashed:
+                kept += 1
+            else:
+                left += 1
+    if left:
+        log.warning(
+            f'{ActionLabel.DELETE} "{root}": {left} file(s) of the tree kept no copy '
+            f"(bound: {TREE_TRASH_MAX_FILES} files / {TREE_TRASH_MAX_BYTES} B)."
+        )
+    return kept, left
 
 
 @dataclass(frozen=True)

@@ -126,12 +126,14 @@ refuses to start when it does not.
 
 ## What is covered
 
-Every **file** this device removes keeps its bytes — whether the deletion arrives
-from the cycle (the remote listing says the file is gone) or from a real-time
-event (a peer deletes it while both are online).
+Every file this device removes keeps its bytes — whether the deletion arrives
+from the cycle (the remote listing says the file is gone), from a real-time event
+(a peer deletes it while both are online), or **inside a directory** a peer
+removed: the files of that tree are parked before the tree itself is deleted.
 
-A removed **directory** is not covered: its removal deletes the files inside it
-without keeping a copy, so only files deleted on their own can be restored.
+That parking is bounded per removal (1000 files / 1 GiB): deleting a huge folder
+does not turn into hashing gigabytes, the files past the bound are removed
+without a copy, and the log reports how many.
 
 ## Turn the trash off
 

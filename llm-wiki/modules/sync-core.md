@@ -572,7 +572,7 @@ which takes the server's `Retry-After` when present, capped at the per-file
 `_apply_add_or_modify` (`hsync_client/event_dispatch.py::_apply_add_or_modify`, also receives `event_name` to log `[REMOTE CREATE]` vs
 `[REMOTE MODIFY]` for the directory branch — the log is gated on `update_dir` returning
 non-`None`, so a security-rejected directory is not pre-logged as created), `_apply_rename` (`hsync_client/event_dispatch.py::_apply_rename`), `_apply_delete` (`hsync_client/event_dispatch.py::_apply_delete`,
-locked via `_remove_locked` (`hsync_client/event_dispatch.py::_remove_locked`, which parks the bytes with `hsync_client/trash.py::delete_local_file` before unlinking, so a realtime deletion is as recoverable as a cycle's)), `_apply_symlink` (`hsync_client/event_dispatch.py::_apply_symlink`). Echo suppression uses
+locked via `_remove_locked` (`hsync_client/event_dispatch.py::_remove_locked`, which parks the bytes with `hsync_client/trash.py::delete_local_file` before unlinking, so a realtime deletion is as recoverable as a cycle's); the directory branch parks the tree's files with `hsync_client/trash.py::delete_local_tree` before the `rmtree`)), `_apply_symlink` (`hsync_client/event_dispatch.py::_apply_symlink`). Echo suppression uses
 the `EventDispatchContext` (`hsync_client/event_dispatch.py::EventDispatchContext`) marking (`_mark` (`hsync_client/event_dispatch.py::_mark`) / `_unmark` (`hsync_client/event_dispatch.py::_unmark`)).
 Path resolution: `_resolve_local_path` (`hsync_client/event_dispatch.py::_resolve_local_path`).
 

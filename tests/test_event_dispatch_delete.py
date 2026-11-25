@@ -303,3 +303,21 @@ class TestApplyInboundDeleteKeepsTheBytes:
 
         assert not subdir.exists()
         assert self._store(bucket, tmp_path).entries() == []
+
+    async def test_a_deleted_directory_parks_the_files_it_held(self, tmp_path, monkeypatch):
+        """A folder a peer removed must be as recoverable as a single file."""
+        monkeypatch.setenv("HSYNC_STATE_DIR", str(tmp_path / "state"))
+        monkeypatch.setenv("HSYNC_TRASH_DIR", str(tmp_path / "trash"))
+        bucket = self._bucket(tmp_path)
+        (bucket / "album").mkdir()
+        (bucket / "album" / "one.jpg").write_bytes(b"1")
+        (bucket / "album" / "two.jpg").write_bytes(b"22")
+        event = {"name": "deleted", "src": {"path": "album", "permissions": "755"}}
+
+        with patch("hsync_client.event_dispatch.CONFIG", {"LOCAL_BUCKET": str(bucket)}):
+            await apply_inbound_event(event, REMOTE_DISPATCH_CTX)
+
+        assert not (bucket / "album").exists()
+        assert sorted(
+            item.entry["relpath"] for item in self._store(bucket, tmp_path).entries()
+        ) == ["album/one.jpg", "album/two.jpg"]

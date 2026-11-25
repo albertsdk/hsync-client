@@ -1522,6 +1522,14 @@ class P2PEndpointMixin(_HTTPTransportBase):
                 # half present.
                 begin_tree_delete(full_path)
                 try:
+                    # Park what the tree holds first, so a folder a peer removed
+                    # stays recoverable here (ADR-0056). Imported here because the
+                    # sync engine is a lazy dependency of this module.
+                    from hsync_client.trash import delete_local_tree, store_for_folder
+
+                    delete_local_tree(
+                        store_for_folder(str(CONFIG.get("LOCAL_BUCKET") or "")), full_path
+                    )
                     self._rmtree_converging(full_path)
                 finally:
                     end_tree_delete(full_path)

@@ -18,7 +18,7 @@ import uuid
 import pytest
 from hsync_common.constants import TRASH_ENTRY_FILENAME
 
-from hsync_client.trash import TrashSettings, TrashStore, empty_store
+from hsync_client.trash import TrashSettings, TrashStore, delete_local_tree, empty_store
 
 
 @pytest.fixture
@@ -533,6 +533,48 @@ class TestSyncCycle:
         assert deleted == 1
         assert not target.exists()
         assert not (folder / "trash").exists()
+
+
+class TestTreeDelete:
+    """A removed folder keeps the bytes of the files it held (ADR-0056)."""
+
+    def test_the_files_of_the_tree_are_parked(self, store, folder):
+        _write(folder, "photos/2024/a.jpg", b"aaaa")
+        _write(folder, "photos/2024/b.jpg", b"bb")
+
+        kept, left = delete_local_tree(store, folder / "photos")
+
+        assert (kept, left) == (2, 0)
+        assert sorted(item.entry["relpath"] for item in store.entries()) == [
+            "photos/2024/a.jpg",
+            "photos/2024/b.jpg",
+        ]
+        # The bytes are parked; the directories are left for the caller to remove.
+        assert (folder / "photos" / "2024").is_dir()
+        assert not (folder / "photos" / "2024" / "a.jpg").exists()
+
+    def test_the_file_cap_leaves_the_rest_and_reports_it(self, store, folder, monkeypatch):
+        import hsync_client.trash as trash_mod
+
+        monkeypatch.setattr(trash_mod, "TREE_TRASH_MAX_FILES", 2)
+        for name in ("a.txt", "b.txt", "c.txt"):
+            _write(folder, f"tree/{name}", b"x")
+
+        kept, left = delete_local_tree(store, folder / "tree")
+
+        assert (kept, left) == (2, 1)
+        assert len(store.entries()) == 2
+
+    def test_a_symlink_is_left_to_the_removal(self, store, folder, tmp_path):
+        target = tmp_path / "outside.txt"
+        target.write_bytes(b"x")
+        _write(folder, "tree/real.txt", b"y")
+        (folder / "tree" / "link.txt").symlink_to(target)
+
+        kept, left = delete_local_tree(store, folder / "tree")
+
+        assert (kept, left) == (1, 1)
+        assert [item.entry["relpath"] for item in store.entries()] == ["tree/real.txt"]
 
 
 class TestCommands:

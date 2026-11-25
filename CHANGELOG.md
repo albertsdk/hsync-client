@@ -45,6 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A removed **directory** keeps the bytes of the files it held: the tree is parked
+  in the trash (up to 1000 files / 1 GiB per removal, with the remainder logged)
+  before it is deleted, so a folder a peer removed is as recoverable as a single
+  file.
 - A deletion applied from a real-time event, or by the p2p master on a peer's
   request, parks its bytes in the same trash as a cycle deletion; the sweep also
   drops a record whose payload is gone.
