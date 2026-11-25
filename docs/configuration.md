@@ -29,7 +29,7 @@ the synced folder: a store pointed inside it — by `--trash-dir`, by
 `HSYNC_TRASH_DIR` or by a state dir relocated into the folder — is refused at
 startup. `0` days is **not** "off": it keeps entries until the size budget
 evicts them, and `--no-trash` (`HSYNC_TRASH_ENABLED=false`) is what disables the
-trash (the desktop dialog's `Disabled` entry, which differs only in wording).
+trash (the desktop's *Keep deleted files* switch emits it).
 See [Trash](trash.md) for the restore workflow.
 
 ## Deletions

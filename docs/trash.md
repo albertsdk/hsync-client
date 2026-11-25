@@ -113,9 +113,9 @@ explicit `--trash-max-size 2GB`. The sweep runs hourly while the client runs; us
 `hsync trash prune` to apply it immediately.
 
 `0` keeps entries until the size budget evicts them; turning the trash off is
-`--no-trash` (`HSYNC_TRASH_ENABLED=false`). The desktop's *Keep deleted files
-for (days)* spin box uses the other vocabulary — its `Disabled` entry is the
-same "off" and it passes `--no-trash` for you.
+`--no-trash` (`HSYNC_TRASH_ENABLED=false`). The desktop offers the same two
+settings as a *Keep deleted files in the local trash* switch and a *Restore
+window (days)* field, and passes `--no-trash` when the switch is off.
 
 ## Where the bytes live
 
