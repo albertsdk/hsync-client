@@ -54,6 +54,10 @@ from hsync_common.models.folder import read_folder_marker
 from hsync_common.models.trash import (
     TRASH_ORIGIN_SYNC,
     TRASH_ORIGIN_USER,
+    TRASH_SWEEP_INTERVAL_SECONDS,
+    TRASH_UNRECOVERABLE_RESTORE,
+    TREE_TRASH_MAX_BYTES,
+    TREE_TRASH_MAX_FILES,
     TrashEntry,
     entry_dir,
     entry_payload_path,
@@ -99,19 +103,14 @@ _last_prune_at = 0.0
 EXPECTED_TRASH_SKIPS = frozenset(
     {"disabled", "no-folder-id", "not-a-regular-file", "outside-folder"}
 )
-# Restore refusals where the entry itself is unusable (the stored bytes are gone
-# or do not match the record): unlike "destination-exists" or "download-only",
-# retrying the same restore cannot succeed.
-UNRECOVERABLE_RESTORE = frozenset({"payload-missing", "payload-corrupt", "failed"})
 # Folder paths already reported for a root inside the shared tree (the realtime
 # handlers build a store per deletion, so the error must not repeat per file).
 _ROOT_INSIDE_FOLDER_REPORTED: set[str] = set()
 
-# A recursive delete parks the files it removes, but only up to these bounds: a
-# tree of a hundred thousand files would otherwise hash gigabytes on the delete
-# path. What is left behind is reported, never dropped silently.
-TREE_TRASH_MAX_FILES = 1000
-TREE_TRASH_MAX_BYTES = 1024**3  # 1 GiB
+# ``TRASH_UNRECOVERABLE_RESTORE`` (which refusals cannot be retried) and the tree
+# park caps (``TREE_TRASH_MAX_*``) come from the shared contract in
+# ``hsync_common.models.trash``: the Android store asserts the same values through
+# the ``trash-contract`` fixture, so they are declared once, there.
 
 
 @dataclass(frozen=True)
@@ -701,7 +700,7 @@ class TrashStore:
             if status == "restored":
                 restored += 1
                 total += item.entry["size"]
-            elif status in UNRECOVERABLE_RESTORE:
+            elif status in TRASH_UNRECOVERABLE_RESTORE:
                 failed += 1
                 problems[relpath] = status
             else:
@@ -735,7 +734,9 @@ class TrashStore:
         """
         return prune_store(self.settings, now=now, dry_run=dry_run)
 
-    def prune_if_due(self, *, interval_seconds: int = 3600) -> PruneReport | None:
+    def prune_if_due(
+        self, *, interval_seconds: int = TRASH_SWEEP_INTERVAL_SECONDS
+    ) -> PruneReport | None:
         """Run :meth:`prune` at most once per interval; ``None`` when not due.
 
         The sync loop calls this every cycle, so a long-running daemon applies
