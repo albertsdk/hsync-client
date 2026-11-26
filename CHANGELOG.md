@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--trash-max-size` budget. `hsync trash list|add|restore|empty` lists, parks a
   file chosen by the user, restores and empties it, `--no-trash` turns it off,
   and a store pointed inside the synced folder is refused.
+- `hsync trash empty --dry-run` / `prune --dry-run`: the same counts as a real run,
+  without deleting anything (and without the confirmation prompt), so an operator
+  checks what a destructive command would do first.
+- `hsync trash restore --all`: restore every entry of a folder in one call (newest
+  first), reporting the entries that stay in the trash and why; `--dry-run`
+  answers first, `--force` applies to the whole batch.
 - `hsync trash stats [--json]`: how many entries the store holds, how many bytes
   they take and the budget they count against, so a front-end shows "X of Y"
   without listing every entry.

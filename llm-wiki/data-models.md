@@ -80,17 +80,17 @@ The store cache (`_stores`) is keyed by folder UUID so tests that switch
 
 | Symbol | Location | Role |
 | ------ | -------- | ---- |
-| `TrashStore` | `hsync_client/trash.py::TrashStore` | one folder's view of the device-local store: `move` (park a file the cycle is deleting), `entries`, `restore`, `empty`, `prune`/`prune_if_due` |
+| `TrashStore` | `hsync_client/trash.py::TrashStore` | one folder's view of the device-local store: `move` (park a file the cycle is deleting), `entries`, `restore`, `restore_all` (every entry, newest first), `empty`, `prune`/`prune_if_due`. `restore` and `restore_all` share one `_preflight` refusal (`payload-missing`, `payload-corrupt`, `download-only`, `destination-exists` unless forced) |
 | `store_for_folder` | `hsync_client/trash.py::store_for_folder` | the store of one folder, or `None` when it has none to extend; refuses a root inside the synced folder (reported once per process). Shared by the cycle and the realtime delete handlers |
 | `delete_local_file` | `hsync_client/trash.py::delete_local_file` | park the bytes, then remove: the single removal used by the cycle, `event_dispatch` and the p2p master. Engine artifacts and `.hsynckeep` are unlinked without an entry |
 | `delete_local_tree` | `hsync_client/trash.py::delete_local_tree` | park the files of a directory tree before the tree is removed (bounded by `TREE_TRASH_MAX_FILES` / `TREE_TRASH_MAX_BYTES`), so a folder a peer deleted is as recoverable as a single file; symlinks are left to the removal and the remainder is logged |
 | `stats_store` | `hsync_client/trash.py::stats_store` | summarize the whole root (`StoreStats`: entries, bytes, oldest, budget, folders) for `hsync trash stats`; walks the store, never the state DB |
-| `empty_store` | `hsync_client/trash.py::empty_store` | empty a whole trash root (one folder's part is `TrashStore.empty`); used by `hsync trash empty --all`, since the store keeps one directory per share |
+| `empty_store` | `hsync_client/trash.py::empty_store` | empty a whole trash root (one folder's part is `TrashStore.empty`); used by `hsync trash empty --all`, since the store keeps one directory per share. `dry_run` renders the same counts without deleting |
 | `prune_store` | `hsync_client/trash.py::prune_store` | the sweep over a whole trash root (one budget for every folder); discards records whose payload is missing or its size differs. `TrashStore.prune` delegates, and `hsync trash prune` calls it without a store |
 | `trash_settings` | `hsync_client/trash.py::trash_settings` | resolve `TRASH_ENABLED` / `TRASH_DIR` / `TRASH_RETENTION_DAYS` / `TRASH_MAX_SIZE` from `CONFIG` |
 | `TrashSettings.budget` | `hsync_client/trash.py::TrashSettings.budget` | effective byte budget: explicit `--trash-max-size`, else a share of the hosting filesystem with a floor |
 | `folder_id_of` | `hsync_client/trash.py::folder_id_of` | read `.hsyncfolder` read-only (a folder never synced has no trash) |
-| `MoveResult` / `RestoreReport` / `EmptyReport` / `PruneReport` | `hsync_client/trash.py` | outcome records; `RestoreReport.status` is the machine-readable verdict (`restored`, `no-entry`, `destination-exists`, `download-only`, `payload-missing`, `payload-corrupt`, `failed`) and `RestoreReport.replaced` says a forced restore parked the copy it replaced |
+| `MoveResult` / `RestoreReport` / `RestoreAllReport` / `EmptyReport` / `PruneReport` | `hsync_client/trash.py` | outcome records; `RestoreReport.status` is the machine-readable verdict (`restored`, `no-entry`, `destination-exists`, `download-only`, `payload-missing`, `payload-corrupt`, `failed`) and `RestoreReport.replaced` says a forced restore parked the copy it replaced. `RestoreAllReport` counts one batch (`restored`/`skipped`/`failed`, `bytes`, `attempted`) and maps each entry left behind to its verdict in `problems`; only `UNRECOVERABLE_RESTORE` (`payload-missing`, `payload-corrupt`, `failed`) counts as a failure, so a path that merely reappeared does not fail the command |
 
 Layout and the entry contract are SSOT in `hsync_common.models.trash`
 (`TrashEntry`, `trash_root`, `entry_payload_path`, `parse_trash_entry`) — see

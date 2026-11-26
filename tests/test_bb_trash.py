@@ -134,6 +134,20 @@ class TestRestore:
         assert result.exit_code == 1
         assert json.loads(result.output)["status"] == "no-entry"
 
+    def test_restore_all_brings_a_bulk_deletion_back(self, folder):
+        for name in ("a.txt", "b.txt"):
+            (folder / name).write_bytes(name.encode())
+            _run("add", "--folder", str(folder), name)
+
+        restored = _run("restore", "--folder", str(folder), "--all", "--json")
+        listed = _run("list", "--folder", str(folder), "--json")
+
+        assert restored.exit_code == 0, restored.output
+        report = json.loads(restored.output)
+        assert (report["restored"], report["problems"]) == (2, {})
+        assert (folder / "a.txt").read_bytes() == b"a.txt"
+        assert json.loads(listed.output) == []
+
 
 class TestEmptyAndPrune:
     def test_empty_removes_the_entries_and_reports_the_bytes(self, folder):
@@ -146,7 +160,7 @@ class TestEmptyAndPrune:
         listed = _run("list", "--folder", str(folder), "--json")
 
         assert emptied.exit_code == 0, emptied.output
-        assert json.loads(emptied.output) == {"freed": 5, "removed": 2}
+        assert json.loads(emptied.output) == {"dry_run": False, "freed": 5, "removed": 2}
         assert json.loads(listed.output) == []
 
     def test_prune_keeps_a_fresh_entry(self, folder):
