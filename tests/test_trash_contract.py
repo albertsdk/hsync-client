@@ -84,6 +84,40 @@ def _seed_sweep_tree(root, folder_id, case):
             "origin": "sync",
         }
         (directory / "entry.json").write_text(json.dumps(record), encoding="utf-8")
+    for broken in case["broken"]:
+        _seed_broken(root, folder_id, broken, case["now"])
+
+
+def _seed_broken(root, folder_id, broken, now):
+    """Write one unusable entry the two stores must both discard.
+
+    The record's ``deleted_at`` is irrelevant: the sweep drops the directory
+    because it cannot be restored, not because of its age.
+    """
+    directory = root / folder_id / broken["entry_id"]
+    payload = directory / "payload" / "docs" / "file.bin"
+    payload.parent.mkdir(parents=True)
+    kind = broken["kind"]
+    if kind == "no-record":
+        payload.write_bytes(b"x")
+        return
+    if kind == "payload-mismatch":
+        # A payload that no longer matches the recorded size is as unusable as a
+        # missing one: the restore could only refuse it.
+        payload.write_bytes(b"x" * 4)
+    # "payload-missing" leaves the bytes absent on purpose: the record is there.
+    (directory / "entry.json").write_text(
+        json.dumps(
+            {
+                "relpath": "docs/file.bin",
+                "sha256": "a" * 64,
+                "size": 3,
+                "deleted_at": now,
+                "origin": "sync",
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 @pytest.mark.parametrize("case", build_trash_contract()["prune_cases"], ids=lambda c: c["why"])
@@ -100,6 +134,7 @@ def test_every_sweep_case_produces_the_shared_plan(tmp_path, case):
 
     assert report.expired == len(case["expired"])
     assert report.evicted == len(case["evicted"])
+    assert report.discarded == case["discarded"]
     assert report.kept == case["kept"]
     assert report.freed == case["freed"]
     remaining = sorted(p.name for p in (root / _FOLDER_ID).iterdir() if p.is_dir())

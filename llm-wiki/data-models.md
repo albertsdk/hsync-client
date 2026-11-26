@@ -100,8 +100,9 @@ against. The sweep rule itself is the contract's too: `prune_store` walks the
 tree and applies `plan_trash_sweep` (`hsync_common/models/trash.py::plan_trash_sweep`)
 instead of re-deriving which entries expire or get evicted.
 `tests/test_trash_contract.py` pins the two sides together, replays the
-fixture's `prune_cases` through `prune_store`, and checks that the record `move`
-writes carries exactly the contract's keys.
+fixture's `prune_cases` through `prune_store` (including the unusable entry
+directories it must discard), and checks that the record `move` writes carries
+exactly the contract's keys.
 
 Layout and the entry contract are SSOT in `hsync_common.models.trash`
 (`TrashEntry`, `trash_root`, `entry_payload_path`, `parse_trash_entry`) — see
