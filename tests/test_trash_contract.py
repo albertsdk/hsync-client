@@ -105,6 +105,9 @@ def _seed_broken(root, folder_id, broken, now):
         # A payload that no longer matches the recorded size is as unusable as a
         # missing one: the restore could only refuse it.
         payload.write_bytes(b"x" * 4)
+    elif kind != "payload-missing":
+        # An unknown kind must fail here, never be seeded as something else.
+        raise ValueError(f"unknown broken entry kind: {kind!r}")
     # "payload-missing" leaves the bytes absent on purpose: the record is there.
     (directory / "entry.json").write_text(
         json.dumps(
