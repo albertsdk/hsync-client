@@ -92,6 +92,13 @@ The store cache (`_stores`) is keyed by folder UUID so tests that switch
 | `folder_id_of` | `hsync_client/trash.py::folder_id_of` | read `.hsyncfolder` read-only (a folder never synced has no trash) |
 | `MoveResult` / `RestoreReport` / `RestoreAllReport` / `EmptyReport` / `PruneReport` | `hsync_client/trash.py` | outcome records; `RestoreReport.status` is the machine-readable verdict (`restored`, `no-entry`, `destination-exists`, `download-only`, `payload-missing`, `payload-corrupt`, `failed`) and `RestoreReport.replaced` says a forced restore parked the copy it replaced. `RestoreAllReport` counts one batch (`restored`/`skipped`/`failed`, `bytes`, `attempted`) and maps each entry left behind to its verdict in `problems`; only `UNRECOVERABLE_RESTORE` (`payload-missing`, `payload-corrupt`, `failed`) counts as a failure, so a path that merely reappeared does not fail the command |
 
+The policy values this module applies are **declared in hsync-common, not here**:
+`TREE_TRASH_MAX_FILES`, `TREE_TRASH_MAX_BYTES`, `TRASH_SWEEP_INTERVAL_SECONDS` and
+`TRASH_UNRECOVERABLE_RESTORE` are imported from `hsync_common.models.trash`, which
+publishes them as the `trash-contract` fixture that the Android store asserts
+against. `tests/test_trash_contract.py` pins the two sides together, including
+that the record `move` writes carries exactly the contract's keys.
+
 Layout and the entry contract are SSOT in `hsync_common.models.trash`
 (`TrashEntry`, `trash_root`, `entry_payload_path`, `parse_trash_entry`) — see
 ADR 0056. The store never opens the per-folder state DB: listing and restoring
