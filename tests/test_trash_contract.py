@@ -13,6 +13,7 @@ from __future__ import annotations
 import inspect
 import json
 
+import pytest
 from hsync_common.models.trash import (
     TRASH_RETENTION_DAYS_DEFAULT,
     TRASH_SWEEP_INTERVAL_SECONDS,
@@ -66,3 +67,44 @@ def test_the_written_record_carries_exactly_the_contract_keys(tmp_path):
 
     record = json.loads((store.entries()[0].directory / "entry.json").read_text(encoding="utf-8"))
     assert sorted(record) == build_trash_contract()["entry"]["keys"]
+
+
+def _seed_sweep_tree(root, folder_id, case):
+    """Write one sweep case onto disk: entry.json plus a payload of its size."""
+    for entry in case["entries"]:
+        directory = root / folder_id / entry["entry_id"]
+        payload = directory / "payload" / "docs" / "file.bin"
+        payload.parent.mkdir(parents=True)
+        payload.write_bytes(b"x" * entry["size"])
+        record = {
+            "relpath": "docs/file.bin",
+            "sha256": "a" * 64,
+            "size": entry["size"],
+            "deleted_at": entry["deleted_at"],
+            "origin": "sync",
+        }
+        (directory / "entry.json").write_text(json.dumps(record), encoding="utf-8")
+
+
+@pytest.mark.parametrize("case", build_trash_contract()["prune_cases"], ids=lambda c: c["why"])
+def test_every_sweep_case_produces_the_shared_plan(tmp_path, case):
+    root = tmp_path / "trash"
+    _seed_sweep_tree(root, _FOLDER_ID, case)
+    settings = trash_mod.TrashSettings(
+        root=root,
+        retention_days=case["retention_days"],
+        max_size=case["budget"],
+    )
+
+    report = trash_mod.prune_store(settings, now=case["now"])
+
+    assert report.expired == len(case["expired"])
+    assert report.evicted == len(case["evicted"])
+    assert report.kept == case["kept"]
+    assert report.freed == case["freed"]
+    remaining = sorted(p.name for p in (root / _FOLDER_ID).iterdir() if p.is_dir())
+    assert remaining == sorted(
+        entry["entry_id"]
+        for entry in case["entries"]
+        if entry["entry_id"] not in set(case["expired"]) | set(case["evicted"])
+    )

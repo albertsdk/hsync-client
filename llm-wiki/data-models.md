@@ -96,8 +96,12 @@ The policy values this module applies are **declared in hsync-common, not here**
 `TREE_TRASH_MAX_FILES`, `TREE_TRASH_MAX_BYTES`, `TRASH_SWEEP_INTERVAL_SECONDS` and
 `TRASH_UNRECOVERABLE_RESTORE` are imported from `hsync_common.models.trash`, which
 publishes them as the `trash-contract` fixture that the Android store asserts
-against. `tests/test_trash_contract.py` pins the two sides together, including
-that the record `move` writes carries exactly the contract's keys.
+against. The sweep rule itself is the contract's too: `prune_store` walks the
+tree and applies `plan_trash_sweep` (`hsync_common/models/trash.py::plan_trash_sweep`)
+instead of re-deriving which entries expire or get evicted.
+`tests/test_trash_contract.py` pins the two sides together, replays the
+fixture's `prune_cases` through `prune_store`, and checks that the record `move`
+writes carries exactly the contract's keys.
 
 Layout and the entry contract are SSOT in `hsync_common.models.trash`
 (`TrashEntry`, `trash_root`, `entry_payload_path`, `parse_trash_entry`) — see
