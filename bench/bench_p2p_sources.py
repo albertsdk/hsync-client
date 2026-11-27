@@ -33,7 +33,7 @@ from pathlib import Path
 # Allow ``from common import ...`` when run from the bench/ directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common import (  # noqa: E402  (import after sys.path tweak)
+from common import (
     BenchResult,
     add_json_out,
     make_cid,
@@ -41,17 +41,17 @@ from common import (  # noqa: E402  (import after sys.path tweak)
     measure,
     print_table,
 )
-from hsync_common.models.file import File  # noqa: E402
-from p2p_peer_common import (  # noqa: E402
+from hsync_common.models.file import File
+from p2p_peer_common import (
     BENCH_BUCKET,
     P2PRequesterEnv,
     P2PServerHarness,
     env_override,
 )
 
-from hsync_client.p2p_inventory import P2PInventoryStore  # noqa: E402
-from hsync_client.p2p_server import P2PServerMode  # noqa: E402
-from hsync_client.p2p_sources import (  # noqa: E402
+from hsync_client.p2p_inventory import P2PInventoryStore
+from hsync_client.p2p_server import P2PServerMode
+from hsync_client.p2p_sources import (
     P2PPeerSource,
     P2PSourceResolver,
     P2PSourceService,

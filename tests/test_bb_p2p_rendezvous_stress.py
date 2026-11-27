@@ -159,7 +159,7 @@ def _run_load(port: int, transport: str, clients: int, seconds: float) -> dict:
             started = time.perf_counter()
             try:
                 _cycle(client, cid)
-            except Exception as exc:  # noqa: BLE001 - the stress report records the failure
+            except Exception as exc:
                 local_errors.append(f"{type(exc).__name__}: {exc}")
                 continue
             local.append((time.perf_counter() - started) * 1000.0)

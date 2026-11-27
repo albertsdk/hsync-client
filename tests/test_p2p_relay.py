@@ -884,7 +884,7 @@ def test_a_closed_relay_stream_is_not_reopened_by_a_late_data_frame() -> None:
             master_conns.append(writer)
             try:
                 await reader.read(-1)  # hold the connection open until teardown
-            except Exception:  # noqa: BLE001 - teardown races are irrelevant here
+            except Exception:
                 pass
 
         master = await asyncio.start_server(_master, "127.0.0.1", 0)

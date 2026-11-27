@@ -85,7 +85,7 @@ def _patch_dials(monkeypatch, quic: _Pipe | None, tcp: _Pipe | None) -> None:
     """Route ``_dial_quic``/``_dial_tcp`` to the fakes (``None`` = raises OSError)."""
     import hsync_client.rdv_client as mod
 
-    async def _quic(self, port: int) -> _Dial:  # noqa: ANN001
+    async def _quic(self, port: int) -> _Dial:
         if quic is None:
             raise OSError("quic blocked")
         dial = quic.dial("quic", port)
@@ -93,7 +93,7 @@ def _patch_dials(monkeypatch, quic: _Pipe | None, tcp: _Pipe | None) -> None:
             await asyncio.sleep(dial.delay)
         return dial
 
-    async def _tcp(self, port: int, context) -> _Dial:  # noqa: ANN002
+    async def _tcp(self, port: int, context) -> _Dial:
         if tcp is None:
             raise OSError("tcp blocked")
         dial = tcp.dial("tcp", port)
@@ -119,7 +119,7 @@ def _register_frame() -> dict:
 class _RunOn:
     """Capture which dial won for the taxonomy test."""
 
-    async def run(self, dial):  # noqa: ANN001
+    async def run(self, dial):
         return dial
 
 
@@ -130,7 +130,7 @@ class TestAttemptTaxonomy:
         client = RendezvousClient("rdv.test", 443, policy=TrustPolicy.none)
         won: list[str] = []
 
-        async def _run(dial):  # noqa: ANN001
+        async def _run(dial):
             won.append(dial.transport)
             return dial.transport
 
@@ -146,7 +146,7 @@ class TestAttemptTaxonomy:
         _patch_dials(monkeypatch, _Pipe(delay=0.5), _Pipe())
         client = RendezvousClient("rdv.test", 443, policy=TrustPolicy.none)
 
-        async def _run(dial):  # noqa: ANN001
+        async def _run(dial):
             return dial.transport
 
         async def _exercise() -> str:
@@ -178,7 +178,7 @@ class TestAttemptTaxonomy:
         _patch_dials(monkeypatch, _Pipe(), _Pipe())
         client = RendezvousClient("rdv.test", 443, policy=TrustPolicy.none, transport="auto")
 
-        async def _boom(dial):  # noqa: ANN001
+        async def _boom(dial):
             raise RendezvousProtocolError("malformed reply")
 
         with pytest.raises(RendezvousProtocolError):

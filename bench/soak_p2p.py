@@ -28,8 +28,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 
-import stress_tree  # noqa: E402
-from p2p_helpers import (  # noqa: E402
+import stress_tree
+from p2p_helpers import (
     _p2p_start,
     _terminate,
     _wait_for_slave_events,

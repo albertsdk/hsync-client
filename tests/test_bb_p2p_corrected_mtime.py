@@ -57,7 +57,7 @@ class TestBlackBoxCorrectedMtimeLan:
         canonical name and the losing content survives as a conflict copy."""
         # Given a synced base file with a fixed mtime
         name = "shared.txt"
-        stem = name.split(".")[0]
+        stem = name.split(".", maxsplit=1)[0]
         base = b"base\n"
         base_time = 1_700_000_000
         (Path(p2p_master_dir) / name).write_bytes(base)
@@ -135,7 +135,7 @@ class TestBlackBoxCorrectedMtimeLan:
         the loser is preserved as a conflict copy.
         """
         name = "shared.txt"
-        stem = name.split(".")[0]
+        stem = name.split(".", maxsplit=1)[0]
         base = b"base\n"
         base_time = 1_700_000_000
         (Path(p2p_master_dir) / name).write_bytes(base)

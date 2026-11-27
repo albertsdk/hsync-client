@@ -326,7 +326,7 @@ async def test_ack_timeout_retries_without_closing_channel(
     # backoff: the publisher keeps trying instead of giving up.
     with contextlib.suppress(asyncio.TimeoutError):
         async with asyncio.timeout(1):
-            while len(websocket.frames) < 4:  # noqa: ASYNC110
+            while len(websocket.frames) < 4:
                 await asyncio.sleep(0)
 
     assert websocket.closed is False, "an ACK timeout must not close the WSS channel"

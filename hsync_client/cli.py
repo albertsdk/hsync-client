@@ -142,7 +142,7 @@ def version_callback(value: bool) -> None:
     """Print version and exit."""
     if value:
         typer.echo(f"hsync {HSYNC_VERSION}")
-        raise typer.Exit()
+        raise typer.Exit
 
 
 def legend_callback(value: bool) -> None:
@@ -152,7 +152,7 @@ def legend_callback(value: bool) -> None:
 
         for line in legend_lines():
             typer.echo(line)
-        raise typer.Exit()
+        raise typer.Exit
 
 
 def collect_subcommand_options(typer_app: typer.Typer) -> dict[str, list[str]]:
@@ -191,7 +191,7 @@ def capabilities_json_callback(_ctx: typer.Context, value: bool) -> None:
         cli_options_by_subcommand=options_by_subcommand,
     )
     typer.echo(json.dumps(doc, indent=2, sort_keys=True))
-    raise typer.Exit()
+    raise typer.Exit
 
 
 @app.callback()

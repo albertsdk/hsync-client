@@ -58,7 +58,7 @@ class TestRelayTransportChoice:
     def test_legacy_client_without_transport_defaults_to_quic(self) -> None:
         # Tests (and older fakes) may expose no ``transport``: QUIC is the
         # historical default and must stay the fallback.
-        class _Legacy:  # noqa: N801
+        class _Legacy:
             pass
 
         assert _relay_transport(_Legacy()) == "quic"
@@ -69,7 +69,7 @@ class TestTcpRelaySession:
         """The TCP seam runs ``verify_peer_der`` before returning (pre-write)."""
         calls: list[str] = []
 
-        class _ClientSeam:  # noqa: N801
+        class _ClientSeam:
             transport = "tcp"
             host = "rdv.example.net"
             port = 443
@@ -93,7 +93,7 @@ class TestTcpRelaySession:
         """Every attach dials the same IP (a multi-A host cannot reach another node)."""
         dialed: list[tuple[int, str]] = []
 
-        class _ClientSeam:  # noqa: N801
+        class _ClientSeam:
             transport = "tcp"
             host = "rdv.example.net"
             port = 443
@@ -117,7 +117,7 @@ class TestTcpRelaySession:
         """A broken first family falls back to the next IP, then stays pinned."""
         dialed: list[tuple[int, str]] = []
 
-        class _ClientSeam:  # noqa: N801
+        class _ClientSeam:
             transport = "tcp"
             host = "rdv.example.net"
             port = 443
@@ -154,7 +154,7 @@ class TestTcpRelaySession:
             def close(self):
                 closed.append(True)
 
-        class _ClientSeam:  # noqa: N801
+        class _ClientSeam:
             transport = "tcp"
             host = "rdv.example.net"
             port = 443
@@ -177,7 +177,7 @@ class TestTcpRelaySession:
         """A blocked candidate port falls back to the next one (as on QUIC)."""
         attempts: list[int] = []
 
-        class _ClientSeam:  # noqa: N801
+        class _ClientSeam:
             transport = "tcp"
             host = "rdv.example.net"
             port = 443

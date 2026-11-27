@@ -48,14 +48,14 @@ from pathlib import Path
 # Allow ``from common import ...`` when run from the bench/ directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common import (  # noqa: E402  (import after sys.path tweak)
+from common import (
     BenchResult,
     add_json_out,
     maybe_write_json,
     measure,
     print_table,
 )
-from hsync_common.runtime import platform_tag  # noqa: E402
+from hsync_common.runtime import platform_tag
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _VERSION_RE = re.compile(r"hsync \d+\.\d+\.\d+")

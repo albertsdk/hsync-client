@@ -82,8 +82,62 @@ line-length = 100
 target-version = "py313"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
-ignore = ["E501", "E402", "B904", "SIM115", "SIM117", "SIM102", "SIM105"]
+# Curated best-practice set shared across the hsync Python projects (see
+# hsync-common/pyproject.toml for the rationale). ``ignore`` keeps the
+# opinionated/noisy rules out; ``per-file-ignores`` relaxes the tests.
+select = [
+    "E", "F", "W",       # pycodestyle, pyflakes, warnings
+    "I",                 # isort
+    "N",                 # pep8-naming
+    "UP",                # pyupgrade
+    "B", "A", "C4",      # bugbear, builtin shadowing, comprehensions
+    "ISC", "ICN",        # implicit string concat, import conventions
+    "PIE", "RET", "RSE", # misc lints, return, raise
+    "SIM", "TID",        # simplify, tidy-imports
+    "ARG", "PERF",       # unused arguments, performance
+    "FURB", "RUF",       # refurb, ruff-specific (noqa / __all__ hygiene)
+    "PGH", "LOG", "G",   # pygrep-hooks, logging
+    "PL", "T10", "ERA",  # pylint, debugger, commented-out code
+]
+ignore = [
+    # pre-existing
+    "E501", "E402", "B904", "SIM115", "SIM117", "SIM102", "SIM105",
+    # deliberate patterns / opinionated rules
+    "ARG002",                     # unused method args: interface/override conformance
+    "EM101", "EM102", "TRY003",   # exception-message style (opinionated)
+    "N818",                       # exception naming: public API already shipped
+    "PLC0415",                    # import-outside-top-level: lazy imports are deliberate
+    "PLW0603",                    # global-statement: module singletons are deliberate
+    "PLR2004",                    # magic values: domain thresholds, noise > signal
+    "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR0917",  # function-shape metrics
+    "PTH",                        # pathlib migration deliberately out of scope here
+    "DTZ005",                     # datetime.now without tz (single, audited site)
+    "ERA001",                     # commented-out code: false positives on doc examples
+    "RUF002", "RUF003",           # ambiguous unicode: intentional math notation
+    "G004",                       # logging f-strings: the client's deliberate style
+    "N802", "N806", "N811", "N813",  # http.server do_* / Qt overrides / import naming
+    "PLW0108",                    # "unnecessary" lambdas kept for late binding
+    "A002",                       # a shadowing parameter name kept for the public API
+    "RUF001",                     # ambiguous unicode: deliberate typography in strings
+    "ARG001",                     # unused args kept for handler/callback signatures
+    "ISC004",                     # deliberate multi-line concatenation inside a list
+    "A001",                       # domain names like ``dir`` shadow a builtin
+]
+
+[tool.ruff.lint.per-file-ignores]
+# A test keeps otherwise-unused fixture parameters/lambdas, unpacked shapes, odd
+# strings and loose expression style; a bench may too.
+"tests/**" = [
+    "ARG002", "ARG004", "ARG005", "RUF012", "RUF059", "RUF007", "RUF015",
+    "RUF005", "RUF010", "PLR0402", "PLW1510", "PLW2901", "RET501", "RET504",
+    "PLR1711", "PIE807", "PIE808", "FURB171", "ICN001", "RSE102", "PERF401",
+]
+"bench/**" = ["ARG002", "ARG005", "RUF059", "PLR0402", "PLW1510", "PIE807", "RUF007"]
+# The utils ``__all__`` is grouped by submodule, not alphabetical.
+"hsync_client/utils/__init__.py" = ["RUF022"]
+# Auxiliary trees (published docs examples, pentest probes) are illustrative.
+"docs/**" = ["N803", "PLR1714", "RUF046"]
+"pentest/**" = ["PERF401"]
 
 [tool.mypy]
 python_version = "3.13"

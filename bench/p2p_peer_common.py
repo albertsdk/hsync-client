@@ -38,25 +38,25 @@ from unittest.mock import patch
 # Allow ``from common import ...`` when run from the bench/ directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common import BenchResult, scaled_warmup  # noqa: E402  (import after sys.path tweak)
-from hsync_common.models.file import File  # noqa: E402
-from requests import RequestException  # noqa: E402
+from common import BenchResult, scaled_warmup
+from hsync_common.models.file import File
+from requests import RequestException
 
-from hsync_client import sync_state  # noqa: E402
-from hsync_client import utils as client_utils  # noqa: E402
-from hsync_client.config import CONFIG as GLOBAL_CONFIG  # noqa: E402
-from hsync_client.config import HsyncConfig, set_config  # noqa: E402
-from hsync_client.p2p_server import P2PServer, P2PServerMode  # noqa: E402
-from hsync_client.p2p_sources import (  # noqa: E402
+from hsync_client import sync_state
+from hsync_client import utils as client_utils
+from hsync_client.config import CONFIG as GLOBAL_CONFIG
+from hsync_client.config import HsyncConfig, set_config
+from hsync_client.p2p_server import P2PServer, P2PServerMode
+from hsync_client.p2p_sources import (
     P2PPeerSource,
     P2PSourceResolver,
     P2PSourceService,
     build_peer_download_url,
 )
-from hsync_client.pinning import PinStore  # noqa: E402
-from hsync_client.ssl_utils import load_or_create_master_cert  # noqa: E402
-from hsync_client.state_backend import reset_bucket_folder_cache  # noqa: E402
-from hsync_client.utils import http as http_utils  # noqa: E402
+from hsync_client.pinning import PinStore
+from hsync_client.ssl_utils import load_or_create_master_cert
+from hsync_client.state_backend import reset_bucket_folder_cache
+from hsync_client.utils import http as http_utils
 
 # Bucket name shared by every bench node: it is part of the peer download URL,
 # so the source URL, the seeder route and the requester's expected bucket must

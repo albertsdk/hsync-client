@@ -54,15 +54,15 @@ from unittest.mock import patch
 # Allow ``from common import ...`` when run from the bench/ directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common import (  # noqa: E402  (import after sys.path tweak)
+from common import (
     BenchResult,
     add_json_out,
     make_cid,
     maybe_write_json,
     print_table,
 )
-from hsync_common.models.file import File  # noqa: E402
-from p2p_peer_common import (  # noqa: E402
+from hsync_common.models.file import File
+from p2p_peer_common import (
     DownloadOutcomeRecorder,
     LatencyRelay,
     P2PRequesterEnv,
@@ -75,9 +75,9 @@ from p2p_peer_common import (  # noqa: E402
     write_payload,
 )
 
-from hsync_client.p2p_server import P2PServerMode  # noqa: E402
-from hsync_client.p2p_sources import P2PPeerSource, P2PSourceResolver  # noqa: E402
-from hsync_client.transfer import download_file  # noqa: E402
+from hsync_client.p2p_server import P2PServerMode
+from hsync_client.p2p_sources import P2PPeerSource, P2PSourceResolver
+from hsync_client.transfer import download_file
 
 MASTER_CID = make_cid(101)
 SEEDER_CID = make_cid(102)

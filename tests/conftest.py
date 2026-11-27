@@ -532,7 +532,7 @@ class _ClientGlobalsGuard:
         # Restore the event emitter (run_sync always calls init_emitter,
         # replacing the prior instance even when the fd is None).
         if self._events_mod is not None:
-            self._events_mod._emitter = self._saved_emitter  # noqa: SLF001
+            self._events_mod._emitter = self._saved_emitter
         return False
 
 

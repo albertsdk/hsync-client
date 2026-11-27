@@ -52,7 +52,7 @@ REPO_ROOT = BENCH_DIR.parent
 sys.path.insert(0, str(BENCH_DIR))
 sys.path.insert(0, str(REPO_ROOT))
 
-from common import (  # noqa: E402  (import after sys.path tweak)
+from common import (
     BenchResult,
     add_json_out,
     make_cids,
@@ -60,16 +60,16 @@ from common import (  # noqa: E402  (import after sys.path tweak)
     print_table,
     scaled_warmup,
 )
-from hsync_common.protocol.tls_trust import TrustPolicy  # noqa: E402
+from hsync_common.protocol.tls_trust import TrustPolicy
 
-from hsync_client.rdv_client import RendezvousClient  # noqa: E402
-from hsync_client.rdv_frames import (  # noqa: E402
+from hsync_client.rdv_client import RendezvousClient
+from hsync_client.rdv_frames import (
     build_leave_frame,
     build_query_frame,
     build_refresh_frame,
     build_register_frame,
 )
-from tests.p2p_helpers import (  # noqa: E402
+from tests.p2p_helpers import (
     _rendezvous_bin,
     _rendezvous_env,
     _stop_rendezvous,
@@ -250,7 +250,7 @@ def run_stress(port: int, transport: str, clients: int, seconds: float, node_pid
                 client.query(build_query_frame(bucket=BUCKET))
                 client.refresh(build_refresh_frame(cid=cid, bucket=BUCKET, connected=1))
                 client.leave(build_leave_frame(cid=cid, bucket=BUCKET))
-            except Exception as exc:  # noqa: BLE001 - the benchmark records the failure
+            except Exception as exc:
                 local_errors.append(type(exc).__name__)
                 continue
             local.append(time.perf_counter() - started)

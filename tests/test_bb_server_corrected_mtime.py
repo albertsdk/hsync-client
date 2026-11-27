@@ -105,7 +105,7 @@ class TestBlackBoxCorrectedMtimeServer:
         the losing server-side content is preserved as a conflicted copy,
         visible in the public listing (no silent data loss)."""
         name = f"doc-{uuid.uuid4().hex[:8]}.txt"
-        stem = name.split(".")[0]
+        stem = name.split(".", maxsplit=1)[0]
         base = b"shared base\n"
         base_time = 1_700_000_000
         older = b"older edit by the other user\n"
@@ -158,7 +158,7 @@ class TestBlackBoxCorrectedMtimeServer:
         content is preserved as a local conflict copy.
         """
         name = f"doc-{uuid.uuid4().hex[:8]}.txt"
-        stem = name.split(".")[0]
+        stem = name.split(".", maxsplit=1)[0]
         base = b"shared base\n"
         base_time = 1_700_000_000
         local_edit = b"local edit with newer raw mtime\n"
@@ -213,7 +213,7 @@ class TestBlackBoxCorrectedMtimeServer:
         would have kept the name.
         """
         name = f"guard-{uuid.uuid4().hex[:8]}.txt"
-        stem = name.split(".")[0]
+        stem = name.split(".", maxsplit=1)[0]
         base_time = 1_700_000_000
         local_edit = b"local edit inside the guard\n"
         remote_edit = _payload_with_higher_hash_than(local_edit)
@@ -259,7 +259,7 @@ class TestBlackBoxCorrectedMtimeServer:
         it), but it is three seconds older: the chronological rule must win.
         """
         name = f"clock-{uuid.uuid4().hex[:8]}.txt"
-        stem = name.split(".")[0]
+        stem = name.split(".", maxsplit=1)[0]
         base_time = 1_700_000_000
         local_edit = b"local edit above the guard\n"
         remote_edit = _payload_with_higher_hash_than(local_edit)

@@ -26,9 +26,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from hsync_client.lan import get_free_port  # noqa: E402
+from hsync_client.lan import get_free_port
 
-from hsync_client.p2p_server import P2PServer  # noqa: E402
+from hsync_client.p2p_server import P2PServer
 
 N_HEALTH = 1500
 N_STATUS = 500
@@ -92,7 +92,7 @@ def main() -> None:
             for _ in range(BIG_FILE_MB * 1024 * 1024 // len(big)):
                 f.write(big)
 
-        import hsync_client.p2p_server as p2p_server
+        from hsync_client import p2p_server
 
         p2p_server.CONFIG = {
             "LOCAL_BUCKET": str(tmp),

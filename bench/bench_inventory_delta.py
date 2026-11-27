@@ -27,7 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common import (  # noqa: E402  (import after sys.path tweak)
+from common import (
     BenchResult,
     add_json_out,
     make_cid,
@@ -37,7 +37,7 @@ from common import (  # noqa: E402  (import after sys.path tweak)
     scaled_warmup,
 )
 
-from hsync_client.p2p_inventory import P2PInventoryStore  # noqa: E402
+from hsync_client.p2p_inventory import P2PInventoryStore
 
 _BUCKET = "bench"
 _GEN = 1

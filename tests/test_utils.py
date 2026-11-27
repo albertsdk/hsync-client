@@ -494,7 +494,7 @@ class TestHttpRetryPolicy:
         seen: list[int] = []
 
         class _Handler(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):  # noqa: N802 - http.server API
+            def do_GET(self):
                 seen.append(1)
                 if len(seen) == 1:
                     # Answer nothing and let the handler close the socket: what a

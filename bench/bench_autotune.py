@@ -33,16 +33,16 @@ from pathlib import Path
 # Allow ``from common import ...`` when run from the bench/ directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common import (  # noqa: E402  (import after sys.path tweak)
+from common import (
     BenchResult,
     add_json_out,
     maybe_write_json,
     measure,
     print_table,
 )
-from hsync_common.models.file import File  # noqa: E402
+from hsync_common.models.file import File
 
-from hsync_client.autotune import (  # noqa: E402
+from hsync_client.autotune import (
     SAFE,
     BwClass,
     NetClass,
@@ -58,7 +58,7 @@ from hsync_client.autotune import (  # noqa: E402
     derive_timeout,
     profile_transfer_queue,
 )
-from hsync_client.constants import (  # noqa: E402
+from hsync_client.constants import (
     HTTP_TIMEOUT_MAX,
     HTTP_TIMEOUT_MIN,
     MAX_CONCURRENT_TRANSFERS_MAX,

@@ -630,7 +630,9 @@ class TestRemoteConflictedCopy:
         winner, loser = sorted((version_a, version_b), key=sha256_of, reverse=True)
         listing = bb_server_files(bb_bucket)
         assert name in listing, f"Main path missing from listing: {listing}"
-        conflicts = [p for p in listing if "_conflicted_copy_" in p and name.split(".")[0] in p]
+        conflicts = [
+            p for p in listing if "_conflicted_copy_" in p and name.split(".", maxsplit=1)[0] in p
+        ]
         assert len(conflicts) == 1, (
             f"Expected exactly 1 conflicted copy for {name}, found {len(conflicts)}: {conflicts}"
         )
@@ -712,7 +714,7 @@ class TestRemoteCausalConflict:
         not preserve a file that has not diverged) nor on the server.
         """
         name = f"silent-{uuid.uuid4().hex}.txt"
-        stem = name.split(".")[0]
+        stem = name.split(".", maxsplit=1)[0]
         base_content = b"shared base v1\n"
         remote_new = b"remote v2 zz\n"
 
@@ -749,7 +751,7 @@ class TestRemoteCausalConflict:
         takes the path, and my preserved copy is later synced back to the
         server — no data loss."""
         name = f"lose-{uuid.uuid4().hex}.txt"
-        stem = name.split(".")[0]
+        stem = name.split(".", maxsplit=1)[0]
         base_content = b"shared base v1\n"
         remote_content = b"remote v2 zz\n"
         local_edit = b"local v2 aa\n"
@@ -800,7 +802,7 @@ class TestRemoteCausalConflict:
         the original path (no local copy), and the *server* preserves the other
         side's version as a conflicted copy."""
         name = f"win-{uuid.uuid4().hex}.txt"
-        stem = name.split(".")[0]
+        stem = name.split(".", maxsplit=1)[0]
         base_content = b"shared base v1\n"
         remote_content = b"remote v2 aa\n"
         local_edit = b"local v2 zz\n"
@@ -845,7 +847,7 @@ class TestRemoteCausalConflict:
         ancestor): my content has the higher hash, so my file wins the path and
         the server preserves the other side's as a conflicted copy."""
         name = f"newwin-{uuid.uuid4().hex}.txt"
-        stem = name.split(".")[0]
+        stem = name.split(".", maxsplit=1)[0]
         remote_content = b"remote new aa\n"
         local_content = b"local new zz\n"
 
@@ -883,7 +885,7 @@ class TestRemoteCausalConflict:
         tie-break: the other side takes the path and my version is preserved
         as a local conflicted copy."""
         name = f"newlose-{uuid.uuid4().hex}.txt"
-        stem = name.split(".")[0]
+        stem = name.split(".", maxsplit=1)[0]
         remote_content = b"remote new oops\n"
         local_content = b"local new aa\n"
 
@@ -921,7 +923,7 @@ class TestRemoteCausalConflict:
         """Both sides independently create the same path with the same bytes:
         they are already in sync — no transfer, no conflicted copy anywhere."""
         name = f"same-{uuid.uuid4().hex}.txt"
-        stem = name.split(".")[0]
+        stem = name.split(".", maxsplit=1)[0]
         content = b"identical fresh content\n"
 
         second_cid = "TestClientY1234567890"

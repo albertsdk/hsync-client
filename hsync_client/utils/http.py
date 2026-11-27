@@ -180,7 +180,7 @@ _CONFIG_FINGERPRINT = object()
 
 
 def get_http_session(
-    cert_fingerprint: str | None | object = _CONFIG_FINGERPRINT,
+    cert_fingerprint: str | object | None = _CONFIG_FINGERPRINT,
 ) -> "Session":
     """Build a ``requests.Session`` that pins the peer cert when required.
 
@@ -253,7 +253,7 @@ _http_session_cache = threading.local()
 def http_get(
     url: str,
     *,
-    cert_fingerprint: str | None | object = _CONFIG_FINGERPRINT,
+    cert_fingerprint: str | object | None = _CONFIG_FINGERPRINT,
     **kwargs,
 ) -> "Response":
     """GET ``url`` through a fingerprint-pinned session (see :func:`get_http_session`)."""
@@ -263,7 +263,7 @@ def http_get(
 def http_post(
     url: str,
     *,
-    cert_fingerprint: str | None | object = _CONFIG_FINGERPRINT,
+    cert_fingerprint: str | object | None = _CONFIG_FINGERPRINT,
     **kwargs,
 ) -> "Response":
     """POST to ``url`` through a fingerprint-pinned session."""
@@ -273,7 +273,7 @@ def http_post(
 def http_delete(
     url: str,
     *,
-    cert_fingerprint: str | None | object = _CONFIG_FINGERPRINT,
+    cert_fingerprint: str | object | None = _CONFIG_FINGERPRINT,
     **kwargs,
 ) -> "Response":
     """DELETE ``url`` through a fingerprint-pinned session."""
@@ -396,7 +396,7 @@ def classify_connection_error(exc: BaseException) -> str:
 def http_patch(
     url: str,
     *,
-    cert_fingerprint: str | None | object = _CONFIG_FINGERPRINT,
+    cert_fingerprint: str | object | None = _CONFIG_FINGERPRINT,
     **kwargs,
 ) -> "Response":
     """PATCH ``url`` through a fingerprint-pinned session."""

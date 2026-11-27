@@ -23,7 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common import (  # noqa: E402  (import after sys.path tweak)
+from common import (
     BenchResult,
     add_json_out,
     make_cid,
@@ -32,8 +32,8 @@ from common import (  # noqa: E402  (import after sys.path tweak)
     print_table,
 )
 
-from hsync_client.p2p_peer_models import Peer  # noqa: E402
-from hsync_client.p2p_peers import PeerManager  # noqa: E402
+from hsync_client.p2p_peer_models import Peer
+from hsync_client.p2p_peers import PeerManager
 
 _BUCKET = "bench"
 
