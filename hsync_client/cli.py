@@ -1151,19 +1151,25 @@ def trash_add(
         ),
     ] = None,
 ) -> None:
-    """Move one file into the trash instead of deleting it.
+    """Move a file or folder into the trash instead of deleting it.
 
     A front-end's "delete" should park the bytes here rather than unlink them:
     the removal still propagates as a deletion (the watcher records the marker),
-    and the same restore brings the file back on every device. The entry is
-    recorded with origin ``user`` so the trash view can tell the two apart.
+    and the same restore brings the file back on every device. A folder is parked
+    file by file and then removed, so its files stay as recoverable as a single
+    file; a symlink is only removed, never followed. Every entry is recorded with
+    origin ``user`` so the trash view can tell it from the device's own
+    deletions.
     """
     from pathlib import Path
+    from shutil import rmtree
 
     from hsync_common.models.trash import TRASH_ORIGIN_USER
 
     from hsync_client.exitcodes import ExitCode
     from hsync_client.logger import setup_logging
+    from hsync_client.trash import delete_local_tree
+    from hsync_client.utils.fs_ops import remove_with_retry
 
     setup_logging(quiet=True)
     target_folder = Path(folder).expanduser()
@@ -1173,7 +1179,26 @@ def trash_add(
     candidate = Path(path).expanduser()
     if not candidate.is_absolute():
         candidate = target_folder / candidate
-    result = _trash_store(str(target_folder), trash_dir).move(candidate, origin=TRASH_ORIGIN_USER)
+    store = _trash_store(str(target_folder), trash_dir)
+    # A front-end's delete can target a whole folder or a symlink. Park the bytes
+    # of every file the tree holds (ADR-0056) and remove it, exactly as a peer's
+    # recursive deletion does; a symlink is only ever removed, never followed, so
+    # its target is left untouched.
+    if candidate.is_symlink() or candidate.is_dir():
+        try:
+            if candidate.is_symlink():
+                remove_with_retry(str(candidate))
+                typer.echo(f'Removed "{path}".')
+            else:
+                kept, left = delete_local_tree(store, candidate)
+                rmtree(candidate)
+                note = f", {left} kept no copy" if left else ""
+                typer.echo(f'Moved "{path}" to the trash ({kept} file(s){note}).')
+        except OSError as exc:
+            typer.echo(f'Cannot move "{path}" to the trash: {exc}.', err=True)
+            raise typer.Exit(code=int(ExitCode.FATAL)) from exc
+        return
+    result = store.move(candidate, origin=TRASH_ORIGIN_USER)
     if result.trashed:
         typer.echo(f'Moved "{path}" to the trash.')
         return

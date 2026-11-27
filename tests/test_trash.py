@@ -809,6 +809,37 @@ class TestCommands:
     def _store(self, folder, tmp_path):
         return TrashStore(folder, settings=TrashSettings(enabled=True, root=tmp_path / "trash"))
 
+    def test_add_parks_a_folder_and_removes_it(self, monkeypatch, tmp_path):
+        folder = self._folder(tmp_path)
+        _write(folder, "photos/2024/a.txt", b"aa")
+        _write(folder, "photos/b.txt", b"bb")
+        (folder / "photos" / "empty").mkdir()
+
+        result = self._run(monkeypatch, tmp_path, "add", "--folder", str(folder), "photos")
+
+        assert result.exit_code == 0, result.output
+        assert not (folder / "photos").exists()
+        assert sorted(
+            item.entry["relpath"] for item in self._store(folder, tmp_path).entries()
+        ) == [
+            "photos/2024/a.txt",
+            "photos/b.txt",
+        ]
+
+    def test_add_removes_a_symlink_without_following_it(self, monkeypatch, tmp_path):
+        folder = self._folder(tmp_path)
+        target = tmp_path / "outside"
+        target.mkdir()
+        (target / "x.txt").write_bytes(b"x")
+        (folder / "linkdir").symlink_to(target)
+
+        result = self._run(monkeypatch, tmp_path, "add", "--folder", str(folder), "linkdir")
+
+        assert result.exit_code == 0, result.output
+        assert not (folder / "linkdir").exists()
+        assert (target / "x.txt").exists()
+        assert self._store(folder, tmp_path).entries() == []
+
     def test_list_json_flags_a_missing_payload(self, monkeypatch, tmp_path):
         folder = self._folder(tmp_path)
         self._park(monkeypatch, tmp_path, folder)

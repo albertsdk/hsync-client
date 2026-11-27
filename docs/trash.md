@@ -33,7 +33,7 @@ applied the deletion, `user` when a front-end removed it), `cid`, `bucket` and
 `payload_present` — a record whose stored bytes are gone is listed with
 `payload_present: false` and cannot be restored (the sweep removes it).
 
-## Delete a file into the trash
+## Delete a file or folder into the trash
 
 Deleting through the trash keeps the removal recoverable: the bytes leave the
 folder, the deletion still propagates everywhere, and the entry can be restored
@@ -43,7 +43,11 @@ from this device.
 hsync trash add --folder SYNCED_FOLDER FILE_PATH
 ```
 
-Use it from a script or a desktop action instead of removing the file yourself:
+A folder works too: every file it holds is parked — one entry per file — and the
+folder is then removed, so a deleted folder is as recoverable as a single file. A
+symlink is only removed, never followed, so its target is left untouched.
+
+Use it from a script or a desktop action instead of removing the path yourself:
 an ordinary `rm` leaves nothing to restore.
 
 ## Restore one file
