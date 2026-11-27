@@ -16,7 +16,7 @@ Every name historically exposed by ``hsync_client.utils`` is re-exported here,
 so ``from hsync_client.utils import <name>`` keeps working unchanged.
 """
 
-from hsync_client.utils import (  # noqa: F401  (submodules, for ``utils.<name>`` access)
+from hsync_client.utils import (  # submodules, for ``utils.<name>`` access
     cid,
     http,
     paths,

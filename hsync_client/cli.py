@@ -1064,6 +1064,23 @@ def _trash_store(folder: str, trash_dir: str | None):
     return TrashStore(Path(folder), settings=_trash_settings(trash_dir))
 
 
+def _require_folder(folder: str):
+    """Resolve *folder* to a directory, failing like every trash verb does.
+
+    Shared because each folder-taking trash command printed the same "Not a
+    directory" error and exited with the fatal code.
+    """
+    from pathlib import Path
+
+    from hsync_client.exitcodes import ExitCode
+
+    target = Path(folder).expanduser()
+    if not target.is_dir():
+        typer.echo(f"Not a directory: {target}", err=True)
+        raise typer.Exit(code=int(ExitCode.FATAL))
+    return target
+
+
 @_trash_app.command("list")
 def trash_list(
     folder: Annotated[
@@ -1086,16 +1103,11 @@ def trash_list(
 ) -> None:
     """List the files this device deleted and can still restore."""
     import time
-    from pathlib import Path
 
-    from hsync_client.exitcodes import ExitCode
     from hsync_client.logger import setup_logging
 
     setup_logging(quiet=True)
-    target = Path(folder).expanduser()
-    if not target.is_dir():
-        typer.echo(f"Not a directory: {target}", err=True)
-        raise typer.Exit(code=int(ExitCode.FATAL))
+    target = _require_folder(folder)
     items = _trash_store(str(target), trash_dir).entries()
     if as_json:
         typer.echo(
@@ -1172,10 +1184,7 @@ def trash_add(
     from hsync_client.utils.fs_ops import remove_with_retry
 
     setup_logging(quiet=True)
-    target_folder = Path(folder).expanduser()
-    if not target_folder.is_dir():
-        typer.echo(f"Not a directory: {target_folder}", err=True)
-        raise typer.Exit(code=int(ExitCode.FATAL))
+    target_folder = _require_folder(folder)
     candidate = Path(path).expanduser()
     if not candidate.is_absolute():
         candidate = target_folder / candidate
@@ -1279,16 +1288,12 @@ def trash_restore(
     payload-corrupt or failed, and the exit code stays non-zero on a refusal.
     """
     from dataclasses import asdict
-    from pathlib import Path
 
     from hsync_client.exitcodes import ExitCode
     from hsync_client.logger import setup_logging
 
     setup_logging(quiet=True)
-    target = Path(folder).expanduser()
-    if not target.is_dir():
-        typer.echo(f"Not a directory: {target}", err=True)
-        raise typer.Exit(code=int(ExitCode.FATAL))
+    target = _require_folder(folder)
     targets = (relpath is not None, all_entries, prefix is not None)
     if sum(targets) != 1:
         raise typer.BadParameter("choose one of a PATH argument, --all or --prefix.")
@@ -1378,9 +1383,7 @@ def trash_empty(
     once per share. --dry-run reports the same counts without deleting anything.
     """
     from dataclasses import asdict
-    from pathlib import Path
 
-    from hsync_client.exitcodes import ExitCode
     from hsync_client.logger import setup_logging
     from hsync_client.trash import EmptyReport, empty_store
 
@@ -1394,10 +1397,7 @@ def trash_empty(
             _trash_settings(trash_dir), older_than_days=older_than, dry_run=dry_run
         )
     else:
-        target = Path(str(folder)).expanduser()
-        if not target.is_dir():
-            typer.echo(f"Not a directory: {target}", err=True)
-            raise typer.Exit(code=int(ExitCode.FATAL))
+        target = _require_folder(str(folder))
         store = _trash_store(str(target), trash_dir)
         if not store.entries():
             if as_json:

@@ -36,7 +36,7 @@ def parse_bandwidth(value: str | int | None) -> int | None:
     Raises:
         ValueError: If the value is invalid.
     """
-    if value is None or value == 0 or value == "0":
+    if value is None or value in {0, "0"}:
         return None
 
     if isinstance(value, bool):

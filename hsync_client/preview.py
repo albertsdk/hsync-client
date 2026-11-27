@@ -95,7 +95,7 @@ def _apply_bandwidth(value: object, key: _BANDWIDTH_KEY, name: str, log) -> bool
 
     Returns False (after logging) when the value is not a valid bandwidth.
     """
-    if value == 0 or value == "0":
+    if value in {0, "0"}:
         CONFIG[key] = None
     elif isinstance(value, int):
         CONFIG[key] = value

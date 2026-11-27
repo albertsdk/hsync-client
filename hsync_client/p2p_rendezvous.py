@@ -50,9 +50,9 @@ if TYPE_CHECKING:
 
 
 __all__ = [
-    "RendezvousSource",
     "RendezvousPlan",
     "RendezvousPlanState",
+    "RendezvousSource",
     "build_rendezvous_plan",
 ]
 

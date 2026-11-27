@@ -118,8 +118,7 @@ def _authority_time_url(server_url: str | None = None) -> str | None:
     buckets = str((CONFIG.get("API") or {}).get("buckets") or "").rstrip("/")
     if not buckets:
         return None
-    if buckets.endswith("/buckets"):
-        buckets = buckets[: -len("/buckets")]
+    buckets = buckets.removesuffix("/buckets")
     return f"{buckets}/time"
 
 

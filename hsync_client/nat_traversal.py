@@ -69,8 +69,7 @@ def candidate_endpoints(
     primary = local_ips[0] if local_ips else None
     if external_port and primary is not None:
         candidates.append(CandidateEndpoint(_TCP, primary, external_port))
-    for host in local_ips:
-        candidates.append(CandidateEndpoint(_TCP, host, listen_port))
+    candidates.extend(CandidateEndpoint(_TCP, host, listen_port) for host in local_ips)
 
     seen: set[tuple[str, int]] = set()
     unique: list[CandidateEndpoint] = []

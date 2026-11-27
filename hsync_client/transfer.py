@@ -2748,8 +2748,7 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
                     f"{format_bytes(new_offset)} uploaded; re-probing and retrying"
                 )
                 raise ServerError(f"Upload accepted partially; resuming from offset {new_offset}")
-            else:
-                _handle_upload_response(file, response, t0)
+            _handle_upload_response(file, response, t0)
     except FileNotFoundError:
         log.error(f'File not found: "{file.filepath}"')
         _emit_transfer_failed("upload", file.filepath, "the local file disappeared while uploading")

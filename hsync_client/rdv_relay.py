@@ -92,7 +92,42 @@ async def _write_keepalives(writer: Any, cid: str, bucket: str) -> None:
         await writer.drain()
 
 
-class RelayDialer:
+class _RelayEndpoint:
+    """State and teardown shared by the relay dialer and acceptor."""
+
+    def __init__(
+        self,
+        client: RendezvousClient,
+        *,
+        cid: str,
+        bucket: str,
+        group: str | None = None,
+        bucket_token: str | None = None,
+    ) -> None:
+        self._client = client
+        self._cid = cid
+        self._bucket = bucket
+        self._group = group
+        self._token = bucket_token
+        self._thread: threading.Thread | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._stop: asyncio.Event | None = None
+        self._ready = threading.Event()
+
+    def _teardown(self) -> None:
+        """Stop the endpoint's loop and join its thread (idempotent)."""
+        loop, stop, thread = self._loop, self._stop, self._thread
+        if loop is not None and stop is not None and not loop.is_closed():
+            try:
+                loop.call_soon_threadsafe(stop.set)
+            except RuntimeError:
+                pass
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=5.0)
+        self._thread = None
+
+
+class RelayDialer(_RelayEndpoint):
     """Requester side: one relay tunnel exposed as a loopback TCP endpoint.
 
     A tunnel is long-lived (until :meth:`close`) and pairs **one** relay session
@@ -112,16 +147,8 @@ class RelayDialer:
         group: str | None = None,
         bucket_token: str | None = None,
     ) -> None:
-        self._client = client
-        self._cid = cid
-        self._bucket = bucket
+        super().__init__(client, cid=cid, bucket=bucket, group=group, bucket_token=bucket_token)
         self._target_cid = target_cid
-        self._group = group
-        self._token = bucket_token
-        self._thread: threading.Thread | None = None
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._stop: asyncio.Event | None = None
-        self._ready = threading.Event()
         self._endpoint: tuple[str, int] | None = None
         self._server: Any | None = None
         # The QUIC session the tunnel bridges over right now, and the flag a caller
@@ -237,15 +264,7 @@ class RelayDialer:
 
     def close(self) -> None:
         """Tear the tunnel down (idempotent)."""
-        loop, stop, thread = self._loop, self._stop, self._thread
-        if loop is not None and stop is not None and not loop.is_closed():
-            try:
-                loop.call_soon_threadsafe(stop.set)
-            except RuntimeError:
-                pass
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=5.0)
-        self._thread = None
+        self._teardown()
         # Prompt for a waiter: the loop clears it too, but only once it unwinds.
         self._session_up.clear()
 
@@ -255,7 +274,7 @@ class RelayDialer:
         self._stop = asyncio.Event()
         try:
             loop.run_until_complete(self._run())
-        except BaseException as exc:  # noqa: BLE001 - reported through the log
+        except BaseException as exc:  # reported through the log
             log.debug(f"Relay dialer stopped: {exc}")
         finally:
             self._ready.set()
@@ -485,7 +504,7 @@ class RelayDialer:
         return _handle
 
 
-class RelayAcceptor:
+class RelayAcceptor(_RelayEndpoint):
     """Serving side: accept relayed sessions and hand them to the local master."""
 
     def __init__(
@@ -498,16 +517,8 @@ class RelayAcceptor:
         group: str | None = None,
         bucket_token: str | None = None,
     ) -> None:
-        self._client = client
-        self._cid = cid
-        self._bucket = bucket
+        super().__init__(client, cid=cid, bucket=bucket, group=group, bucket_token=bucket_token)
         self._local_port = local_port
-        self._group = group
-        self._token = bucket_token
-        self._thread: threading.Thread | None = None
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._stop: asyncio.Event | None = None
-        self._ready = threading.Event()
         self._registered = False
 
     @property
@@ -529,15 +540,7 @@ class RelayAcceptor:
 
     def stop(self) -> None:
         """Withdraw the listener and drop every live session (idempotent)."""
-        loop, stop, thread = self._loop, self._stop, self._thread
-        if loop is not None and stop is not None and not loop.is_closed():
-            try:
-                loop.call_soon_threadsafe(stop.set)
-            except RuntimeError:
-                pass
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=5.0)
-        self._thread = None
+        self._teardown()
         self._registered = False
 
     def _thread_main(self) -> None:
@@ -546,7 +549,7 @@ class RelayAcceptor:
         self._stop = asyncio.Event()
         try:
             loop.run_until_complete(self._run())
-        except BaseException as exc:  # noqa: BLE001 - reported through the log
+        except BaseException as exc:  # reported through the log
             log.debug(f"Relay acceptor stopped: {exc}")
         finally:
             self._ready.set()

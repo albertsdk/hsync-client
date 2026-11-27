@@ -486,8 +486,7 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
         decompressed_path = f"{literal_path}.decompressed"
         try:
             with open(literal_path, "rb") as src, open(decompressed_path, "wb") as out:
-                for chunk in decompress_stream(src, DELTA_MAX_LITERAL_SIZE):
-                    out.write(chunk)
+                out.writelines(decompress_stream(src, DELTA_MAX_LITERAL_SIZE))
         except (zstd.ZstdError, ValueError) as exc:
             handler._send_error_response(_HTTP_BAD_REQUEST, f"Invalid compressed payload: {exc}")
             return

@@ -194,7 +194,7 @@ class SharedUpnpMapping:
         if mapper is not None:
             try:
                 mapper.unmap()
-            except Exception as exc:  # noqa: BLE001 - best-effort teardown
+            except Exception as exc:  # best-effort teardown
                 log.debug(f"UPnP unmap failed: {exc}")
 
 
@@ -1301,7 +1301,7 @@ class RdvRendezvous(RendezvousPlanState):
             self._client.leave(
                 build_leave_frame(cid=self._cid, bucket=self._bucket, bucket_token=self._token)
             )
-        except Exception as exc:  # noqa: BLE001 - shutdown must never raise
+        except Exception as exc:  # shutdown must never raise
             log.debug(f"Rendezvous leave failed (best-effort): {exc}")
 
 

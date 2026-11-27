@@ -885,7 +885,7 @@ def _drop_case_collisions(
             # files, so the deterministic winner is reconciled instead (the
             # engine's identity still tracks only one of them).
             conflicted |= distinct
-            conflicts.append((winner, sorted(distinct - {winner})[0]))
+            conflicts.append((winner, min(distinct - {winner})))
             log.warning(
                 f'{ActionLabel.SKIP} "{winner}" and another name differ only by case; '
                 "both stay out of this device's sync"
@@ -904,7 +904,7 @@ def _drop_case_collisions(
                 rewrites[rel] = winner
         if not aligned:
             conflicted |= distinct
-            conflicts.append((winner, sorted(distinct - {winner})[0]))
+            conflicts.append((winner, min(distinct - {winner})))
             continue
         if local_rels:
             local_winners.add(winner)

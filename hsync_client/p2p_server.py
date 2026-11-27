@@ -419,13 +419,13 @@ class _ServingContext:
     """
 
     __slots__ = (
-        "mode",
         "bucket",
-        "peer_read_slots",
         "cid_guard",
-        "source_service",
         "inventory_store",
+        "mode",
+        "peer_read_slots",
         "progress_echo",
+        "source_service",
     )
 
     def __init__(
@@ -785,6 +785,20 @@ class P2PEndpointMixin(_HTTPTransportBase):
         self.end_headers()
         self.wfile.write(body)
 
+    def _begin_mutation(self) -> tuple[str, dict] | None:
+        """Shared prologue of the mutating verbs.
+
+        A read-only seeder or an unauthorized caller is answered here, so the
+        caller returns on ``None``; otherwise returns the request path and its
+        parsed query.
+        """
+        if self._is_seeder():
+            self._send_method_not_allowed()
+            return None
+        if not self._check_mutation_auth():
+            return None
+        return urlparse(self.path).path, _parse_request_query(self.path)
+
     def do_GET(self) -> None:
         """Handle GET requests."""
         if not self._check_auth():
@@ -1057,15 +1071,10 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
     def do_DELETE(self) -> None:
         """Handle DELETE requests for bidirectional sync."""
-        if self._is_seeder():
-            self._send_method_not_allowed()
+        request = self._begin_mutation()
+        if request is None:
             return
-        if not self._check_mutation_auth():
-            return
-
-        parsed = urlparse(self.path)
-        path = parsed.path
-        query = _parse_request_query(self.path)
+        path, query = request
 
         # Delete file: /api/v1/buckets/{bucket}/files?path=...
         if path.endswith(ENDPOINT_FILES_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
@@ -1076,15 +1085,10 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
     def do_PATCH(self) -> None:
         """Handle PATCH requests for rename operations."""
-        if self._is_seeder():
-            self._send_method_not_allowed()
+        request = self._begin_mutation()
+        if request is None:
             return
-        if not self._check_mutation_auth():
-            return
-
-        parsed = urlparse(self.path)
-        path = parsed.path
-        query = _parse_request_query(self.path)
+        path, query = request
 
         # Permission-only change: /api/v1/buckets/{bucket}/files/permissions
         if path.endswith(ENDPOINT_FILES_PERMISSIONS_SUFFIX) and ENDPOINT_BUCKETS_PREFIX in path:
@@ -2421,7 +2425,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
         # The wire path is always "/"-separated (the frame's own contract); the
         # destination path is native.
         rel = rel_dest.replace("\\", "/")
-        total = declared_size if declared_size > 0 else 0
+        total = max(0, declared_size)
         try:
             build_p2p_file_progress(file=rel, transferred=0, total=total)
         except ValueError as exc:
@@ -2546,7 +2550,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
             if resync
             else progress_reporter(
                 dest_path_local,
-                declared_size if declared_size > 0 else 0,
+                max(0, declared_size),
                 "download",
                 echo=self._upload_progress_echo(form_fields, rel_dest, declared_size),
             )
@@ -3678,7 +3682,7 @@ class P2PServer:
         # framework refuse an absurd declared body early (0 only when the
         # operator disabled MAX_INBOUND_SIZE).
         max_inbound = int(CONFIG.get("MAX_INBOUND_SIZE", 0) or 0)
-        app = web.Application(client_max_size=max_inbound if max_inbound > 0 else 0)
+        app = web.Application(client_max_size=max(0, max_inbound))
         # Always register the canonical realtime route: when no control plane is
         # attached (a read-only seeder) or the node is not serving, it answers
         # 503 rather than falling through to the REST router as a 404.

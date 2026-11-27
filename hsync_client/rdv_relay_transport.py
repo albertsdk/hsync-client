@@ -240,7 +240,7 @@ def _close_writer(writer: Any) -> None:
     try:
         if not writer.is_closing():
             writer.close()
-    except Exception:  # noqa: BLE001 - teardown must never raise
+    except Exception:  # teardown must never raise
         pass
 
 

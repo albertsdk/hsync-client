@@ -165,7 +165,7 @@ def stop_serving(rel: str, cid: str) -> None:
 class ProgressReporter:
     """Emit throttled ``progress`` events for a single in-flight transfer."""
 
-    __slots__ = ("_path", "_total", "_op", "_last_ts", "_echo")
+    __slots__ = ("_echo", "_last_ts", "_op", "_path", "_total")
 
     def __init__(
         self,
@@ -212,7 +212,7 @@ class ProgressReporter:
 class ProgressWriter:
     """Binary sink wrapper that feeds a reporter with the bytes it accepted."""
 
-    __slots__ = ("_write", "_reporter", "_total")
+    __slots__ = ("_reporter", "_total", "_write")
 
     def __init__(
         self,

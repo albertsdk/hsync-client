@@ -666,7 +666,7 @@ class RendezvousClient:
                 is_closing = getattr(writer, "is_closing", lambda: False)
                 if not is_closing():
                     writer.close()
-            except Exception:  # noqa: BLE001 - teardown must never raise
+            except Exception:  # teardown must never raise
                 pass
             finally:
                 # aioquic's context exit transmits CONNECTION_CLOSE and then
@@ -704,7 +704,7 @@ class RendezvousClient:
                 # TLS/TCP connection per exchange, so an unawaited close leaks a
                 # descriptor per exchange under sustained load.
                 await writer.wait_closed()
-            except Exception:  # noqa: BLE001 - teardown must never raise
+            except Exception:  # teardown must never raise
                 pass
 
         return _Dial(

@@ -192,16 +192,24 @@ class StdinCommandHandler:
             return None
         return str(cmd), data
 
-    async def _handle_line(self, line: bytes) -> None:
-        """Parse one command line and run its handler on the current loop."""
+    def _resolve(self, line: bytes) -> tuple[str, dict, Callable[..., Any]] | None:
+        """Parse a line and look up its handler; ``None`` when not dispatchable."""
         parsed = self._parse(line)
         if parsed is None:
-            return
+            return None
         cmd, data = parsed
         handler = self._handlers.get(cmd)
         if handler is None:
             self._log.warning(f"Unknown stdin command: {cmd}")
+            return None
+        return cmd, data, handler
+
+    async def _handle_line(self, line: bytes) -> None:
+        """Parse one command line and run its handler on the current loop."""
+        resolved = self._resolve(line)
+        if resolved is None:
             return
+        cmd, data, handler = resolved
         try:
             if inspect.iscoroutinefunction(handler):
                 await handler(**data)
@@ -332,14 +340,10 @@ class StdinCommandHandler:
                 os.write(wake_w, b"\0")
 
     def _dispatch_in_thread(self, line: bytes) -> None:
-        parsed = self._parse(line)
-        if parsed is None:
+        resolved = self._resolve(line)
+        if resolved is None:
             return
-        cmd, data = parsed
-        handler = self._handlers.get(cmd)
-        if handler is None:
-            self._log.warning(f"Unknown stdin command: {cmd}")
-            return
+        cmd, data, handler = resolved
         try:
             if inspect.iscoroutinefunction(handler):
                 # No loop on this thread: drive the coroutine to completion.

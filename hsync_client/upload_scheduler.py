@@ -115,8 +115,7 @@ class PerPathUploadScheduler:
         # ``lambda: _get_*_executor()``) keeps the singleton/test override
         # patchable, while a plain Executor is used as-is.
         executor = self._executor() if callable(self._executor) else self._executor
-        future = executor.submit(self._drain, key)
-        return future
+        return executor.submit(self._drain, key)
 
     def _drain(self, key: str) -> None:
         """Run the current request, then a coalesced follow-up if one arrived."""

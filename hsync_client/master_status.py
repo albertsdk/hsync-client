@@ -48,7 +48,7 @@ from hsync_client.empty_dirs import empty_dir_states
 from hsync_client.events import UiEventName, emit_event
 from hsync_client.sync import _bucket_key, emit_folder_size, get_files_local
 
-__all__ = ["MasterSyncStatus", "NO_DEVICE_MESSAGE", "classify", "local_identities"]
+__all__ = ["NO_DEVICE_MESSAGE", "MasterSyncStatus", "classify", "local_identities"]
 
 # Same wording the one-shot p2p path uses, so a front-end can show one string
 # for "nothing to synchronise against".

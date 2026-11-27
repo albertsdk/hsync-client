@@ -171,12 +171,10 @@ def create_fingerprint_ssl_context(expected_fingerprint: str) -> ssl.SSLContext:
     if not expected_fingerprint or not is_sha256_hex(expected_fingerprint):
         raise ValueError("A valid SHA-256 fingerprint is required for fingerprint SSL context")
 
-    ctx = disable_certificate_verification(create_urllib3_context())
     # The fingerprint is enforced by the caller via assert_fingerprint on
     # the urllib3 PoolManager / FingerprintHTTPAdapter; the context itself
     # only disables chain validation (trust is established by the pin).
-
-    return ctx
+    return disable_certificate_verification(create_urllib3_context())
 
 
 class FingerprintHTTPAdapter(HTTPAdapter):
