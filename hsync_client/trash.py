@@ -59,10 +59,12 @@ from hsync_common.models.trash import (
     TREE_TRASH_MAX_BYTES,
     TREE_TRASH_MAX_FILES,
     TrashEntry,
+    TrashSweepEntry,
     entry_dir,
     entry_payload_path,
     is_safe_folder_id,
     parse_trash_entry,
+    plan_trash_sweep,
     trash_folder_dir,
     trash_root,
     trash_root_inside_folder,
@@ -809,16 +811,18 @@ def prune_store(
     discarded rather than kept: a crash between the record and the move must not
     leave a restorable-looking entry that every restore can only refuse.
 
+    Which entries go is decided by the shared contract
+    (``hsync_common/models/trash.py::plan_trash_sweep``), not here: the walk only
+    reads the tree and applies the plan, so the rule has one owner and the
+    ``prune_cases`` of the ``trash-contract`` fixture describe this sweep exactly.
+
     Consumers: ``hsync_client/trash.py::TrashStore.prune`` (the cycle's sweep) and
     the ``hsync trash prune`` command (an operator run, or a one-shot client that
     never reaches the hourly gate). With *dry_run* nothing is removed and the
     report describes what the sweep would have done.
     """
     moment = int(time.time()) if now is None else now
-    cutoff = moment - settings.retention_days * _SECONDS_PER_DAY
-    expired = 0
     discarded = 0
-    freed = 0
     kept: list[tuple[TrashEntry, Path]] = []
     for folder_dir in _trash_folders(settings.root):
         for directory in folder_dir.iterdir():
@@ -829,33 +833,30 @@ def prune_store(
                 discarded += 1
                 _drop(directory, dry_run)
                 continue
-            if settings.retention_days > 0 and entry["deleted_at"] < cutoff:
-                expired += 1
-                freed += entry["size"]
-                _drop(directory, dry_run)
-                continue
             kept.append((entry, directory))
-    budget = settings.budget()
-    evicted = 0
-    total = sum(entry["size"] for entry, _directory in kept)
-    if budget > 0 and total > budget:
-        # Oldest first, and deterministic within the same second: the entry id
-        # starts with its creation timestamp.
-        for entry, directory in sorted(
-            kept, key=lambda pair: (pair[0]["deleted_at"], pair[1].name)
-        ):
-            if total <= budget:
-                break
-            total -= entry["size"]
-            freed += entry["size"]
-            evicted += 1
+    plan = plan_trash_sweep(
+        [
+            TrashSweepEntry(
+                entry_id=directory.name,
+                deleted_at=entry["deleted_at"],
+                size=entry["size"],
+            )
+            for entry, directory in kept
+        ],
+        retention_days=settings.retention_days,
+        budget=settings.budget(),
+        now=moment,
+    )
+    dropped = set(plan.expired) | set(plan.evicted)
+    for _entry, directory in kept:
+        if directory.name in dropped:
             _drop(directory, dry_run)
     return PruneReport(
-        expired=expired,
-        evicted=evicted,
+        expired=len(plan.expired),
+        evicted=len(plan.evicted),
         discarded=discarded,
-        freed=freed,
-        kept=len(kept) - evicted,
+        freed=plan.freed,
+        kept=plan.kept,
         dry_run=dry_run,
     )
 
