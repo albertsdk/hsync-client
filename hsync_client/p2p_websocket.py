@@ -773,195 +773,174 @@ class P2PWebSocketServer:
         await websocket.send_str(compact_json_str(build_p2p_auth_failed(reason=reason)))
         await websocket.close()
 
-    async def handle(self, request: web.Request) -> web.WebSocketResponse:  # noqa: C901 - refactor pending
-        """aiohttp route handler for one master WebSocket connection.
+    async def _authenticate_websocket(
+        self, websocket, client_addr: str, master_caps, p2p_key
+    ) -> tuple[bool, str, str | None, str | None]:
+        """Run the authenticated greeting handshake (shared secret configured).
 
-        Greeting/auth/hello handshake and the inventory loop, served on the
-        single HTTPS/WSS listener alongside the REST data plane.
+        Returns ``(admitted, client_cid, inventory_token, inventory_rejection)``.
         """
-        websocket = web.WebSocketResponse(heartbeat=30.0, max_msg_size=WS_MAX_MESSAGE_BYTES)
-        await websocket.prepare(request)
-        # Capture the publish epoch: a yield landing during the (awaited)
-        # handshake retires the role, so the socket must not be registered.
-        publish_epoch = self._publish_epoch
-        client_addr = request.remote or ""
+        await websocket.send_str(
+            compact_json_str(build_p2p_auth_required(capabilities=master_caps))
+        )
         client_cid = "unknown"
         inventory_token: str | None = None
         inventory_rejection: str | None = "unsupported"
-        slave_caps: set[Capability] = set()
-        log.info(f"WebSocket client connected (pre-auth): {client_addr}")
-
-        # Send greeting: tell the client whether authentication is required.
-        # Both paths carry the P2P protocol version and this master's
-        # capabilities (ADR-0024): the authenticated path's reply is the
-        # capability source of truth; the hello path is at least consistent.
-        master_caps = local_capabilities()
-        p2p_key = CONFIG.get("P2P_KEY")
-        if p2p_key:
-            await websocket.send_str(
-                compact_json_str(build_p2p_auth_required(capabilities=master_caps))
-            )
-            try:
-                # Wait for auth message
-                auth_msg = await self._recv_text(websocket, 10.0)
-                auth_data = json.loads(auth_msg)
-                token = auth_data.get("token")
-                declared_cid = auth_data.get("cid")
-                if not isinstance(declared_cid, str) or not is_valid_cid(declared_cid):
-                    await self._reject_auth(
-                        websocket,
-                        "invalid_cid",
-                        f"WebSocket auth rejected – invalid CID from {client_addr}: "
-                        f"{declared_cid!r}",
-                    )
-                    return websocket
-                client_cid = declared_cid
-                # Protocol is a hard gate inside the auth contract: a slave
-                # speaking a different P2P protocol must never authenticate.
-                if auth_data.get("protocol_version") != PROTOCOL_VERSION_P2P:
-                    await self._reject_auth(
-                        websocket,
-                        "protocol_incompatible",
-                        f"WebSocket auth rejected – incompatible P2P protocol from "
-                        f"{client_addr} (CID: {client_cid}): "
-                        f"{auth_data.get('protocol_version')!r}",
-                    )
-                    return websocket
-                if auth_data.get("type") != "auth" or not (
-                    isinstance(token, str) and hmac.compare_digest(token, str(p2p_key))
-                ):
-                    await self._reject_auth(
-                        websocket,
-                        "invalid_token",
-                        f"WebSocket auth failed from {client_addr} (CID: {client_cid})",
-                    )
-                    return websocket
-                # Reserve the slave's CID before admitting the connection: a
-                # duplicated device identity (the master's own CID, or a CID
-                # bound to a different host) must never reach the causal model.
-                slave_caps = decode_capabilities(auth_data.get("capabilities"))
-                serve_slots, slot_rejection = self._resolve_serve_slots(
-                    auth_data.get("serve_slots"), slave_caps
-                )
-                if slot_rejection is not None:
-                    await self._reject_auth(
-                        websocket,
-                        slot_rejection,
-                        f"WebSocket auth rejected – invalid capacity advertisement from "
-                        f"{client_addr} (CID: {client_cid}): {slot_rejection}",
-                    )
-                    return websocket
-                admitted, inventory_token, inventory_rejection = await self._admit_slave(
-                    client_cid,
-                    client_addr,
-                    websocket,
-                    authenticated=True,
-                    publishes_index=Capability.publishes_index in slave_caps,
-                    serve_slots=serve_slots,
-                )
-                if not admitted:
-                    return websocket
-                log.debug(
-                    f"WebSocket slave {client_cid} capabilities: "
-                    f"{sorted(c.value for c in slave_caps) or 'none'}"
-                )
-                await websocket.send_str(
-                    compact_json_str(build_p2p_auth_ok(capabilities=master_caps))
-                )
-                log.info(f"WebSocket client authenticated: {client_addr} (CID: {client_cid})")
-            except TimeoutError:
-                await self._release_failed_admission(client_cid, websocket, inventory_token)
+        try:
+            # Wait for auth message
+            auth_msg = await self._recv_text(websocket, 10.0)
+            auth_data = json.loads(auth_msg)
+            token = auth_data.get("token")
+            declared_cid = auth_data.get("cid")
+            if not isinstance(declared_cid, str) or not is_valid_cid(declared_cid):
                 await self._reject_auth(
                     websocket,
-                    "timeout",
-                    f"WebSocket auth timeout from {client_addr} (CID: {client_cid})",
+                    "invalid_cid",
+                    f"WebSocket auth rejected – invalid CID from {client_addr}: {declared_cid!r}",
                 )
-                return websocket
-            except Exception as e:
-                # The CID may already be reserved at this point (a failure after
-                # a successful admission, e.g. the auth-ok send): release it so
-                # a retrying same-address slave is not locked out. Idempotent.
-                await self._release_failed_admission(client_cid, websocket, inventory_token)
-                log.warning(f"WebSocket auth error from {client_addr} (CID: {client_cid}): {e}")
-                await websocket.close()
-                return websocket
-        else:
-            # No shared secret: request the client's CID via a lightweight
-            # hello handshake so the operator can distinguish peers in logs.
-            # The CID is NOT authenticated (no P2P_KEY), so every log line
-            # carries an explicit "(unauthenticated)" qualifier.
-            await websocket.send_str(compact_json_str(build_p2p_hello(capabilities=master_caps)))
-            try:
-                hello_msg = await self._recv_text(websocket, 5.0)
-                hello_data = json.loads(hello_msg)
-                declared_cid = hello_data.get("cid")
-                if (
-                    hello_data.get("type") == "hello"
-                    and hello_data.get("protocol_version") == PROTOCOL_VERSION_P2P
-                    and isinstance(declared_cid, str)
-                    and is_valid_cid(declared_cid)
-                ):
-                    client_cid = declared_cid
-                    # Reserve the slave's CID before admitting the connection
-                    # (no failed frame exists on the unauthenticated hello
-                    # path; the slave observes the close).
-                    slave_caps = decode_capabilities(hello_data.get("capabilities"))
-                    serve_slots, slot_rejection = self._resolve_serve_slots(
-                        hello_data.get("serve_slots"), slave_caps
-                    )
-                    if slot_rejection is not None:
-                        log.warning(f"WebSocket hello invalid from {client_addr}: {slot_rejection}")
-                        await websocket.close()
-                        return websocket
-                    admitted, inventory_token, inventory_rejection = await self._admit_slave(
-                        client_cid,
-                        client_addr,
-                        websocket,
-                        authenticated=False,
-                        publishes_index=Capability.publishes_index in slave_caps,
-                        serve_slots=serve_slots,
-                    )
-                    if not admitted:
-                        return websocket
-                    log.info(
-                        f"WebSocket client connected (no auth): {client_addr} "
-                        f"(CID: {client_cid}, unauthenticated, capabilities: "
-                        f"{sorted(c.value for c in slave_caps) or 'none'})"
-                    )
-                else:
-                    log.warning(
-                        f"WebSocket hello invalid from {client_addr}: "
-                        f"type={hello_data.get('type')!r} cid={declared_cid!r} "
-                        f"protocol={hello_data.get('protocol_version')!r}"
-                    )
-                    await websocket.close()
-                    return websocket
-            except TimeoutError:
-                await self._release_failed_admission(client_cid, websocket, inventory_token)
-                log.warning(f"WebSocket hello timeout from {client_addr}")
-                await websocket.close()
-                return websocket
-            except Exception as e:
-                await self._release_failed_admission(client_cid, websocket, inventory_token)
-                log.warning(f"WebSocket hello error from {client_addr}: {e}")
-                await websocket.close()
-                return websocket
-
-        # A yield that raced this handshake must not admit the client: the epoch
-        # moves on every role retirement (the gate close), and the socket is only
-        # registered after the awaited handshake.
-        if publish_epoch != self._publish_epoch:
+                return False, client_cid, None, None
+            client_cid = declared_cid
+            # Protocol is a hard gate inside the auth contract: a slave speaking a
+            # different P2P protocol must never authenticate.
+            if auth_data.get("protocol_version") != PROTOCOL_VERSION_P2P:
+                await self._reject_auth(
+                    websocket,
+                    "protocol_incompatible",
+                    f"WebSocket auth rejected – incompatible P2P protocol from "
+                    f"{client_addr} (CID: {client_cid}): "
+                    f"{auth_data.get('protocol_version')!r}",
+                )
+                return False, client_cid, None, None
+            if auth_data.get("type") != "auth" or not (
+                isinstance(token, str) and hmac.compare_digest(token, str(p2p_key))
+            ):
+                await self._reject_auth(
+                    websocket,
+                    "invalid_token",
+                    f"WebSocket auth failed from {client_addr} (CID: {client_cid})",
+                )
+                return False, client_cid, None, None
+            # Reserve the slave's CID before admitting the connection: a duplicated
+            # device identity must never reach the causal model.
+            slave_caps = decode_capabilities(auth_data.get("capabilities"))
+            serve_slots, slot_rejection = self._resolve_serve_slots(
+                auth_data.get("serve_slots"), slave_caps
+            )
+            if slot_rejection is not None:
+                await self._reject_auth(
+                    websocket,
+                    slot_rejection,
+                    f"WebSocket auth rejected – invalid capacity advertisement from "
+                    f"{client_addr} (CID: {client_cid}): {slot_rejection}",
+                )
+                return False, client_cid, None, None
+            admitted, inventory_token, inventory_rejection = await self._admit_slave(
+                client_cid,
+                client_addr,
+                websocket,
+                authenticated=True,
+                publishes_index=Capability.publishes_index in slave_caps,
+                serve_slots=serve_slots,
+            )
+            if not admitted:
+                return False, client_cid, None, None
+            log.debug(
+                f"WebSocket slave {client_cid} capabilities: "
+                f"{sorted(c.value for c in slave_caps) or 'none'}"
+            )
+            await websocket.send_str(compact_json_str(build_p2p_auth_ok(capabilities=master_caps)))
+            log.info(f"WebSocket client authenticated: {client_addr} (CID: {client_cid})")
+            return True, client_cid, inventory_token, inventory_rejection
+        except TimeoutError:
             await self._release_failed_admission(client_cid, websocket, inventory_token)
+            await self._reject_auth(
+                websocket,
+                "timeout",
+                f"WebSocket auth timeout from {client_addr} (CID: {client_cid})",
+            )
+            return False, client_cid, None, None
+        except Exception as e:
+            # The CID may already be reserved at this point (a failure after a
+            # successful admission): release it so a retrying same-address slave is
+            # not locked out. Idempotent.
+            await self._release_failed_admission(client_cid, websocket, inventory_token)
+            log.warning(f"WebSocket auth error from {client_addr} (CID: {client_cid}): {e}")
             await websocket.close()
-            return websocket
+            return False, client_cid, None, None
 
-        # Add client to set (its CID is already reserved by _admit_slave)
-        with self._clients_lock:
-            self._clients.add(websocket)
-        self._notify_clients_changed()
-        if client_cid != "unknown":
-            self._notify_peer_connection(client_cid, True)
+    async def _hello_websocket(
+        self, websocket, client_addr: str, master_caps
+    ) -> tuple[bool, str, str | None, str | None]:
+        """Run the unauthenticated hello handshake (no shared secret).
 
+        Returns ``(admitted, client_cid, inventory_token, inventory_rejection)``.
+        """
+        await websocket.send_str(compact_json_str(build_p2p_hello(capabilities=master_caps)))
+        client_cid = "unknown"
+        try:
+            hello_msg = await self._recv_text(websocket, 5.0)
+            hello_data = json.loads(hello_msg)
+            declared_cid = hello_data.get("cid")
+            if not (
+                hello_data.get("type") == "hello"
+                and hello_data.get("protocol_version") == PROTOCOL_VERSION_P2P
+                and isinstance(declared_cid, str)
+                and is_valid_cid(declared_cid)
+            ):
+                log.warning(
+                    f"WebSocket hello invalid from {client_addr}: "
+                    f"type={hello_data.get('type')!r} cid={declared_cid!r} "
+                    f"protocol={hello_data.get('protocol_version')!r}"
+                )
+                await websocket.close()
+                return False, client_cid, None, None
+            client_cid = declared_cid
+            # Reserve the slave's CID before admitting the connection (no failed
+            # frame exists on the unauthenticated hello path).
+            slave_caps = decode_capabilities(hello_data.get("capabilities"))
+            serve_slots, slot_rejection = self._resolve_serve_slots(
+                hello_data.get("serve_slots"), slave_caps
+            )
+            if slot_rejection is not None:
+                log.warning(f"WebSocket hello invalid from {client_addr}: {slot_rejection}")
+                await websocket.close()
+                return False, client_cid, None, None
+            admitted, inventory_token, inventory_rejection = await self._admit_slave(
+                client_cid,
+                client_addr,
+                websocket,
+                authenticated=False,
+                publishes_index=Capability.publishes_index in slave_caps,
+                serve_slots=serve_slots,
+            )
+            if not admitted:
+                return False, client_cid, None, None
+            log.info(
+                f"WebSocket client connected (no auth): {client_addr} "
+                f"(CID: {client_cid}, unauthenticated, capabilities: "
+                f"{sorted(c.value for c in slave_caps) or 'none'})"
+            )
+            return True, client_cid, inventory_token, inventory_rejection
+        except TimeoutError:
+            await self._release_failed_admission(client_cid, websocket, None)
+            log.warning(f"WebSocket hello timeout from {client_addr}")
+            await websocket.close()
+            return False, client_cid, None, None
+        except Exception as e:
+            await self._release_failed_admission(client_cid, websocket, None)
+            log.warning(f"WebSocket hello error from {client_addr}: {e}")
+            await websocket.close()
+            return False, client_cid, None, None
+
+    async def _serve_slave_messages(
+        self,
+        websocket,
+        client_addr: str,
+        client_cid: str,
+        inventory_token: str | None,
+        inventory_rejection: str | None,
+    ) -> None:
+        """Serve one admitted slave's message loop and release it on exit."""
         try:
             # Keep connection alive and handle incoming messages
             async for msg in websocket:
@@ -979,9 +958,8 @@ class P2PWebSocketServer:
                 if isinstance(payload, Mapping) and payload.get("type") == "inventory":
                     if inventory_token is not None and self._inventory_store is not None:
                         # The inventory store is SQLite behind a re-entrant lock
-                        # also taken by the HTTP worker pool; running it inline
-                        # would stall this shared loop (and every HTTP worker
-                        # bridged through it). Keep per-connection ordering by
+                        # also taken by the HTTP worker pool; running it inline would
+                        # stall this shared loop. Keep per-connection ordering by
                         # awaiting the result before the ACK is sent.
                         ack = await asyncio.to_thread(
                             self._inventory_store.apply_frame,
@@ -1012,13 +990,77 @@ class P2PWebSocketServer:
                         self._inventory_store.end_session, client_cid, inventory_token
                     )
             if client_cid != "unknown":
-                # Only the current owner of the binding may clear the liveness
-                # mark: a superseded connection (same-address reconnect) must
-                # not emit "disconnected" for a CID the replacement still holds.
+                # Only the current owner of the binding may clear the liveness mark:
+                # a superseded connection must not emit "disconnected" for a CID the
+                # replacement still holds.
                 if self._cid_registry.release(client_cid, websocket):
                     self._notify_peer_connection(client_cid, False)
             self._notify_clients_changed()
             log.info(f"WebSocket client disconnected: {client_addr} (CID: {client_cid})")
+
+    async def handle(self, request: web.Request) -> web.WebSocketResponse:
+        """aiohttp route handler for one master WebSocket connection.
+
+        Greeting/auth/hello handshake and the inventory loop, served on the
+        single HTTPS/WSS listener alongside the REST data plane.
+        """
+        websocket = web.WebSocketResponse(heartbeat=30.0, max_msg_size=WS_MAX_MESSAGE_BYTES)
+        await websocket.prepare(request)
+        # Capture the publish epoch: a yield landing during the (awaited)
+        # handshake retires the role, so the socket must not be registered.
+        publish_epoch = self._publish_epoch
+        client_addr = request.remote or ""
+        client_cid = "unknown"
+        inventory_token: str | None = None
+        inventory_rejection: str | None = "unsupported"
+        log.info(f"WebSocket client connected (pre-auth): {client_addr}")
+
+        # Send greeting: tell the client whether authentication is required.
+        # Both paths carry the P2P protocol version and this master's
+        # capabilities (ADR-0024): the authenticated path's reply is the
+        # capability source of truth; the hello path is at least consistent.
+        master_caps = local_capabilities()
+        p2p_key = CONFIG.get("P2P_KEY")
+        if p2p_key:
+            (
+                admitted,
+                client_cid,
+                inventory_token,
+                inventory_rejection,
+            ) = await self._authenticate_websocket(websocket, client_addr, master_caps, p2p_key)
+            if not admitted:
+                return websocket
+        else:
+            # No shared secret: request the client's CID via a lightweight hello
+            # handshake so the operator can distinguish peers in logs (the CID is
+            # NOT authenticated).
+            (
+                admitted,
+                client_cid,
+                inventory_token,
+                inventory_rejection,
+            ) = await self._hello_websocket(websocket, client_addr, master_caps)
+            if not admitted:
+                return websocket
+
+        # A yield that raced this handshake must not admit the client: the epoch
+        # moves on every role retirement (the gate close), and the socket is only
+        # registered after the awaited handshake.
+        if publish_epoch != self._publish_epoch:
+            await self._release_failed_admission(client_cid, websocket, inventory_token)
+            await websocket.close()
+            return websocket
+
+        # Add client to set (its CID is already reserved by _admit_slave)
+        with self._clients_lock:
+            self._clients.add(websocket)
+        self._notify_clients_changed()
+        if client_cid != "unknown":
+            self._notify_peer_connection(client_cid, True)
+
+        await self._serve_slave_messages(
+            websocket, client_addr, client_cid, inventory_token, inventory_rejection
+        )
         return websocket
 
     async def broadcast(self, event_dict: dict) -> None:
@@ -1620,7 +1662,201 @@ async def _close_ws_on_endpoint_change(websocket: Any, guard: Any) -> None:
     )
 
 
-async def p2p_websocket_client(  # noqa: C901 - refactor pending
+def _ws_ssl_context(use_https: bool, expected_fingerprint) -> Any:
+    """Build the WSS SSL context (chain validation off; trust by pin, TOFU)."""
+    if not use_https:
+        return None
+    from hsync_client.ssl_utils import create_fingerprint_ssl_context
+
+    return create_fingerprint_ssl_context(str(expected_fingerprint or ""))
+
+
+def _pin_peer_certificate(websocket, expected_fingerprint) -> bool:
+    """Bind the certificate presented on the live WSS connection to the pin.
+
+    Chain validation is disabled on the WSS context by design (the self-signed
+    master certificate is trusted by pin, not by a CA), so this is what establishes
+    trust. Returns False on mismatch (the caller drops the link).
+    """
+    if not expected_fingerprint:
+        return True
+    from hsync_client.ssl_utils import verify_peer_cert_fingerprint, websocket_ssl_object
+
+    ssl_object = websocket_ssl_object(websocket)
+    if not verify_peer_cert_fingerprint(ssl_object, str(expected_fingerprint)):
+        log.error("Master WSS certificate fingerprint mismatch; refusing connection")
+        return False
+    return True
+
+
+def _maybe_start_inventory_publisher(inventory_publisher, master_caps, websocket) -> None:
+    """Start publishing the index only when both sides advertise the capability."""
+    if (
+        inventory_publisher is not None
+        and Capability.index in master_caps
+        and Capability.index in local_capabilities()
+    ):
+        inventory_publisher.start(websocket)
+
+
+async def _ws_greeting_handshake(
+    websocket,
+    host: str,
+    connect_started: float,
+    serving_slots: int | None,
+    inventory_publisher: P2PInventoryPublisher | None,
+    source_resolver: P2PSourceResolver | None,
+) -> tuple[bool, set[Capability]]:
+    """Read the master greeting and run the auth/hello handshake.
+
+    Returns ``(admitted, master_caps)``; ``admitted=False`` means the caller must
+    drop the connection. The greeting carries the P2P protocol version and the
+    master's capabilities (ADR-0024): a protocol mismatch is a hard fail and, on
+    the authenticated path, the master's advertised set becomes the session's
+    capability source of truth.
+    """
+    global _duplicate_identity_event_sent
+    greeting = await asyncio.wait_for(websocket.recv(), timeout=10.0)
+    log.info(f"WebSocket greeting received in {monotonic() - connect_started:.1f}s")
+    greeting_data = json.loads(greeting)
+    master_caps = decode_capabilities(greeting_data.get("capabilities"))
+    if greeting_data.get("type") == "auth_required":
+        # Protocol gate first: a greeting we do not speak must never proceed to
+        # authentication.
+        if greeting_data.get("protocol_version") != PROTOCOL_VERSION_P2P:
+            log.error(
+                "Master P2P protocol mismatch "
+                f"({greeting_data.get('protocol_version')!r} vs "
+                f"{PROTOCOL_VERSION_P2P}); refusing connection"
+            )
+            return False, master_caps
+        p2p_key = CONFIG.get("P2P_KEY")
+        if not p2p_key:
+            log.error("WebSocket authentication failed – server requires P2P key")
+            return False, master_caps
+        auth_msg = compact_json_str(
+            build_p2p_auth(
+                token=p2p_key,
+                cid=CONFIG["CID"],
+                capabilities=local_capabilities(),
+                serve_slots=serving_slots,
+            )
+        )
+        await websocket.send(auth_msg)
+        response = await asyncio.wait_for(websocket.recv(), timeout=10.0)
+        auth_result = json.loads(response)
+        if auth_result.get("status") != "ok":
+            reason = auth_result.get("reason") or "unknown"
+            if reason == "cid_conflict":
+                log.error(
+                    f"{ActionLabel.SECURITY} Master refused this client: its device "
+                    f"identity (CID {CONFIG['CID']}) is already in use by the master "
+                    f"or another connected peer. This machine's device directory "
+                    f"was likely copied from another machine; give each instance "
+                    f"its own HSYNC_DEVICE_DIR."
+                )
+                if not _duplicate_identity_event_sent:
+                    _duplicate_identity_event_sent = True
+                    emit_event(
+                        UiEventName.duplicate_identity,
+                        peer_cid=CONFIG["CID"],
+                        peer_address=host,
+                        message=(
+                            "This machine's device identity is already in use by the "
+                            "master or another peer. Give each machine its own "
+                            "HSYNC_DEVICE_DIR."
+                        ),
+                    )
+            else:
+                log.error(f"WebSocket authentication failed ({reason})")
+            return False, master_caps
+        master_caps = decode_capabilities(auth_result.get("capabilities"))
+        adopt_remote_capabilities(master_caps)
+        if source_resolver is not None:
+            source_resolver.set_authenticated_master_capability(
+                Capability.peer_download in master_caps
+            )
+        log.info("WebSocket authenticated with master")
+        return True, master_caps
+    if greeting_data.get("type") == "hello":
+        # Lightweight hello handshake: the master has no P2P_KEY but still wants
+        # our CID for log attribution; capabilities are exchanged for coherence,
+        # not trusted (no shared secret).
+        await websocket.send(
+            compact_json_str(
+                build_p2p_hello(
+                    capabilities=local_capabilities(),
+                    cid=CONFIG["CID"],
+                    serve_slots=serving_slots,
+                )
+            )
+        )
+        log.info("WebSocket hello sent to master (no auth)")
+        return True, master_caps
+    log.error(f"Unexpected master greeting {greeting_data.get('type')!r}; refusing connection")
+    return False, master_caps
+
+
+async def _teardown_ws_client(
+    *,
+    network_waker,
+    network_task,
+    endpoint_task,
+    resync_task,
+    catchup_task,
+    inventory_publisher,
+    inbound,
+    watcher,
+    connected: bool,
+) -> None:
+    """Release every resource a WebSocket slave session started."""
+    global _slave_event_handler
+    # Drop the network-change watcher first: its callback must not fire for a
+    # connection that is already tearing down.
+    if network_waker is not None:
+        network_waker.close()
+    if network_task is not None:
+        network_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await network_task
+    if endpoint_task is not None:
+        endpoint_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await endpoint_task
+    # Stop the periodic resync task before tearing down the watcher. CancelledError
+    # is a BaseException, so it must be suppressed explicitly.
+    if resync_task is not None:
+        resync_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await resync_task
+    if catchup_task is not None:
+        # A catch-up still comparing belongs to this link: it must not keep
+        # transferring after it.
+        catchup_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await catchup_task
+    if inventory_publisher is not None:
+        await inventory_publisher.stop()
+    # Drain the pending inbound mutations before returning to the rendezvous loop:
+    # the reconnect's full sync must not race writes still in flight.
+    if inbound is not None:
+        await inbound.drain()
+    # Wait for pending client→master operations to complete before the full sync.
+    if _slave_event_handler is not None:
+        # Cancel any not-yet-fired on_created-deferred uploads first so they cannot
+        # start new uploads during/after the wait.
+        _slave_event_handler.cancel_all_create_timers()
+        _slave_event_handler.wait_pending(timeout=30.0)
+    watcher.stop()
+    _slave_event_handler = None
+    log.info("Client file watcher stopped")
+    if connected:
+        # The link dropped: report the same "waiting" state server mode uses for a
+        # lost link (not "connecting", the pre-connection state).
+        set_link_status("waiting")
+
+
+async def p2p_websocket_client(
     host: str,
     port: int,
     use_https: bool = False,
@@ -1708,12 +1944,8 @@ async def p2p_websocket_client(  # noqa: C901 - refactor pending
     # Set up SSL context for WSS. The self-signed master cert is trusted by
     # pinned fingerprint (TOFU), not by chain validation, so we accept any cert
     # at the handshake and verify the fingerprint on the live connection below.
-    ssl_context = None
     expected_fingerprint = CONFIG.get("MASTER_CERT_FINGERPRINT")
-    if use_https:
-        from hsync_client.ssl_utils import create_fingerprint_ssl_context
-
-        ssl_context = create_fingerprint_ssl_context(str(expected_fingerprint or ""))
+    ssl_context = _ws_ssl_context(use_https, expected_fingerprint)
 
     # Bound so the teardown path below can drain the inbound mutations even when
     # the connection failed before the dispatch context was built.
@@ -1746,117 +1978,23 @@ async def p2p_websocket_client(  # noqa: C901 - refactor pending
             # the WSS context by design (the self-signed master certificate is
             # trusted by pin, not by a CA), so the check below is what
             # establishes trust.
-            if use_https and expected_fingerprint:
-                from hsync_client.ssl_utils import (
-                    verify_peer_cert_fingerprint,
-                    websocket_ssl_object,
-                )
-
-                ssl_object = websocket_ssl_object(websocket)
-                if not verify_peer_cert_fingerprint(ssl_object, str(expected_fingerprint)):
-                    log.error("Master WSS certificate fingerprint mismatch; refusing connection")
-                    return
+            if use_https and not _pin_peer_certificate(websocket, expected_fingerprint):
+                return
 
             log.info("WebSocket connected to master")
 
-            # Read server greeting to determine if auth is required.
-            # The greeting carries the P2P protocol version and the master's
-            # capabilities (ADR-0024): hard-fail on a protocol mismatch and,
-            # on the authenticated path, adopt the master's advertised
-            # capability set as the session's capability source of truth.
-            greeting = await asyncio.wait_for(websocket.recv(), timeout=10.0)
-            log.info(f"WebSocket greeting received in {monotonic() - connect_started:.1f}s")
-            greeting_data = json.loads(greeting)
-            master_caps = decode_capabilities(greeting_data.get("capabilities"))
-
-            if greeting_data.get("type") == "auth_required":
-                # Protocol gate first: a greeting we do not speak must never
-                # proceed to authentication.
-                if greeting_data.get("protocol_version") != PROTOCOL_VERSION_P2P:
-                    log.error(
-                        "Master P2P protocol mismatch "
-                        f"({greeting_data.get('protocol_version')!r} vs "
-                        f"{PROTOCOL_VERSION_P2P}); refusing connection"
-                    )
-                    return
-                p2p_key = CONFIG.get("P2P_KEY")
-                if not p2p_key:
-                    log.error("WebSocket authentication failed – server requires P2P key")
-                    return
-                auth_msg = compact_json_str(
-                    build_p2p_auth(
-                        token=p2p_key,
-                        cid=CONFIG["CID"],
-                        capabilities=local_capabilities(),
-                        serve_slots=serving_slots,
-                    )
-                )
-                await websocket.send(auth_msg)
-
-                response = await asyncio.wait_for(websocket.recv(), timeout=10.0)
-                auth_result = json.loads(response)
-                if auth_result.get("status") != "ok":
-                    reason = auth_result.get("reason") or "unknown"
-                    if reason == "cid_conflict":
-                        log.error(
-                            f"{ActionLabel.SECURITY} Master refused this client: its device "
-                            f"identity (CID {CONFIG['CID']}) is already in use by the master "
-                            f"or another connected peer. This machine's device directory "
-                            f"was likely copied from another machine; give each instance "
-                            f"its own HSYNC_DEVICE_DIR."
-                        )
-                        global _duplicate_identity_event_sent
-                        if not _duplicate_identity_event_sent:
-                            _duplicate_identity_event_sent = True
-                            emit_event(
-                                UiEventName.duplicate_identity,
-                                peer_cid=CONFIG["CID"],
-                                peer_address=host,
-                                message=(
-                                    "This machine's device identity is already in use by the "
-                                    "master or another peer. Give each machine its own "
-                                    "HSYNC_DEVICE_DIR."
-                                ),
-                            )
-                    else:
-                        log.error(f"WebSocket authentication failed ({reason})")
-                    return
-                master_caps = decode_capabilities(auth_result.get("capabilities"))
-                adopt_remote_capabilities(master_caps)
-                if source_resolver is not None:
-                    source_resolver.set_authenticated_master_capability(
-                        Capability.peer_download in master_caps
-                    )
-                log.info("WebSocket authenticated with master")
-            elif greeting_data.get("type") == "hello":
-                # Lightweight hello handshake: the master has no P2P_KEY
-                # but still wants to know our CID for log attribution.
-                # The CID is sent unauthenticated (the master logs it
-                # with an "(unauthenticated)" qualifier). Capabilities are
-                # exchanged for coherence, not trusted (no shared secret).
-                await websocket.send(
-                    compact_json_str(
-                        build_p2p_hello(
-                            capabilities=local_capabilities(),
-                            cid=CONFIG["CID"],
-                            serve_slots=serving_slots,
-                        )
-                    )
-                )
-                log.info("WebSocket hello sent to master (no auth)")
-            else:
-                log.error(
-                    f"Unexpected master greeting {greeting_data.get('type')!r}; refusing connection"
-                )
+            admitted, master_caps = await _ws_greeting_handshake(
+                websocket,
+                host,
+                connect_started,
+                serving_slots,
+                inventory_publisher,
+                source_resolver,
+            )
+            if not admitted:
                 return
 
-            if (
-                inventory_publisher is not None
-                and Capability.index in master_caps
-                and Capability.index in local_capabilities()
-            ):
-                inventory_publisher.start(websocket)
-
+            _maybe_start_inventory_publisher(inventory_publisher, master_caps, websocket)
             log.info(f"WebSocket handshake completed in {monotonic() - connect_started:.1f}s")
             log.info("Listening for events from master...")
 
@@ -1939,57 +2077,17 @@ async def p2p_websocket_client(  # noqa: C901 - refactor pending
     except Exception as e:
         log.error(f"WebSocket connection error after {monotonic() - connect_started:.1f}s: {e}")
     finally:
-        # Drop the network-change watcher first: its callback must not fire for
-        # a connection that is already tearing down.
-        if network_waker is not None:
-            network_waker.close()
-        if network_task is not None:
-            network_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await network_task
-        if endpoint_task is not None:
-            endpoint_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await endpoint_task
-        # Stop the periodic resync task before tearing down the watcher.
-        # CancelledError is a BaseException, so it must be suppressed
-        # explicitly: awaiting the task we just cancelled re-raises it.
-        if resync_task is not None:
-            resync_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await resync_task
-        if catchup_task is not None:
-            # A catch-up still comparing belongs to this link: it must not keep
-            # transferring (or read a CONFIG the next attempt re-binds) after it.
-            catchup_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await catchup_task
-        if inventory_publisher is not None:
-            await inventory_publisher.stop()
-        # Drain the pending inbound mutations before returning to the rendezvous
-        # loop: the reconnect's full sync must not race writes still in flight.
-        if inbound is not None:
-            await inbound.drain()
-        # Wait for pending client→master operations to complete before
-        # returning to the rendezvous loop (which triggers a full sync).
-        # This prevents race conditions where a rename/upload/delete is
-        # still in-flight while the full sync runs and reverts it.
-        if _slave_event_handler is not None:
-            # Cancel any not-yet-fired on_created-deferred uploads first so
-            # they cannot start new uploads during/after the wait; their
-            # files will be reconciled by the full sync on reconnect.
-            _slave_event_handler.cancel_all_create_timers()
-            _slave_event_handler.wait_pending(timeout=30.0)
-        watcher.stop()
-        _slave_event_handler = None
-        log.info("Client file watcher stopped")
-        if connected:
-            # The link dropped: report the same "waiting" state server mode uses
-            # for a lost link (not "connecting", which is the pre-connection
-            # state), so the front-end clears the stale presence and reports the
-            # loss. Continuous mode re-enters rendezvous and reports "connected"
-            # again once a master is reached.
-            set_link_status("waiting")
+        await _teardown_ws_client(
+            network_waker=network_waker,
+            network_task=network_task,
+            endpoint_task=endpoint_task,
+            resync_task=resync_task,
+            catchup_task=catchup_task,
+            inventory_publisher=inventory_publisher,
+            inbound=inbound,
+            watcher=watcher,
+            connected=connected,
+        )
 
 
 async def _p2p_periodic_resync(
@@ -3152,6 +3250,56 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
                 self._delete_timer.daemon = True
                 self._delete_timer.start()
 
+    def _handle_hidden_move(self, src_path: str, dest_path: str, event) -> bool:
+        """Apply the hidden/visible rename rules; True when the move is handled.
+
+        Both hidden → ignore; hidden→visible → creation; visible→hidden →
+        deletion (with the causal tombstone unless deletions are kept).
+        """
+        if event.is_directory:
+            src_hidden = is_hidden_dir(src_path)
+            dest_hidden = is_hidden_dir(dest_path)
+        else:
+            src_hidden = is_hidden_file(src_path)
+            dest_hidden = is_hidden_file(dest_path)
+        if src_hidden and dest_hidden:
+            return True
+        if src_hidden and not dest_hidden:
+            # Hidden to visible: treat as creation.
+            if event.is_directory:
+                from hsync_client.sync import get_files_local
+
+                self._inventory_observer.replace_snapshot(get_files_local())
+            if not event.is_directory and Path(dest_path).exists():
+                invalidate_sha256_cache(dest_path)
+                file_obj = File.get(dest_path)
+                if file_obj:
+                    self._inventory_observer.upsert(file_obj)
+                    if CONFIG.get("SYNC_DIRECTION") == "download-only":
+                        return True
+                    self._start_upload(file_obj)
+            return True
+        if not src_hidden and dest_hidden:
+            # Visible to hidden: treat as deletion.
+            if event.is_directory:
+                self._inventory_observer.remove_prefix(src_path)
+            else:
+                self._inventory_observer.remove_file(src_path)
+            if CONFIG.get("SYNC_DIRECTION") == "download-only":
+                return True
+            if not deletions_are_kept(CONFIG):
+                # Causal tombstone (ADR-0003): a hide/move-away is a local deletion
+                # and must survive locally even when the master is unreachable.
+                if not event.is_directory:
+                    _record_deletion_marker(src_path)
+                self._start_operation(
+                    target=self._delete_on_master,
+                    args=(src_path, event.is_directory),
+                    name=f"delete-{src_path}",
+                )
+            return True
+        return False
+
     def on_moved(self, event) -> None:
         """Handle file/directory move/rename events."""
         src_path = ensure_str_path(event.src_path)
@@ -3190,53 +3338,8 @@ class P2PSlaveFileEventHandler(FileSystemEventHandler):
         if self._ignore_watcher_paths(src_path, dest_path):
             return
 
-        # Handle hidden file/dir scenarios
-        if event.is_directory:
-            src_hidden = is_hidden_dir(src_path)
-            dest_hidden = is_hidden_dir(dest_path)
-        else:
-            src_hidden = is_hidden_file(src_path)
-            dest_hidden = is_hidden_file(dest_path)
-
-        # Both hidden - ignore
-        if src_hidden and dest_hidden:
-            return
-
-        # Hidden to visible - treat as creation
-        if src_hidden and not dest_hidden:
-            if event.is_directory:
-                from hsync_client.sync import get_files_local
-
-                self._inventory_observer.replace_snapshot(get_files_local())
-            if not event.is_directory and Path(dest_path).exists():
-                invalidate_sha256_cache(dest_path)
-                file_obj = File.get(dest_path)
-                if file_obj:
-                    self._inventory_observer.upsert(file_obj)
-                    if CONFIG.get("SYNC_DIRECTION") == "download-only":
-                        return
-                    self._start_upload(file_obj)
-            return
-
-        # Visible to hidden - treat as deletion
-        if not src_hidden and dest_hidden:
-            if event.is_directory:
-                self._inventory_observer.remove_prefix(src_path)
-            else:
-                self._inventory_observer.remove_file(src_path)
-            if CONFIG.get("SYNC_DIRECTION") == "download-only":
-                return
-            if not deletions_are_kept(CONFIG):
-                # Causal tombstone (ADR-0003): a hide/move-away is a local
-                # deletion and must survive locally even when the master is
-                # unreachable (same guarantee as ``on_deleted``).
-                if not event.is_directory:
-                    _record_deletion_marker(src_path)
-                self._start_operation(
-                    target=self._delete_on_master,
-                    args=(src_path, event.is_directory),
-                    name=f"delete-{src_path}",
-                )
+        # Hidden vs visible transitions are handled as create/delete/ignore.
+        if self._handle_hidden_move(src_path, dest_path, event):
             return
 
         if event.is_directory:

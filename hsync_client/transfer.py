@@ -900,6 +900,32 @@ def _has_download_space(file: File, full_save_path: str, resume_offset: int) -> 
     return False
 
 
+def _raise_source_status_failure(status: int, response, source) -> None:
+    """Map a non-200/206 status from a peer source to a deferrable failure."""
+    retry_after_s = _parse_retry_after(response.headers.get("Retry-After"))
+    response.close()
+    if status in (400, 401, 403):
+        kind = PeerFailureKind.unauthorized
+    elif status == 404:
+        kind = PeerFailureKind.not_found
+    elif status == 409:
+        kind = PeerFailureKind.conflict
+    elif status in (429, 503):
+        # 503 (busy) and 429 (rate limit) both mean "come back later": the source
+        # is deferred for Retry-After rather than counted unhealthy.
+        kind = PeerFailureKind.busy
+    elif 400 <= status < 500:
+        kind = PeerFailureKind.malformed
+    else:
+        kind = PeerFailureKind.transport
+    raise _PeerSourceFailure(
+        kind,
+        f"Seeder returned HTTP {status}",
+        discard_partial=status == 416,
+        retry_after_s=retry_after_s,
+    )
+
+
 def _accept_download_response(
     response,
     file: File,
@@ -916,28 +942,7 @@ def _accept_download_response(
     """
     status = response.status_code
     if source is not None and status not in (200, 206):
-        retry_after_s = _parse_retry_after(response.headers.get("Retry-After"))
-        response.close()
-        if status in (400, 401, 403):
-            kind = PeerFailureKind.unauthorized
-        elif status == 404:
-            kind = PeerFailureKind.not_found
-        elif status == 409:
-            kind = PeerFailureKind.conflict
-        elif status in (429, 503):
-            # 503 (busy) and 429 (rate limit) both mean "come back later": the
-            # source is deferred for Retry-After rather than counted unhealthy.
-            kind = PeerFailureKind.busy
-        elif 400 <= status < 500:
-            kind = PeerFailureKind.malformed
-        else:
-            kind = PeerFailureKind.transport
-        raise _PeerSourceFailure(
-            kind,
-            f"Seeder returned HTTP {status}",
-            discard_partial=status == 416,
-            retry_after_s=retry_after_s,
-        )
+        _raise_source_status_failure(status, response, source)
 
     if status in (401, 403):
         _emit_auth_error("Authentication failed", "downloading", file.filepath)
@@ -1184,7 +1189,239 @@ def _open_download_stream(
     )
 
 
-def _stream_download_body(  # noqa: C901 - pre-existing; refactor pending
+def _write_download_body(
+    response,
+    partial_file_path: str,
+    counter_holder: list[_CountingReader | None],
+    written_holder: list[int],
+    wire_bytes_holder: list[int],
+    *,
+    resume_offset: int,
+    sha256,
+    file: File,
+    write_cap: int,
+    source: P2PPeerSource | None,
+    reporter: ProgressReporter,
+    is_compressed: bool,
+) -> bool:
+    """Write the (optionally decoded) body to the ``.part``.
+
+    ``written``/``wire_bytes``/``counter`` are reported through ``*_holder`` so the
+    caller can read them even when a decode error unwinds this function. Returns
+    ``False`` when the attempt must end early (the resume prefix no longer matches).
+    """
+    chunk_size = adaptive_chunk_size(file.size)
+    write_mode = "ab" if resume_offset > 0 else "wb"
+    written_holder[0] = resume_offset
+    wire_bytes_holder[0] = 0
+    if resume_offset > 0:
+        prefix_size = 0
+        with _open_partial_no_follow(partial_file_path, "rb") as prefix:
+            while prefix_chunk := prefix.read(chunk_size):
+                prefix_size += len(prefix_chunk)
+                sha256.update(prefix_chunk)
+        if prefix_size != resume_offset:
+            _peer_only_failure(
+                source,
+                PeerFailureKind.malformed,
+                "Partial prefix changed",
+                discard_partial=True,
+            )
+            log.error(f'Partial prefix changed for "{file.filepath}"')
+            return False
+    with _open_partial_no_follow(partial_file_path, write_mode) as output:
+        if is_compressed:
+            response.raw.decode_content = False
+            counter_holder[0] = _CountingReader(
+                response.raw, bandwidth_limit=CONFIG.get("MAX_BANDWIDTH_DOWNLOAD")
+            )
+            for chunk in decompress_stream(
+                counter_holder[0],
+                max_output_size=write_cap,
+                read_size=max(1, min(chunk_size, max(write_cap, 1))),
+            ):
+                output.write(chunk)
+                sha256.update(chunk)
+                written_holder[0] += len(chunk)
+                reporter.update(written_holder[0])
+        else:
+            dl_bw_limit = CONFIG.get("MAX_BANDWIDTH_DOWNLOAD")
+            for chunk in response.iter_content(chunk_size=chunk_size):
+                if not chunk:
+                    continue
+                written_holder[0] += len(chunk)
+                wire_bytes_holder[0] += len(chunk)
+                reporter.update(written_holder[0])
+                if written_holder[0] > write_cap:
+                    _peer_only_failure(
+                        source,
+                        PeerFailureKind.malformed,
+                        "Body exceeds listing size",
+                        discard_partial=True,
+                    )
+                    # Distinct from the absolute-cap check above ("maximum download
+                    # size"): here the body outgrew the size the remote listing
+                    # declared, i.e. the remote copy changed while transferring.
+                    raise DeclaredSizeMismatchError(
+                        f'"{file.filepath}" received more bytes than the size '
+                        f"declared by the remote ({write_cap} bytes); "
+                        "the remote copy changed while transferring"
+                    )
+                output.write(chunk)
+                sha256.update(chunk)
+                delay = get_throttle_delay(len(chunk), dl_bw_limit, "download")
+                if delay > 0:
+                    time_sleep(delay)
+        output.flush()
+        fsync(output.fileno())
+    return True
+
+
+def _verify_download_digests(
+    file: File,
+    *,
+    written: int,
+    wire_bytes: int,
+    content_length: int | None,
+    sha256,
+    server_sha256,
+    expected_sha: str,
+    resume_offset: int,
+    source: P2PPeerSource | None,
+) -> bool:
+    """Validate wire length, decoded size and digests; False ends the attempt early."""
+    if content_length is not None and wire_bytes != content_length:
+        if wire_bytes < content_length:
+            message = f"Incomplete wire body ({wire_bytes}/{content_length} bytes)"
+            _peer_only_failure(source, PeerFailureKind.transport, message)
+            raise RequestException(message)
+        _peer_only_failure(
+            source,
+            PeerFailureKind.malformed,
+            "Content-Length mismatch",
+            discard_partial=True,
+        )
+        log.error(f'Content-Length mismatch downloading "{file.filepath}"')
+        return False
+    if written != file.size:
+        if written < file.size:
+            _peer_only_failure(
+                source,
+                PeerFailureKind.malformed,
+                f"Complete body has wrong size ({written}/{file.size} bytes)",
+                discard_partial=True,
+            )
+            log.error(f'Incomplete body downloading "{file.filepath}"')
+            return False
+        _peer_only_failure(
+            source,
+            PeerFailureKind.malformed,
+            "Body exceeds listing size",
+            discard_partial=True,
+        )
+        log.error(f'Body exceeds listing size downloading "{file.filepath}"')
+        return False
+    sha256sum = sha256.hexdigest()
+    if is_sha256_hex(server_sha256):
+        normalized_server_sha = cast(str, server_sha256).lower()
+        if not hmac.compare_digest(sha256sum, normalized_server_sha):
+            _peer_only_failure(
+                source,
+                PeerFailureKind.hash_mismatch,
+                "Source checksum mismatch",
+                discard_partial=True,
+            )
+            if resume_offset:
+                raise _RestartMasterDownload
+            log.error(f'Server checksum mismatch downloading "{file.filepath}"')
+            return False
+    if not hmac.compare_digest(sha256sum, expected_sha):
+        _peer_only_failure(
+            source,
+            PeerFailureKind.hash_mismatch,
+            "Listing checksum mismatch",
+            discard_partial=True,
+        )
+        if resume_offset:
+            raise _RestartMasterDownload
+        log.error(f'Invalid checksum downloading "{file.filepath}"')
+        return False
+    return True
+
+
+def _wire_bytes(counter: _CountingReader | None, fallback: int) -> int:
+    """The wire count from *counter* when the body was counted, else *fallback*."""
+    return counter.bytes_read if counter is not None else fallback
+
+
+def _discard_partial_if(cleanup: bool, partial_file_path: str | None) -> None:
+    """Discard the ``.part`` when the attempt asked for cleanup and it exists."""
+    if cleanup and partial_file_path and Path(partial_file_path).exists():
+        _discard_partial(partial_file_path)
+        log.debug(f"Cleaned up partial file: {partial_file_path}")
+
+
+def _validate_and_commit_download(
+    file: File,
+    *,
+    full_save_path: str,
+    partial_file_path: str,
+    dest_existed: bool,
+    dest_marker,
+    written: int,
+    wire_bytes: int,
+    content_length: int | None,
+    sha256,
+    server_sha256,
+    expected_sha: str,
+    resume_offset: int,
+    t0: float,
+    source: P2PPeerSource | None,
+    source_resolver: P2PSourceResolver | None,
+    rtt_seconds: float,
+    body_seconds: float,
+    inventory_observer: InventoryObserver,
+) -> bool:
+    """Validate the received body then commit it.
+
+    Returns the caller's ``cleanup_partial``: ``True`` when the ``.part`` must be
+    discarded, ``False`` once it was renamed onto the destination.
+    """
+    if not _verify_download_digests(
+        file,
+        written=written,
+        wire_bytes=wire_bytes,
+        content_length=content_length,
+        sha256=sha256,
+        server_sha256=server_sha256,
+        expected_sha=expected_sha,
+        resume_offset=resume_offset,
+        source=source,
+    ):
+        return True
+    if destination_mutation_since(full_save_path, dest_existed, dest_marker):
+        log.info(
+            f'Not committing "{file.filepath}": the destination was deleted '
+            "or renamed while downloading"
+        )
+        return True
+    clear_read_only(full_save_path)
+    replace_with_retry(partial_file_path, full_save_path)
+    _finalize_download(
+        file,
+        full_save_path,
+        t0,
+        source=source,
+        source_resolver=source_resolver,
+        rtt_seconds=rtt_seconds,
+        wire_bytes=wire_bytes,
+        body_seconds=body_seconds,
+        inventory_observer=inventory_observer,
+    )
+    return False
+
+
+def _stream_download_body(
     file: File,
     target: _DownloadTarget,
     opened: _OpenedDownload,
@@ -1215,9 +1452,9 @@ def _stream_download_body(  # noqa: C901 - pre-existing; refactor pending
     # writing (that sweep runs in the resync task, outside this transfer).
     register_inflight_partial(partial_file_path)
     sha256 = hashlib.sha256()
-    written = resume_offset
-    wire_bytes = 0
-    counter: _CountingReader | None = None
+    written_holder: list[int] = [resume_offset]
+    wire_bytes_holder: list[int] = [0]
+    counter_holder: list[_CountingReader | None] = [None]
     # Bound before the try: the zstd handler reads it, and header validation can
     # end the attempt before the body loop assigns it.
     content_length: int | None = None
@@ -1231,32 +1468,13 @@ def _stream_download_body(  # noqa: C901 - pre-existing; refactor pending
         server_sha256 = plan.server_sha256
         is_compressed = plan.is_compressed
 
-        chunk_size = adaptive_chunk_size(file.size)
-        write_mode = "ab" if resume_offset > 0 else "wb"
-        if resume_offset > 0:
-            prefix_size = 0
-            with _open_partial_no_follow(partial_file_path, "rb") as prefix:
-                while prefix_chunk := prefix.read(chunk_size):
-                    prefix_size += len(prefix_chunk)
-                    sha256.update(prefix_chunk)
-            if prefix_size != resume_offset:
-                _peer_only_failure(
-                    source,
-                    PeerFailureKind.malformed,
-                    "Partial prefix changed",
-                    discard_partial=True,
-                )
-                log.error(f'Partial prefix changed for "{file.filepath}"')
-                return
-
         body_started = monotonic()
-        # The remote listing is authoritative for downloads, including an
-        # exact zero-byte file. MAX_INBOUND_SIZE is enforced above as a policy
-        # ceiling; it must never turn size=0 into an "unknown" multi-GB cap.
+        # The remote listing is authoritative for downloads, including an exact
+        # zero-byte file. MAX_INBOUND_SIZE is enforced above as a policy ceiling;
+        # it must never turn size=0 into an "unknown" multi-GB cap.
         write_cap = file.size
-        # The serving master shows the bytes *this* node stored, not the wire
-        # bytes it handed to its transport: forward the delivery progress up the
-        # session when one exists (a no-op observer sends nothing).
+        # The serving master shows the bytes *this* node stored, not the wire bytes
+        # it handed to its transport: forward the delivery progress up the session.
         reporter = ProgressReporter(
             full_save_path,
             write_cap,
@@ -1265,136 +1483,42 @@ def _stream_download_body(  # noqa: C901 - pre-existing; refactor pending
                 inventory_observer, file, full_save_path, write_cap, source
             ),
         )
-        with _open_partial_no_follow(partial_file_path, write_mode) as output:
-            if is_compressed:
-                response.raw.decode_content = False
-                counter = _CountingReader(
-                    response.raw, bandwidth_limit=CONFIG.get("MAX_BANDWIDTH_DOWNLOAD")
-                )
-                for chunk in decompress_stream(
-                    counter,
-                    max_output_size=write_cap,
-                    read_size=max(1, min(chunk_size, max(write_cap, 1))),
-                ):
-                    output.write(chunk)
-                    sha256.update(chunk)
-                    written += len(chunk)
-                    reporter.update(written)
-            else:
-                dl_bw_limit = CONFIG.get("MAX_BANDWIDTH_DOWNLOAD")
-                for chunk in response.iter_content(chunk_size=chunk_size):
-                    if not chunk:
-                        continue
-                    written += len(chunk)
-                    wire_bytes += len(chunk)
-                    reporter.update(written)
-                    if written > write_cap:
-                        _peer_only_failure(
-                            source,
-                            PeerFailureKind.malformed,
-                            "Body exceeds listing size",
-                            discard_partial=True,
-                        )
-                        # Distinct from the absolute-cap check above
-                        # ("maximum download size"): here the body outgrew the
-                        # size the remote listing declared, i.e. the remote
-                        # copy changed while it was being transferred. The
-                        # wording must say so, or the user reads the declared
-                        # size as their --max-inbound-size limit.
-                        raise DeclaredSizeMismatchError(
-                            f'"{file.filepath}" received more bytes than the size '
-                            f"declared by the remote ({write_cap} bytes); "
-                            "the remote copy changed while transferring"
-                        )
-                    output.write(chunk)
-                    sha256.update(chunk)
-                    delay = get_throttle_delay(len(chunk), dl_bw_limit, "download")
-                    if delay > 0:
-                        time_sleep(delay)
-            output.flush()
-            fsync(output.fileno())
-        if counter is not None:
-            wire_bytes = counter.bytes_read
+        ok = _write_download_body(
+            response,
+            partial_file_path,
+            counter_holder,
+            written_holder,
+            wire_bytes_holder,
+            resume_offset=resume_offset,
+            sha256=sha256,
+            file=file,
+            write_cap=write_cap,
+            source=source,
+            reporter=reporter,
+            is_compressed=is_compressed,
+        )
+        if not ok:
+            return
+        wire_bytes_holder[0] = _wire_bytes(counter_holder[0], wire_bytes_holder[0])
         body_seconds = monotonic() - body_started
 
-        if content_length is not None and wire_bytes != content_length:
-            if wire_bytes < content_length:
-                cleanup_partial = False
-                message = f"Incomplete wire body ({wire_bytes}/{content_length} bytes)"
-                _peer_only_failure(source, PeerFailureKind.transport, message)
-                raise RequestException(message)
-            _peer_only_failure(
-                source,
-                PeerFailureKind.malformed,
-                "Content-Length mismatch",
-                discard_partial=True,
-            )
-            log.error(f'Content-Length mismatch downloading "{file.filepath}"')
-            return
-
-        if written != file.size:
-            if written < file.size:
-                _peer_only_failure(
-                    source,
-                    PeerFailureKind.malformed,
-                    f"Complete body has wrong size ({written}/{file.size} bytes)",
-                    discard_partial=True,
-                )
-                log.error(f'Incomplete body downloading "{file.filepath}"')
-                return
-            _peer_only_failure(
-                source,
-                PeerFailureKind.malformed,
-                "Body exceeds listing size",
-                discard_partial=True,
-            )
-            log.error(f'Body exceeds listing size downloading "{file.filepath}"')
-            return
-
-        sha256sum = sha256.hexdigest()
-        if is_sha256_hex(server_sha256):
-            normalized_server_sha = cast(str, server_sha256).lower()
-            if not hmac.compare_digest(sha256sum, normalized_server_sha):
-                _peer_only_failure(
-                    source,
-                    PeerFailureKind.hash_mismatch,
-                    "Source checksum mismatch",
-                    discard_partial=True,
-                )
-                if resume_offset:
-                    raise _RestartMasterDownload
-                log.error(f'Server checksum mismatch downloading "{file.filepath}"')
-                return
-        if not hmac.compare_digest(sha256sum, expected_sha):
-            _peer_only_failure(
-                source,
-                PeerFailureKind.hash_mismatch,
-                "Listing checksum mismatch",
-                discard_partial=True,
-            )
-            if resume_offset:
-                raise _RestartMasterDownload
-            log.error(f'Invalid checksum downloading "{file.filepath}"')
-            return
-
-        if destination_mutation_since(full_save_path, dest_existed, dest_marker):
-            log.info(
-                f'Not committing "{file.filepath}": the destination was deleted '
-                "or renamed while downloading"
-            )
-            cleanup_partial = True
-            return
-        clear_read_only(full_save_path)
-        replace_with_retry(partial_file_path, full_save_path)
-        cleanup_partial = False
-        _finalize_download(
+        cleanup_partial = _validate_and_commit_download(
             file,
-            full_save_path,
-            t0,
+            full_save_path=full_save_path,
+            partial_file_path=partial_file_path,
+            dest_existed=dest_existed,
+            dest_marker=dest_marker,
+            written=written_holder[0],
+            wire_bytes=wire_bytes_holder[0],
+            content_length=content_length,
+            sha256=sha256,
+            server_sha256=server_sha256,
+            expected_sha=expected_sha,
+            resume_offset=resume_offset,
+            t0=t0,
             source=source,
             source_resolver=source_resolver,
             rtt_seconds=rtt_seconds,
-            wire_bytes=wire_bytes,
             body_seconds=body_seconds,
             inventory_observer=inventory_observer,
         )
@@ -1415,10 +1539,10 @@ def _stream_download_body(  # noqa: C901 - pre-existing; refactor pending
         log.error(f'Permission denied saving "{file.filepath}": {exc}')
         return
     except zstd.ZstdError as exc:
-        if counter is not None:
-            wire_bytes = counter.bytes_read
-        wire_body_complete = content_length is not None and wire_bytes >= content_length
-        if written < file.size and not wire_body_complete:
+        if counter_holder[0] is not None:
+            wire_bytes_holder[0] = counter_holder[0].bytes_read
+        wire_body_complete = content_length is not None and wire_bytes_holder[0] >= content_length
+        if written_holder[0] < file.size and not wire_body_complete:
             cleanup_partial = False
             if source is not None:
                 raise _PeerSourceFailure(PeerFailureKind.transport, str(exc)) from exc
@@ -1436,9 +1560,7 @@ def _stream_download_body(  # noqa: C901 - pre-existing; refactor pending
         return
     finally:
         response.close()
-        if cleanup_partial and partial_file_path and Path(partial_file_path).exists():
-            _discard_partial(partial_file_path)
-            log.debug(f"Cleaned up partial file: {partial_file_path}")
+        _discard_partial_if(cleanup_partial, partial_file_path)
         # Released last: while the artifact is still ours the sweep skips it,
         # so it cannot delete the leftover in the window between the two
         # statements (and a successful transfer already renamed it away).
@@ -2467,6 +2589,152 @@ def _post_streaming_body(uri: str, headers: dict[str, str], body: Any) -> Any:
     )
 
 
+def _self_record_local_edit(file: File) -> None:
+    """Record this node's content edit before advertising it (ADR-0022 §3.4.7)."""
+    try:
+        from hsync_client.sync import is_sync_cycle_active
+        from hsync_client.sync_state import flush, note_local_edit
+
+        if file.sha256sum:
+            note_local_edit(file.filepath, file.sha256sum)
+            # Full sync cycles defer persistence to their single end flush;
+            # real-time watcher uploads persist immediately.
+            if not is_sync_cycle_active():
+                flush()
+    except Exception as e:  # pragma: no cover - bookkeeping must never break upload
+        log.debug(f'Could not self-record content edit for "{file.filepath}": {e}')
+
+
+def _try_delta_upload(file: File, delta_ctx, t0: float) -> bool:
+    """Send only the changed blocks via the delta endpoint; False to fall back."""
+    try:
+        upload_file_delta(file, delta_ctx)
+    except (DeltaTransferError, OSError) as exc:
+        log.warning(f'Delta upload for "{file.filepath}" fell back to full transfer ({exc})')
+        return False
+    log.info(
+        f'{ActionLabel.UPLOAD} "{file.filepath}" {format_bytes(file.size)} '
+        f"{format_duration(monotonic() - t0, subsecond=True)}"
+    )
+    emit_completed_transfer("upload", file.filepath, file.size or 0)
+    vclock, corrected_mtime = _resolve_local_version_pair(file)
+    _record_synced_base(file, vclock=vclock, corrected_mtime=corrected_mtime)
+    return True
+
+
+def _resolve_upload_status(file: File, filename: str, permissions_only: bool) -> tuple[str, int]:
+    """Resolve the ``(status, offset)`` pair, probing the peer only when due."""
+    if file.sha256sum is None or (
+        not permissions_only and (file.size or 0) < UPLOAD_STATUS_PREFLIGHT_MIN_SIZE
+    ):
+        return "new", 0
+    return _get_upload_status(filename, file.sha256sum, file.size)
+
+
+def _upload_compressed(file: File, data: dict, headers: dict, uri: str, t0: float) -> bool:
+    """Try the compressed upload; True when handled, False to fall back.
+
+    On a fall-back the ``compressed`` form fields are removed so the peer does not
+    try to zstd-decompress the raw bytes.
+    """
+    # Compress STREAMING to a temporary file (memory stays bounded by one chunk),
+    # then send it as a regular file part: a real file object lets requests frame
+    # the multipart body with an exact Content-Length while streaming from disk.
+    compressed_tmp = _compress_to_temp_file(file.filepath)
+    try:
+        compressed_size = Path(compressed_tmp).stat().st_size
+        if file.size and compressed_size >= file.size:
+            # Compressing did not help: sending the larger frame would waste
+            # bandwidth and route the body through the whole-file reader.
+            log.debug(
+                f'Compression not beneficial for "{file.filepath}" '
+                f"({format_bytes(compressed_size)} >= {format_bytes(file.size)}); "
+                "sending the original"
+            )
+            return False
+        if file.size:
+            compression_ratio = compressed_size / file.size * 100
+            log.debug(
+                f"Compressed {format_bytes(file.size)} -> {format_bytes(compressed_size)} "
+                f"({compression_ratio:.1f}%)"
+            )
+        # Do NOT send ``Content-Encoding: zstd``: only the multipart file part is
+        # compressed, not the request body, and both servers key decompression off
+        # the ``compressed`` form field.
+        data["compressed"] = "true"
+        data["compressed_size"] = compressed_size
+        ul_bw_limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
+        reporter = ProgressReporter(file.filepath, compressed_size, "upload")
+        boundary = uuid4().hex
+        body, content_type = _build_multipart_streaming(
+            compressed_tmp,
+            dict(data),
+            boundary=boundary,
+            filename=Path(file.filepath).name,
+            offset=0,
+            bandwidth_limit=ul_bw_limit,
+            on_progress=reporter.update,
+        )
+        headers["Content-Type"] = content_type
+        response = _post_streaming_body(uri, headers, body)
+        if response.status_code == 202:
+            # The peer stored only part of the compressed frame; a compressed
+            # upload is not resumable, so fall through to the standard upload. Drop
+            # the form fields or the peer would try to zstd-decompress raw bytes
+            # ("Unknown frame descriptor").
+            data.pop("compressed", None)
+            data.pop("compressed_size", None)
+            log.warning(
+                f"Compressed upload was only partially received for "
+                f'"{file.filepath}"; retrying uncompressed'
+            )
+            return False
+        _handle_upload_response(file, response, t0)
+        return True
+    finally:
+        with suppress(OSError):
+            remove(compressed_tmp)
+
+
+def _upload_standard(
+    file: File, data: dict, headers: dict, uri: str, offset: int, t0: float
+) -> None:
+    """Stream the multipart body directly from disk (no full buffer in RAM)."""
+    ul_bw_limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
+    boundary = uuid4().hex
+    # The local counter always feeds the row (identical scale to the receiver's
+    # echo here); the echo takes over only while its frames keep arriving.
+    reporter = ProgressReporter(file.filepath, file.size or 0, "upload")
+    if offset > 0:
+        # Anchor the resumed position BEFORE the first chunk so the rate window
+        # does not read a first-sample burst.
+        reporter.update(offset)
+    body, content_type = _build_multipart_streaming(
+        file.filepath,
+        dict(data),
+        boundary=boundary,
+        filename=Path(file.filepath).name,
+        offset=offset,
+        bandwidth_limit=ul_bw_limit,
+        on_progress=lambda sent: reporter.update(offset + sent),
+    )
+    headers["Content-Type"] = content_type
+    response = _post_streaming_body(uri, headers, body)
+    if response.status_code == 202:
+        # The peer stored only part of the file: raise a retryable error so the
+        # wrapper re-probes and resumes from the peer's reported offset.
+        try:
+            new_offset = int(response.json().get("offset", 0) or 0)
+        except (ValueError, TypeError):
+            new_offset = 0
+        log.info(
+            f'Partial upload for "{file.filepath}": '
+            f"{format_bytes(new_offset)} uploaded; re-probing and retrying"
+        )
+        raise ServerError(f"Upload accepted partially; resuming from offset {new_offset}")
+    _handle_upload_response(file, response, t0)
+
+
 def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
     """
     Perform a single upload attempt with resume support.
@@ -2508,45 +2776,15 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
         # for the signatures; the tick then advances the version the delta/full
         # upload advertises, so the server's causal arbitration accepts it
         # instead of rejecting it as superseded/conflict (409).
-        try:
-            from hsync_client.sync import is_sync_cycle_active
-            from hsync_client.sync_state import flush, note_local_edit
+        _self_record_local_edit(file)
 
-            if file.sha256sum:
-                note_local_edit(file.filepath, file.sha256sum)
-                # Full sync cycles defer persistence to their single end flush;
-                # real-time watcher uploads persist immediately.
-                if not is_sync_cycle_active():
-                    flush()
-        except Exception as e:  # pragma: no cover - bookkeeping must never break upload
-            log.debug(f'Could not self-record content edit for "{file.filepath}": {e}')
+        if delta_ctx is not None and _try_delta_upload(file, delta_ctx, t0):
+            return
 
-        if delta_ctx is not None:
-            try:
-                upload_file_delta(file, delta_ctx)
-                log.info(
-                    f'{ActionLabel.UPLOAD} "{file.filepath}" {format_bytes(file.size)} '
-                    f"{format_duration(monotonic() - t0, subsecond=True)}"
-                )
-                emit_completed_transfer("upload", file.filepath, file.size or 0)
-                vclock, corrected_mtime = _resolve_local_version_pair(file)
-                _record_synced_base(file, vclock=vclock, corrected_mtime=corrected_mtime)
-                return
-            except (DeltaTransferError, OSError) as exc:
-                log.warning(
-                    f'Delta upload for "{file.filepath}" fell back to full transfer ({exc})'
-                )
-
-        # Check for resumable upload. Permission-only uploads always probe
-        # (their fast path depends on learning the peer already holds the
-        # content); small non-permission uploads skip the probe and start fresh
-        # (see UPLOAD_STATUS_PREFLIGHT_MIN_SIZE).
-        if file.sha256sum is None or (
-            not permissions_only and (file.size or 0) < UPLOAD_STATUS_PREFLIGHT_MIN_SIZE
-        ):
-            status, offset = "new", 0
-        else:
-            status, offset = _get_upload_status(filename, file.sha256sum, file.size)
+        # Check for resumable upload. Permission-only uploads always probe (their
+        # fast path depends on learning the peer already holds the content); small
+        # non-permission uploads skip the probe and start fresh.
+        status, offset = _resolve_upload_status(file, filename, permissions_only)
 
         if status == "complete":
             if not permissions_only:
@@ -2597,158 +2835,17 @@ def _upload_file_attempt(file: File, permissions_only: bool = False) -> None:
         log.debug(f"     Header: {safe_json_for_log(redact_headers(CONFIG['REQUEST_HEADERS']))}")
         log.debug(f"       data: {safe_json_for_log(data)}")
 
-        # Determine if compression should be used
-        # Don't compress if: resuming, client disabled, server disabled, or file not compressible
+        # Compress only a fresh, compressible upload when both sides enabled it.
         use_compression = (
             offset == 0
             and CONFIG.get("COMPRESSION_ENABLED", False)
             and CONFIG.get("SERVER_COMPRESSION_ENABLED", False)
             and should_compress(file.filepath, file.size, transfer_type="upload")
         )
-
         headers = dict(cast(dict[str, str], CONFIG["REQUEST_HEADERS"]))
-
-        compressed_tmp: str | None = None
-        compressed_size = 0
-        compressed_partial = False
-        if use_compression:
-            # Compress STREAMING to a temporary file (memory stays bounded by
-            # one chunk), then send it as a regular file part: a real file
-            # object lets requests frame the multipart body with an exact
-            # Content-Length while still streaming each chunk from disk.
-            compressed_tmp = _compress_to_temp_file(file.filepath)
-            compressed_size = Path(compressed_tmp).stat().st_size
-            if file.size and compressed_size >= file.size:
-                # Compressing did not help (e.g. already-compressed or random
-                # data): sending the larger frame would waste bandwidth and
-                # route the body through the whole-file reader. Send the
-                # original instead. The compression CPU is already spent;
-                # should_compress skips known formats beforehand.
-                log.debug(
-                    f'Compression not beneficial for "{file.filepath}" '
-                    f"({format_bytes(compressed_size)} >= {format_bytes(file.size)}); "
-                    "sending the original"
-                )
-                with suppress(OSError):
-                    remove(compressed_tmp)
-                compressed_tmp = None
-                use_compression = False
-
-        if use_compression:
-            assert compressed_tmp is not None
-            try:
-                if file.size:
-                    compression_ratio = compressed_size / file.size * 100
-                    log.debug(
-                        f"Compressed {format_bytes(file.size)} -> "
-                        f"{format_bytes(compressed_size)} "
-                        f"({compression_ratio:.1f}%)"
-                    )
-
-                # Do NOT send ``Content-Encoding: zstd``: only the multipart file
-                # part is compressed, not the request body, and both servers key
-                # decompression off the ``compressed`` form field. A
-                # Content-Encoding on the multipart envelope makes aiohttp (the
-                # p2p master) decode the whole body and fail with 400.
-                data["compressed"] = "true"
-                data["compressed_size"] = compressed_size
-
-                ul_bw_limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
-                # The wire scale of the compressed payload drives the bar as a
-                # fallback: the master's delivery frame upgrades it to the file
-                # scale once it lands, but the sender must never depend on that
-                # frame — the control WebSocket is established only after the
-                # initial sync, so a first-cycle upload has no echo at all.
-                reporter = ProgressReporter(
-                    file.filepath,
-                    compressed_size,
-                    "upload",
-                )
-                boundary = uuid4().hex
-                body, content_type = _build_multipart_streaming(
-                    compressed_tmp,
-                    dict(data),
-                    boundary=boundary,
-                    filename=Path(file.filepath).name,
-                    offset=0,
-                    bandwidth_limit=ul_bw_limit,
-                    on_progress=reporter.update,
-                )
-                headers["Content-Type"] = content_type
-                response = _post_streaming_body(uri, headers, body)
-                if response.status_code == 202:
-                    # The peer stored only part of the compressed frame. A
-                    # compressed upload is not resumable (the server refuses
-                    # an offset for it), so retrying it would fail the same
-                    # way; fall through to the standard, resumable upload.
-                    # The standard body is NOT compressed: drop the form
-                    # fields or the peer would try to zstd-decompress the
-                    # raw bytes ("Unknown frame descriptor").
-                    compressed_partial = True
-                    data.pop("compressed", None)
-                    data.pop("compressed_size", None)
-                    log.warning(
-                        f"Compressed upload was only partially received for "
-                        f'"{file.filepath}"; retrying uncompressed'
-                    )
-                else:
-                    _handle_upload_response(file, response, t0)
-                    return
-            finally:
-                with suppress(OSError):
-                    remove(compressed_tmp)
-        if not use_compression or compressed_partial:
-            # Standard upload: stream the multipart body directly from disk
-            # so files of arbitrary size do not need to be loaded into RAM.
-            ul_bw_limit = CONFIG.get("MAX_BANDWIDTH_UPLOAD")
-
-            boundary = uuid4().hex
-            # Same rule as the compressed branch: the local counter always feeds
-            # the row (identical scale to the receiver's echo here), and the
-            # echo takes over only while its frames keep arriving.
-            reporter = ProgressReporter(
-                file.filepath,
-                file.size or 0,
-                "upload",
-            )
-            if offset > 0:
-                # Anchor the resumed position BEFORE the first chunk: the
-                # Desktop's short rate window reads a first sample that jumps
-                # to the offset as an instantaneous burst, so the resumed
-                # position is reported first. Only the bytes actually sent
-                # pace the rate.
-                reporter.update(offset)
-            body, content_type = _build_multipart_streaming(
-                file.filepath,
-                dict(data),
-                boundary=boundary,
-                filename=Path(file.filepath).name,
-                offset=offset,
-                bandwidth_limit=ul_bw_limit,
-                on_progress=lambda sent: reporter.update(offset + sent),
-            )
-            # Content-Length is derived by requests from body.__len__; setting it
-            # here as well would coexist with the chunked framing requests adds
-            # for generators, yielding a request h11/uvicorn rejects.
-            headers["Content-Type"] = content_type
-            response = _post_streaming_body(uri, headers, body)
-            if response.status_code == 202:
-                # The peer stored only part of the file (a preflight race gave
-                # it a stale offset, or a dropped connection ended the body
-                # early). This is neither a success nor a permanent failure:
-                # raise a retryable error so the wrapper re-probes and resumes
-                # from the peer's reported offset, and publish the terminal
-                # transfer_failed once the retries are exhausted.
-                try:
-                    new_offset = int(response.json().get("offset", 0) or 0)
-                except (ValueError, TypeError):
-                    new_offset = 0
-                log.info(
-                    f'Partial upload for "{file.filepath}": '
-                    f"{format_bytes(new_offset)} uploaded; re-probing and retrying"
-                )
-                raise ServerError(f"Upload accepted partially; resuming from offset {new_offset}")
-            _handle_upload_response(file, response, t0)
+        if use_compression and _upload_compressed(file, data, headers, uri, t0):
+            return
+        _upload_standard(file, data, headers, uri, offset, t0)
     except FileNotFoundError:
         log.error(f'File not found: "{file.filepath}"')
         _emit_transfer_failed("upload", file.filepath, "the local file disappeared while uploading")
