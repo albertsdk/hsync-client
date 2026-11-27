@@ -109,7 +109,7 @@ NO_PEERS_MESSAGE = NO_DEVICE_MESSAGE
 READINESS_ENDPOINT_TIMEOUT_S = 10.0
 
 
-def run_p2p_mode(config: "HsyncConfig", log) -> int:
+def run_p2p_mode(config: "HsyncConfig", log) -> int:  # noqa: C901 - refactor pending
     """
     Handle P2P mode synchronization.
 
@@ -704,7 +704,7 @@ def _endpoint_retry_delay(config: "HsyncConfig") -> float:
     return max(1.0, min(delay, 30.0))
 
 
-def _run_as_slave(
+def _run_as_slave(  # noqa: C901 - refactor pending
     config: "HsyncConfig",
     log,
     one_shot: bool,

@@ -98,6 +98,7 @@ select = [
     "FURB", "RUF",       # refurb, ruff-specific (noqa / __all__ hygiene)
     "PGH", "LOG", "G",   # pygrep-hooks, logging
     "PL", "T10", "ERA",  # pylint, debugger, commented-out code
+    "C90",               # mccabe complexity (threshold below)
 ]
 ignore = [
     # pre-existing
@@ -138,6 +139,11 @@ ignore = [
 # Auxiliary trees (published docs examples, pentest probes) are illustrative.
 "docs/**" = ["N803", "PLR1714", "RUF046"]
 "pentest/**" = ["PERF401"]
+
+[tool.ruff.lint.mccabe]
+# A pragmatic ceiling that the current code meets; lower it as functions are
+# refactored (see the `# noqa: C901` debt markers on the worst offenders).
+max-complexity = 25
 
 [tool.mypy]
 python_version = "3.13"

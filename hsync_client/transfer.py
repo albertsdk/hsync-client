@@ -1184,7 +1184,7 @@ def _open_download_stream(
     )
 
 
-def _stream_download_body(
+def _stream_download_body(  # noqa: C901 - pre-existing; refactor pending
     file: File,
     target: _DownloadTarget,
     opened: _OpenedDownload,

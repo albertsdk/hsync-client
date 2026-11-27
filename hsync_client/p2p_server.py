@@ -2074,7 +2074,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
         except (ValueError, IndexError):
             return None
 
-    def _handle_download(self, query: dict, expected_sha256: str | None = None) -> None:
+    def _handle_download(self, query: dict, expected_sha256: str | None = None) -> None:  # noqa: C901 - refactor pending
         """Serve one safely-opened regular file, optionally bound to an expected hash."""
         filename = _first(query, "filename")
         if not filename:

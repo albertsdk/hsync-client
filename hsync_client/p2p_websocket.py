@@ -773,7 +773,7 @@ class P2PWebSocketServer:
         await websocket.send_str(compact_json_str(build_p2p_auth_failed(reason=reason)))
         await websocket.close()
 
-    async def handle(self, request: web.Request) -> web.WebSocketResponse:
+    async def handle(self, request: web.Request) -> web.WebSocketResponse:  # noqa: C901 - refactor pending
         """aiohttp route handler for one master WebSocket connection.
 
         Greeting/auth/hello handshake and the inventory loop, served on the
@@ -1620,7 +1620,7 @@ async def _close_ws_on_endpoint_change(websocket: Any, guard: Any) -> None:
     )
 
 
-async def p2p_websocket_client(
+async def p2p_websocket_client(  # noqa: C901 - refactor pending
     host: str,
     port: int,
     use_https: bool = False,
