@@ -10,6 +10,7 @@ master election, and WebSocket communication.
 
 import os
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from hsync_common.endpoint import format_authority
@@ -109,7 +110,7 @@ NO_PEERS_MESSAGE = NO_DEVICE_MESSAGE
 READINESS_ENDPOINT_TIMEOUT_S = 10.0
 
 
-def run_p2p_mode(config: "HsyncConfig", log) -> int:  # noqa: C901 - refactor pending
+def run_p2p_mode(config: "HsyncConfig", log) -> int:
     """
     Handle P2P mode synchronization.
 
@@ -194,49 +195,17 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:  # noqa: C901 - refactor pe
     )
     endpoints = tuple(config.get("RENDEZVOUS_SERVER_ENDPOINTS") or ())
     mdns_enabled = bool(config.get("MDNS_ENABLED", True))
-    if endpoints:
-        listed = ", ".join(
-            format_authority(endpoint.host, endpoint.port or RENDEZVOUS_DEFAULT_PORT)
-            for endpoint in endpoints
-        )
-        upnp = "on" if config.get("MAP_DATA_PORT", True) else "off"
-        if mdns_enabled:
-            log.info(
-                "Discovery: mDNS on the local network + discovery server(s) "
-                f"{listed} (cross-network; UPnP {upnp})"
-            )
-            # The UI event keeps its documented shape: ``plan`` names the combined
-            # plan and ``rendezvous`` carries the configured endpoints.
-            emit_event(UiEventName.rendezvous, plan="mdns+rendezvous", rendezvous=listed)
-        else:
-            log.info(
-                f"Discovery: discovery server(s) {listed} only "
-                f"(local network excluded; UPnP {upnp})"
-            )
-            emit_event(UiEventName.rendezvous, plan="rendezvous", rendezvous=listed)
-    else:
-        log.info("Discovery: mDNS on the local network (no discovery server configured)")
-        emit_event(UiEventName.rendezvous, plan="mdns")
+    _log_discovery_plan(config, endpoints, mdns_enabled, log)
     if config["P2P_NEVER_MASTER"]:
         log.info("Never-master mode enabled - this client will always remain a client/slave")
     peer_manager = p2p_sync.start(register_service=True)
 
-    seeder_attempted = False
-    master_serving = False
-    inventory_publisher: P2PInventoryPublisher | None = None
-    master_channel: _MasterChannel | None = None
-
-    last_exit = int(ExitCode.OK)
+    state = _P2PLoopState(p2p_server=p2p_server, p2p_ws_server=p2p_ws_server)
     rendezvous_deadline = (
         time.monotonic() + rendezvous_timeout
         if one_shot and not wait_indefinitely_for_peer
         else None
     )
-
-    # Track how long the group has been without an elected master so we can warn
-    # once after NO_MASTER_WARNING_TIMEOUT (e.g. when every peer is never-master).
-    no_master_since: float | None = None
-    no_master_warned = False
 
     # Per-(kind, cid) dedupe of the trust refusal blocks/events: the rendezvous
     # loop retries continuously, so a repeating refusal must not spam the log or
@@ -245,212 +214,41 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:  # noqa: C901 - refactor pe
 
     try:
         while True:
-            # Wait for peer rendezvous
-            current_wait = float(rendezvous_wait)
-            if rendezvous_deadline is not None:
-                current_wait = min(
-                    current_wait,
-                    max(0.0, rendezvous_deadline - time.monotonic()),
-                )
-            p2p_sync.wait_for_rendezvous(timeout=current_wait)
+            # Wait for peer rendezvous, then expire peers whose heartbeats stopped
+            # and re-elect if the master vanished (the periodic sweep bounds
+            # failover detection to ``peer_timeout`` even when no further mDNS
+            # event arrives — e.g. a two-node group whose master died).
+            _wait_for_rendezvous(peer_manager, p2p_sync, rendezvous_wait, rendezvous_deadline)
 
-            # Expire peers whose heartbeats stopped and re-elect if the master
-            # vanished. Rendezvous is event-driven (mDNS announcements), which a
-            # hard-crashed peer stops sending entirely — so this periodic sweep
-            # is what bounds failover detection to ``peer_timeout`` even when no
-            # further event arrives (e.g. a two-node group whose master died).
-            peer_manager.reconcile_stale_peers()
-
-            # Never advertise incumbency before the rendezvous has answered once:
-            # a node that has not yet seen an already-serving peer would otherwise
-            # claim ``server_ready`` first and out-rank it, splitting the bucket
-            # until the next election. The plan bounds its own wait, so a lone
-            # node still serves after a short grace (mDNS-only plans are always
-            # settled and never reach here).
-            if (
-                rendezvous_deadline is None
-                and peer_manager.is_master()
-                and not _master_claim_settled(p2p_sync)
-            ):
-                time.sleep(MASTER_CLAIM_SETTLE_S / 10)
+            action, gate_exit = _rendezvous_loop_gate(
+                peer_manager, p2p_sync, rendezvous_deadline, log
+            )
+            if action == "continue":
                 continue
-
-            # A one-shot run must terminate: its rendezvous window is its whole
-            # lifetime budget. Once that window expired without a single live
-            # peer there is nothing to sync and nobody to serve, yet the local
-            # role may be MASTER — a lone eligible node claims mastership at
-            # rendezvous start so a joining slave finds a serving master. Without
-            # this gate that self-conferred role would keep the continuous
-            # master loop alive forever, so `--once` would never honour the
-            # documented no-peer exit code. A master that does have live peers
-            # (or any continuous run, which has no deadline) stays continuous.
-            # A single clock read feeds both gates below so mocked and real
-            # clocks advance one step per iteration.
-            now_after_rendezvous = time.monotonic()
-            if (
-                rendezvous_deadline is not None
-                and now_after_rendezvous >= rendezvous_deadline
-                and not peer_manager.get_alive_peers()
-            ):
-                log.warning("No master elected - this client is alone, nothing to sync")
-                emit_event(UiEventName.no_peers, message=NO_PEERS_MESSAGE)
-                return int(ExitCode.P2P_NO_PEER)
-
-            # A finite one-shot window must not end merely because an
-            # ineligible seeder wakes rendezvous before the serving master is
-            # announced. Keep consuming mDNS changes until a master is elected
-            # or the original deadline expires.
-            if (
-                rendezvous_deadline is not None
-                and peer_manager.get_master_cid() is None
-                and now_after_rendezvous < rendezvous_deadline
-            ):
-                continue
+            if action == "return":
+                return gate_exit
 
             if peer_manager.is_master():
-                no_master_since = None
-                no_master_warned = False
-                _stop_slave_inventory(
-                    p2p_sync,
-                    inventory_publisher,
-                    serving=serve_blocks(config),
-                )
-                inventory_publisher = None
-                seeder_attempted = False
-
-                # Wire the master's live WebSocket client count into rendezvous
-                # presence BEFORE serving: the provider feeds wait_for_rendezvous
-                # (the single owner of the peers event) and the callback refreshes
-                # this node's mDNS ``connected`` TXT value on every join/leave.
-                # Wiring it only after ``_run_as_master`` would let the master
-                # advertise ``connected=0`` and miss clients that connect while it
-                # is serving, so peers would keep reading a stale 0.
-                ws_server = p2p_ws_server
-
-                def ws_connected_count(server: P2PWebSocketServer = ws_server) -> int:
-                    return server.connected_clients
-
-                def on_clients_changed(count: int) -> None:
-                    p2p_sync.set_connected_clients(count)
-                    manager = p2p_sync.peer_manager
-                    if manager is not None:
-                        # The rendezvous loop is blocked while serving; refresh the
-                        # master's own presence on join/leave.
-                        _emit_master_presence(count, manager)
-                    # "connected" means an active peer link: a lone serving
-                    # master is "waiting" for a device to connect.
-                    set_link_status(_p2p_status(count))
-
-                p2p_sync.set_connected_clients_provider(ws_connected_count)
-                p2p_ws_server.set_clients_changed_callback(on_clients_changed)
-                # Re-evaluate on every re-entry (the loop re-enters ~1/s once the
-                # serving stint yields): the data-plane hold expires on its own,
-                # so this is what returns a master nobody is talking to to
-                # "waiting for a device" instead of leaving it "connected".
-                set_link_status(_p2p_status(p2p_ws_server.connected_clients))
-
-                p2p_server, p2p_ws_server = _run_as_master(
+                _serve_master_stint(
+                    state,
                     config=config,
                     log=log,
                     p2p_sync=p2p_sync,
-                    p2p_server=p2p_server,
-                    p2p_ws_server=p2p_ws_server,
+                    peer_manager=peer_manager,
                     cid_registry=cid_registry,
                 )
-                # A watcher-failure return leaves the control plane not running:
-                # the flag must reflect whether the master is actually serving.
-                master_serving = p2p_ws_server.running
-                # The serving role answers the front-end's PREVIEW/SYNC through
-                # its own channel (no asyncio loop runs here) and re-classifies
-                # whenever a device publishes a new inventory.
-                if master_channel is None:
-                    master_channel = _MasterChannel(p2p_server, p2p_ws_server, peer_manager, log)
-                master_channel.start()
-                # Check if we're still master after _run_as_master returns
-                if not peer_manager.is_master():
-                    # We lost mastership: retire the serving role, then revoke our
-                    # incumbency (local flag + mDNS server_ready) so peers no
-                    # longer rank us as an incumbent — a yielded node that left
-                    # server_ready=true would be a "zombie incumbent" and could
-                    # prolong a split-brain (ADR-0027 leadership lease).
-                    _stop_p2p_serving(p2p_ws_server, p2p_server)
-                    master_serving = False
-                    inventory_publisher = None
-                    if master_channel is not None:
-                        master_channel.stop()
-                    p2p_sync.set_connected_clients_provider(None)
-                    p2p_ws_server.set_clients_changed_callback(None)
-                    p2p_sync.update_server_not_ready()
-                    log.warning(
-                        f"{ActionLabel.MASTER_YIELD} this client yielded mastership; "
-                        f"the deterministic election picked "
-                        f"{peer_manager.get_master_cid() or 'no eligible peer'}."
-                    )
-                    # Back to the rendezvous loop: the link status drops to
-                    # "connecting" until the new master link is established.
-                    set_link_status("connecting")
-                # NOTE: the master role is inherently continuous: it must
-                # stay available to serve peers regardless of the one-shot
-                # flag (which only applies to slaves). The loop only exits
-                # via KeyboardInterrupt or by losing the master role and
-                # being elected slave on a later iteration.
             else:
-                # Retire any serving role before acting as a requester. The
-                # process-wide listener stays bound and is reconfigured.
-                if master_serving:
-                    _stop_p2p_serving(p2p_ws_server, p2p_server)
-                    master_serving = False
-                    if master_channel is not None:
-                        master_channel.stop()
-                    p2p_sync.set_connected_clients_provider(None)
-                    p2p_sync.update_server_not_ready()
-                # Warn (once) if no master has been elected for a while: this
-                # happens when every reachable peer is in never-master mode.
-                if peer_manager.get_master_cid() is None:
-                    now = time.time()
-                    if no_master_since is None:
-                        no_master_since = now
-                    elif not no_master_warned and (
-                        now - no_master_since >= NO_MASTER_WARNING_TIMEOUT
-                    ):
-                        log.warning(
-                            f"{ActionLabel.NO_MASTER} No master elected after "
-                            f"{int(now - no_master_since)}s. All discovered peers "
-                            f"may be configured with --never-master; no node will "
-                            f"serve files and synchronization cannot proceed."
-                        )
-                        emit_event(
-                            UiEventName.no_master,
-                            elapsed=int(now - no_master_since),
-                        )
-                        # The condition is standing: its retraction (when an
-                        # election gives the group a primary again) must be
-                        # publishable.
-                        note_condition_standing("master")
-                        no_master_warned = True
-                else:
-                    no_master_since = None
-                    if no_master_warned:
-                        # The group has a primary again: retract the warning so a
-                        # front-end never reports a condition that is gone.
-                        emit_warning_cleared("master")
-                    no_master_warned = False
-
-                if not seeder_attempted:
-                    inventory_publisher = _start_slave_inventory(config, p2p_sync, log, p2p_server)
-                    seeder_attempted = True
-
-                should_continue, exit_code = _run_as_slave(
+                should_continue, exit_code = _serve_slave_stint(
+                    state,
                     config=config,
                     log=log,
-                    one_shot=one_shot,
+                    p2p_sync=p2p_sync,
                     peer_manager=peer_manager,
+                    one_shot=one_shot,
                     wait_indefinitely_for_peer=wait_indefinitely_for_peer,
-                    inventory_publisher=inventory_publisher,
                     notified=notified,
-                    plan=p2p_sync,
                 )
-                last_exit = exit_code
+                state.last_exit = exit_code
                 if not should_continue:
                     break
 
@@ -467,19 +265,285 @@ def run_p2p_mode(config: "HsyncConfig", log) -> int:  # noqa: C901 - refactor pe
             raise
         log.info("Shutting down P2P mode...")
     finally:
-        if master_channel is not None:
-            master_channel.close()
-        _stop_p2p_serving(p2p_ws_server, p2p_server)
+        if state.master_channel is not None:
+            state.master_channel.close()
+        _stop_p2p_serving(state.p2p_ws_server, state.p2p_server)
         _close_relay_dialer()
         _stop_slave_inventory(
             p2p_sync,
-            inventory_publisher,
+            state.inventory_publisher,
             serving=serve_blocks(config),
         )
-        p2p_server.stop()
+        state.p2p_server.stop()
         p2p_sync.stop()
 
-    return last_exit
+    return state.last_exit
+
+
+@dataclass
+class _P2PLoopState:
+    """Mutable state threaded through the P2P rendezvous loop."""
+
+    p2p_server: P2PServer
+    p2p_ws_server: P2PWebSocketServer
+    master_serving: bool = False
+    seeder_attempted: bool = False
+    inventory_publisher: P2PInventoryPublisher | None = None
+    master_channel: _MasterChannel | None = None
+    last_exit: int = int(ExitCode.OK)
+    # Track how long the group has been without an elected master so we can warn
+    # once after NO_MASTER_WARNING_TIMEOUT (when every peer is never-master).
+    no_master_since: float | None = None
+    no_master_warned: bool = False
+
+
+def _wire_master_ws_callbacks(p2p_sync: RendezvousPlan, p2p_ws_server: P2PWebSocketServer) -> None:
+    """Wire the master's live WS client count into rendezvous presence before serving.
+
+    The provider feeds ``wait_for_rendezvous`` (the single owner of the peers
+    event) and the callback refreshes this node's mDNS ``connected`` TXT value on
+    every join/leave. Wiring it only after ``_run_as_master`` would let the master
+    advertise ``connected=0`` and miss clients that connect while it is serving.
+    """
+    ws_server = p2p_ws_server
+
+    def ws_connected_count() -> int:
+        return ws_server.connected_clients
+
+    def on_clients_changed(count: int) -> None:
+        p2p_sync.set_connected_clients(count)
+        manager = p2p_sync.peer_manager
+        if manager is not None:
+            # The rendezvous loop is blocked while serving; refresh the master's
+            # own presence on join/leave.
+            _emit_master_presence(count, manager)
+        # "connected" means an active peer link: a lone serving master is
+        # "waiting" for a device to connect.
+        set_link_status(_p2p_status(count))
+
+    p2p_sync.set_connected_clients_provider(ws_connected_count)
+    p2p_ws_server.set_clients_changed_callback(on_clients_changed)
+    # Re-evaluate on every re-entry: the data-plane hold expires on its own, so
+    # this is what returns a master nobody is talking to to "waiting for a
+    # device" instead of leaving it "connected".
+    set_link_status(_p2p_status(p2p_ws_server.connected_clients))
+
+
+def _handle_mastership_yield(
+    state: _P2PLoopState, p2p_sync: RendezvousPlan, peer_manager, log
+) -> None:
+    """Retire the serving role after losing mastership (ADR-0027 leadership lease)."""
+    _stop_p2p_serving(state.p2p_ws_server, state.p2p_server)
+    state.master_serving = False
+    state.inventory_publisher = None
+    if state.master_channel is not None:
+        state.master_channel.stop()
+    p2p_sync.set_connected_clients_provider(None)
+    state.p2p_ws_server.set_clients_changed_callback(None)
+    p2p_sync.update_server_not_ready()
+    log.warning(
+        f"{ActionLabel.MASTER_YIELD} this client yielded mastership; "
+        f"the deterministic election picked "
+        f"{peer_manager.get_master_cid() or 'no eligible peer'}."
+    )
+    # Back to the rendezvous loop: the link status drops to "connecting" until the
+    # new master link is established.
+    set_link_status("connecting")
+
+
+def _serve_master_stint(
+    state: _P2PLoopState,
+    *,
+    config: "HsyncConfig",
+    log,
+    p2p_sync: RendezvousPlan,
+    peer_manager,
+    cid_registry: SlaveCidRegistry | None,
+) -> None:
+    """Serve one master stint; the master role is inherently continuous."""
+    state.no_master_since = None
+    state.no_master_warned = False
+    _stop_slave_inventory(
+        p2p_sync,
+        state.inventory_publisher,
+        serving=serve_blocks(config),
+    )
+    state.inventory_publisher = None
+    state.seeder_attempted = False
+
+    _wire_master_ws_callbacks(p2p_sync, state.p2p_ws_server)
+
+    state.p2p_server, state.p2p_ws_server = _run_as_master(
+        config=config,
+        log=log,
+        p2p_sync=p2p_sync,
+        p2p_server=state.p2p_server,
+        p2p_ws_server=state.p2p_ws_server,
+        cid_registry=cid_registry,
+    )
+    # A watcher-failure return leaves the control plane not running: the flag must
+    # reflect whether the master is actually serving.
+    state.master_serving = state.p2p_ws_server.running
+    # The serving role answers the front-end's PREVIEW/SYNC through its own
+    # channel and re-classifies whenever a device publishes a new inventory.
+    if state.master_channel is None:
+        state.master_channel = _MasterChannel(
+            state.p2p_server, state.p2p_ws_server, peer_manager, log
+        )
+    state.master_channel.start()
+    # Check if we're still master after _run_as_master returns.
+    if not peer_manager.is_master():
+        _handle_mastership_yield(state, p2p_sync, peer_manager, log)
+
+
+def _warn_no_master(state: _P2PLoopState, peer_manager, log) -> None:
+    """Warn once when no master has been elected for a while (and retract it)."""
+    if peer_manager.get_master_cid() is None:
+        now = time.time()
+        if state.no_master_since is None:
+            state.no_master_since = now
+        elif not state.no_master_warned and (
+            now - state.no_master_since >= NO_MASTER_WARNING_TIMEOUT
+        ):
+            log.warning(
+                f"{ActionLabel.NO_MASTER} No master elected after "
+                f"{int(now - state.no_master_since)}s. All discovered peers "
+                f"may be configured with --never-master; no node will "
+                f"serve files and synchronization cannot proceed."
+            )
+            emit_event(UiEventName.no_master, elapsed=int(now - state.no_master_since))
+            # The condition is standing: its retraction must be publishable.
+            note_condition_standing("master")
+            state.no_master_warned = True
+    else:
+        state.no_master_since = None
+        if state.no_master_warned:
+            # The group has a primary again: retract the warning so a front-end
+            # never reports a condition that is gone.
+            emit_warning_cleared("master")
+        state.no_master_warned = False
+
+
+def _serve_slave_stint(
+    state: _P2PLoopState,
+    *,
+    config: "HsyncConfig",
+    log,
+    p2p_sync: RendezvousPlan,
+    peer_manager,
+    one_shot: bool,
+    wait_indefinitely_for_peer: bool,
+    notified: dict[tuple[str, str], str],
+) -> tuple[bool, int]:
+    """Act as a requester for one iteration; return ``(continue_loop, exit_code)``."""
+    # Retire any serving role before acting as a requester. The process-wide
+    # listener stays bound and is reconfigured.
+    if state.master_serving:
+        _stop_p2p_serving(state.p2p_ws_server, state.p2p_server)
+        state.master_serving = False
+        if state.master_channel is not None:
+            state.master_channel.stop()
+        p2p_sync.set_connected_clients_provider(None)
+        p2p_sync.update_server_not_ready()
+
+    _warn_no_master(state, peer_manager, log)
+
+    if not state.seeder_attempted:
+        state.inventory_publisher = _start_slave_inventory(config, p2p_sync, log, state.p2p_server)
+        state.seeder_attempted = True
+
+    return _run_as_slave(
+        config=config,
+        log=log,
+        one_shot=one_shot,
+        peer_manager=peer_manager,
+        wait_indefinitely_for_peer=wait_indefinitely_for_peer,
+        inventory_publisher=state.inventory_publisher,
+        notified=notified,
+        plan=p2p_sync,
+    )
+
+
+def _log_discovery_plan(config: "HsyncConfig", endpoints, mdns_enabled: bool, log) -> None:
+    """Log the effective discovery plan and emit its UI event."""
+    if not endpoints:
+        log.info("Discovery: mDNS on the local network (no discovery server configured)")
+        emit_event(UiEventName.rendezvous, plan="mdns")
+        return
+    listed = ", ".join(
+        format_authority(endpoint.host, endpoint.port or RENDEZVOUS_DEFAULT_PORT)
+        for endpoint in endpoints
+    )
+    upnp = "on" if config.get("MAP_DATA_PORT", True) else "off"
+    if mdns_enabled:
+        log.info(
+            "Discovery: mDNS on the local network + discovery server(s) "
+            f"{listed} (cross-network; UPnP {upnp})"
+        )
+        # The UI event keeps its documented shape: ``plan`` names the combined plan
+        # and ``rendezvous`` carries the configured endpoints.
+        emit_event(UiEventName.rendezvous, plan="mdns+rendezvous", rendezvous=listed)
+    else:
+        log.info(
+            f"Discovery: discovery server(s) {listed} only (local network excluded; UPnP {upnp})"
+        )
+        emit_event(UiEventName.rendezvous, plan="rendezvous", rendezvous=listed)
+
+
+def _wait_for_rendezvous(
+    peer_manager, p2p_sync: RendezvousPlan, rendezvous_wait, rendezvous_deadline: float | None
+) -> None:
+    """Block for the next rendezvous tick, then reconcile stale peers."""
+    current_wait = float(rendezvous_wait)
+    if rendezvous_deadline is not None:
+        current_wait = min(current_wait, max(0.0, rendezvous_deadline - time.monotonic()))
+    p2p_sync.wait_for_rendezvous(timeout=current_wait)
+    peer_manager.reconcile_stale_peers()
+
+
+def _rendezvous_loop_gate(
+    peer_manager, p2p_sync: RendezvousPlan, rendezvous_deadline: float | None, log
+) -> tuple[str, int]:
+    """Decide the loop's next move after a rendezvous wait.
+
+    Returns ``(action, exit_code)``: ``("continue", 0)`` to re-wait,
+    ``("return", code)`` to end the run, or ``("proceed", 0)`` to act.
+
+    Incumbency must not be advertised before the rendezvous has answered once: a
+    node that has not seen an already-serving peer would claim ``server_ready``
+    first and out-rank it, splitting the bucket until the next election (the plan
+    bounds its own wait, so a lone node still serves after a short grace). And a
+    one-shot window expired without a live peer ends the run with the documented
+    no-peer code — the self-conferred master role would otherwise keep the
+    continuous master loop alive forever.
+    """
+    if (
+        rendezvous_deadline is None
+        and peer_manager.is_master()
+        and not _master_claim_settled(p2p_sync)
+    ):
+        time.sleep(MASTER_CLAIM_SETTLE_S / 10)
+        return "continue", 0
+    # A single clock read feeds both deadlines below so mocked and real clocks
+    # advance one step per iteration.
+    now_after_rendezvous = time.monotonic()
+    if (
+        rendezvous_deadline is not None
+        and now_after_rendezvous >= rendezvous_deadline
+        and not peer_manager.get_alive_peers()
+    ):
+        log.warning("No master elected - this client is alone, nothing to sync")
+        emit_event(UiEventName.no_peers, message=NO_PEERS_MESSAGE)
+        return "return", int(ExitCode.P2P_NO_PEER)
+    # A finite one-shot window must not end merely because an ineligible seeder
+    # wakes rendezvous before the serving master is announced.
+    if (
+        rendezvous_deadline is not None
+        and peer_manager.get_master_cid() is None
+        and now_after_rendezvous < rendezvous_deadline
+    ):
+        return "continue", 0
+    return "proceed", 0
 
 
 def _run_as_master(
