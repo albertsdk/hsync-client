@@ -768,7 +768,337 @@ def _endpoint_retry_delay(config: "HsyncConfig") -> float:
     return max(1.0, min(delay, 30.0))
 
 
-def _run_as_slave(  # noqa: C901 - refactor pending
+def _run_slave_initial_sync(
+    log,
+    master,
+    peer_manager,
+    inventory_publisher,
+    source_resolver,
+    *,
+    one_shot: bool,
+    wait_indefinitely_for_peer: bool,
+) -> tuple[bool, int] | int:
+    """Run the initial sync against the master; return the exit code or an early exit.
+
+    Returns ``(continue_loop, exit_code)`` on a transport/unexpected failure, or the
+    mapped ``int`` exit code on success (the caller then continues).
+    """
+    from asyncio import run
+
+    # The HTTPS data plane itself proves the master is reachable: credit it for
+    # presence now, otherwise the UI sits on "1/N" for the whole initial sync (the
+    # WebSocket, and the master's advertised client count, only come up
+    # afterwards). Cleared again if the sync fails.
+    peer_manager.mark_peer_connected(master.cid)
+    _emit_slave_presence(peer_manager)
+    # The link is the data plane: publish it as connected at the same point, or a
+    # long first sync (and every resync after a reconnect) leaves the front-end on
+    # "Connecting…" with no master/slave role while the transfer is running.
+    set_link_status("connected")
+
+    def _peer_directions() -> list[tuple[str, str]]:
+        """Every other device in the group and the direction it advertises.
+
+        Feeds the upload-only report on ``sync_complete``: the master is the
+        destination and always stores an upload, so it is left out, while a slave
+        that is itself upload-only will ignore the file.
+        """
+        return [
+            (peer.cid, peer.sync_direction)
+            for peer in peer_manager.get_alive_peers()
+            if peer.cid not in (master.cid, CONFIG.get("CID"))
+        ]
+
+    try:
+        log_initial_sync_start()
+        if inventory_publisher is None:
+            result = run(
+                sync(
+                    p2p_mode=True,
+                    source_resolver=source_resolver,
+                    reconcile_dirs=True,
+                    peer_direction_provider=_peer_directions,
+                )
+            )
+        else:
+            result = run(
+                sync(
+                    p2p_mode=True,
+                    inventory_observer=inventory_publisher,
+                    source_resolver=source_resolver,
+                    reconcile_dirs=True,
+                    peer_direction_provider=_peer_directions,
+                )
+            )
+    except (AuthenticationError, NetworkError, ServerError):
+        # sync() already logged the failure and emitted the structured event. A
+        # one-shot run maps a transport failure to a fatal exit; a continuous run
+        # must survive a transient failure (e.g. the master going offline mid-sync)
+        # and re-enter the rendezvous loop.
+        peer_manager.mark_peer_disconnected(master.cid)
+        set_link_status("connecting")
+        if (not one_shot) or wait_indefinitely_for_peer:
+            return True, int(ExitCode.OK)
+        return False, int(ExitCode.FATAL)
+    except Exception:
+        # An unexpected error (a genuine bug) must never be masked as a retryable
+        # condition, even in continuous mode: surface it as a fatal exit.
+        peer_manager.mark_peer_disconnected(master.cid)
+        set_link_status("connecting")
+        return False, int(ExitCode.FATAL)
+    if isinstance(result, SyncCycleResult):
+        return exit_code_for_result(
+            failed_transfers=result.failed,
+            guard_tripped=result.guard_tripped,
+            conflicts=result.conflicts,
+        )
+    # A caller that stubbed ``run()`` without a cycle result reports a clean exit.
+    return int(ExitCode.OK)
+
+
+@dataclass
+class _SlaveMasterConn:
+    """The master connection established for one slave stint."""
+
+    master: object
+    master_url: str
+    display_url: str
+    master_host: str
+    master_port: int
+    relayed: bool
+    source_resolver: P2PSourceResolver
+
+
+def _connect_to_master(
+    config: "HsyncConfig",
+    log,
+    master,
+    plan: RendezvousPlan | None,
+    peer_manager,
+    *,
+    one_shot: bool,
+    wait_indefinitely_for_peer: bool,
+    notified: dict[tuple[str, str], str] | None,
+) -> _SlaveMasterConn | tuple[bool, int]:
+    """Resolve and validate the master endpoint and build the connection context.
+
+    Returns a :class:`_SlaveMasterConn` on success, or a ``(continue_loop,
+    exit_code)`` tuple when the master is not ready / refused (the caller returns
+    it to re-enter the rendezvous loop).
+    """
+    # Wait for master to be ready (server_ready=true in mDNS)
+    if not master.server_ready:
+        log.info(f"Waiting for master {master.cid} to start server...")
+        return True, int(ExitCode.OK)
+    # Secure-only P2P: a master must serve over HTTPS and advertise a certificate
+    # fingerprint we can pin. Anything else is refused; there is no plain-HTTP
+    # downgrade path. We do NOT self-promote on refusal (that would create a second
+    # master and split-brain); we stay in the rendezvous loop and warn.
+    if not (master.use_https and master.cert_fingerprint):
+        log.warning(
+            f"{ActionLabel.INSECURE_MASTER} master {master.cid} does not advertise an HTTPS "
+            f"endpoint with a certificate fingerprint. Refusing to connect "
+            f"(P2P transport is HTTPS-only)."
+        )
+        # A refusal, not a failure: without this the user only sees "no device
+        # found" and cannot tell a missing peer from one the client deliberately
+        # refused for security reasons.
+        emit_event(
+            UiEventName.security_rejected,
+            op="connect",
+            path=master.cid,
+            message=(
+                "A device was refused because it does not serve HTTPS with a "
+                "certificate fingerprint"
+            ),
+        )
+        return (not one_shot) or wait_indefinitely_for_peer, int(ExitCode.OK)
+    if not _evaluate_master_pin(config, master, log, notified=notified):
+        # Stay in the rendezvous loop (continuous) rather than connecting to a
+        # master whose identity can no longer be verified or which has not yet
+        # been paired out of band.
+        return (not one_shot) or wait_indefinitely_for_peer, int(ExitCode.OK)
+    log.info(f"Master using HTTPS, fingerprint: {master.cert_fingerprint[:32]}...")
+    config["MASTER_CERT_FINGERPRINT"] = master.cert_fingerprint
+
+    # Pick the reachable data-plane endpoint: a rendezvous peer advertises several
+    # candidates, so the local one is preferred over the NATed public one. A
+    # single-candidate peer keeps its endpoint unchanged.
+    endpoint = _select_master_endpoint(master, log)
+    relayed = False
+    if endpoint is None:
+        endpoint = _relay_master_endpoint(plan, master, log, peer_manager)
+        relayed = endpoint is not None
+    if endpoint is None:
+        log.warning(f"No reachable endpoint for master {master.cid}; retrying rendezvous.")
+        # A master that restarted moves to a new ephemeral port, so the peer record
+        # still holds a dead endpoint: pull a fresh rendezvous sample now instead of
+        # waiting for the lease cadence. The bounded pause keeps a dead endpoint
+        # from spinning this loop at CPU speed.
+        if plan is not None:
+            plan.request_sample()
+        time.sleep(_endpoint_retry_delay(config))
+        return (not one_shot) or wait_indefinitely_for_peer, int(ExitCode.OK)
+    master_host, master_port = endpoint
+    if not relayed:
+        # The master answered on a direct candidate again: the "no data relay"
+        # problem (its premise was "unreachable directly") no longer holds.
+        emit_warning_cleared("relay")
+
+    # `master_url` is the transport address (loopback when relayed) and is what the
+    # HTTP/WS client, the source resolver and the transfer core use. What the
+    # operator and the UI see stays the master's own address: a ``127.0.0.1`` row
+    # in the status bar would be meaningless.
+    master_url = server_url(master_host, master_port, use_https=master.use_https)
+    display_url = (
+        master_url
+        if not relayed
+        else server_url(master.address, master.port, use_https=master.use_https)
+    )
+    log.info(f"Connecting to master: {master.cid} at {display_url}")
+    emit_event(UiEventName.server, url=display_url)
+
+    config["API"]["buckets"] = f"{master_url}/api/v1/buckets"
+    ws_master_url = http_to_ws(master_url)
+    config["API"]["events"] = f"{ws_master_url}/api/v1/buckets"
+
+    if config["P2P_KEY"]:
+        config["REQUEST_HEADERS"]["Authorization"] = f"Bearer {config['P2P_KEY']}"
+
+    # Set compression capability based on master peer
+    config["SERVER_COMPRESSION_ENABLED"] = master.compression_enabled
+    config["SERVER_DELTA_ENABLED"] = master.delta_enabled
+    if master.readonly_permissions:
+        # Advisory only: the mDNS TXT record is unauthenticated, so
+        # ``REMOTE_READONLY_PERMISSIONS`` is switched on by the capability the
+        # master proves in the WSS handshake, never by this hint.
+        log.debug("Master advertises lossy local permissions (advisory TXT hint)")
+
+    set_config(config)
+
+    # The elected master is the mesh's time authority (ADR-0055): adopt its clock.
+    # Runs on a background thread so the reconnect loop never blocks on the
+    # master's time endpoint; the next sync cycle sees the result.
+    from hsync_client.timesync import start_authority_clock_offset_probe
+
+    start_authority_clock_offset_probe(log)
+
+    if relayed:
+        _apply_relay_transfer_tuning(config, log)
+
+    source_resolver = P2PSourceResolver(
+        master_url=master_url,
+        master_cert_fingerprint=master.cert_fingerprint,
+        requester_cid=config["CID"],
+        bucket=config["REMOTE_BUCKET"],
+        p2p_key=config["P2P_KEY"],
+        local_bucket=config["LOCAL_BUCKET"],
+        enabled=fetch_from_peers(config),
+        master_capable=bool(master.serves_blocks),
+        timeout=float(config.get("HTTP_TIMEOUT", 30)),
+    )
+
+    # Re-derive autotune-managed tuning from the real master RTT. A relayed master
+    # is reached over loopback, so its measured RTT says nothing about the real
+    # two-leg path: keep the current tuning instead of tightening timeouts around a
+    # localhost round trip.
+    if not relayed:
+        # A previously relayed peer reached directly again: lift the relay's
+        # concurrency cap before the RTT refresh.
+        _restore_relay_transfer_tuning(config, log)
+        _refresh_p2p_network_tuning(master, config, log, host=master_host, port=master_port)
+
+    return _SlaveMasterConn(
+        master=master,
+        master_url=master_url,
+        display_url=display_url,
+        master_host=master_host,
+        master_port=master_port,
+        relayed=relayed,
+        source_resolver=source_resolver,
+    )
+
+
+def _run_dry_run_session(
+    config: "HsyncConfig",
+    log,
+    master,
+    peer_manager,
+    inventory_publisher,
+    source_resolver,
+    plan: RendezvousPlan | None,
+    *,
+    master_host: str,
+    master_port: int,
+    one_shot: bool,
+    wait_indefinitely_for_peer: bool,
+    exit_code: int,
+) -> tuple[bool, int] | None:
+    """Run the DRYRUN branch; return an early-exit tuple, or None when applied."""
+    from asyncio import run
+
+    # The master may have exited just before this iteration: its peer record can
+    # still look fresh, and the automatic preview would run against a dead
+    # endpoint. Probe first; when it fails, demote the master and go back to
+    # rendezvous so the election can pick a reachable node.
+    if not _master_endpoint_reachable(master_host, master_port):
+        log.warning(
+            f"Master {master.cid} at {master_host}:{master_port} is "
+            "unreachable; skipping the preview and re-entering rendezvous."
+        )
+        peer_manager.remove_peer(master.cid)
+        return (not one_shot) or wait_indefinitely_for_peer, int(ExitCode.OK)
+    # In dry-run mode, only show preview without syncing.
+    _run_preview(log)
+    if one_shot:
+        return False, exit_code
+    # In continuous mode with dry-run, wait for SYNC/PREVIEW commands. This node is
+    # parked here and cannot serve, so it must not be elected master: it withdraws
+    # its candidacy both locally and on the wire. It is restored when the dry run
+    # ends (SYNC or stdin EOF).
+    log.info("Dry-run mode: waiting for commands (stdin) or Ctrl+C to exit...")
+    if plan is not None:
+        plan.set_master_eligibility(False)
+    try:
+
+        def _credit_master() -> None:
+            # The preview-confirm flow's first real sync uses the HTTPS data plane:
+            # credit the master for presence and publish the link now.
+            peer_manager.mark_peer_connected(master.cid)
+            _emit_slave_presence(peer_manager)
+            set_link_status("connected")
+
+        def _clear_master_credit() -> None:
+            peer_manager.mark_peer_disconnected(master.cid)
+            set_link_status("connecting")
+
+        applied = run(
+            _run_stdin_wait(
+                log,
+                inventory_observer=inventory_publisher,
+                source_resolver=source_resolver,
+                on_sync_start=_credit_master,
+                on_sync_error=_clear_master_credit,
+            )
+        )
+    finally:
+        if plan is not None:
+            plan.set_master_eligibility(True)
+    if not applied:
+        # The command channel ended without applying the plan (stdin closed, or it
+        # was never a pipe/terminal). Falling through would open the live session
+        # with DRYRUN still set, so a "preview only" run could write files. Stop.
+        log.info("Dry-run finished without applying a plan; stopping.")
+        peer_manager.mark_peer_disconnected(master.cid)
+        return False, int(ExitCode.OK)
+    # The plan was applied: this process is a live engine now. The SYNC handler
+    # cleared DRYRUN on the global CONFIG only, while the rendezvous loop re-reads
+    # this local ``config`` on every iteration, so clear it here too.
+    config["DRYRUN"] = False
+    return None
+
+
+def _run_as_slave(
     config: "HsyncConfig",
     log,
     one_shot: bool,
@@ -791,289 +1121,54 @@ def _run_as_slave(  # noqa: C901 - refactor pending
     _close_relay_dialer()
     master = peer_manager.get_master()
     if master:
-        # Wait for master to be ready (server_ready=true in mDNS)
-        if not master.server_ready:
-            log.info(f"Waiting for master {master.cid} to start server...")
-            return True, int(ExitCode.OK)  # Continue rendezvous loop
-
-        # Secure-only P2P: a master must serve over HTTPS and advertise a
-        # certificate fingerprint we can pin. Anything else is refused; there is
-        # no plain-HTTP downgrade path. We do NOT self-promote on refusal (that
-        # would create a second master and split-brain); we stay in the
-        # rendezvous loop and warn.
-        if not (master.use_https and master.cert_fingerprint):
-            log.warning(
-                f"{ActionLabel.INSECURE_MASTER} master {master.cid} does not advertise an HTTPS "
-                f"endpoint with a certificate fingerprint. Refusing to connect "
-                f"(P2P transport is HTTPS-only)."
-            )
-            # A refusal, not a failure: without this the user only sees "no
-            # device found" and cannot tell a missing peer from one the client
-            # deliberately refused for security reasons.
-            emit_event(
-                UiEventName.security_rejected,
-                op="connect",
-                path=master.cid,
-                message=(
-                    "A device was refused because it does not serve HTTPS with a "
-                    "certificate fingerprint"
-                ),
-            )
-            return (not one_shot) or wait_indefinitely_for_peer, int(ExitCode.OK)
-
-        if not _evaluate_master_pin(config, master, log, notified=notified):
-            # Stay in the rendezvous loop (continuous) rather than connecting to
-            # a master whose identity can no longer be verified or which has not
-            # yet been paired out of band.
-            return (not one_shot) or wait_indefinitely_for_peer, int(ExitCode.OK)
-        log.info(f"Master using HTTPS, fingerprint: {master.cert_fingerprint[:32]}...")
-        config["MASTER_CERT_FINGERPRINT"] = master.cert_fingerprint
-
-        # Pick the reachable data-plane endpoint: a rendezvous peer advertises
-        # several candidates, so the local one is preferred over the NATed
-        # public one. A single-candidate peer keeps its endpoint unchanged.
-        endpoint = _select_master_endpoint(master, log)
-        relayed = False
-        if endpoint is None:
-            endpoint = _relay_master_endpoint(plan, master, log, peer_manager)
-            relayed = endpoint is not None
-        if endpoint is None:
-            log.warning(f"No reachable endpoint for master {master.cid}; retrying rendezvous.")
-            # A master that restarted moves to a new ephemeral port, so the peer
-            # record still holds a dead endpoint: pull a fresh rendezvous sample
-            # now instead of waiting for the lease cadence. The bounded pause is
-            # what keeps a dead endpoint from spinning this loop at CPU speed
-            # (one iteration per ~10 ms produced thousands of log lines and
-            # starved the retry that would have used the new endpoint).
-            if plan is not None:
-                plan.request_sample()
-            time.sleep(_endpoint_retry_delay(config))
-            return (not one_shot) or wait_indefinitely_for_peer, int(ExitCode.OK)
-        master_host, master_port = endpoint
-        if not relayed:
-            # The master answered on a direct candidate again: the "no data relay"
-            # problem (its premise was "unreachable directly") no longer holds.
-            emit_warning_cleared("relay")
-
-        # `master_url` is the transport address (loopback when relayed) and is
-        # what the HTTP/WS client, the source resolver and the transfer core use.
-        # What the operator and the UI see stays the master's own address: a
-        # ``127.0.0.1`` row in the status bar would be meaningless.
-        master_url = server_url(master_host, master_port, use_https=master.use_https)
-        display_url = (
-            master_url
-            if not relayed
-            else server_url(master.address, master.port, use_https=master.use_https)
+        conn = _connect_to_master(
+            config,
+            log,
+            master,
+            plan,
+            peer_manager,
+            one_shot=one_shot,
+            wait_indefinitely_for_peer=wait_indefinitely_for_peer,
+            notified=notified,
         )
-        log.info(f"Connecting to master: {master.cid} at {display_url}")
-        emit_event(UiEventName.server, url=display_url)
-
-        config["API"]["buckets"] = f"{master_url}/api/v1/buckets"
-        ws_master_url = http_to_ws(master_url)
-        config["API"]["events"] = f"{ws_master_url}/api/v1/buckets"
-
-        if config["P2P_KEY"]:
-            config["REQUEST_HEADERS"]["Authorization"] = f"Bearer {config['P2P_KEY']}"
-
-        # Set compression capability based on master peer
-        config["SERVER_COMPRESSION_ENABLED"] = master.compression_enabled
-        config["SERVER_DELTA_ENABLED"] = master.delta_enabled
-        if master.readonly_permissions:
-            # Advisory only: the mDNS TXT record is unauthenticated, so
-            # ``REMOTE_READONLY_PERMISSIONS`` is switched on by the capability
-            # the master proves in the WSS handshake
-            # (``adopt_remote_capabilities``), never by this hint.
-            log.debug("Master advertises lossy local permissions (advisory TXT hint)")
-
-        set_config(config)
-
-        # The elected master is the mesh's time authority (ADR-0055): adopt its
-        # clock (``trusted`` in the reply). Runs on a background thread so the
-        # reconnect loop never blocks on the master's time endpoint; the next
-        # sync cycle sees the result.
-        from hsync_client.timesync import start_authority_clock_offset_probe
-
-        start_authority_clock_offset_probe(log)
-
-        if relayed:
-            _apply_relay_transfer_tuning(config, log)
-
-        source_resolver = P2PSourceResolver(
-            master_url=master_url,
-            master_cert_fingerprint=master.cert_fingerprint,
-            requester_cid=config["CID"],
-            bucket=config["REMOTE_BUCKET"],
-            p2p_key=config["P2P_KEY"],
-            local_bucket=config["LOCAL_BUCKET"],
-            enabled=fetch_from_peers(config),
-            master_capable=bool(master.serves_blocks),
-            timeout=float(config.get("HTTP_TIMEOUT", 30)),
-        )
-
-        # Re-derive autotune-managed tuning from the real master RTT (the P2P
-        # startup probe is skipped when only the placeholder URL is known). A
-        # relayed master is reached over loopback, so its measured RTT says
-        # nothing about the real two-leg path: keep the current tuning instead of
-        # tightening timeouts around a localhost round trip.
-        if not relayed:
-            # A previously relayed peer reached directly again: lift the relay's
-            # concurrency cap before the RTT refresh (which re-derives it only
-            # when it manages the key).
-            _restore_relay_transfer_tuning(config, log)
-            _refresh_p2p_network_tuning(master, config, log, host=master_host, port=master_port)
+        if isinstance(conn, tuple):
+            return conn
+        master_host = conn.master_host
+        master_port = conn.master_port
+        relayed = conn.relayed
+        source_resolver = conn.source_resolver
 
         exit_code = int(ExitCode.OK)
         if config["DRYRUN"]:
-            # The master may have exited just before this iteration: its peer
-            # record can still look fresh, and the automatic preview would run
-            # against a dead endpoint, burning the full retry budget and
-            # surfacing a spurious error notification. Probe the data endpoint
-            # first; when it fails, demote the master and go back to rendezvous
-            # so the election can pick a reachable node.
-            if not _master_endpoint_reachable(master_host, master_port):
-                log.warning(
-                    f"Master {master.cid} at {master_host}:{master_port} is "
-                    "unreachable; skipping the preview and re-entering rendezvous."
-                )
-                peer_manager.remove_peer(master.cid)
-                return (not one_shot) or wait_indefinitely_for_peer, int(ExitCode.OK)
-            # In dry-run mode, only show preview without syncing
-            _run_preview(log)
-            if one_shot:
-                return False, exit_code
-            # In continuous mode with dry-run, wait for SYNC/PREVIEW commands.
-            # This node is parked here and cannot serve, so it must not be
-            # elected master: it withdraws its candidacy both locally and on the
-            # wire (a peer that elected it would wait forever for its
-            # ``server_ready``). It is restored when the dry run ends (SYNC or
-            # stdin EOF) and the node returns to the rendezvous loop.
-            log.info("Dry-run mode: waiting for commands (stdin) or Ctrl+C to exit...")
-            if plan is not None:
-                plan.set_master_eligibility(False)
-            try:
-
-                def _credit_master() -> None:
-                    # The preview-confirm flow's first real sync uses the HTTPS
-                    # data plane: credit the master for presence and publish the
-                    # link now (the WebSocket opens only after this sync),
-                    # exactly like the direct initial-sync branch below.
-                    peer_manager.mark_peer_connected(master.cid)
-                    _emit_slave_presence(peer_manager)
-                    set_link_status("connected")
-
-                def _clear_master_credit() -> None:
-                    peer_manager.mark_peer_disconnected(master.cid)
-                    set_link_status("connecting")
-
-                applied = run(
-                    _run_stdin_wait(
-                        log,
-                        inventory_observer=inventory_publisher,
-                        source_resolver=source_resolver,
-                        on_sync_start=_credit_master,
-                        on_sync_error=_clear_master_credit,
-                    )
-                )
-            finally:
-                if plan is not None:
-                    plan.set_master_eligibility(True)
-            if not applied:
-                # The command channel ended without applying the plan (stdin
-                # closed, or it was never a pipe/terminal). Falling through
-                # would open the live session with DRYRUN still set, and the
-                # event path is not gated on it, so a "preview only" run could
-                # write files. Stop instead: nothing can command this process.
-                log.info("Dry-run finished without applying a plan; stopping.")
-                peer_manager.mark_peer_disconnected(master.cid)
-                return False, int(ExitCode.OK)
-            # The plan was applied: this process is a live engine now. The SYNC
-            # handler cleared DRYRUN on the global CONFIG only, while the
-            # rendezvous loop re-reads this local ``config`` on every iteration
-            # (it is a copy, not the same object), so after a network drop the
-            # reconnected run fell back into the preview branch and parked
-            # without reopening the WebSocket or the watcher.
-            config["DRYRUN"] = False
+            early = _run_dry_run_session(
+                config,
+                log,
+                master,
+                peer_manager,
+                inventory_publisher,
+                source_resolver,
+                plan,
+                master_host=master_host,
+                master_port=master_port,
+                one_shot=one_shot,
+                wait_indefinitely_for_peer=wait_indefinitely_for_peer,
+                exit_code=exit_code,
+            )
+            if early is not None:
+                return early
         else:
-            # Perform initial sync (the master is the transport coordinator).
-            # The HTTPS data plane itself proves the master is reachable: credit
-            # it for presence now, otherwise the UI sits on "1/N" for the whole
-            # initial sync (the WebSocket — and the master's advertised client
-            # count — only come up afterwards). Cleared again if the sync fails.
-            peer_manager.mark_peer_connected(master.cid)
-            _emit_slave_presence(peer_manager)
-            # The link is the data plane: publish it as connected at the same
-            # point, or a long first sync (and every resync after a reconnect)
-            # leaves the front-end on "Connecting…" with no master/slave role
-            # while the transfer is running. The WebSocket handshake below
-            # re-publishes the same state (the publisher dedupes repeats).
-            set_link_status("connected")
-
-            def _peer_directions() -> list[tuple[str, str]]:
-                """Every other device in the group and the direction it advertises.
-
-                Feeds the upload-only report on ``sync_complete``: the master is
-                the destination and always stores an upload, so it is left out
-                (its acceptance is counted by the caller), while a slave that is
-                itself upload-only will ignore the file.
-                """
-                return [
-                    (peer.cid, peer.sync_direction)
-                    for peer in peer_manager.get_alive_peers()
-                    if peer.cid not in (master.cid, CONFIG.get("CID"))
-                ]
-
-            try:
-                log_initial_sync_start()
-                if inventory_publisher is None:
-                    result = run(
-                        sync(
-                            p2p_mode=True,
-                            source_resolver=source_resolver,
-                            reconcile_dirs=True,
-                            peer_direction_provider=_peer_directions,
-                        )
-                    )
-                else:
-                    result = run(
-                        sync(
-                            p2p_mode=True,
-                            inventory_observer=inventory_publisher,
-                            source_resolver=source_resolver,
-                            reconcile_dirs=True,
-                            peer_direction_provider=_peer_directions,
-                        )
-                    )
-            except (AuthenticationError, NetworkError, ServerError):
-                # sync() already logged the failure and emitted the structured
-                # event. A one-shot run maps a transport failure to a fatal
-                # exit; a continuous run must survive a transient failure (e.g.
-                # the master going offline mid-sync) and re-enter the rendezvous
-                # loop so the master is re-detected or a new one is elected.
-                peer_manager.mark_peer_disconnected(master.cid)
-                # The link that was just published as connected is gone: back to
-                # the pre-connection state, not "waiting" (which the front-end
-                # reports as a lost link and notifies).
-                set_link_status("connecting")
-                if (not one_shot) or wait_indefinitely_for_peer:
-                    return True, int(ExitCode.OK)
-                return False, int(ExitCode.FATAL)
-            except Exception:
-                # An unexpected error (a genuine bug) must never be masked as a
-                # retryable condition, even in continuous mode: surface it as a
-                # fatal exit instead of looping forever.
-                peer_manager.mark_peer_disconnected(master.cid)
-                set_link_status("connecting")
-                return False, int(ExitCode.FATAL)
-            if isinstance(result, SyncCycleResult):
-                exit_code = exit_code_for_result(
-                    failed_transfers=result.failed,
-                    guard_tripped=result.guard_tripped,
-                    conflicts=result.conflicts,
-                )
-            else:
-                # A caller that stubbed `run()` without a cycle result (test
-                # doubles, defensive paths) reports a clean exit.
-                exit_code = int(ExitCode.OK)
+            initial = _run_slave_initial_sync(
+                log,
+                master,
+                peer_manager,
+                inventory_publisher,
+                source_resolver,
+                one_shot=one_shot,
+                wait_indefinitely_for_peer=wait_indefinitely_for_peer,
+            )
+            if isinstance(initial, tuple):
+                return initial
+            exit_code = initial
 
         if one_shot:
             return False, exit_code
