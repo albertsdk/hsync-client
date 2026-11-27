@@ -2103,7 +2103,150 @@ class P2PEndpointMixin(_HTTPTransportBase):
         except (ValueError, IndexError):
             return None
 
-    def _handle_download(self, query: dict, expected_sha256: str | None = None) -> None:  # noqa: C901 - refactor pending
+    def _serve_range_download(
+        self,
+        stream: Any,
+        opened: Any,
+        *,
+        file_size: int,
+        checksum: str,
+        permissions: str,
+        range_tuple: tuple[int, int],
+        display_path: str,
+        started: list[bool],
+    ) -> None:
+        """Serve a resumed request (HTTP 206) for one byte range."""
+        start, end = range_tuple
+        stream.seek(start)
+        range_len = end - start
+        self.send_response(HTTP_PARTIAL_CONTENT)
+        self.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
+        self.send_header("Content-Length", str(range_len))
+        self.send_header("Content-Range", f"bytes {start}-{end - 1}/{file_size}")
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header(HEADER_CHECKSUM_SHA256, checksum)
+        self.send_header("X-Permissions", permissions)
+        self.end_headers()
+        started[0] = True
+        remaining = range_len
+        # A resumed request serves only the tail: the reporter starts at the
+        # resume offset so the percentage still refers to the whole file.
+        range_reporter = progress_reporter(display_path, file_size, "upload")
+        sent = start
+        while remaining > 0:
+            chunk = stream.read(min(_P2P_UPLOAD_CHUNK_SIZE, remaining))
+            if not chunk:
+                self.close_connection = True
+                emit_failed_transfer("upload", display_path, "connection lost while serving")
+                return
+            if not _same_open_file(opened, os.fstat(stream.fileno())):
+                self.close_connection = True
+                emit_failed_transfer("upload", display_path, "file changed while serving")
+                return
+            sent = _write_served_chunk(self.wfile, chunk, range_reporter, sent)
+            _throttle_upload(len(chunk))
+            remaining -= len(chunk)
+        emit_completed_transfer("upload", display_path, file_size)
+
+    def _serve_compressed_download(
+        self,
+        stream: Any,
+        opened: Any,
+        *,
+        file_size: int,
+        checksum: str,
+        permissions: str,
+        display_path: str,
+        started: list[bool],
+    ) -> None:
+        """Stream a zstd-framed, chunked body for a large compressible file.
+
+        The body is chunked (its length is unknown up front), memory stays at one
+        read chunk and nothing is written to disk, for a file of any size. A range
+        request never reaches this branch (it is answered before), so a resume
+        still gets byte-addressed identity bytes.
+        """
+        self.send_response(HTTP_OK)
+        self.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
+        self.send_header("Content-Encoding", CONTENT_ENCODING_ZSTD)
+        self.send_header("Transfer-Encoding", "chunked")
+        self.send_header(HEADER_CHECKSUM_SHA256, checksum)
+        self.send_header("X-Permissions", permissions)
+        self.end_headers()
+        started[0] = True
+        # The bar follows the *file*: the source bytes read so far, the same
+        # quantity the receiver measures once its echo lands.
+        compressed_reporter = progress_reporter(display_path, file_size, "upload")
+        compressor = zstd.ZstdCompressor(level=compression_level(is_p2p=True)).compressobj()
+        sent = 0
+        stream.seek(0)
+        try:
+            while chunk := stream.read(_P2P_UPLOAD_CHUNK_SIZE):
+                if not _same_open_file(opened, os.fstat(stream.fileno())):
+                    raise _ServedFileChanged
+                payload = compressor.compress(chunk)
+                if payload:
+                    self._write_chunk(payload)
+                sent += len(chunk)
+                if compressed_reporter is not None:
+                    compressed_reporter.update(sent)
+                _throttle_upload(len(chunk))
+            if sent != file_size:
+                raise _ServedFileChanged
+            tail = compressor.flush()
+            if tail:
+                self._write_chunk(tail)
+            self._end_chunked()
+        except (_ServedFileChanged, OSError):
+            # The headers are gone, so a truncated body is the only failure signal
+            # left: the receiver rejects it on the checksum and the next cycle
+            # retries the file.
+            self.close_connection = True
+            emit_failed_transfer("upload", display_path, "file changed while serving")
+            return
+        emit_completed_transfer("upload", display_path, file_size)
+
+    def _serve_identity_download(
+        self,
+        stream: Any,
+        opened: Any,
+        *,
+        file_size: int,
+        checksum: str,
+        permissions: str,
+        display_path: str,
+        started: list[bool],
+    ) -> None:
+        """Stream the raw bytes (Content-Length) for a whole-file serve."""
+        self.send_response(HTTP_OK)
+        self.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
+        self.send_header("Content-Length", str(file_size))
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header(HEADER_CHECKSUM_SHA256, checksum)
+        self.send_header("X-Permissions", permissions)
+        self.end_headers()
+        started[0] = True
+        identity_reporter = progress_reporter(display_path, file_size, "upload")
+        sent = 0
+        while True:
+            chunk = stream.read(_P2P_UPLOAD_CHUNK_SIZE)
+            if not chunk:
+                break
+            if not _same_open_file(opened, os.fstat(stream.fileno())):
+                self.close_connection = True
+                emit_failed_transfer("upload", display_path, "file changed while serving")
+                return
+            sent = _write_served_chunk(self.wfile, chunk, identity_reporter, sent)
+            _throttle_upload(len(chunk))
+        if not _same_open_file(opened, os.fstat(stream.fileno())):
+            self.close_connection = True
+            emit_failed_transfer("upload", display_path, "file changed while serving")
+        else:
+            # Completed identity serve: report the outgoing transfer so the
+            # serving side's Sent counter (files and bytes) updates.
+            emit_completed_transfer("upload", display_path, file_size)
+
+    def _handle_download(self, query: dict, expected_sha256: str | None = None) -> None:
         """Serve one safely-opened regular file, optionally bound to an expected hash."""
         filename = _first(query, "filename")
         if not filename:
@@ -2133,7 +2276,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
         # transport. Keyed by the requesting CID so only its own echo applies.
         serve_cid = origin_cid or ""
         note_serving(normalized, display_path, serve_cid)
-        response_started = False
+        response_started = [False]
         try:
             with _open_regular_beneath(local_bucket, normalized) as (stream, opened):
                 file_size = opened.st_size
@@ -2162,42 +2305,16 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
                 permissions = f"{stat_module.S_IMODE(opened.st_mode):o}"
                 if range_tuple:
-                    start, end = range_tuple
-                    stream.seek(start)
-                    range_len = end - start
-                    self.send_response(HTTP_PARTIAL_CONTENT)
-                    self.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
-                    self.send_header("Content-Length", str(range_len))
-                    self.send_header("Content-Range", f"bytes {start}-{end - 1}/{file_size}")
-                    self.send_header("Accept-Ranges", "bytes")
-                    self.send_header(HEADER_CHECKSUM_SHA256, checksum)
-                    self.send_header("X-Permissions", permissions)
-                    self.end_headers()
-                    response_started = True
-                    remaining = range_len
-                    # A resumed request serves only the tail: the reporter
-                    # starts at the resume offset so the percentage still
-                    # refers to the whole file.
-                    range_reporter = progress_reporter(display_path, file_size, "upload")
-                    sent = start
-                    while remaining > 0:
-                        chunk = stream.read(min(_P2P_UPLOAD_CHUNK_SIZE, remaining))
-                        if not chunk:
-                            self.close_connection = True
-                            emit_failed_transfer(
-                                "upload", display_path, "connection lost while serving"
-                            )
-                            return
-                        if not _same_open_file(opened, os.fstat(stream.fileno())):
-                            self.close_connection = True
-                            emit_failed_transfer(
-                                "upload", display_path, "file changed while serving"
-                            )
-                            return
-                        sent = _write_served_chunk(self.wfile, chunk, range_reporter, sent)
-                        _throttle_upload(len(chunk))
-                        remaining -= len(chunk)
-                    emit_completed_transfer("upload", display_path, file_size)
+                    self._serve_range_download(
+                        stream,
+                        opened,
+                        file_size=file_size,
+                        checksum=checksum,
+                        permissions=permissions,
+                        range_tuple=range_tuple,
+                        display_path=display_path,
+                        started=response_started,
+                    )
                     return
 
                 accept_encoding = self.headers.get("Accept-Encoding", "").lower()
@@ -2209,87 +2326,26 @@ class P2PEndpointMixin(_HTTPTransportBase):
                     and (not self._is_seeder() or "zstd" in accept_encoding)
                 )
                 if use_compression:
-                    # Stream the frame into the response. A staged frame had to be a
-                    # temporary file, so the branch was bounded by the file size it
-                    # could afford to stage and larger files travelled identity; here
-                    # the body is chunked (its length is unknown up front), memory
-                    # stays at one read chunk and nothing is written to disk, for a
-                    # file of any size. A range request never reaches this branch (it
-                    # is answered above), so a resume still gets byte-addressed
-                    # identity bytes.
-                    self.send_response(HTTP_OK)
-                    self.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
-                    self.send_header("Content-Encoding", CONTENT_ENCODING_ZSTD)
-                    self.send_header("Transfer-Encoding", "chunked")
-                    self.send_header(HEADER_CHECKSUM_SHA256, checksum)
-                    self.send_header("X-Permissions", permissions)
-                    self.end_headers()
-                    response_started = True
-                    # The bar follows the *file*: the source bytes read so far, the
-                    # same quantity the receiver measures once its echo lands. The
-                    # wire count is not a usable total (the frame length is unknown
-                    # until it has been produced), and the receiver's echo upgrades
-                    # the scale anyway.
-                    compressed_reporter = progress_reporter(display_path, file_size, "upload")
-                    compressor = zstd.ZstdCompressor(
-                        level=compression_level(is_p2p=True)
-                    ).compressobj()
-                    sent = 0
-                    stream.seek(0)
-                    try:
-                        while chunk := stream.read(_P2P_UPLOAD_CHUNK_SIZE):
-                            if not _same_open_file(opened, os.fstat(stream.fileno())):
-                                raise _ServedFileChanged
-                            payload = compressor.compress(chunk)
-                            if payload:
-                                self._write_chunk(payload)
-                            sent += len(chunk)
-                            if compressed_reporter is not None:
-                                compressed_reporter.update(sent)
-                            _throttle_upload(len(chunk))
-                        if sent != file_size:
-                            raise _ServedFileChanged
-                        tail = compressor.flush()
-                        if tail:
-                            self._write_chunk(tail)
-                        self._end_chunked()
-                    except (_ServedFileChanged, OSError):
-                        # The headers are gone, so a truncated body is the only
-                        # failure signal left: the receiver rejects it on the
-                        # checksum and the next cycle retries the file.
-                        self.close_connection = True
-                        emit_failed_transfer("upload", display_path, "file changed while serving")
-                        return
-                    emit_completed_transfer("upload", display_path, file_size)
+                    self._serve_compressed_download(
+                        stream,
+                        opened,
+                        file_size=file_size,
+                        checksum=checksum,
+                        permissions=permissions,
+                        display_path=display_path,
+                        started=response_started,
+                    )
                     return
 
-                self.send_response(HTTP_OK)
-                self.send_header("Content-Type", CONTENT_TYPE_OCTET_STREAM)
-                self.send_header("Content-Length", str(file_size))
-                self.send_header("Accept-Ranges", "bytes")
-                self.send_header(HEADER_CHECKSUM_SHA256, checksum)
-                self.send_header("X-Permissions", permissions)
-                self.end_headers()
-                response_started = True
-                identity_reporter = progress_reporter(display_path, file_size, "upload")
-                sent = 0
-                while True:
-                    chunk = stream.read(_P2P_UPLOAD_CHUNK_SIZE)
-                    if not chunk:
-                        break
-                    if not _same_open_file(opened, os.fstat(stream.fileno())):
-                        self.close_connection = True
-                        emit_failed_transfer("upload", display_path, "file changed while serving")
-                        return
-                    sent = _write_served_chunk(self.wfile, chunk, identity_reporter, sent)
-                    _throttle_upload(len(chunk))
-                if not _same_open_file(opened, os.fstat(stream.fileno())):
-                    self.close_connection = True
-                    emit_failed_transfer("upload", display_path, "file changed while serving")
-                else:
-                    # Completed identity serve: report the outgoing transfer so
-                    # the serving side's Sent counter (files and bytes) updates.
-                    emit_completed_transfer("upload", display_path, file_size)
+                self._serve_identity_download(
+                    stream,
+                    opened,
+                    file_size=file_size,
+                    checksum=checksum,
+                    permissions=permissions,
+                    display_path=display_path,
+                    started=response_started,
+                )
                 return
         except FileNotFoundError:
             self._send_error_response(HTTP_NOT_FOUND, "File not found")
@@ -2298,7 +2354,7 @@ class P2PEndpointMixin(_HTTPTransportBase):
             self._send_error_response(HTTP_FORBIDDEN, "Access denied")
         except OSError as exc:
             log.error(f"Error reading file {display_path}: {exc}")
-            if response_started:
+            if response_started[0]:
                 self.close_connection = True
                 emit_failed_transfer("upload", display_path, f"serving failed: {exc}")
             else:
