@@ -547,6 +547,38 @@ class TestApplyValidation:
         assert perms == [(str(target), "0o644")]
         assert abs(target.stat().st_mtime - 1_600_000_000.0) < 2
 
+    def test_origin_is_marked_before_the_write(
+        self, p2p_config, apply_handler, tmp_path, monkeypatch
+    ):
+        """Regression: the inbound origin must be marked before the atomic
+        replace, so the watcher cannot observe the write and echo the applied
+        delta back to the peer that sent it."""
+        base = _base_bytes()
+        new = bytearray(base)
+        new[500:600] = b"A" * 100
+        target = _master_file(p2p_config, data=base)
+
+        client_base = tmp_path / "client-base.bin"
+        client_base.write_bytes(base)
+        sigs = compute_signatures(str(client_base), BLOCK)
+        ops, literals = find_matches(bytes(new), sigs, BLOCK)
+
+        monkeypatch.setitem(ld.CONFIG, "P2P_KEY", "secret")
+        seen_at_mark: list[bytes] = []
+        monkeypatch.setattr(
+            "hsync_client.p2p_websocket.mark_inbound_origin",
+            lambda fp, cid: seen_at_mark.append(Path(fp).read_bytes()),
+        )
+
+        meta = _valid_metadata(base, bytes(new), ops=[op.to_dict() for op in ops])
+        meta["cid"] = "PeerCID1234567890abcd"
+        _apply(apply_handler, meta, literals)
+        assert apply_handler.sent[0][0] == 200
+        # At origin-mark time the target still held the OLD content: the marker
+        # was written before the replace.
+        assert seen_at_mark == [base]
+        assert target.read_bytes() == bytes(new)
+
     def test_invalid_mtime_is_ignored(self, p2p_config, apply_handler, tmp_path):
         base = _base_bytes()
         new = base + b"tail"

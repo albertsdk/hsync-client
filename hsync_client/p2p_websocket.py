@@ -1704,7 +1704,6 @@ async def _ws_greeting_handshake(
     host: str,
     connect_started: float,
     serving_slots: int | None,
-    inventory_publisher: P2PInventoryPublisher | None,
     source_resolver: P2PSourceResolver | None,
 ) -> tuple[bool, set[Capability]]:
     """Read the master greeting and run the auth/hello handshake.
@@ -1988,7 +1987,6 @@ async def p2p_websocket_client(
                 host,
                 connect_started,
                 serving_slots,
-                inventory_publisher,
                 source_resolver,
             )
             if not admitted:

@@ -58,6 +58,7 @@ from hsync_common.hashing import compute_sha256, is_sha256_hex
 from hsync_common.ignore import should_skip
 from hsync_common.models.delta import (
     BlockSignature,
+    DeltaOp,
     delta_download_payload,
     delta_signatures_payload,
     parse_op_payload,
@@ -425,8 +426,12 @@ def handle_delta_signatures_post(handler) -> None:
     )
 
 
-def _parse_delta_apply_meta(form_fields: dict, handler) -> dict | None:
-    """Parse and validate the delta metadata; None when a response was already sent."""
+def _parse_delta_apply_meta(form_fields: dict, handler) -> tuple[dict, list[DeltaOp]] | None:
+    """Parse and validate the delta metadata; None when a response was already sent.
+
+    Returns ``(meta, ops)`` so the caller reuses the parsed op list instead of
+    re-running ``parse_op_payload``.
+    """
     try:
         meta = json.loads(form_fields.get("metadata", ""))
     except ValueError:
@@ -451,10 +456,11 @@ def _parse_delta_apply_meta(form_fields: dict, handler) -> dict | None:
     ):
         handler._send_error_response(_HTTP_BAD_REQUEST, "Invalid metadata fields")
         return None
-    if parse_op_payload(meta.get("ops")) is None:
+    ops = parse_op_payload(meta.get("ops"))
+    if ops is None:
         handler._send_error_response(_HTTP_BAD_REQUEST, "Invalid ops")
         return None
-    return meta
+    return meta, ops
 
 
 def _validate_delta_ops(filepath: str, literal_file: str, ops, new_size: int, handler) -> bool:
@@ -513,16 +519,25 @@ def _prepare_delta_literal(literal_path: str, meta: dict, handler) -> tuple[bool
     return True, decompressed_path, decompressed_path
 
 
-def _apply_rebuilt_metadata(filepath: str, meta: dict) -> None:
-    """Mark the inbound origin and adopt the announced mtime/permissions."""
+def _mark_inbound_origin(filepath: str, meta: dict) -> None:
+    """Record the peer origin of a rebuilt file so the watcher does not echo it.
+
+    Call this *before* the atomic replace so the marker is observed ahead of the
+    write event.
+    """
     cid = meta.get("cid", "")
-    if cid:
-        from hsync_common.ids import is_valid_cid
+    if not cid:
+        return
+    from hsync_common.ids import is_valid_cid
 
-        from hsync_client.p2p_websocket import mark_inbound_origin
+    from hsync_client.p2p_websocket import mark_inbound_origin
 
-        if is_valid_cid(cid) and CONFIG.get("P2P_KEY"):
-            mark_inbound_origin(filepath, cid)
+    if is_valid_cid(cid) and CONFIG.get("P2P_KEY"):
+        mark_inbound_origin(filepath, cid)
+
+
+def _apply_rebuilt_metadata(filepath: str, meta: dict) -> None:
+    """Adopt the announced mtime/permissions on the committed rebuilt file."""
     mtime = meta.get("mtime")
     if mtime:
         try:
@@ -588,15 +603,14 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
     dest_existed = Path(filepath).exists()
     dest_marker = deletion_marker_snapshot(filepath)
 
-    meta = _parse_delta_apply_meta(form_fields, handler)
-    if meta is None:
+    parsed = _parse_delta_apply_meta(form_fields, handler)
+    if parsed is None:
         return
+    meta, ops = parsed
     base_sha256 = meta.get("base_sha256")
     new_sha256 = meta.get("new_sha256")
     new_size = meta.get("new_size")
     assert isinstance(new_size, int)  # validated by _parse_delta_apply_meta
-    ops = parse_op_payload(meta.get("ops"))
-    assert ops is not None  # validated by _parse_delta_apply_meta
 
     # Race check: the master's base must still be what the slave saw.
     current_base = _file_sha256(filepath)
@@ -632,6 +646,10 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
         )
         if rebuilt is None:
             return
+        # Mark the inbound origin *before* the atomic replace so the watcher
+        # sees the marker ahead of the write event and does not echo the change
+        # back to the peer that sent it.
+        _mark_inbound_origin(filepath, meta)
         if destination_mutation_since(filepath, dest_existed, dest_marker):
             _send_destination_changed(handler, filepath)
             return
