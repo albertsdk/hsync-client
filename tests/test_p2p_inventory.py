@@ -541,6 +541,46 @@ async def test_master_wss_auth_path_rejects_inventory_when_slave_does_not_publis
 
 
 @pytest.mark.asyncio
+async def test_hello_failure_releases_the_reserved_inventory_session(tmp_path: Path) -> None:
+    """Regression: an error after a successful hello admission must release the
+    reserved inventory session, passing its token to ``_release_failed_admission``
+    (the extracted helper used to pass ``None``)."""
+    store = P2PInventoryStore(tmp_path / "inventory.sqlite3", "bucket")
+    store.activate()
+    server = P2PWebSocketServer(port=0, inventory_store=store)
+
+    released: list[object] = []
+
+    async def _fake_release(client_cid, websocket, token):
+        released.append(token)
+
+    hello = json.dumps(
+        build_p2p_hello(
+            capabilities=["index", "publishes_index", "peer_download"],
+            cid=CID_A,
+            serve_slots=2,
+        )
+    )
+    try:
+        with (
+            patch.object(server, "_recv_text", AsyncMock(return_value=hello)),
+            patch.object(server, "_admit_slave", AsyncMock(return_value=(True, "TOKEN-1", None))),
+            patch.object(server, "_release_failed_admission", _fake_release),
+            # The only statement between a successful admission and the return is a
+            # log line: failing it exercises the helper's error path.
+            patch("hsync_client.p2p_websocket.log.info", side_effect=RuntimeError("boom")),
+        ):
+            admitted, _cid, _token, _rejection = await server._hello_websocket(
+                AsyncMock(), "127.0.0.1", set()
+            )
+    finally:
+        store.close()
+
+    assert admitted is False
+    assert released == ["TOKEN-1"]
+
+
+@pytest.mark.asyncio
 async def test_wss_reconnect_installs_new_inventory_owner_before_closing_old(
     tmp_path: Path,
 ) -> None:

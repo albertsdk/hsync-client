@@ -900,7 +900,7 @@ def _has_download_space(file: File, full_save_path: str, resume_offset: int) -> 
     return False
 
 
-def _raise_source_status_failure(status: int, response, source) -> None:
+def _raise_source_status_failure(status: int, response) -> None:
     """Map a non-200/206 status from a peer source to a deferrable failure."""
     retry_after_s = _parse_retry_after(response.headers.get("Retry-After"))
     response.close()
@@ -942,7 +942,7 @@ def _accept_download_response(
     """
     status = response.status_code
     if source is not None and status not in (200, 206):
-        _raise_source_status_failure(status, response, source)
+        _raise_source_status_failure(status, response)
 
     if status in (401, 403):
         _emit_auth_error("Authentication failed", "downloading", file.filepath)

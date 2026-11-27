@@ -877,6 +877,7 @@ class P2PWebSocketServer:
         """
         await websocket.send_str(compact_json_str(build_p2p_hello(capabilities=master_caps)))
         client_cid = "unknown"
+        inventory_token: str | None = None
         try:
             hello_msg = await self._recv_text(websocket, 5.0)
             hello_data = json.loads(hello_msg)
@@ -922,12 +923,12 @@ class P2PWebSocketServer:
             )
             return True, client_cid, inventory_token, inventory_rejection
         except TimeoutError:
-            await self._release_failed_admission(client_cid, websocket, None)
+            await self._release_failed_admission(client_cid, websocket, inventory_token)
             log.warning(f"WebSocket hello timeout from {client_addr}")
             await websocket.close()
             return False, client_cid, None, None
         except Exception as e:
-            await self._release_failed_admission(client_cid, websocket, None)
+            await self._release_failed_admission(client_cid, websocket, inventory_token)
             log.warning(f"WebSocket hello error from {client_addr}: {e}")
             await websocket.close()
             return False, client_cid, None, None
