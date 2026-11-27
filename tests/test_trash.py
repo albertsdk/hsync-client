@@ -61,6 +61,26 @@ def _rewrite_entry(item, **overrides):
     (item.directory / TRASH_ENTRY_FILENAME).write_text(json.dumps(record), encoding="utf-8")
 
 
+class _StepClock:
+    """A deterministic ``time`` stand-in that advances by *step_ns* per read.
+
+    Lets a test place two deletions in the same wall-clock second while their
+    nanosecond identity still orders them, which is what the entry id relies on.
+    """
+
+    def __init__(self, start_ns, step_ns=1):
+        self._ns = start_ns
+        self._step = step_ns
+
+    def time_ns(self):
+        current = self._ns
+        self._ns += self._step
+        return current
+
+    def time(self):
+        return self.time_ns() / 1_000_000_000
+
+
 class TestMove:
     def test_the_bytes_and_the_record_move_into_the_store(self, store, folder):
         source = _write(folder)
@@ -126,6 +146,29 @@ class TestListAndRestore:
         second = store.move(_write(folder, "b.txt"))
 
         assert [item.entry_id for item in store.entries()] == [second.entry_id, first.entry_id]
+
+    def test_two_deletions_in_one_second_restore_the_newest(self, store, folder, monkeypatch):
+        """A re-created path deleted again must come back as its newest copy.
+
+        Both deletions land in the same wall-clock second, so only the entry id's
+        nanosecond field can order them: a bare restore must not depend on
+        chance.
+        """
+        import hsync_client.trash as trash_mod
+
+        monkeypatch.setattr(
+            trash_mod, "time", _StepClock(1_700_000_000_000_000_000, step_ns=1_000_000)
+        )
+        store.move(_write(folder, "x.txt", b"V1"))
+        store.move(_write(folder, "x.txt", b"V2"))
+
+        assert len(store.entries()) == 2
+        report = store.restore("x.txt")
+
+        assert report.status == "restored"
+        assert (folder / "x.txt").read_bytes() == b"V2"
+        # The older copy is left in the store, never silently dropped.
+        assert [item.entry["relpath"] for item in store.entries()] == ["x.txt"]
 
     def test_restore_puts_the_bytes_back_and_drops_the_entry(self, store, folder):
         store.move(_write(folder, "docs/report.txt", b"payload"))
@@ -397,6 +440,61 @@ class TestRestoreAll:
         assert (report.restored, report.skipped) == (0, 1)
         assert report.problems == {"docs/a.txt": "download-only"}
 
+    def test_duplicate_paths_restore_only_the_newest(self, store, folder, monkeypatch):
+        """One attempt per path, so the counters match ``problems`` exactly."""
+        import hsync_client.trash as trash_mod
+
+        monkeypatch.setattr(
+            trash_mod, "time", _StepClock(1_700_000_000_000_000_000, step_ns=1_000_000)
+        )
+        store.move(_write(folder, "x.txt", b"V1"))
+        store.move(_write(folder, "x.txt", b"V2"))
+
+        report = store.restore_all()
+
+        assert (report.restored, report.skipped, report.failed) == (1, 0, 0)
+        assert report.problems == {}
+        assert (folder / "x.txt").read_bytes() == b"V2"
+        # The older copy is left in the store, untouched.
+        assert [item.entry["relpath"] for item in store.entries()] == ["x.txt"]
+
+    def test_force_never_lets_an_older_duplicate_win(self, store, folder, monkeypatch):
+        """``--force`` replaces an existing file, not the freshly restored newest."""
+        import hsync_client.trash as trash_mod
+
+        monkeypatch.setattr(
+            trash_mod, "time", _StepClock(1_700_000_000_000_000_000, step_ns=1_000_000)
+        )
+        store.move(_write(folder, "x.txt", b"V1"))
+        store.move(_write(folder, "x.txt", b"V2"))
+
+        report = store.restore_all(force=True)
+
+        assert report.restored == 1
+        assert (folder / "x.txt").read_bytes() == b"V2"
+
+    def test_a_prefix_restores_only_its_subtree(self, store, folder):
+        """A deleted folder comes back without restoring the whole share."""
+        store.move(_write(folder, "photos/2024/a.jpg", b"a"))
+        store.move(_write(folder, "photos/b.jpg", b"b"))
+        store.move(_write(folder, "notes/c.txt", b"c"))
+
+        report = store.restore_all(prefix="photos")
+
+        assert report.restored == 2
+        assert (folder / "photos/2024/a.jpg").read_bytes() == b"a"
+        assert (folder / "photos/b.jpg").read_bytes() == b"b"
+        assert not (folder / "notes/c.txt").exists()
+        assert [item.entry["relpath"] for item in store.entries()] == ["notes/c.txt"]
+
+    def test_a_prefix_tolerates_a_trailing_slash(self, store, folder):
+        store.move(_write(folder, "photos/a.jpg", b"a"))
+
+        report = store.restore_all(prefix="/photos/")
+
+        assert report.restored == 1
+        assert (folder / "photos/a.jpg").read_bytes() == b"a"
+
 
 class TestAdd:
     """A user deletion parks the bytes with origin ``user``."""
@@ -641,6 +739,18 @@ class TestTreeDelete:
         assert (kept, left) == (1, 1)
         assert [item.entry["relpath"] for item in store.entries()] == ["tree/real.txt"]
 
+    def test_a_symlinked_directory_is_counted_as_left(self, store, folder, tmp_path):
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "x").write_bytes(b"x")
+        _write(folder, "tree/real.txt", b"y")
+        (folder / "tree" / "linkdir").symlink_to(outside)
+
+        kept, left = delete_local_tree(store, folder / "tree")
+
+        assert (kept, left) == (1, 1)
+        assert [item.entry["relpath"] for item in store.entries()] == ["tree/real.txt"]
+
 
 class TestStats:
     """The store summary a front-end shows as "X of Y" (ADR-0056)."""
@@ -747,6 +857,27 @@ class TestCommands:
         assert (folder / "a.txt").read_bytes() == b"aa"
         assert (folder / "b.txt").read_bytes() == b"bb"
 
+    def test_restore_prefix_brings_back_one_folder(self, monkeypatch, tmp_path):
+        folder = self._folder(tmp_path)
+        self._park(monkeypatch, tmp_path, folder, "photos/a.txt", b"aa")
+        self._park(monkeypatch, tmp_path, folder, "notes/b.txt", b"bb")
+
+        result = self._run(
+            monkeypatch,
+            tmp_path,
+            "restore",
+            "--folder",
+            str(folder),
+            "--prefix",
+            "photos",
+            "--json",
+        )
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["restored"] == 1
+        assert (folder / "photos/a.txt").read_bytes() == b"aa"
+        assert not (folder / "notes/b.txt").exists()
+
     def test_restore_all_can_report_without_writing(self, monkeypatch, tmp_path):
         folder = self._folder(tmp_path)
         self._park(monkeypatch, tmp_path, folder)
@@ -776,9 +907,13 @@ class TestCommands:
         both = self._run(
             monkeypatch, tmp_path, "restore", "--folder", str(folder), "gone.txt", "--all"
         )
+        all_and_prefix = self._run(
+            monkeypatch, tmp_path, "restore", "--folder", str(folder), "--all", "--prefix", "docs"
+        )
 
         assert neither.exit_code != 0, neither.output
         assert both.exit_code != 0, both.output
+        assert all_and_prefix.exit_code != 0, all_and_prefix.output
 
     def test_restore_all_json_reports_the_outcome(self, monkeypatch, tmp_path):
         folder = self._folder(tmp_path)

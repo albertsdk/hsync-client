@@ -1202,6 +1202,14 @@ def trash_restore(
         str | None, typer.Argument(help="Bucket-relative path to restore (omit it with --all).")
     ] = None,
     all_entries: bool = typer.Option(False, "--all", help="Restore every entry of the folder."),
+    prefix: Annotated[
+        str | None,
+        typer.Option(
+            "--prefix",
+            help="Restore every entry under this bucket-relative directory.",
+            metavar="DIR",
+        ),
+    ] = None,
     trash_dir: Annotated[
         str | None,
         typer.Option(
@@ -1225,7 +1233,7 @@ def trash_restore(
         help="Replace an existing file: it is moved to the trash first, so nothing is lost.",
     ),
     dry_run: bool = typer.Option(
-        False, "--dry-run", help="With --all, report what would be restored."
+        False, "--dry-run", help="With --all or --prefix, report what would be restored."
     ),
 ) -> None:
     """Put a trashed file back; the next cycle propagates it again.
@@ -1234,10 +1242,12 @@ def trash_restore(
     new version that supersedes the deletion marker, so every peer resurrects
     it. No lock is taken, so this works while a sync runs.
 
-    --all restores every entry of the folder in one call (newest first), which
-    is what a bulk deletion needs; an entry that cannot come back — its path
-    already exists, or the stored copy is unusable — stays in the store and is
-    reported. --dry-run answers the same question without writing anything.
+    --all restores every entry of the folder in one call (newest first); --prefix
+    narrows that to one deleted folder's subtree. A path left by a
+    re-create-then-delete resolves to its newest entry. An entry that cannot come
+    back — its path already exists, or the stored copy is unusable — stays in the
+    store and is reported. --dry-run answers the same question without writing
+    anything.
 
     With --json the report a front-end branches on is printed instead: status is
     restored, no-entry, destination-exists, download-only, payload-missing,
@@ -1254,13 +1264,14 @@ def trash_restore(
     if not target.is_dir():
         typer.echo(f"Not a directory: {target}", err=True)
         raise typer.Exit(code=int(ExitCode.FATAL))
-    if all_entries == (relpath is not None):
-        raise typer.BadParameter("choose one of a PATH argument or --all.")
-    if dry_run and not all_entries:
-        raise typer.BadParameter("--dry-run needs --all.")
+    targets = (relpath is not None, all_entries, prefix is not None)
+    if sum(targets) != 1:
+        raise typer.BadParameter("choose one of a PATH argument, --all or --prefix.")
+    if dry_run and relpath is not None:
+        raise typer.BadParameter("--dry-run needs --all or --prefix.")
     store = _trash_store(str(target), trash_dir)
-    if all_entries:
-        bulk = store.restore_all(direction=direction, force=force, dry_run=dry_run)
+    if all_entries or prefix is not None:
+        bulk = store.restore_all(direction=direction, force=force, dry_run=dry_run, prefix=prefix)
         if as_json:
             typer.echo(json.dumps(asdict(bulk), indent=2, sort_keys=True))
             code = int(ExitCode.FATAL) if bulk.failed or bulk.status != "ok" else 0

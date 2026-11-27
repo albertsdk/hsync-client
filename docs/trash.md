@@ -94,6 +94,24 @@ them without writing anything:
 hsync trash restore --folder SYNCED_FOLDER --all --dry-run
 ```
 
+## Restore one folder
+
+To bring back a single deleted folder without restoring the whole share, pass
+its bucket-relative path as a prefix:
+
+```bash
+hsync trash restore --folder SYNCED_FOLDER --prefix photos
+```
+
+`--prefix photos` restores `photos` and everything under `photos/`; the entries
+outside that subtree stay in the trash. It accepts the same `--direction`,
+`--force`, `--dry-run` and `--json` as `--all`.
+
+A path that was deleted, re-created and deleted again has more than one entry in
+the store: a restore brings back its **newest** copy and leaves the older ones
+untouched, so neither `restore FILE_PATH` nor `--all`/`--prefix` ever overwrites
+the version they just restored.
+
 ## Remove trashed files for good
 
 ```bash

@@ -259,7 +259,14 @@ def delete_local_tree(store: TrashStore | None, path: str | Path) -> tuple[int, 
     budget = TREE_TRASH_MAX_BYTES
     # ``os.walk`` lists each directory before descending, so moving the files out
     # of the current one does not disturb the traversal.
-    for dirpath, _dirnames, filenames in os.walk(root):
+    for dirpath, dirnames, filenames in os.walk(root):
+        # A symlinked directory carries no restorable payload either: count it as
+        # left (like a file symlink) and drop it from the walk so it is not
+        # descended into and the "left behind" count never under-reports it.
+        for name in list(dirnames):
+            if (Path(dirpath) / name).is_symlink():
+                dirnames.remove(name)
+                left += 1
         for name in filenames:
             candidate = Path(dirpath) / name
             if candidate.is_symlink() or kept >= TREE_TRASH_MAX_FILES or budget <= 0:
@@ -328,14 +335,16 @@ class RestoreReport:
 
 @dataclass(frozen=True)
 class RestoreAllReport:
-    """Outcome of restoring every entry of one folder in one call.
+    """Outcome of restoring a folder's entries in one call.
 
     ``status`` is ``ok`` or ``disabled`` (the store is off, so nothing was
     attempted). The counters split the rest: ``restored`` entries written back,
     ``skipped`` left in the store for a reason the user can fix (the path
     already exists, or the folder is download-only) and ``failed`` entries whose
     stored copy is unusable. ``problems`` maps each of those paths to its
-    refusal, so a front-end shows *which* files were left and why.
+    refusal, so a front-end shows *which* files were left and why. Only the
+    newest entry of each path is attempted (see :meth:`restore_all`), so a path
+    appears at most once and the counters match ``problems``.
     """
 
     folder: str
@@ -546,7 +555,14 @@ class TrashStore:
         except OSError as exc:
             return MoveResult(reason=f"unreadable: {exc}")
 
-        entry_id = f"{int(time.time())}-{uuid.uuid4().hex[:12]}"
+        # ``<seconds>-<nanoseconds><random>``: the fixed-width nanosecond field
+        # keeps the id ordered by creation even for two deletions of the same
+        # path inside one second, where a random-only suffix would decide by
+        # chance which copy a bare ``restore <path>`` brings back. The random
+        # tail only breaks a same-nanosecond tie; the shape still matches
+        # ``is_safe_entry_id`` / the published ``entry_id_pattern``.
+        now_ns = time.time_ns()
+        entry_id = f"{now_ns // 1_000_000_000}-{now_ns:016x}{uuid.uuid4().hex[:8]}"
         directory: Path | None = None
         try:
             directory = entry_dir(self.root, str(self.folder_id), entry_id)
@@ -556,7 +572,7 @@ class TrashStore:
                 size=info.st_size,
                 mtime_ns=info.st_mtime_ns,
                 mode=stat.S_IMODE(info.st_mode),
-                deleted_at=int(time.time()),
+                deleted_at=now_ns // 1_000_000_000,
                 origin=origin,
                 cid=self.cid or None,
                 bucket=self.bucket,
@@ -584,6 +600,10 @@ class TrashStore:
         (ADR-0003), so it uploads it and every peer resurrects the path. No
         state-DB write and no lock, which is what lets it run during a sync.
 
+        A path with several entries (a file deleted, re-created and deleted
+        again) resolves to the **newest** one: the ids carry a nanosecond field,
+        so the newest is well defined even for two deletions in the same second.
+
         With *force*, an existing destination is not a dead end: the file there
         is parked as its own entry first (origin ``user``), so the path ends up
         with the restored bytes and the copy it replaced stays restorable. A
@@ -597,12 +617,23 @@ class TrashStore:
             # A download-only run mirrors the peer and deletes local extras, so
             # the restored file would be removed again on the next cycle.
             return RestoreReport(folder=canonical, relpath=relpath, status="download-only")
-        item = next((item for item in self.entries() if item.entry["relpath"] == relpath), None)
+        item = next((one for one in self.entries() if one.entry["relpath"] == relpath), None)
         if item is None:
             return RestoreReport(folder=canonical, relpath=relpath, status="no-entry")
+        return self._restore_item(item, direction=direction, force=force)
+
+    def _restore_item(self, item: TrashItem, *, direction: str, force: bool) -> RestoreReport:
+        """Restore one concrete entry (the shared body of restore/restore_all).
+
+        Acting on the entry that was handed in — never re-resolving it by path —
+        is what keeps :meth:`restore_all` deterministic when several entries
+        share a relpath.
+        """
+        canonical = str(self.folder)
         refusal = self._preflight(item, direction=direction, force=force)
         if refusal is not None:
             return refusal
+        relpath = str(item.entry["relpath"])
         destination = self.folder / relpath
         replaced = False
         if destination.exists() or destination.is_symlink():
@@ -677,28 +708,41 @@ class TrashStore:
         return None
 
     def restore_all(
-        self, *, direction: str = "bidirectional", force: bool = False, dry_run: bool = False
+        self,
+        *,
+        direction: str = "bidirectional",
+        force: bool = False,
+        dry_run: bool = False,
+        prefix: str | None = None,
     ) -> RestoreAllReport:
-        """Restore every entry of this folder, newest first.
+        """Restore this folder's entries, newest first, optionally under *prefix*.
 
         One call instead of one command per file: after a bulk deletion the
         store holds hundreds of entries and no user repeats the gesture that
-        many times. A refusal never stops the sweep — the entry stays in the
-        store and is named in ``problems``. The dry run returns the same verdicts
-        and writes nothing.
+        many times. Only the **newest entry of each path** is attempted — older
+        copies left by a re-create-then-delete stay in the store instead of
+        overwriting the version just restored — so ``attempted``, ``problems``
+        and the counters all describe the same, path-unique set (a bare
+        ``restore <path>`` resolves the same newest entry). A refusal never
+        stops the sweep: the entry stays in the store and is named in
+        ``problems``. The dry run returns the same verdicts and writes nothing.
+
+        *prefix* limits the sweep to one bucket-relative subtree (``dir`` matches
+        ``dir`` and everything under ``dir/``): the way to bring back a single
+        deleted folder without restoring the whole share.
         """
         canonical = str(self.folder)
         if not self.settings.enabled:
             return RestoreAllReport(folder=canonical, status="disabled", dry_run=dry_run)
         restored = skipped = failed = total = 0
         problems: dict[str, str] = {}
-        for item in self.entries():
+        for item in self._restore_candidates(prefix):
             relpath = str(item.entry["relpath"])
             if dry_run:
                 refusal = self._preflight(item, direction=direction, force=force)
                 status = "restored" if refusal is None else refusal.status
             else:
-                status = self.restore(relpath, direction=direction, force=force).status
+                status = self._restore_item(item, direction=direction, force=force).status
             if status == "restored":
                 restored += 1
                 total += item.entry["size"]
@@ -717,6 +761,22 @@ class TrashStore:
             dry_run=dry_run,
             problems=problems,
         )
+
+    def _restore_candidates(self, prefix: str | None) -> list[TrashItem]:
+        """The newest entry of each path, optionally limited to a *prefix*.
+
+        ``entries()`` is newest first, so the first entry seen for a relpath is
+        the one a restore should bring back; the older duplicates are left in
+        the store untouched.
+        """
+        normalized = _normalize_prefix(prefix)
+        newest: dict[str, TrashItem] = {}
+        for item in self.entries():
+            relpath = str(item.entry["relpath"])
+            if normalized is not None and not _under_prefix(relpath, normalized):
+                continue
+            newest.setdefault(relpath, item)
+        return list(newest.values())
 
     # ── maintenance ───────────────────────────────────────────────────────
 
@@ -866,6 +926,24 @@ def _age_cutoff(older_than_days: int | None) -> int | None:
     if older_than_days is None:
         return None
     return int(time.time()) - older_than_days * _SECONDS_PER_DAY
+
+
+def _normalize_prefix(prefix: str | None) -> str | None:
+    """Normalize a subtree filter to a bucket-relative prefix, or ``None``.
+
+    It only filters already-safe relpaths, never a filesystem path, so a leading
+    or trailing slash and backslashes are tolerated; an empty result means "no
+    filter".
+    """
+    if prefix is None:
+        return None
+    text = str(prefix).replace("\\", "/").strip().strip("/")
+    return text or None
+
+
+def _under_prefix(relpath: str, prefix: str) -> bool:
+    """True when *relpath* is *prefix* itself or lies below it."""
+    return relpath == prefix or relpath.startswith(prefix + "/")
 
 
 def _discard_entries(
