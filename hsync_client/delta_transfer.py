@@ -192,18 +192,14 @@ def prepare_delta_download(file: File, local_path: str) -> DeltaDownloadContext 
     )
 
 
-def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:
-    """Perform an upload-delta against the peer's base file.
+def _fetch_delta_signatures(
+    ctx: DeltaUploadContext, headers: dict, sig_uri: str
+) -> tuple[list[BlockSignature], int, int]:
+    """Fetch and validate the peer's block signatures for the delta base.
 
-    Raises:
-        DeltaTransferError: Recoverable condition → full-upload fallback.
-        RequestException: Connection-level failure (retryable by the caller).
-        ServerError: Server-side 5xx (retryable by the caller).
+    Returns ``(sigs, block_size, file_size)``; every refusal is a recoverable
+    :class:`DeltaTransferError` (the caller falls back to a full upload).
     """
-    t0 = monotonic()
-    headers = dict(cast(dict[str, str], CONFIG["REQUEST_HEADERS"]))
-    sig_uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files/delta/signatures"
-
     response = get(
         sig_uri,
         headers=headers,
@@ -216,10 +212,8 @@ def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:
     if response.status_code != 200:
         # 404 covers both "file missing" and "peer without delta endpoints".
         raise DeltaTransferError(f"signatures unavailable ({response.status_code})")
-
     body = response.json()
-    remote_sha = body.get("sha256")
-    if remote_sha != ctx.base_hash:
+    if body.get("sha256") != ctx.base_hash:
         raise DeltaTransferError("remote base changed (conflict or rescan needed)")
     block_size = body.get("block_size")
     file_size = body.get("file_size")
@@ -230,7 +224,39 @@ def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:
     clean_sigs = sanitize_signature_list(body.get("signatures"))
     if clean_sigs is None:
         raise DeltaTransferError("invalid signatures from peer")
-    sigs = [BlockSignature(**s) for s in clean_sigs]
+    return [BlockSignature(**s) for s in clean_sigs], block_size, file_size
+
+
+def _handle_delta_apply_conflict(response, file: File, new_sha256: str) -> None:
+    """Resolve a 409 from delta/apply: return when the race already reached the target.
+
+    Idempotent conflict: when the server's current file already holds exactly this
+    delta's target content, a concurrent upload won the race and there is nothing
+    to do. Raises :class:`DeltaTransferError` for any other 409.
+    """
+    try:
+        detail = response.json()
+    except ValueError:
+        detail = {}
+    if detail.get("actual_base_sha256") == new_sha256:
+        log.info(f'[DELTA ↑] "{file.filepath}" already stored by a concurrent upload')
+        return
+    reason = detail.get("detail") or detail.get("resolution") or detail.get("message") or "http 409"
+    raise DeltaTransferError(f"apply rejected (409): {reason}")
+
+
+def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:
+    """Perform an upload-delta against the peer's base file.
+
+    Raises:
+        DeltaTransferError: Recoverable condition → full-upload fallback.
+        RequestException: Connection-level failure (retryable by the caller).
+        ServerError: Server-side 5xx (retryable by the caller).
+    """
+    t0 = monotonic()
+    headers = dict(cast(dict[str, str], CONFIG["REQUEST_HEADERS"]))
+    sig_uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files/delta/signatures"
+    sigs, block_size, file_size = _fetch_delta_signatures(ctx, headers, sig_uri)
 
     # TOCTOU: snapshot before the rolling scan, re-check after — a file that
     # changes mid-scan would produce a delta describing a torn read whose
@@ -342,23 +368,8 @@ def upload_file_delta(file: File, ctx: DeltaUploadContext) -> None:
         )
 
         if response.status_code == 409:
-            # Idempotent conflict: when the server's current file already holds
-            # exactly this delta's target content, a concurrent upload won the
-            # race — the desired state is reached, so there is nothing to do.
-            try:
-                detail = response.json()
-            except ValueError:
-                detail = {}
-            if detail.get("actual_base_sha256") == new_sha256:
-                log.info(f'[DELTA ↑] "{file.filepath}" already stored by a concurrent upload')
-                return
-            reason = (
-                detail.get("detail")
-                or detail.get("resolution")
-                or detail.get("message")
-                or "http 409"
-            )
-            raise DeltaTransferError(f"apply rejected (409): {reason}")
+            _handle_delta_apply_conflict(response, file, new_sha256)
+            return
         if response.status_code >= 500:
             raise ServerError(f"Server error on delta apply: {response.status_code}")
         if response.status_code != 200:
@@ -395,6 +406,26 @@ def _parse_data_url(data_url: object) -> str:
     if not token or "/" in token or token in (".", ".."):
         raise DeltaTransferError("invalid data_url token from peer")
     return token
+
+
+def _parse_delta_instructions(body: dict) -> tuple[str, int, list, str]:
+    """Validate the peer's delta instructions; return ``(sha, size, ops, data_uri)``."""
+    instructions = body.get("instructions")
+    if not isinstance(instructions, dict):
+        raise DeltaTransferError("malformed instructions from peer")
+    new_sha256 = body.get("new_sha256")
+    new_size = instructions.get("new_size")
+    if not is_sha256_hex(new_sha256) or not isinstance(new_size, int) or new_size < 0:
+        raise DeltaTransferError("invalid instructions metadata from peer")
+    assert isinstance(new_sha256, str)  # narrowed by is_sha256_hex
+    ops = parse_op_payload(instructions.get("ops"))
+    if ops is None:
+        raise DeltaTransferError("invalid ops from peer")
+    if sum(op.length for op in ops) != new_size:
+        raise DeltaTransferError("ops coverage mismatch from peer")
+    token = _parse_data_url(body.get("data_url"))
+    data_uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files/delta/data/{token}"
+    return new_sha256, new_size, ops, data_uri
 
 
 def download_file_delta(file: File, ctx: DeltaDownloadContext) -> None:
@@ -436,22 +467,7 @@ def download_file_delta(file: File, ctx: DeltaDownloadContext) -> None:
     body = response.json()
     if not body.get("delta"):
         raise DeltaTransferError(str(body.get("reason") or "not worthwhile"))
-
-    instructions = body.get("instructions")
-    if not isinstance(instructions, dict):
-        raise DeltaTransferError("malformed instructions from peer")
-    new_sha256 = body.get("new_sha256")
-    new_size = instructions.get("new_size")
-    if not is_sha256_hex(new_sha256) or not isinstance(new_size, int) or new_size < 0:
-        raise DeltaTransferError("invalid instructions metadata from peer")
-    ops = parse_op_payload(instructions.get("ops"))
-    if ops is None:
-        raise DeltaTransferError("invalid ops from peer")
-    if sum(op.length for op in ops) != new_size:
-        raise DeltaTransferError("ops coverage mismatch from peer")
-
-    token = _parse_data_url(body.get("data_url"))
-    data_uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/files/delta/data/{token}"
+    new_sha256, new_size, ops, data_uri = _parse_delta_instructions(body)
 
     part_path = f"{ctx.local_path}{PARTIAL_DELTA_SUFFIX}"
     payload_path = f"{part_path}.lit"

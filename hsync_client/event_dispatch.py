@@ -265,6 +265,33 @@ async def _update_file_with_echo(ctx: EventDispatchContext, src: dict, target: s
             _unmark(ctx, target)
 
 
+async def _handle_subdir_scope(src, dst, event_name, ctx: EventDispatchContext, origin_cid) -> bool:
+    """Apply the ``--subdir`` scope to a live event; True when handled here.
+
+    The initial listing is filtered locally/remotely, but the server/master can
+    still push events for paths outside the scope. Ignore them, and handle a rename
+    crossing the boundary as a delete (left the subtree) or an add (entered it).
+    """
+    filter_path = CONFIG.get("FILTER_PATH")
+    if not filter_path:
+        return False
+    src_rels = wire_relpaths(src) if isinstance(src, dict) else []
+    dst_rels = wire_relpaths(dst) if isinstance(dst, dict) else []
+    src_in = any(_in_subdir_rel(rel, filter_path) for rel in src_rels)
+    dst_in = any(_in_subdir_rel(rel, filter_path) for rel in dst_rels)
+    if event_name != EventName.renamed.value:
+        return not src_in
+    if src_in and dst_in:
+        return False
+    if src_in:
+        await _apply_delete(src, ctx, origin_cid)
+        return True
+    if dst_in and isinstance(dst, dict):
+        await _apply_add_or_modify(dst, ctx, EventName.added.value, origin_cid)
+        return True
+    return True
+
+
 async def apply_inbound_event(event_data: dict, ctx: EventDispatchContext) -> None:
     """Apply an event received from a remote peer (central server or P2P master).
 
@@ -301,29 +328,9 @@ async def apply_inbound_event(event_data: dict, ctx: EventDispatchContext) -> No
             _reject_unsafe(event_name, rels[0] if rels else None)
             return
 
-    # --subdir scopes the live inbound stream too: the initial listing is
-    # filtered locally/remotely, but the server/master can still push events
-    # for paths outside the scope. Ignore them, and handle a rename crossing
-    # the boundary as a delete (left the subtree) or an add (entered it).
-    filter_path = CONFIG.get("FILTER_PATH")
-    if filter_path:
-        src_rels = wire_relpaths(src) if isinstance(src, dict) else []
-        dst_rels = wire_relpaths(dst) if isinstance(dst, dict) else []
-        src_in = any(_in_subdir_rel(rel, filter_path) for rel in src_rels)
-        dst_in = any(_in_subdir_rel(rel, filter_path) for rel in dst_rels)
-        if event_name == EventName.renamed.value:
-            if src_in and dst_in:
-                pass
-            elif src_in:
-                await _apply_delete(src, ctx, origin_cid)
-                return
-            elif dst_in and isinstance(dst, dict):
-                await _apply_add_or_modify(dst, ctx, EventName.added.value, origin_cid)
-                return
-            else:
-                return
-        elif not src_in:
-            return
+    # --subdir scopes the live inbound stream too (see _handle_subdir_scope).
+    if await _handle_subdir_scope(src, dst, event_name, ctx, origin_cid):
+        return
 
     if event_name in _ADD_OR_MODIFY_EVENTS:
         await _apply_add_or_modify(src, ctx, event_name, origin_cid)

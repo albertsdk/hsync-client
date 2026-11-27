@@ -504,6 +504,52 @@ class RelayDialer(_RelayEndpoint):
         return _handle
 
 
+async def _pump_relay_frames(
+    reader, local_writers: dict[int, Any], closed_streams: set[int], close_stream, start_pump
+) -> None:
+    """Demultiplex relayed substream frames onto loopback connections.
+
+    A DATA frame opens the loopback connection lazily, on the first byte, and only
+    for a stream that is still live (a closed id is never re-opened, which would
+    splice a new TLS connection into the middle of the old one).
+    """
+    while True:
+        frame = await _read_substream(reader)
+        if frame is None:
+            return
+        kind, stream_id, payload = frame
+        if kind == _RELAY_SUBSTREAM_PING:
+            continue
+        if stream_id in closed_streams:
+            continue
+        if kind == _RELAY_SUBSTREAM_CLOSE:
+            await close_stream(stream_id)
+            continue
+        local_writer = local_writers.get(stream_id)
+        if local_writer is None:
+            local_writer = await start_pump(stream_id)
+            if local_writer is None:
+                continue
+        try:
+            local_writer.write(payload)
+            await local_writer.drain()
+        except (ConnectionError, OSError):
+            await close_stream(stream_id)
+
+
+async def _teardown_relay_session(
+    writer, local_writers: dict[int, Any], pumps: set[asyncio.Task[Any]]
+) -> None:
+    """Close every loopback writer and cancel the pumps for one relayed session."""
+    for stream_id in list(local_writers):
+        _close_writer(local_writers.pop(stream_id))
+    for task in list(pumps):
+        task.cancel()
+    if pumps:
+        await asyncio.gather(*pumps, return_exceptions=True)
+    _close_writer(writer)
+
+
 class RelayAcceptor(_RelayEndpoint):
     """Serving side: accept relayed sessions and hand them to the local master."""
 
@@ -693,50 +739,32 @@ class RelayAcceptor(_RelayEndpoint):
                 with contextlib.suppress(ConnectionError, OSError, asyncio.CancelledError):
                     await _close_stream(stream_id)
 
+        async def _start_pump(stream_id: int) -> Any:
+            try:
+                local_reader, local_writer = await asyncio.open_connection(
+                    "127.0.0.1", self._local_port
+                )
+            except (ConnectionError, OSError):
+                # The master is not accepting: fail this stream now with a CLOSE
+                # instead of stranding the peer's connection.
+                await _close_stream(stream_id)
+                return None
+            local_writers[stream_id] = local_writer
+            task = asyncio.create_task(_local_to_session(stream_id, local_reader))
+            pumps.add(task)
+            task.add_done_callback(pumps.discard)
+            return local_writer
+
         try:
-            while True:
-                frame = await _read_substream(reader)
-                if frame is None:
-                    return
-                kind, stream_id, payload = frame
-                if kind == _RELAY_SUBSTREAM_PING:
-                    continue
-                if stream_id in closed_streams:
-                    continue
-                if kind == _RELAY_SUBSTREAM_CLOSE:
-                    await _close_stream(stream_id)
-                    continue
-                # kind == _RELAY_SUBSTREAM_DATA: open the loopback connection
-                # lazily, on the first byte, and only for a stream that is still
-                # live.
-                local_writer = local_writers.get(stream_id)
-                if local_writer is None:
-                    try:
-                        local_reader, local_writer = await asyncio.open_connection(
-                            "127.0.0.1", self._local_port
-                        )
-                    except (ConnectionError, OSError):
-                        # The master is not accepting: fail this stream now with a
-                        # CLOSE instead of stranding the peer's connection.
-                        await _close_stream(stream_id)
-                        continue
-                    local_writers[stream_id] = local_writer
-                    task = asyncio.create_task(_local_to_session(stream_id, local_reader))
-                    pumps.add(task)
-                    task.add_done_callback(pumps.discard)
-                try:
-                    local_writer.write(payload)
-                    await local_writer.drain()
-                except (ConnectionError, OSError):
-                    await _close_stream(stream_id)
+            await _pump_relay_frames(
+                reader,
+                local_writers,
+                closed_streams,
+                _close_stream,
+                _start_pump,
+            )
         finally:
-            for stream_id in list(local_writers):
-                _close_writer(local_writers.pop(stream_id))
-            for task in list(pumps):
-                task.cancel()
-            if pumps:
-                await asyncio.gather(*pumps, return_exceptions=True)
-            _close_writer(writer)
+            await _teardown_relay_session(writer, local_writers, pumps)
 
     async def _keepalive(self, writer: Any) -> None:
         """Keep the control stream (and therefore the QUIC connection) alive."""

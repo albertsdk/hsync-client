@@ -122,6 +122,50 @@ def _authority_time_url(server_url: str | None = None) -> str | None:
     return f"{buckets}/time"
 
 
+def _authority_timestamp(response, logger, degrade) -> tuple[float | None, Any]:
+    """Parse a finite ``timestamp`` from a clock reply.
+
+    Returns ``(remote_time, payload)``; ``remote_time`` is ``None`` (after calling
+    *degrade*) when the reply carries no usable timestamp.
+    """
+    try:
+        payload = response.json()
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    try:
+        remote_time = float(payload.get("timestamp"))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        logger.warning(f"{ActionLabel.CLOCK_DEGRADED} clock endpoint returned no usable timestamp")
+        degrade()
+        return None, payload
+    if not math.isfinite(remote_time):
+        logger.warning(
+            f"{ActionLabel.CLOCK_DEGRADED} clock endpoint returned a non-finite timestamp"
+        )
+        degrade()
+        return None, payload
+    return remote_time, payload
+
+
+def _record_authority_offset(
+    *, offset, rtt, trusted: bool, authority_source: str, keep_better: bool, logger
+) -> None:
+    """Record a clock measurement, honouring "keep the better trusted source"."""
+    if trusted:
+        offset_store.record(offset, trusted=True, rtt=rtt, source=authority_source)
+        logger.info(f"{ActionLabel.CLOCK_SYNC} authority offset {offset:+.3f}s (±{rtt / 2:.3f}s)")
+    elif keep_better:
+        logger.debug("Master clock is not anchored; keeping the existing trusted offset")
+    else:
+        offset_store.record(offset, trusted=False, rtt=rtt)
+        logger.warning(
+            f"{ActionLabel.CLOCK_DEGRADED} master clock is not anchored; "
+            "corrected mtimes are unknown and conflicts resolve by content"
+        )
+
+
 def probe_authority_clock_offset(
     logger: Any = log,
     *,
@@ -193,23 +237,8 @@ def probe_authority_clock_offset(
         _degrade()
         return False
 
-    try:
-        payload = response.json()
-    except Exception:
-        payload = {}
-    if not isinstance(payload, dict):
-        payload = {}
-    try:
-        remote_time = float(payload.get("timestamp"))  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        logger.warning(f"{ActionLabel.CLOCK_DEGRADED} clock endpoint returned no usable timestamp")
-        _degrade()
-        return False
-    if not math.isfinite(remote_time):
-        logger.warning(
-            f"{ActionLabel.CLOCK_DEGRADED} clock endpoint returned a non-finite timestamp"
-        )
-        _degrade()
+    remote_time, payload = _authority_timestamp(response, logger, _degrade)
+    if remote_time is None:
         return False
 
     offset, rtt = compute_clock_offset(t1, remote_time, t3)
@@ -227,17 +256,14 @@ def probe_authority_clock_offset(
 
     if not _current():
         return trusted
-    if trusted:
-        offset_store.record(offset, trusted=True, rtt=rtt, source=authority_source)
-        logger.info(f"{ActionLabel.CLOCK_SYNC} authority offset {offset:+.3f}s (±{rtt / 2:.3f}s)")
-    elif _keep_better_trusted_source():
-        logger.debug("Master clock is not anchored; keeping the existing trusted offset")
-    else:
-        offset_store.record(offset, trusted=False, rtt=rtt)
-        logger.warning(
-            f"{ActionLabel.CLOCK_DEGRADED} master clock is not anchored; "
-            "corrected mtimes are unknown and conflicts resolve by content"
-        )
+    _record_authority_offset(
+        offset=offset,
+        rtt=rtt,
+        trusted=trusted,
+        authority_source=authority_source,
+        keep_better=_keep_better_trusted_source(),
+        logger=logger,
+    )
     return trusted
 
 

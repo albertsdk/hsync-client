@@ -71,6 +71,60 @@ def _file(sha: str) -> File:
     )
 
 
+def _run_bulk(results: list[BenchResult], cid_a: str) -> None:
+    # ---- bulk diff: steady-state reconcile over an in-sync listing ----
+    with tempfile.TemporaryDirectory(prefix="hsync_reconcile_") as tmp:
+        bucket = str(Path(tmp) / "bucket")
+        state_dir = str(Path(tmp) / "state")
+        os.makedirs(bucket, exist_ok=True)
+        os.makedirs(state_dir, exist_ok=True)
+        os.environ["HSYNC_STATE_DIR"] = state_dir
+        set_config({"LOCAL_BUCKET": bucket, "CID": cid_a, "SYNC_DIRECTION": "bidirectional"})
+        sync_state._stores.clear()
+        reset_bucket_folder_cache()
+
+        n_files = 100
+        for i in range(n_files):
+            Path(bucket, f"f-{i:04d}.txt").write_bytes(b"x" * 64)
+
+        # Populate the SHA-256 LRU cache and seed the merge base for each file.
+        local_dicts = []
+        for path in sorted(Path(bucket).glob("f-*.txt")):
+            local = File.get(str(path))
+            assert local is not None and local.sha256sum
+            local_dicts.append(local.to_dict())
+            sync_state.record_base(str(path), local.sha256sum, vclock={cid_a: 1}, corrected_mtime=1)
+
+        remote_dicts = []
+        for local in local_dicts:
+            rel = str(Path(local["filepath"]).relative_to(bucket))
+            remote_dicts.append(
+                {
+                    "filepath": rel,
+                    "name": local["name"],
+                    "mtime": local["mtime"],
+                    "ctime": local["ctime"],
+                    "size": local["size"],
+                    "sha256sum": local["sha256sum"],
+                    "permissions": local["permissions"],
+                    "version": {
+                        "vclock": {cid_a: 1},
+                        "version_id": "v",
+                        "origin_cid": cid_a,
+                        "ts": 0,
+                        "corrected_mtime": 1,
+                    },
+                }
+            )
+
+        def op_bulk() -> None:
+            actions = get_sync_actions(remote_dicts, local_dicts, persist_state=False)
+            assert len(actions) == n_files
+            assert all(a.name is SyncActionName.nothing for a in actions)
+
+        results.append(measure("get_sync_actions(100 in_sync)", op_bulk, count=20))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--count", type=int, default=2000)
@@ -183,61 +237,11 @@ def main() -> None:
         measure("parse_advertised_version(malformed)", op_parse_malformed, count=count),
     ]
 
-    # ---- bulk diff: steady-state reconcile over an in-sync listing ----
-    with tempfile.TemporaryDirectory(prefix="hsync_reconcile_") as tmp:
-        bucket = str(Path(tmp) / "bucket")
-        state_dir = str(Path(tmp) / "state")
-        os.makedirs(bucket, exist_ok=True)
-        os.makedirs(state_dir, exist_ok=True)
-        os.environ["HSYNC_STATE_DIR"] = state_dir
-        set_config({"LOCAL_BUCKET": bucket, "CID": cid_a, "SYNC_DIRECTION": "bidirectional"})
-        sync_state._stores.clear()
-        reset_bucket_folder_cache()
+    _run_bulk(results, cid_a)
 
-        n_files = 100
-        for i in range(n_files):
-            Path(bucket, f"f-{i:04d}.txt").write_bytes(b"x" * 64)
-
-        # Populate the SHA-256 LRU cache and seed the merge base for each file.
-        local_dicts = []
-        for path in sorted(Path(bucket).glob("f-*.txt")):
-            local = File.get(str(path))
-            assert local is not None and local.sha256sum
-            local_dicts.append(local.to_dict())
-            sync_state.record_base(str(path), local.sha256sum, vclock={cid_a: 1}, corrected_mtime=1)
-
-        remote_dicts = []
-        for local in local_dicts:
-            rel = str(Path(local["filepath"]).relative_to(bucket))
-            remote_dicts.append(
-                {
-                    "filepath": rel,
-                    "name": local["name"],
-                    "mtime": local["mtime"],
-                    "ctime": local["ctime"],
-                    "size": local["size"],
-                    "sha256sum": local["sha256sum"],
-                    "permissions": local["permissions"],
-                    "version": {
-                        "vclock": {cid_a: 1},
-                        "version_id": "v",
-                        "origin_cid": cid_a,
-                        "ts": 0,
-                        "corrected_mtime": 1,
-                    },
-                }
-            )
-
-        def op_bulk() -> None:
-            actions = get_sync_actions(remote_dicts, local_dicts, persist_state=False)
-            assert len(actions) == n_files
-            assert all(a.name is SyncActionName.nothing for a in actions)
-
-        results.append(measure("get_sync_actions(100 in_sync)", op_bulk, count=20))
-
-        print(f"reconcile micro-benchmark (ops={count}, decision leaves + bulk diff)")
-        print_table(results)
-        maybe_write_json(args.json_out, results)
+    print(f"reconcile micro-benchmark (ops={count}, decision leaves + bulk diff)")
+    print_table(results)
+    maybe_write_json(args.json_out, results)
 
 
 if __name__ == "__main__":

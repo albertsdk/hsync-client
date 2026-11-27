@@ -650,6 +650,49 @@ def _is_whitelisted(name: str) -> bool:
     return name in ENGINE_FILENAMES or name.endswith(WHITELIST_SUFFIXES)
 
 
+def _check_dir_entry(rel: str, full: Path, entry: dict, mode: str, stats, mismatches) -> None:
+    """Verify one directory entry; append a mismatch when it diverges."""
+    if not full.is_dir():
+        mismatches.append(Mismatch(rel, "type", "dir", "file"))
+        return
+    st = full.stat()
+    stats.objects += 1
+    actual = st.st_mode & 0o777
+    expected = int(entry["mode"]) & 0o777
+    if mode == "server":
+        ok = (st.st_mode & 0o700) == 0o700
+        exp_repr = "floor 0o700"
+        act_repr = oct(st.st_mode & 0o777)
+    else:
+        ok = actual == (expected | 0o700)
+        exp_repr = oct(expected | 0o700)
+        act_repr = oct(actual)
+    if not ok:
+        mismatches.append(Mismatch(rel, "dir_mode", exp_repr, act_repr))
+
+
+def _check_file_entry(
+    rel: str, full: Path, entry: dict, mtime_tolerance: float, stats, mismatches
+) -> None:
+    """Verify one file entry (size/digest/mode/mtime); append each divergence."""
+    if full.is_dir():
+        mismatches.append(Mismatch(rel, "type", "file", "dir"))
+        return
+    st = full.stat()
+    stats.objects += 1
+    stats.bytes += st.st_size
+    if st.st_size != int(entry["size"]):
+        mismatches.append(Mismatch(rel, "size", str(entry["size"]), str(st.st_size)))
+    digest = _sha256_file(full)
+    if digest != entry["sha256"]:
+        mismatches.append(Mismatch(rel, "sha256", str(entry["sha256"]), digest))
+    actual_mode = st.st_mode & 0o777
+    if actual_mode != int(entry["mode"]) & 0o777:
+        mismatches.append(Mismatch(rel, "mode", oct(int(entry["mode"]) & 0o777), oct(actual_mode)))
+    if abs(st.st_mtime - float(entry["mtime"])) > mtime_tolerance:
+        mismatches.append(Mismatch(rel, "mtime", str(entry["mtime"]), f"{st.st_mtime:.0f}"))
+
+
 def verify_tree(
     root: Path,
     manifest: Manifest,
@@ -688,42 +731,9 @@ def verify_tree(
             seen.add(rel)
             stats.checked += 1
             if entry["type"] == "dir":
-                if not full.is_dir():
-                    mismatches.append(Mismatch(rel, "type", "dir", "file"))
-                    continue
-                st = full.stat()
-                stats.objects += 1
-                actual = st.st_mode & 0o777
-                expected = int(entry["mode"]) & 0o777
-                if mode == "server":
-                    ok = (st.st_mode & 0o700) == 0o700
-                    exp_repr = "floor 0o700"
-                    act_repr = oct(st.st_mode & 0o777)
-                else:
-                    ok = actual == (expected | 0o700)
-                    exp_repr = oct(expected | 0o700)
-                    act_repr = oct(actual)
-                if not ok:
-                    mismatches.append(Mismatch(rel, "dir_mode", exp_repr, act_repr))
+                _check_dir_entry(rel, full, entry, mode, stats, mismatches)
                 continue
-            if full.is_dir():
-                mismatches.append(Mismatch(rel, "type", "file", "dir"))
-                continue
-            st = full.stat()
-            stats.objects += 1
-            stats.bytes += st.st_size
-            if st.st_size != int(entry["size"]):
-                mismatches.append(Mismatch(rel, "size", str(entry["size"]), str(st.st_size)))
-            digest = _sha256_file(full)
-            if digest != entry["sha256"]:
-                mismatches.append(Mismatch(rel, "sha256", str(entry["sha256"]), digest))
-            actual_mode = st.st_mode & 0o777
-            if actual_mode != int(entry["mode"]) & 0o777:
-                mismatches.append(
-                    Mismatch(rel, "mode", oct(int(entry["mode"]) & 0o777), oct(actual_mode))
-                )
-            if abs(st.st_mtime - float(entry["mtime"])) > mtime_tolerance:
-                mismatches.append(Mismatch(rel, "mtime", str(entry["mtime"]), f"{st.st_mtime:.0f}"))
+            _check_file_entry(rel, full, entry, mtime_tolerance, stats, mismatches)
 
     for rel, entry in sorted(manifest.items()):
         if rel not in seen:

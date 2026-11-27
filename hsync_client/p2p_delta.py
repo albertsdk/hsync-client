@@ -284,24 +284,58 @@ def handle_delta_signatures_get(handler, query: dict) -> None:
     )
 
 
-def handle_delta_signatures_post(handler) -> None:
-    """Match slave base signatures against the master file (download delta)."""
-    if _delta_disabled(handler):
-        return
+def _read_sig_body(handler) -> dict | None:
+    """Read and validate the JSON signatures body; None when a 400 was already sent."""
     try:
         content_length = int(handler.headers.get("Content-Length", 0))
     except ValueError:
         content_length = 0
     if content_length <= 0 or content_length > _MAX_SIG_BODY_BYTES:
         handler._send_error_response(_HTTP_BAD_REQUEST, "Invalid request body")
-        return
+        return None
     try:
         body = json.loads(handler.rfile.read(content_length))
     except ValueError:
         handler._send_error_response(_HTTP_BAD_REQUEST, "Invalid JSON body")
-        return
+        return None
     if not isinstance(body, dict):
         handler._send_error_response(_HTTP_BAD_REQUEST, "Invalid request body")
+        return None
+    return body
+
+
+def _compress_delta_payload(
+    filepath: str, literal_path: str, literal_size: int
+) -> tuple[str, bool]:
+    """Stream-compress the literal payload for transit; return ``(path, compressed)``.
+
+    A second pass is needed because the sink must hold raw literals (the data ops
+    reference its offsets), so compression streams the temp file into a new one.
+    """
+    if not (
+        literal_size
+        and CONFIG.get("COMPRESSION_ENABLED", False)
+        and should_compress(filepath, literal_size, is_p2p=True)
+    ):
+        return literal_path, False
+    compressed_path = os.path.join(_get_payload_dir(), f"delta_literals_{uuid.uuid4().hex}.zst")
+    try:
+        compress_file_to_file(literal_path, compressed_path, level=compression_level(is_p2p=True))
+    except Exception:
+        os.remove(literal_path)
+        if os.path.exists(compressed_path):
+            os.remove(compressed_path)
+        raise
+    os.remove(literal_path)
+    return compressed_path, True
+
+
+def handle_delta_signatures_post(handler) -> None:
+    """Match slave base signatures against the master file (download delta)."""
+    if _delta_disabled(handler):
+        return
+    body = _read_sig_body(handler)
+    if body is None:
         return
 
     relpath = body.get("path")
@@ -360,28 +394,7 @@ def handle_delta_signatures_post(handler) -> None:
         )
         return
 
-    compressed = False
-    payload_path = literal_path
-    if (
-        literal_size
-        and CONFIG.get("COMPRESSION_ENABLED", False)
-        and should_compress(filepath, literal_size, is_p2p=True)
-    ):
-        # Second pass: the sink must hold raw literals (the data ops reference
-        # its offsets), so compression streams the temp file into a new one.
-        compressed_path = os.path.join(_get_payload_dir(), f"delta_literals_{uuid.uuid4().hex}.zst")
-        try:
-            compress_file_to_file(
-                literal_path, compressed_path, level=compression_level(is_p2p=True)
-            )
-        except Exception:
-            os.remove(literal_path)
-            if os.path.exists(compressed_path):
-                os.remove(compressed_path)
-            raise
-        os.remove(literal_path)
-        payload_path = compressed_path
-        compressed = True
+    payload_path, compressed = _compress_delta_payload(filepath, literal_path, literal_size)
 
     bucket = CONFIG.get("REMOTE_BUCKET", "")
     token = _issue_token_from_file(
@@ -412,6 +425,145 @@ def handle_delta_signatures_post(handler) -> None:
     )
 
 
+def _parse_delta_apply_meta(form_fields: dict, handler) -> dict | None:
+    """Parse and validate the delta metadata; None when a response was already sent."""
+    try:
+        meta = json.loads(form_fields.get("metadata", ""))
+    except ValueError:
+        handler._send_error_response(_HTTP_BAD_REQUEST, "Invalid metadata JSON")
+        return None
+    if not isinstance(meta, dict):
+        handler._send_error_response(_HTTP_BAD_REQUEST, "Invalid metadata")
+        return None
+    # The literal's declared size is part of the contract: the reporter used it
+    # while streaming and the sender reports progress on the same scale.
+    if delta_metadata_payload_size(meta) is None:
+        handler._send_error_response(_HTTP_BAD_REQUEST, "Invalid payload_size in delta metadata")
+        return None
+    base_sha256 = meta.get("base_sha256")
+    new_sha256 = meta.get("new_sha256")
+    new_size = meta.get("new_size")
+    if (
+        not is_sha256_hex(base_sha256)
+        or not is_sha256_hex(new_sha256)
+        or not isinstance(new_size, int)
+        or new_size < 0
+    ):
+        handler._send_error_response(_HTTP_BAD_REQUEST, "Invalid metadata fields")
+        return None
+    if parse_op_payload(meta.get("ops")) is None:
+        handler._send_error_response(_HTTP_BAD_REQUEST, "Invalid ops")
+        return None
+    return meta
+
+
+def _validate_delta_ops(filepath: str, literal_file: str, ops, new_size: int, handler) -> bool:
+    """Validate the ops against real bounds; False when a 422 was already sent."""
+    invalid = validate_op_bounds(
+        ops,
+        base_size=Path(filepath).stat().st_size,
+        literal_size=Path(literal_file).stat().st_size,
+        new_size=new_size,
+    )
+    if invalid is not None:
+        handler._send_json_response(_HTTP_UNPROCESSABLE, {"detail": invalid})
+        return False
+    return True
+
+
+def _rebuild_delta(
+    filepath: str, ops, literal_file: str, part_path: str, new_sha256, new_size, handler
+) -> str | None:
+    """Reconstruct the base onto ``part_path``; None when verification failed.
+
+    On ``ReconstructionMismatch`` the 422 response has already been sent.
+    """
+    with _delta_compute_sem, open(literal_file, "rb") as literal_stream:
+        try:
+            return reconstruct_and_verify(
+                filepath,
+                ops,
+                literal_stream,
+                part_path,
+                expected_sha256=new_sha256,
+                expected_size=new_size,
+            )
+        except ReconstructionMismatch as mismatch:
+            details = dict(mismatch.details)
+            reason = str(details.pop("reason", MISMATCH_HASH))
+            handler._send_json_response(_HTTP_UNPROCESSABLE, {"detail": reason, **details})
+            return None
+
+
+def _prepare_delta_literal(literal_path: str, meta: dict, handler) -> tuple[bool, str, str | None]:
+    """Optionally decompress the literal payload.
+
+    Returns ``(ok, literal_file, decompressed_path)``; ``ok`` is False when the
+    payload was invalid (the error response has already been sent).
+    """
+    if meta.get("compressed") is not True:
+        return True, literal_path, None
+    decompressed_path = f"{literal_path}.decompressed"
+    try:
+        with open(literal_path, "rb") as src, open(decompressed_path, "wb") as out:
+            out.writelines(decompress_stream(src, DELTA_MAX_LITERAL_SIZE))
+    except (zstd.ZstdError, ValueError) as exc:
+        handler._send_error_response(_HTTP_BAD_REQUEST, f"Invalid compressed payload: {exc}")
+        return False, literal_path, None
+    return True, decompressed_path, decompressed_path
+
+
+def _apply_rebuilt_metadata(filepath: str, meta: dict) -> None:
+    """Mark the inbound origin and adopt the announced mtime/permissions."""
+    cid = meta.get("cid", "")
+    if cid:
+        from hsync_common.ids import is_valid_cid
+
+        from hsync_client.p2p_websocket import mark_inbound_origin
+
+        if is_valid_cid(cid) and CONFIG.get("P2P_KEY"):
+            mark_inbound_origin(filepath, cid)
+    mtime = meta.get("mtime")
+    if mtime:
+        try:
+            mtime_val = clamp_incoming_raw_mtime(float(mtime))
+            os.utime(filepath, (mtime_val, mtime_val))
+        except (ValueError, OSError):
+            pass
+    permissions = meta.get("permissions")
+    if permissions:
+        from hsync_client.utils import set_permissions
+
+        set_permissions(filepath, permissions)
+
+
+def _send_destination_changed(handler, filepath: str) -> None:
+    """Return a 409 for a destination removed or renamed while the delta ran."""
+    # The destination hash may be unavailable (it was removed): the conflict
+    # detail must still stay processable.
+    try:
+        current = {
+            "detail": "destination_changed",
+            "actual_base_sha256": _file_sha256(filepath),
+        }
+    except OSError:
+        current = {"detail": "destination_changed"}
+    handler._send_json_response(_HTTP_CONFLICT, current)
+
+
+def _cleanup_delta_artifacts(
+    cleanup_path: str | None, decompressed_path: str | None, part_path: str
+) -> None:
+    """Remove leftover rebuild artifacts and clear the inflight marker."""
+    for leftover in (cleanup_path, decompressed_path):
+        if leftover and Path(leftover).exists():
+            try:
+                os.remove(leftover)
+            except OSError:
+                pass
+    unregister_inflight_partial(part_path)
+
+
 def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
     """Apply a slave-computed delta onto the master's base file.
 
@@ -436,35 +588,15 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
     dest_existed = Path(filepath).exists()
     dest_marker = deletion_marker_snapshot(filepath)
 
-    try:
-        meta = json.loads(form_fields.get("metadata", ""))
-    except ValueError:
-        handler._send_error_response(_HTTP_BAD_REQUEST, "Invalid metadata JSON")
+    meta = _parse_delta_apply_meta(form_fields, handler)
+    if meta is None:
         return
-    if not isinstance(meta, dict):
-        handler._send_error_response(_HTTP_BAD_REQUEST, "Invalid metadata")
-        return
-    # The literal's declared size is part of the contract: the reporter used it
-    # while streaming and the sender reports progress on the same scale.
-    if delta_metadata_payload_size(meta) is None:
-        handler._send_error_response(_HTTP_BAD_REQUEST, "Invalid payload_size in delta metadata")
-        return
-
     base_sha256 = meta.get("base_sha256")
     new_sha256 = meta.get("new_sha256")
     new_size = meta.get("new_size")
-    if (
-        not is_sha256_hex(base_sha256)
-        or not is_sha256_hex(new_sha256)
-        or not isinstance(new_size, int)
-        or new_size < 0
-    ):
-        handler._send_error_response(_HTTP_BAD_REQUEST, "Invalid metadata fields")
-        return
+    assert isinstance(new_size, int)  # validated by _parse_delta_apply_meta
     ops = parse_op_payload(meta.get("ops"))
-    if ops is None:
-        handler._send_error_response(_HTTP_BAD_REQUEST, "Invalid ops")
-        return
+    assert ops is not None  # validated by _parse_delta_apply_meta
 
     # Race check: the master's base must still be what the slave saw.
     current_base = _file_sha256(filepath)
@@ -479,30 +611,12 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
         )
         return
 
-    # Decompress a zstd literal payload (anti-bomb capped).
-    literal_file = literal_path
-    decompressed_path: str | None = None
-    if meta.get("compressed") is True:
-        decompressed_path = f"{literal_path}.decompressed"
-        try:
-            with open(literal_path, "rb") as src, open(decompressed_path, "wb") as out:
-                out.writelines(decompress_stream(src, DELTA_MAX_LITERAL_SIZE))
-        except (zstd.ZstdError, ValueError) as exc:
-            handler._send_error_response(_HTTP_BAD_REQUEST, f"Invalid compressed payload: {exc}")
-            return
-        literal_file = decompressed_path
+    ok, literal_file, decompressed_path = _prepare_delta_literal(literal_path, meta, handler)
+    if not ok:
+        return
 
     # Validate ops against real bounds before touching anything.
-    base_size = Path(filepath).stat().st_size
-    literal_size = Path(literal_file).stat().st_size
-    invalid = validate_op_bounds(
-        ops,
-        base_size=base_size,
-        literal_size=literal_size,
-        new_size=new_size,
-    )
-    if invalid is not None:
-        handler._send_json_response(_HTTP_UNPROCESSABLE, {"detail": invalid})
+    if not _validate_delta_ops(filepath, literal_file, ops, new_size, handler):
         return
 
     part_path = f"{filepath}{PARTIAL_DELTA_SUFFIX}"
@@ -513,58 +627,18 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
     # base, so the finally block removes only genuine leftovers.
     cleanup_path: str | None = part_path
     try:
-        with _delta_compute_sem, open(literal_file, "rb") as literal_stream:
-            try:
-                rebuilt = reconstruct_and_verify(
-                    filepath,
-                    ops,
-                    literal_stream,
-                    part_path,
-                    expected_sha256=new_sha256,
-                    expected_size=new_size,
-                )
-            except ReconstructionMismatch as mismatch:
-                details = dict(mismatch.details)
-                reason = str(details.pop("reason", MISMATCH_HASH))
-                handler._send_json_response(_HTTP_UNPROCESSABLE, {"detail": reason, **details})
-                return
-
-        cid = meta.get("cid", "")
-        if cid:
-            from hsync_common.ids import is_valid_cid
-
-            from hsync_client.p2p_websocket import mark_inbound_origin
-
-            if is_valid_cid(cid) and CONFIG.get("P2P_KEY"):
-                mark_inbound_origin(filepath, cid)
-
+        rebuilt = _rebuild_delta(
+            filepath, ops, literal_file, part_path, new_sha256, new_size, handler
+        )
+        if rebuilt is None:
+            return
         if destination_mutation_since(filepath, dest_existed, dest_marker):
-            # The destination hash may be unavailable (it was removed): the
-            # conflict detail must still stay processable.
-            try:
-                current = {
-                    "detail": "destination_changed",
-                    "actual_base_sha256": _file_sha256(filepath),
-                }
-            except OSError:
-                current = {"detail": "destination_changed"}
-            handler._send_json_response(_HTTP_CONFLICT, current)
+            _send_destination_changed(handler, filepath)
             return
         replace_with_retry(part_path, filepath)
         cleanup_path = None
 
-        mtime = meta.get("mtime")
-        if mtime:
-            try:
-                mtime_val = clamp_incoming_raw_mtime(float(mtime))
-                os.utime(filepath, (mtime_val, mtime_val))
-            except (ValueError, OSError):
-                pass
-        permissions = meta.get("permissions")
-        if permissions:
-            from hsync_client.utils import set_permissions
-
-            set_permissions(filepath, permissions)
+        _apply_rebuilt_metadata(filepath, meta)
 
         # The rebuilt file is committed: publish the terminal transfer (the file
         # the peer reports as an upload, received here as a download) so the
@@ -573,13 +647,7 @@ def handle_delta_apply(handler, form_fields: dict, literal_path: str) -> None:
 
         handler._send_json_response(_HTTP_OK, {"status": "ok", "sha256": rebuilt, "size": new_size})
     finally:
-        for leftover in (cleanup_path, decompressed_path):
-            if leftover and Path(leftover).exists():
-                try:
-                    os.remove(leftover)
-                except OSError:
-                    pass
-        unregister_inflight_partial(part_path)
+        _cleanup_delta_artifacts(cleanup_path, decompressed_path, part_path)
 
 
 def handle_delta_data(handler, bucket: str, token: str) -> None:

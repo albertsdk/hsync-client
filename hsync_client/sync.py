@@ -825,6 +825,86 @@ def _align_case_spelling(bucket: str, info: dict, winner: str) -> bool:
     return True
 
 
+def _warn_case_collision(rel: str, winner: str) -> None:
+    """Warn (bounded, per pair) that *rel* collides with *winner* and is skipped."""
+    if len(_collision_warned) >= _COLLISION_WARNED_CAP:
+        _collision_warned.clear()
+    if (rel, winner) not in _collision_warned:
+        _collision_warned.add((rel, winner))
+        log.warning(
+            f'{ActionLabel.SKIP} "{rel}" collides with "{winner}" on this filesystem; skipping it'
+        )
+
+
+def _resolve_collision_groups(
+    groups: dict, fold_case: bool, bucket: str, local_by_rel: dict
+) -> tuple[dict, set, dict, set, list]:
+    """Resolve every case/normalization collision group for one cycle."""
+    losers: dict[str, str] = {}
+    conflicted: set[str] = set()
+    rewrites: dict[str, str] = {}
+    local_winners: set[str] = set()
+    conflicts: list[tuple[str, str]] = []
+    for group in groups.values():
+        distinct = {rel for rel, _ in group}
+        if len(distinct) < 2:
+            continue
+        local_rels = {rel for rel, is_local in group if is_local}
+        remote_rels = {rel for rel, is_local in group if not is_local}
+        winner = _collision_winner(distinct)
+        if len(remote_rels) >= 2 and fold_case:
+            # Real twins: the bucket holds two files this device cannot both
+            # materialise. Keep both sides untouched and report the group. On a
+            # case-sensitive filesystem the two spellings are distinct files, so
+            # the deterministic winner is reconciled instead.
+            conflicted |= distinct
+            conflicts.append((winner, min(distinct - {winner})))
+            log.warning(
+                f'{ActionLabel.SKIP} "{winner}" and another name differ only by case; '
+                "both stay out of this device's sync"
+            )
+            continue
+        aligned = True
+        if local_rels and fold_case:
+            for rel in local_rels:
+                if rel == winner:
+                    continue
+                info = local_by_rel.get(rel)
+                if info is None or not _align_case_spelling(bucket, info, winner):
+                    aligned = False
+                    break
+                rewrites[rel] = winner
+        if not aligned:
+            conflicted |= distinct
+            conflicts.append((winner, min(distinct - {winner})))
+            continue
+        if local_rels:
+            local_winners.add(winner)
+        for rel in distinct - {winner}:
+            # A spelling rewritten in place is converged, not dropped.
+            if rewrites.get(rel) == winner:
+                continue
+            losers[rel] = winner
+            _warn_case_collision(rel, winner)
+    return losers, conflicted, rewrites, local_winners, conflicts
+
+
+def _emit_case_conflict_warning(conflicts: list[tuple[str, str]]) -> None:
+    """Emit (or clear) the aggregated case-conflict warning for this cycle."""
+    if not conflicts:
+        emit_warning_cleared("case-conflict")
+        return
+    examples = ", ".join(f'"{a}" / "{b}"' for a, b in conflicts[:3])
+    more = f" (+{len(conflicts) - 3} more)" if len(conflicts) > 3 else ""
+    emit_warning(
+        f"{len(conflicts)} name(s) differ only by letter case and cannot be stored "
+        f"together on this device: {examples}{more}. They are left as they are; "
+        "rename one of each pair on a device that supports both.",
+        source="case-conflict",
+        reason="case-conflict",
+    )
+
+
 def _drop_case_collisions(
     local_files: list[dict], remote_files: list[dict]
 ) -> tuple[list[dict], list[dict]]:
@@ -865,75 +945,10 @@ def _drop_case_collisions(
 
     local_by_rel = {rel: info for info, is_local, rel in entries if is_local and rel}
 
-    losers: dict[str, str] = {}
-    conflicted: set[str] = set()
-    rewrites: dict[str, str] = {}
-    local_winners: set[str] = set()
-    conflicts: list[tuple[str, str]] = []
-    for group in groups.values():
-        distinct = {rel for rel, _ in group}
-        if len(distinct) < 2:
-            continue
-        local_rels = {rel for rel, is_local in group if is_local}
-        remote_rels = {rel for rel, is_local in group if not is_local}
-        winner = _collision_winner(distinct)
-
-        if len(remote_rels) >= 2 and fold_case:
-            # Real twins: the bucket holds two files this device cannot both
-            # materialise. Keep both sides untouched and report the group.
-            # On a case-sensitive filesystem the two spellings are distinct
-            # files, so the deterministic winner is reconciled instead (the
-            # engine's identity still tracks only one of them).
-            conflicted |= distinct
-            conflicts.append((winner, min(distinct - {winner})))
-            log.warning(
-                f'{ActionLabel.SKIP} "{winner}" and another name differ only by case; '
-                "both stay out of this device's sync"
-            )
-            continue
-
-        aligned = True
-        if local_rels and fold_case:
-            for rel in local_rels:
-                if rel == winner:
-                    continue
-                info = local_by_rel.get(rel)
-                if info is None or not _align_case_spelling(bucket, info, winner):
-                    aligned = False
-                    break
-                rewrites[rel] = winner
-        if not aligned:
-            conflicted |= distinct
-            conflicts.append((winner, min(distinct - {winner})))
-            continue
-        if local_rels:
-            local_winners.add(winner)
-        for rel in distinct - {winner}:
-            # A spelling rewritten in place is converged, not dropped.
-            if rewrites.get(rel) == winner:
-                continue
-            losers[rel] = winner
-            if len(_collision_warned) >= _COLLISION_WARNED_CAP:
-                _collision_warned.clear()
-            if (rel, winner) not in _collision_warned:
-                _collision_warned.add((rel, winner))
-                log.warning(
-                    f'{ActionLabel.SKIP} "{rel}" collides with "{winner}" on this '
-                    "filesystem; skipping it"
-                )
-
-    if conflicts:
-        examples = ", ".join(f'"{a}" / "{b}"' for a, b in conflicts[:3])
-        more = f" (+{len(conflicts) - 3} more)" if len(conflicts) > 3 else ""
-        emit_warning(
-            f"{len(conflicts)} name(s) differ only by letter case and cannot be stored "
-            f"together on this device: {examples}{more}. They are left as they are; "
-            "rename one of each pair on a device that supports both.",
-            source="case-conflict",
-            reason="case-conflict",
-        )
-    else:
-        emit_warning_cleared("case-conflict")
+    losers, conflicted, rewrites, local_winners, conflicts = _resolve_collision_groups(
+        groups, fold_case, bucket, local_by_rel
+    )
+    _emit_case_conflict_warning(conflicts)
 
     if not losers and not conflicted:
         return local_files, remote_files
@@ -2745,26 +2760,13 @@ def sweep_empty_local_dirs(remote_dirs: list[dict]) -> int:
     return removed
 
 
-def reconcile_directories(remote_dirs: list[dict], *, p2p_mode: bool) -> None:
-    """Create the directory entries that exist on only one side (create-only).
+def _create_missing_local_dirs(
+    remote_dirs: list[dict], *, direction: str, filter_path: Any, local_root: Path
+) -> set[str]:
+    """Create every safe remote directory missing locally; return the remote set.
 
-    Directories have no content hash and no tombstones, so a periodic
-    bidirectional creation could resurrect one that a peer deleted while the
-    other side still holds it. This runs only on the first cycle of a process
-    (``sync(reconcile_dirs=True)``): it closes the startup gap — directories
-    that existed before the realtime channel connected — while later changes
-    keep travelling as live events. Nothing is ever deleted here.
-
-    * remote → local: create every safe remote directory missing locally
-      (skipped in ``upload-only``, where this node takes nothing back).
-    * local → remote: POST every safe local directory missing remotely to the
-      peer's ``/dirs`` endpoint (P2P only; skipped in ``download-only``).
+    Skipped per-entry in ``upload-only``, where this node takes nothing back.
     """
-    direction = CONFIG.get("SYNC_DIRECTION", "bidirectional")
-    filter_path = CONFIG.get("FILTER_PATH")
-    local_bucket = CONFIG["LOCAL_BUCKET"]
-    local_root = Path(local_bucket)
-
     remote_paths: set[str] = set()
     for info in remote_dirs:
         if not isinstance(info, dict):
@@ -2798,13 +2800,13 @@ def reconcile_directories(remote_dirs: list[dict], *, p2p_mode: bool) -> None:
             log.debug(f'Reconciled directory (remote): "{full}"')
         except OSError as e:
             log.warning(f'Could not create directory "{full}": {e}')
+    return remote_paths
 
-    if not p2p_mode or direction == "download-only":
-        return
 
-    remote_set = {p.rstrip("/") for p in remote_paths}
-    uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/dirs"
-    cid = CONFIG.get("CID")
+def _post_missing_remote_dirs(
+    local_bucket: str, remote_set: set[str], filter_path: Any, uri: str, cid: Any
+) -> None:
+    """POST every safe local directory missing remotely to the peer (P2P only)."""
     for root, dirs, _files in walk(local_bucket):
         # Hidden check on the absolute path: the matcher compares path
         # components, so a bare basename can miss (or falsely match) a rule.
@@ -2839,6 +2841,37 @@ def reconcile_directories(remote_dirs: list[dict], *, p2p_mode: bool) -> None:
                 log.debug(f'Reconciled directory (local): "{root}"')
         except RequestException as e:
             log.warning(f'Could not create remote directory "{rel}": {e}')
+
+
+def reconcile_directories(remote_dirs: list[dict], *, p2p_mode: bool) -> None:
+    """Create the directory entries that exist on only one side (create-only).
+
+    Directories have no content hash and no tombstones, so a periodic
+    bidirectional creation could resurrect one that a peer deleted while the
+    other side still holds it. This runs only on the first cycle of a process
+    (``sync(reconcile_dirs=True)``): it closes the startup gap — directories
+    that existed before the realtime channel connected — while later changes
+    keep travelling as live events. Nothing is ever deleted here.
+
+    * remote → local: create every safe remote directory missing locally
+      (skipped in ``upload-only``, where this node takes nothing back).
+    * local → remote: POST every safe local directory missing remotely to the
+      peer's ``/dirs`` endpoint (P2P only; skipped in ``download-only``).
+    """
+    direction = CONFIG.get("SYNC_DIRECTION", "bidirectional")
+    filter_path = CONFIG.get("FILTER_PATH")
+    local_bucket = CONFIG["LOCAL_BUCKET"]
+    local_root = Path(local_bucket)
+
+    remote_paths = _create_missing_local_dirs(
+        remote_dirs, direction=direction, filter_path=filter_path, local_root=local_root
+    )
+    if not p2p_mode or direction == "download-only":
+        return
+    uri = f"{CONFIG['API']['buckets']}/{CONFIG['REMOTE_BUCKET']}/dirs"
+    _post_missing_remote_dirs(
+        local_bucket, {p.rstrip("/") for p in remote_paths}, filter_path, uri, CONFIG.get("CID")
+    )
 
 
 # ── Direction-filter exclusion sets (module-level, pre-computed once) ─────
@@ -3108,6 +3141,60 @@ def _local_hash_index(local_files: list[dict], bucket_root: str) -> dict[str, st
     return index
 
 
+def _precheck_remote_entry(
+    remote_file_info: dict, bucket_root: str, remote_filepaths: set[str], actions: list[SyncAction]
+) -> bool:
+    """Validate/route one remote entry before comparison; True when handled here.
+
+    Returns True when the entry was consumed (skipped, or a symlink action added),
+    so the caller must continue to the next entry.
+    """
+    remote_path = str(remote_file_info.get("filepath", ""))
+    # .hsynckeep is a per-peer local sentinel: never exchange it across peers.
+    if basename(remote_path) == HSYNCKEEP_FILENAME:
+        return True
+    # The remote listing is untrusted input (hostile server or P2P master): drop
+    # entries whose path is unsafe or names an internal engine artifact.
+    if validate_remote_relpath(remote_path) is None:
+        log.warning(
+            f"{ActionLabel.SECURITY} Ignoring unsafe remote listing entry: "
+            f'"{remote_file_info.get("filepath")}"'
+        )
+        return True
+    # Symlink entry: replicate STRUCTURALLY (the link, never the target content).
+    if remote_file_info.get("type") == "symlink":
+        link = Symlink.from_dict(remote_file_info, bucket_root)
+        if link.filepath:
+            remote_filepaths.add(str(link.filepath))
+        actions.append(SyncAction(link, SyncActionName.download_symlink))
+        return True
+    return False
+
+
+def _resolve_permissions_only(
+    action, local_file, remote_file, direction: str, persist_state: bool
+) -> tuple[Any, bool]:
+    """Converge a permission-only (chmod) divergence; return ``(action, permissions_only)``.
+
+    The causal matrix compares content hashes, so an identical content with
+    different permissions resolves to ``nothing``; permissions then propagate as an
+    ordinary ``modified`` change. Gated on *persist_state* so a dry-run/preview
+    never mutates the local filesystem.
+    """
+    if action != SyncActionName.nothing or not persist_state:
+        return action, False
+    local_perms = local_file.permissions
+    remote_perms = remote_file.permissions
+    if not _permissions_diverge(local_perms, remote_perms):
+        return action, False
+    if direction != "download-only":
+        return SyncActionName.upload, True
+    if local_file.filepath:
+        set_permissions(local_file.filepath, remote_perms)
+        log.debug('Permission-only converge (remote): "{}" ({})', local_file.filepath, remote_perms)
+    return action, False
+
+
 def _actions_from_remote(
     remote_files: list[dict],
     local_files: list[dict],
@@ -3138,27 +3225,7 @@ def _actions_from_remote(
 
     # Process remote files
     for remote_file_info in remote_files:
-        remote_path = str(remote_file_info.get("filepath", ""))
-        # .hsynckeep is a per-peer local sentinel: never exchange it across peers.
-        if basename(remote_path) == HSYNCKEEP_FILENAME:
-            continue
-        # The remote listing is untrusted input (hostile server or P2P
-        # master): drop entries whose path is unsafe or names an internal
-        # engine artifact instead of acting on them.
-        if validate_remote_relpath(remote_path) is None:
-            log.warning(
-                f"{ActionLabel.SECURITY} Ignoring unsafe remote listing entry: "
-                f'"{remote_file_info.get("filepath")}"'
-            )
-            continue
-        # Symlink entry: replicate STRUCTURALLY (the link, never the target
-        # content). The same code path serves remote (server listing) and P2P
-        # (master listing); the target containment is re-validated on receive.
-        if remote_file_info.get("type") == "symlink":
-            link = Symlink.from_dict(remote_file_info, bucket_root)
-            if link.filepath:
-                remote_filepaths.add(str(link.filepath))
-            actions.append(SyncAction(link, SyncActionName.download_symlink))
+        if _precheck_remote_entry(remote_file_info, bucket_root, remote_filepaths, actions):
             continue
         # One malformed entry (bogus types for size/mtime, unreadable local
         # stat) must not stall the whole reconciliation cycle.
@@ -3215,22 +3282,9 @@ def _actions_from_remote(
             # - download-only: the remote mode wins → converge locally.
             # Gated on persist_state so a dry-run/preview never mutates the
             # local filesystem (same purity contract as merge_and_record).
-            permissions_only = False
-            if action == SyncActionName.nothing and persist_state:
-                local_perms = local_file.permissions
-                remote_perms = remote_file.permissions
-                if _permissions_diverge(local_perms, remote_perms):
-                    if direction == "download-only":
-                        if local_file.filepath:
-                            set_permissions(local_file.filepath, remote_perms)
-                            log.debug(
-                                'Permission-only converge (remote): "{}" ({})',
-                                local_file.filepath,
-                                remote_perms,
-                            )
-                    else:
-                        action = SyncActionName.upload
-                        permissions_only = True
+            action, permissions_only = _resolve_permissions_only(
+                action, local_file, remote_file, direction, persist_state
+            )
 
             # mtime-only divergence: the content hashes match (the causal
             # matrix resolved to ``nothing``) but the mtimes differ. A ``touch``
@@ -3650,6 +3704,134 @@ def update_dir(data: dict, *, create: bool = True) -> Dir | None:
     return dir
 
 
+def _download_remote_version(
+    file_data: File,
+    inventory_observer: InventoryObserver,
+    source_resolver: P2PSourceResolver | None,
+) -> bool:
+    """Download one remote version; True on success, False when skipped/failed.
+
+    Skips a file that already failed permanently in this cycle (a realtime event
+    re-queuing while the full sync runs) and records new permanent failures.
+    """
+    if _is_permanently_failed(file_data):
+        log.debug('Skipping permanently-failed download: "{}"', file_data.filepath)
+        return False
+    # Import here to avoid circular import
+    from hsync_client.transfer import download_file
+
+    try:
+        download_file(
+            file_data,
+            inventory_observer=inventory_observer,
+            source_resolver=source_resolver,
+            refresh_peer_sources=source_resolver is not None,
+        )
+    except PermanentDownloadError as e:
+        _record_permanent_download_failure(file_data, e)
+        return False
+    return True
+
+
+def _replace_local_with_remote(
+    file: File,
+    data: dict,
+    file_data: File,
+    inventory_observer: InventoryObserver,
+    source_resolver: P2PSourceResolver | None,
+) -> None:
+    """Content differs: decide via the causal matrix (ADR-0022), then download."""
+    # The remote side is the advertised version (if any) on the event's src
+    # File; the local side is the effective stored version. The wall clock is
+    # never consulted.
+    remote_vclock, remote_corrected = _parse_advertised_version(data.get("version"))
+    local_vclock = None
+    local_corrected = 0
+    base_hash = None
+    if file.filepath:
+        eff, base_hash = sync_state.local_version_and_base(file.filepath, file.sha256sum)
+        local_vclock = eff["vclock"] if eff else None
+        local_corrected = eff.get("corrected_mtime", 0) if eff else 0
+    local_corrected, remote_corrected, mtime_uncertainty = _chronological_inputs(
+        int(local_corrected), int(remote_corrected)
+    )
+    decision = resolve_three_way(
+        file.sha256sum or None,
+        local_vclock,
+        file_data.sha256sum or None,
+        remote_vclock,
+        base_hash,
+        local_corrected_mtime=local_corrected,
+        remote_corrected_mtime=remote_corrected,
+        mtime_uncertainty=mtime_uncertainty,
+    )
+    # conflict_upload: local wins tie-break — skip the download; the local change
+    # is uploaded on the next reconcile. No conflict copy is saved.
+    if decision is SyncDecision.conflict_upload:
+        log.debug(
+            'Causal conflict for "{}": local wins tie-break, skipping '
+            "download (will upload on next reconcile)",
+            file_data.filepath,
+        )
+        inventory_observer.upsert(file)
+        return
+    # conflict_download: remote wins tie-break — preserve the local copy first.
+    if decision is SyncDecision.conflict_download:
+        _save_conflict_copy(file)
+    # download / dominance: take the remote version silently.
+    file_data = File.from_dict(data, CONFIG["LOCAL_BUCKET"])
+    if not _download_remote_version(file_data, inventory_observer, source_resolver):
+        return
+    # Invalidate cached SHA-256 — file content has changed
+    if file_data.filepath:
+        invalidate_sha256_cache(file_data.filepath)
+
+
+def _converge_identical_content(
+    file: File, data: dict, file_data: File, inventory_observer: InventoryObserver
+) -> None:
+    """Content identical: converge metadata by logical version, then upsert.
+
+    A plain ``touch`` announced by a peer still converges by *logical version*,
+    never by the wall clock (ADR-0054): adopt the peer's mtime when it wins,
+    decided by the same helper as the reconcile (``_metadata_only_decision``) so
+    the realtime and reconcile paths never disagree. An ahead local side pushes
+    its own metadata on the next reconcile.
+    """
+    remote_vclock, remote_corrected = _parse_advertised_version(data.get("version"))
+    if file.filepath:
+        local_eff, _base = sync_state.local_version_and_base(file.filepath, file.sha256sum)
+        adopt, apply_corrected = _metadata_only_decision(
+            direction=CONFIG.get("SYNC_DIRECTION", "bidirectional"),
+            adopt_on_tie=True,
+            local_vclock=local_eff["vclock"] if local_eff else None,
+            remote_vclock=remote_vclock,
+            # The live on-disk corrected mtime is the local claim (the stored
+            # snapshot can be stale).
+            local_corrected=int(sync_state._corrected_mtime_of(file.filepath)),
+            remote_corrected=int(remote_corrected),
+            abs_path=file.filepath,
+            remote_raw_mtime=int(file_data.mtime or 0),
+        )
+        if adopt:
+            _apply_decided_metadata(
+                file.filepath,
+                apply_corrected=apply_corrected,
+                corrected_mtime=int(remote_corrected),
+                raw_mtime=int(file_data.mtime),
+            )
+            sync_state.merge_and_record(file.filepath, file.sha256sum, remote_vclock)
+            inventory_observer.upsert(file)
+            return
+    if _permissions_diverge(file.permissions, file_data.permissions):
+        # Only permissions differ - update them
+        if file_data.permissions:
+            set_permissions(file_data.filepath, file_data.permissions)
+    else:
+        log.debug('File not changed: "{}"', file_data.filepath)
+    inventory_observer.upsert(file)
+
+
 def update_file(
     data: dict,
     inventory_observer: InventoryObserver = NOOP_INVENTORY_OBSERVER,
@@ -3664,9 +3846,6 @@ def update_file(
     Args:
         data: Dictionary with file metadata from remote event.
     """
-    # Import here to avoid circular import
-    from hsync_client.transfer import download_file
-
     # Remote event data is untrusted input: refuse unsafe paths.
     if validate_remote_relpath(str(data.get("filepath", ""))) is None:
         log.warning(f'{ActionLabel.SECURITY} Rejected unsafe remote file: "{data.get("filepath")}"')
@@ -3685,124 +3864,15 @@ def update_file(
         log.error("Invalid file data: missing filepath")
         return
 
-    if Path(file_data.filepath).exists():
-        # File exists locally - check if update needed
-        file = File.get(file_data.filepath)
-
-        if file and file.sha256sum != file_data.sha256sum:
-            # Content differs: decide via the causal matrix (ADR-0022). The
-            # remote side is the advertised version (if any) on the event's
-            # src File; the local side is the effective stored version. The
-            # wall clock is never consulted.
-            remote_vclock, remote_corrected = _parse_advertised_version(data.get("version"))
-            local_vclock = None
-            local_corrected = 0
-            base_hash = None
-            if file.filepath:
-                eff, base_hash = sync_state.local_version_and_base(file.filepath, file.sha256sum)
-                local_vclock = eff["vclock"] if eff else None
-                local_corrected = eff.get("corrected_mtime", 0) if eff else 0
-            local_corrected, remote_corrected, mtime_uncertainty = _chronological_inputs(
-                int(local_corrected), int(remote_corrected)
-            )
-            decision = resolve_three_way(
-                file.sha256sum or None,
-                local_vclock,
-                file_data.sha256sum or None,
-                remote_vclock,
-                base_hash,
-                local_corrected_mtime=local_corrected,
-                remote_corrected_mtime=remote_corrected,
-                mtime_uncertainty=mtime_uncertainty,
-            )
-            # conflict_upload: local wins tie-break — skip the download; the
-            # local change is uploaded on the next reconcile. No conflict copy
-            # is saved (the local version is the winner).
-            if decision is SyncDecision.conflict_upload:
-                log.debug(
-                    'Causal conflict for "{}": local wins tie-break, skipping '
-                    "download (will upload on next reconcile)",
-                    file_data.filepath,
-                )
-                inventory_observer.upsert(file)
-                return
-            # conflict_download: remote wins tie-break — preserve the local
-            # copy before overwriting it.
-            if decision is SyncDecision.conflict_download:
-                _save_conflict_copy(file)
-            # download / dominance: take the remote version silently.
-            file_data = File.from_dict(data, CONFIG["LOCAL_BUCKET"])
-            # Skip if this exact file already failed permanently in this
-            # cycle (realtime event re-queuing while the full sync runs).
-            if _is_permanently_failed(file_data):
-                log.debug('Skipping permanently-failed download: "{}"', file_data.filepath)
-                return
-            try:
-                download_file(
-                    file_data,
-                    inventory_observer=inventory_observer,
-                    source_resolver=source_resolver,
-                    refresh_peer_sources=source_resolver is not None,
-                )
-            except PermanentDownloadError as e:
-                _record_permanent_download_failure(file_data, e)
-                return
-            # Invalidate cached SHA-256 — file content has changed
-            if file_data.filepath:
-                invalidate_sha256_cache(file_data.filepath)
-        elif file is not None:
-            # Content identical. A plain ``touch`` announced by a peer still
-            # converges by *logical version*, never by the wall clock (ADR-0054):
-            # adopt the peer's mtime when it wins, decided by the same helper as
-            # the reconcile (``_metadata_only_decision``) so the realtime and
-            # reconcile paths never disagree. An ahead local side pushes its own
-            # metadata on the next reconcile.
-            version_payload = data.get("version")
-            remote_vclock, remote_corrected = _parse_advertised_version(version_payload)
-            if file.filepath:
-                local_eff, _base = sync_state.local_version_and_base(file.filepath, file.sha256sum)
-                adopt, apply_corrected = _metadata_only_decision(
-                    direction=CONFIG.get("SYNC_DIRECTION", "bidirectional"),
-                    adopt_on_tie=True,
-                    local_vclock=local_eff["vclock"] if local_eff else None,
-                    remote_vclock=remote_vclock,
-                    # The live on-disk corrected mtime is the local claim (the
-                    # stored snapshot can be stale).
-                    local_corrected=int(sync_state._corrected_mtime_of(file.filepath)),
-                    remote_corrected=int(remote_corrected),
-                    abs_path=file.filepath,
-                    remote_raw_mtime=int(file_data.mtime or 0),
-                )
-                if adopt:
-                    _apply_decided_metadata(
-                        file.filepath,
-                        apply_corrected=apply_corrected,
-                        corrected_mtime=int(remote_corrected),
-                        raw_mtime=int(file_data.mtime),
-                    )
-                    sync_state.merge_and_record(file.filepath, file.sha256sum, remote_vclock)
-                    inventory_observer.upsert(file)
-                    return
-            if _permissions_diverge(file.permissions, file_data.permissions):
-                # Only permissions differ - update them
-                if file_data.permissions:
-                    set_permissions(file_data.filepath, file_data.permissions)
-            else:
-                log.debug('File not changed: "{}"', file_data.filepath)
-            inventory_observer.upsert(file)
-    else:
+    if not Path(file_data.filepath).exists():
         # File doesn't exist locally - download it
-        file = File.from_dict(data, CONFIG["LOCAL_BUCKET"])
-        # Skip if this exact file already failed permanently in this cycle.
-        if _is_permanently_failed(file):
-            log.debug('Skipping permanently-failed download: "{}"', file.filepath)
-            return
-        try:
-            download_file(
-                file,
-                inventory_observer=inventory_observer,
-                source_resolver=source_resolver,
-                refresh_peer_sources=source_resolver is not None,
-            )
-        except PermanentDownloadError as e:
-            _record_permanent_download_failure(file, e)
+        _download_remote_version(
+            File.from_dict(data, CONFIG["LOCAL_BUCKET"]), inventory_observer, source_resolver
+        )
+        return
+
+    file = File.get(file_data.filepath)
+    if file and file.sha256sum != file_data.sha256sum:
+        _replace_local_with_remote(file, data, file_data, inventory_observer, source_resolver)
+    elif file is not None:
+        _converge_identical_content(file, data, file_data, inventory_observer)

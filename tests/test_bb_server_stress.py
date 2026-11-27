@@ -47,27 +47,8 @@ pytestmark = pytest.mark.skipif(not _ENABLED, reason=_REASON)
 _K = stress_tree.stress_knobs("server")
 
 
-def _wire_verify(
-    live_server, bucket: str, manifest: stress_tree.Manifest, mtime_tolerance: float
-) -> list[stress_tree.Mismatch]:
-    """Primary server-mode verification over the public REST surface (plan §6).
-
-    Structure + metadata parity from the ``/files`` and ``/dirs`` listings,
-    then one download per file re-hashed on arrival (``Accept-Encoding:
-    identity`` so the digest is computed over the stored bytes whatever the
-    server's compression decision). Content is thus verified as any real
-    client would observe it — no internal server state is consulted.
-    """
-    base, api_key = live_server
-    headers = {"Authorization": f"Bearer {api_key}"}
-    mismatches: list[stress_tree.Mismatch] = []
-
-    r = requests.get(
-        f"{base}/api/v1/buckets/{bucket}/files", headers=headers, timeout=300, verify=False
-    )
-    assert r.status_code == 200, r.text
-    listed = {f["filepath"]: f for f in r.json()}
-    files = {p: m for p, m in manifest.items() if m["type"] == "file"}
+def _verify_listed_files(listed: dict, files: dict, mtime_tolerance: float, mismatches) -> None:
+    """Structure + metadata parity for file entries in the ``/files`` listing."""
     for rel in sorted(files):
         m = files[rel]
         e = listed.get(rel)
@@ -90,18 +71,19 @@ def _wire_verify(
             # conflicted copies included (plan §6.2 — deliberately not whitelisted).
             mismatches.append(stress_tree.Mismatch(rel, "extra", None, "listed"))
 
-    r = requests.get(
-        f"{base}/api/v1/buckets/{bucket}/dirs", headers=headers, timeout=120, verify=False
-    )
-    assert r.status_code == 200, r.text
-    listed_dirs = {d["path"] for d in r.json()}
-    dirs = {p for p, m in manifest.items() if m["type"] == "dir"}
+
+def _verify_listed_dirs(listed_dirs: set[str], dirs: set[str], mismatches) -> None:
+    """Directory parity from the ``/dirs`` listing."""
     for rel in sorted(dirs - listed_dirs):
         mismatches.append(stress_tree.Mismatch(rel, "missing", "dir", None))
     for rel in sorted(listed_dirs - dirs):
         mismatches.append(stress_tree.Mismatch(rel, "extra", None, "listed"))
 
-    # Per-file download re-hash (streamed; content-level black-box verdict).
+
+def _verify_downloaded_files(
+    base: str, bucket: str, headers: dict, files: dict, mismatches
+) -> None:
+    """Download each file and re-hash the streamed bytes (content-level verdict)."""
     for rel in sorted(files):
         m = files[rel]
         with requests.get(
@@ -126,6 +108,40 @@ def _wire_verify(
             mismatches.append(stress_tree.Mismatch(rel, "size", str(m["size"]), str(size)))
         if h.hexdigest() != m["sha256"]:
             mismatches.append(stress_tree.Mismatch(rel, "content", str(m["sha256"]), h.hexdigest()))
+
+
+def _wire_verify(
+    live_server, bucket: str, manifest: stress_tree.Manifest, mtime_tolerance: float
+) -> list[stress_tree.Mismatch]:
+    """Primary server-mode verification over the public REST surface (plan §6).
+
+    Structure + metadata parity from the ``/files`` and ``/dirs`` listings,
+    then one download per file re-hashed on arrival (``Accept-Encoding:
+    identity`` so the digest is computed over the stored bytes whatever the
+    server's compression decision). Content is thus verified as any real
+    client would observe it — no internal server state is consulted.
+    """
+    base, api_key = live_server
+    headers = {"Authorization": f"Bearer {api_key}"}
+    mismatches: list[stress_tree.Mismatch] = []
+
+    r = requests.get(
+        f"{base}/api/v1/buckets/{bucket}/files", headers=headers, timeout=300, verify=False
+    )
+    assert r.status_code == 200, r.text
+    listed = {f["filepath"]: f for f in r.json()}
+    files = {p: m for p, m in manifest.items() if m["type"] == "file"}
+    _verify_listed_files(listed, files, mtime_tolerance, mismatches)
+
+    r = requests.get(
+        f"{base}/api/v1/buckets/{bucket}/dirs", headers=headers, timeout=120, verify=False
+    )
+    assert r.status_code == 200, r.text
+    listed_dirs = {d["path"] for d in r.json()}
+    dirs = {p for p, m in manifest.items() if m["type"] == "dir"}
+    _verify_listed_dirs(listed_dirs, dirs, mismatches)
+
+    _verify_downloaded_files(base, bucket, headers, files, mismatches)
     return mismatches
 
 

@@ -877,6 +877,82 @@ class BaseFileEventHandler(FileSystemEventHandler):
         except Exception as e:
             log.error(f'Error handling file event for "{src_path}": {e}')
 
+    def _on_moved_dir(self, src_path: str, dest_path: str) -> Event | None:
+        """Handle a directory move; the rename event, or None when reframed."""
+        if not src_path:
+            # Move-in from outside the tree: same handling as a fresh directory.
+            self.on_created(DirCreatedEvent(dest_path))
+            return None
+        if not dest_path:
+            # Move-out to outside the tree: same handling as a delete.
+            self.on_deleted(DirDeletedEvent(src_path))
+            return None
+        if is_hidden_dir(src_path) and is_hidden_dir(dest_path):
+            return None
+        if is_hidden_dir(src_path) and not is_hidden_dir(dest_path):
+            self.on_created(DirCreatedEvent(dest_path))
+            return None
+        if is_hidden_dir(dest_path):
+            self.on_deleted(DirDeletedEvent(src_path))
+            return None
+        # A renamed directory vacates its source path: invalidate the dedup entry
+        # so a later re-create at that path is re-evaluated (renaming preserves the
+        # mtime, so an undone rename would otherwise be stat-suppressed).
+        self._invalidate_dedup(src_path)
+        log.info(
+            f'{self._label("RENAME", src_path, dest_path)} "{src_path}" -> "{dest_path}"'
+            f"{self._cid_suffix(src_path, dest_path)}"
+        )
+        dst = Dir.get(dest_path)
+        if not dst:
+            return None
+        src = deepcopy(dst)
+        src.path = src_path
+        # Directories carry no tombstones: mark every file the rename vacated under
+        # the old prefix, or an offline peer re-uploads the whole subtree.
+        self._mark_dir_rename_vacated(src_path, dest_path)
+        return self._make_event(EventName.renamed, src, dst)
+
+    def _on_moved_file(self, src_path: str, dest_path: str) -> Event | None:
+        """Handle a file move; the rename event, or None when reframed."""
+        if not src_path:
+            # Move-in from outside the tree: the file arrives already final (no
+            # close-write follows), so propagate it exactly like a close.
+            if not is_hidden_file(dest_path):
+                self._process_file_ready(dest_path, trigger="move-in")
+            return None
+        if not dest_path:
+            # Move-out to outside the tree: route through on_deleted.
+            self.on_deleted(FileDeletedEvent(src_path))
+            return None
+        if is_hidden_file(src_path):
+            # Safe-save: an editor renamed a temp file over the final file, so
+            # reframe it as a content modification of the destination.
+            if not is_hidden_file(dest_path):
+                self._process_file_ready(dest_path, trigger="safe-save")
+            return None
+        log.info(
+            f'{self._label("RENAME", src_path, dest_path)} "{src_path}" -> "{dest_path}"'
+            f"{self._cid_suffix(src_path, dest_path)}"
+        )
+        invalidate_sha256_cache(src_path)
+        invalidate_sha256_cache(dest_path)
+        if Path(dest_path).is_symlink():
+            # A symlink is replicated structurally, never as its target's bytes.
+            self.on_deleted(FileDeletedEvent(src_path))
+            self._broadcast_symlink(dest_path)
+            return None
+        dst = File.get(dest_path)
+        if not dst:
+            return None
+        src = deepcopy(dst)
+        src.filepath = src_path
+        # A rename vacates the source path exactly like a delete: record the causal
+        # marker or an offline peer re-uploads it (resurrection).
+        self._on_deleted(src_path, is_directory=False)
+        self._invalidate_dedup(src_path)
+        return self._make_event(EventName.renamed, src, dst)
+
     def on_moved(self, event) -> None:
         src_path = ensure_str_path(event.src_path)
         dest_path = ensure_str_path(getattr(event, "dest_path", None))
@@ -898,103 +974,10 @@ class BaseFileEventHandler(FileSystemEventHandler):
         # handle (on inotify a plain IN_CREATE fires while the file is still
         # being written, so content propagates via ``on_closed`` instead; a
         # move-in has no close-write, so this is its only event).
-        message: Event | None = None
         if event.is_directory:
-            if not src_path:
-                # Move-in from outside the tree: same handling as a fresh
-                # directory (hidden-dir filtering included).
-                self.on_created(DirCreatedEvent(dest_path))
-                return
-            if not dest_path:
-                # Move-out to outside the tree: same handling as a delete
-                # (coalescing and tombstone bookkeeping included).
-                self.on_deleted(DirDeletedEvent(src_path))
-                return
-            if is_hidden_dir(src_path) and is_hidden_dir(dest_path):
-                return
-            if is_hidden_dir(src_path) and not is_hidden_dir(dest_path):
-                self.on_created(DirCreatedEvent(dest_path))
-                return
-            if is_hidden_dir(dest_path):
-                self.on_deleted(DirDeletedEvent(src_path))
-                return
-
-            # A renamed directory vacates its source path: invalidate the
-            # dedup entry so a later re-create at that path is re-evaluated.
-            # Renaming preserves the directory's mtime, so an undone rename
-            # (dir back to its old path) would otherwise be stat-suppressed
-            # by the directory-create dedup. Mirrors the file-branch
-            # invalidation below and the delete-flush invalidation.
-            self._invalidate_dedup(src_path)
-
-            log.info(
-                f'{self._label("RENAME", src_path, dest_path)} "{src_path}" -> "{dest_path}"'
-                f"{self._cid_suffix(src_path, dest_path)}"
-            )
-            dst = Dir.get(dest_path)
-            if dst:
-                src = deepcopy(dst)
-                src.path = src_path
-                message = self._make_event(EventName.renamed, src, dst)
-                # Directories carry no tombstones: mark every file the rename
-                # vacated under the old prefix, or a peer that was offline sees
-                # the old paths merely missing and re-uploads the whole subtree.
-                self._mark_dir_rename_vacated(src_path, dest_path)
+            message: Event | None = self._on_moved_dir(src_path, dest_path)
         else:
-            if not src_path:
-                # Move-in from outside the tree: the file arrives already
-                # final (no close-write follows), so propagate it exactly like
-                # a close (hidden files filtered exactly like on_closed). The
-                # two-stage stat/hash dedup keeps a hypothetical duplicate (a
-                # later on_closed after an in-place re-write) harmless.
-                if is_hidden_file(dest_path):
-                    return
-                self._process_file_ready(dest_path, trigger="move-in")
-                return
-            if not dest_path:
-                # Move-out to outside the tree: the path vacated the tree, so
-                # route it through on_deleted (tombstones, coalescing and the
-                # delete broadcast are identical to a plain delete).
-                self.on_deleted(FileDeletedEvent(src_path))
-                return
-            if is_hidden_file(src_path):
-                # Safe-save: an editor/application wrote to a temp file
-                # (``.goutputstream-*``, ``*.tmp``, …) and atomically renamed
-                # it over the final file. The temp is hidden (ignored) so we
-                # reframe this as a content modification of the *destination*,
-                # not a user-initiated rename. If the destination is also
-                # hidden the event is dropped entirely (temp→temp).
-                if not is_hidden_file(dest_path):
-                    self._process_file_ready(dest_path, trigger="safe-save")
-                return
-
-            log.info(
-                f'{self._label("RENAME", src_path, dest_path)} "{src_path}" -> "{dest_path}"'
-                f"{self._cid_suffix(src_path, dest_path)}"
-            )
-            invalidate_sha256_cache(src_path)
-            invalidate_sha256_cache(dest_path)
-            if Path(dest_path).is_symlink():
-                # A symlink is replicated structurally, never as its target's
-                # bytes: publish the new link and drop the old path instead of
-                # building a File (which would stat the target).
-                self.on_deleted(FileDeletedEvent(src_path))
-                self._broadcast_symlink(dest_path)
-                return
-            dst = File.get(dest_path)
-            if dst:
-                src = deepcopy(dst)
-                src.filepath = src_path
-                message = self._make_event(EventName.renamed, src, dst)
-                # A rename vacates the source path exactly like a delete: record
-                # the causal marker, or a peer that was offline sees the old
-                # path merely missing and re-uploads it (resurrection).
-                self._on_deleted(src_path, is_directory=False)
-                # The source path no longer exists; drop its dedup cache so a
-                # file later re-created at the same path with identical stat
-                # and/or hash is re-evaluated (not skipped as "unchanged").
-                # Mirrors the invalidation in on_deleted for the same bug class.
-                self._invalidate_dedup(src_path)
+            message = self._on_moved_file(src_path, dest_path)
 
         if message:
             # The originating side must publish the same rename to its own UI as

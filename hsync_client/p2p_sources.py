@@ -240,51 +240,7 @@ class P2PSourceService:
             log.exception("P2P source lookup failed; returning master-only fallback")
             return build_p2p_sources_response(files=response_files)
 
-        candidates_by_file: list[list[P2PSourceCandidate]] = []
-        holder_sets = [
-            {holder.cid for holder in holders.get((file["path"], file["sha256"]), ())}
-            for file in files
-        ]
-        needed = set().union(*holder_sets)
-        # URL and announced-address set depend only on the peer, not on the file:
-        # compute them once per resolve (and only for peers that hold something),
-        # not once per (file, peer). The live session lookups stay per file so a
-        # concurrent update is still observed.
-        prepared: dict[str, tuple[str, frozenset[object]]] = {}
-        for peer in peers:
-            if peer.cid not in needed:
-                continue
-            prepared[peer.cid] = (
-                build_peer_download_url(self.bucket, peer.address, peer.port),
-                _announced_ip_set(peer),
-            )
-        for holder_cids in holder_sets:
-            candidates: list[P2PSourceCandidate] = []
-            for peer in peers:
-                prepared_item = prepared.get(peer.cid)
-                if prepared_item is None or peer.cid not in holder_cids:
-                    continue
-                download_url, announced = prepared_item
-                owner_address = self._store.session_address(peer.cid)
-                if owner_address is None or not _owner_is_announced(owner_address, announced):
-                    continue
-                # A candidate exists only with a live capacity advertisement:
-                # without it the requester could not respect the seeder's cap.
-                serve_slots = self._store.session_serve_slots(peer.cid)
-                if serve_slots is None:
-                    continue
-                candidates.append(
-                    P2PSourceCandidate(
-                        cid=peer.cid,
-                        download_url=download_url,
-                        cert_fp=str(peer.cert_fingerprint),
-                        compression=peer.compression_enabled,
-                        serve_slots=serve_slots,
-                    )
-                )
-                if len(candidates) >= P2P_SOURCES_MAX_CANDIDATES:
-                    break
-            candidates_by_file.append(candidates)
+        candidates_by_file = self._candidates_by_file(files, holders, peers)
 
         # Start from the always-valid empty fallback and add candidates by rank
         # across the batch. This preserves a useful first choice for every file
@@ -293,6 +249,64 @@ class P2PSourceService:
         current_size = self._compact_size(base)
         if current_size > P2P_SOURCES_MAX_BODY_BYTES:
             raise ValueError("request cannot produce a bounded sources response")
+        self._append_candidates_within_budget(response_files, candidates_by_file, current_size)
+
+        return build_p2p_sources_response(files=response_files)
+
+    def _candidates_by_file(self, files, holders, peers) -> list[list[P2PSourceCandidate]]:
+        """Rank each file's live holders into a bounded candidate list."""
+        holder_sets = [
+            {holder.cid for holder in holders.get((file["path"], file["sha256"]), ())}
+            for file in files
+        ]
+        needed = set().union(*holder_sets)
+        # URL and announced-address set depend only on the peer, not on the file:
+        # compute them once per resolve (and only for peers that hold something).
+        prepared: dict[str, tuple[str, frozenset[object]]] = {}
+        for peer in peers:
+            if peer.cid not in needed:
+                continue
+            prepared[peer.cid] = (
+                build_peer_download_url(self.bucket, peer.address, peer.port),
+                _announced_ip_set(peer),
+            )
+        return [
+            self._candidates_for_file(holder_cids, peers, prepared) for holder_cids in holder_sets
+        ]
+
+    def _candidates_for_file(self, holder_cids, peers, prepared) -> list[P2PSourceCandidate]:
+        """Rank the peers that hold one file into a bounded candidate list."""
+        candidates: list[P2PSourceCandidate] = []
+        for peer in peers:
+            prepared_item = prepared.get(peer.cid)
+            if prepared_item is None or peer.cid not in holder_cids:
+                continue
+            download_url, announced = prepared_item
+            owner_address = self._store.session_address(peer.cid)
+            if owner_address is None or not _owner_is_announced(owner_address, announced):
+                continue
+            # A candidate exists only with a live capacity advertisement: without it
+            # the requester could not respect the seeder's cap.
+            serve_slots = self._store.session_serve_slots(peer.cid)
+            if serve_slots is None:
+                continue
+            candidates.append(
+                P2PSourceCandidate(
+                    cid=peer.cid,
+                    download_url=download_url,
+                    cert_fp=str(peer.cert_fingerprint),
+                    compression=peer.compression_enabled,
+                    serve_slots=serve_slots,
+                )
+            )
+            if len(candidates) >= P2P_SOURCES_MAX_CANDIDATES:
+                break
+        return candidates
+
+    def _append_candidates_within_budget(
+        self, response_files, candidates_by_file, current_size
+    ) -> None:
+        """Add candidates by rank across the batch until the body budget is hit."""
         for rank in range(P2P_SOURCES_MAX_CANDIDATES):
             for index, candidates in enumerate(candidates_by_file):
                 if rank >= len(candidates):
@@ -305,8 +319,6 @@ class P2PSourceService:
                     continue
                 response_files[index]["sources"].append(candidate)
                 current_size += added_size
-
-        return build_p2p_sources_response(files=response_files)
 
 
 @dataclass(frozen=True, slots=True)

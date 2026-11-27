@@ -218,6 +218,35 @@ class StdinCommandHandler:
         except Exception as exc:
             self._log.error(f"stdin command '{cmd}' failed: {exc}")
 
+    def _pump_stdin_lines(self, dup_fd: int, wake_r: int, stop: threading.Event) -> None:
+        """Read newline-framed commands until stop/EOF and dispatch each line."""
+        buf = bytearray()
+        while not stop.is_set():
+            try:
+                ready, _, _ = select.select([dup_fd, wake_r], [], [])
+            except (OSError, ValueError):
+                break  # a descriptor was closed under us
+            if wake_r in ready:
+                break  # stop_thread
+            try:
+                chunk = os.read(dup_fd, _BoundedLineReader._READ_CHUNK)
+            except OSError:
+                break  # stdin closed by the parent
+            if not chunk:
+                break  # EOF: the parent process closed the pipe
+            buf.extend(chunk)
+            while True:
+                newline = buf.find(b"\n")
+                if newline == -1:
+                    if len(buf) > _MAX_STDIN_LINE_BYTES:
+                        buf.clear()  # drop an over-cap line, keep reading
+                    break
+                line = bytes(buf[: newline + 1])
+                del buf[: newline + 1]
+                if len(line) > _MAX_STDIN_LINE_BYTES:
+                    continue
+                self._dispatch_in_thread(line)
+
     def run_in_thread(self, stop: threading.Event) -> None:
         """Blocking reader for callers that have no event loop.
 
@@ -256,33 +285,8 @@ class StdinCommandHandler:
             self._thread_fd = dup_fd
             self._wake_w = wake_w
         self._log.debug("stdin command reader started (thread)")
-        buf = bytearray()
         try:
-            while not stop.is_set():
-                try:
-                    ready, _, _ = select.select([dup_fd, wake_r], [], [])
-                except (OSError, ValueError):
-                    break  # a descriptor was closed under us
-                if wake_r in ready:
-                    break  # stop_thread
-                try:
-                    chunk = os.read(dup_fd, _BoundedLineReader._READ_CHUNK)
-                except OSError:
-                    break  # stdin closed by the parent
-                if not chunk:
-                    break  # EOF: the parent process closed the pipe
-                buf.extend(chunk)
-                while True:
-                    newline = buf.find(b"\n")
-                    if newline == -1:
-                        if len(buf) > _MAX_STDIN_LINE_BYTES:
-                            buf.clear()  # drop an over-cap line, keep reading
-                        break
-                    line = bytes(buf[: newline + 1])
-                    del buf[: newline + 1]
-                    if len(line) > _MAX_STDIN_LINE_BYTES:
-                        continue
-                    self._dispatch_in_thread(line)
+            self._pump_stdin_lines(dup_fd, wake_r, stop)
         finally:
             with self._thread_lock:
                 self._thread_fd = None

@@ -399,6 +399,21 @@ class _SharedValidationValues(TypedDict):
 _SHARED_VALIDATION_KEYS: tuple[str, ...] = tuple(_SharedValidationValues.__annotations__)
 
 
+def _require_in_range(value, lo, hi, message: str) -> None:
+    """Raise :class:`typer.BadParameter` when *value* is outside ``[lo, hi]``.
+
+    ``None`` means "not given" and is always accepted.
+    """
+    if value is not None and (value < lo or value > hi):
+        raise typer.BadParameter(message)
+
+
+def _require_non_negative(value, message: str) -> None:
+    """Raise :class:`typer.BadParameter` when *value* is negative (``None`` = unset)."""
+    if value is not None and value < 0:
+        raise typer.BadParameter(message)
+
+
 def _validate_shared_options(values: Mapping[str, Any]) -> tuple[int | None, int | None, int]:
     """Validate the options shared by the ``p2p`` and ``server`` subcommands.
 
@@ -437,30 +452,36 @@ def _validate_shared_options(values: Mapping[str, Any]) -> tuple[int | None, int
     mass_delete_percent = opts["mass_delete_percent"]
     delta_min_file_size = opts["delta_min_file_size"]
     delta_min_file_size_p2p = opts["delta_min_file_size_p2p"]
-    if http_timeout is not None and (
-        http_timeout < HTTP_TIMEOUT_MIN or http_timeout > HTTP_TIMEOUT_MAX
-    ):
-        raise typer.BadParameter(
-            f"HTTP timeout must be between {HTTP_TIMEOUT_MIN} and {HTTP_TIMEOUT_MAX}."
-        )
-    if resync is not None and (resync < RESYNC_MIN or resync > RESYNC_MAX):
-        raise typer.BadParameter(f"Resync interval must be between {RESYNC_MIN} and {RESYNC_MAX}.")
-    if reconnect_delay is not None and (
-        reconnect_delay < RECONNECT_DELAY_MIN or reconnect_delay > RECONNECT_DELAY_MAX
-    ):
-        raise typer.BadParameter(
-            f"Retry delay must be between {RECONNECT_DELAY_MIN} and {RECONNECT_DELAY_MAX}."
-        )
-    if stability_delay is not None and (
-        stability_delay < STABILITY_DELAY_MIN or stability_delay > STABILITY_DELAY_MAX
-    ):
-        raise typer.BadParameter(
-            f"Stability delay must be between {STABILITY_DELAY_MIN} and {STABILITY_DELAY_MAX}."
-        )
-    if max_wait_timeout < MAX_WAIT_TIMEOUT_MIN or max_wait_timeout > MAX_WAIT_TIMEOUT_MAX:
-        raise typer.BadParameter(
-            f"Max wait timeout must be between {MAX_WAIT_TIMEOUT_MIN} and {MAX_WAIT_TIMEOUT_MAX}."
-        )
+    _require_in_range(
+        http_timeout,
+        HTTP_TIMEOUT_MIN,
+        HTTP_TIMEOUT_MAX,
+        f"HTTP timeout must be between {HTTP_TIMEOUT_MIN} and {HTTP_TIMEOUT_MAX}.",
+    )
+    _require_in_range(
+        resync,
+        RESYNC_MIN,
+        RESYNC_MAX,
+        f"Resync interval must be between {RESYNC_MIN} and {RESYNC_MAX}.",
+    )
+    _require_in_range(
+        reconnect_delay,
+        RECONNECT_DELAY_MIN,
+        RECONNECT_DELAY_MAX,
+        f"Retry delay must be between {RECONNECT_DELAY_MIN} and {RECONNECT_DELAY_MAX}.",
+    )
+    _require_in_range(
+        stability_delay,
+        STABILITY_DELAY_MIN,
+        STABILITY_DELAY_MAX,
+        f"Stability delay must be between {STABILITY_DELAY_MIN} and {STABILITY_DELAY_MAX}.",
+    )
+    _require_in_range(
+        max_wait_timeout,
+        MAX_WAIT_TIMEOUT_MIN,
+        MAX_WAIT_TIMEOUT_MAX,
+        f"Max wait timeout must be between {MAX_WAIT_TIMEOUT_MIN} and {MAX_WAIT_TIMEOUT_MAX}.",
+    )
     if sync_direction not in SYNC_DIRECTIONS:
         raise typer.BadParameter(f"sync-direction must be one of: {', '.join(SYNC_DIRECTIONS)}.")
     parsed_min_free_disk_space = _parse_size_option(
@@ -470,11 +491,13 @@ def _validate_shared_options(values: Mapping[str, Any]) -> tuple[int | None, int
         maximum=MIN_FREE_DISK_SPACE_MAX,
         default=MIN_FREE_DISK_SPACE_DEFAULT,
     )
-    if max_inbound_size < MAX_INBOUND_SIZE_MB_MIN or max_inbound_size > MAX_INBOUND_SIZE_MB_MAX:
-        raise typer.BadParameter(
-            f"Max download size must be between "
-            f"{MAX_INBOUND_SIZE_MB_MIN} and {MAX_INBOUND_SIZE_MB_MAX} MB."
-        )
+    _require_in_range(
+        max_inbound_size,
+        MAX_INBOUND_SIZE_MB_MIN,
+        MAX_INBOUND_SIZE_MB_MAX,
+        f"Max download size must be between "
+        f"{MAX_INBOUND_SIZE_MB_MIN} and {MAX_INBOUND_SIZE_MB_MAX} MB.",
+    )
 
     parsed_bw_upload = _parse_and_validate_bandwidth(
         max_bandwidth_upload, "--limit-upload", "Upload"
@@ -483,24 +506,26 @@ def _validate_shared_options(values: Mapping[str, Any]) -> tuple[int | None, int
         max_bandwidth_download, "--limit-download", "Download"
     )
 
-    if max_concurrent_transfers is not None and (
-        max_concurrent_transfers < MAX_CONCURRENT_TRANSFERS_MIN
-        or max_concurrent_transfers > MAX_CONCURRENT_TRANSFERS_MAX
-    ):
-        raise typer.BadParameter(
-            f"--max-concurrent-transfers must be between "
-            f"{MAX_CONCURRENT_TRANSFERS_MIN} and {MAX_CONCURRENT_TRANSFERS_MAX}."
-        )
+    _require_in_range(
+        max_concurrent_transfers,
+        MAX_CONCURRENT_TRANSFERS_MIN,
+        MAX_CONCURRENT_TRANSFERS_MAX,
+        f"--max-concurrent-transfers must be between "
+        f"{MAX_CONCURRENT_TRANSFERS_MIN} and {MAX_CONCURRENT_TRANSFERS_MAX}.",
+    )
 
-    if mass_delete_threshold is not None and mass_delete_threshold < 0:
-        raise typer.BadParameter("--mass-delete-threshold must be >= 0 (0 = disabled).")
-    if mass_delete_percent is not None and (mass_delete_percent < 0 or mass_delete_percent > 100):
-        raise typer.BadParameter("--mass-delete-percent must be between 0 and 100 (0 = disabled).")
+    _require_non_negative(
+        mass_delete_threshold, "--mass-delete-threshold must be >= 0 (0 = disabled)."
+    )
+    _require_in_range(
+        mass_delete_percent,
+        0,
+        100,
+        "--mass-delete-percent must be between 0 and 100 (0 = disabled).",
+    )
     # Delta size floors (0 = delta for every file size)
-    if delta_min_file_size is not None and delta_min_file_size < 0:
-        raise typer.BadParameter("--delta-min-file-size must be >= 0.")
-    if delta_min_file_size_p2p is not None and delta_min_file_size_p2p < 0:
-        raise typer.BadParameter("--delta-min-file-size-p2p must be >= 0.")
+    _require_non_negative(delta_min_file_size, "--delta-min-file-size must be >= 0.")
+    _require_non_negative(delta_min_file_size_p2p, "--delta-min-file-size-p2p must be >= 0.")
 
     # Sync trash (ADR-0056). The store is device-local, so it must stay outside
     # the synced folder: everything inside it is shared with the peers. The
@@ -508,13 +533,13 @@ def _validate_shared_options(values: Mapping[str, Any]) -> tuple[int | None, int
     # a relocated state dir) can point the store inside without a flag on the
     # line.
     trash_retention_days = opts["trash_retention_days"]
-    if trash_retention_days is not None and not (
-        0 <= trash_retention_days <= TRASH_RETENTION_DAYS_MAX
-    ):
-        raise typer.BadParameter(
-            f"--trash-retention must be between 0 and {TRASH_RETENTION_DAYS_MAX} days "
-            "(0 = no time limit)."
-        )
+    _require_in_range(
+        trash_retention_days,
+        0,
+        TRASH_RETENTION_DAYS_MAX,
+        f"--trash-retention must be between 0 and {TRASH_RETENTION_DAYS_MAX} days "
+        "(0 = no time limit).",
+    )
     local_path = values["local_path"]
     if local_path:
         # Lazy: ``hsync_common.models`` is outside the CLI's import budget
