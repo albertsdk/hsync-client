@@ -825,88 +825,91 @@ class P2PEndpointMixin(_HTTPTransportBase):
             return
 
         if self._is_seeder():
-            download_path = (
-                f"{ENDPOINT_BUCKETS_PREFIX}/{self.server.bucket}{ENDPOINT_FILES_DOWNLOAD_SUFFIX}"
-            )
-            if path != download_path:
-                self._send_method_not_allowed()
-                return
-            required = {"filename", "sha256", "cid"}
-            if set(query) != required or any(len(query[key]) != 1 for key in required):
-                self._send_error_response(HTTP_BAD_REQUEST, "Invalid seeder query")
-                return
-            expected_sha = query["sha256"][0]
-            requester_cid = query["cid"][0]
-            if (
-                not is_sha256_hex(expected_sha)
-                or expected_sha != expected_sha.lower()
-                or not is_valid_cid(requester_cid)
-            ):
-                self._send_error_response(HTTP_BAD_REQUEST, "Invalid seeder query")
-                return
-            slots = self.server.peer_read_slots
-            if slots is None:
-                raise RuntimeError("seeder server is missing its read-cap semaphore")
-            if not slots.acquire(blocking=False):
-                # Saturated, not broken: tell the requester how long to wait so it
-                # defers this seeder instead of pricing the refusal as a failure.
-                self._send_error_response(
-                    HTTP_SERVICE_UNAVAILABLE,
-                    "Seeder read cap reached",
-                    extra_headers={"Retry-After": str(SEEDER_RETRY_AFTER_S)},
-                )
-                return
-            try:
-                self._handle_download(query, expected_sha256=expected_sha)
-            finally:
-                slots.release()
+            self._handle_seeder_get(path, query)
             return
 
         # Bucket-scoped REST routes, most specific suffix first. The prefix is
         # tested once: every one of them lives under /api/v1/buckets/{bucket}.
-        if ENDPOINT_BUCKETS_PREFIX in path:
-            # List directory permissions: /api/v1/buckets/{bucket}/dirs
-            if path.endswith(ENDPOINT_DIRS_SUFFIX):
-                self._handle_list_dirs()
-                return
-
-            # List files: /api/v1/buckets/{bucket}/files
-            if path.endswith(ENDPOINT_FILES_SUFFIX):
-                self._handle_list_files(query)
-                return
-
-            # Download file: /api/v1/buckets/{bucket}/files/download
-            if path.endswith(ENDPOINT_FILES_DOWNLOAD_SUFFIX):
-                self._handle_download(query)
-                return
-
-            # Upload status: /api/v1/buckets/{bucket}/files/upload-status
-            if path.endswith(ENDPOINT_FILES_UPLOAD_STATUS_SUFFIX):
-                self._handle_upload_status(query)
-                return
-
-            # Delta signatures: /api/v1/buckets/{bucket}/files/delta/signatures
-            if path.endswith(ENDPOINT_DELTA_SIGNATURES_SUFFIX):
-                from hsync_client.p2p_delta import handle_delta_signatures_get
-
-                handle_delta_signatures_get(self, query)
-                return
-
-            # Delta literal payload: /api/v1/buckets/{bucket}/files/delta/data/{token}
-            if ENDPOINT_DELTA_DATA_MARKER in path:
-                from hsync_client.p2p_delta import handle_delta_data
-
-                bucket = path.split(f"{ENDPOINT_BUCKETS_PREFIX}/", 1)[-1].split("/", 1)[0]
-                token = path.rsplit(ENDPOINT_DELTA_DATA_MARKER, 1)[-1]
-                handle_delta_data(self, bucket, token)
-                return
-
-            # Tombstones: /api/v1/buckets/{bucket}/tombstones
-            if path.endswith(ENDPOINT_TOMBSTONES_SUFFIX):
-                self._handle_tombstones()
-                return
+        if ENDPOINT_BUCKETS_PREFIX in path and self._dispatch_bucket_get(path, query):
+            return
 
         self._send_error_response(HTTP_NOT_FOUND, "Not found")
+
+    def _handle_seeder_get(self, path: str, query: dict) -> None:
+        """Serve a download to a peer from a read-only seeder, or refuse it."""
+        download_path = (
+            f"{ENDPOINT_BUCKETS_PREFIX}/{self.server.bucket}{ENDPOINT_FILES_DOWNLOAD_SUFFIX}"
+        )
+        if path != download_path:
+            self._send_method_not_allowed()
+            return
+        required = {"filename", "sha256", "cid"}
+        if set(query) != required or any(len(query[key]) != 1 for key in required):
+            self._send_error_response(HTTP_BAD_REQUEST, "Invalid seeder query")
+            return
+        expected_sha = query["sha256"][0]
+        requester_cid = query["cid"][0]
+        if (
+            not is_sha256_hex(expected_sha)
+            or expected_sha != expected_sha.lower()
+            or not is_valid_cid(requester_cid)
+        ):
+            self._send_error_response(HTTP_BAD_REQUEST, "Invalid seeder query")
+            return
+        slots = self.server.peer_read_slots
+        if slots is None:
+            raise RuntimeError("seeder server is missing its read-cap semaphore")
+        if not slots.acquire(blocking=False):
+            # Saturated, not broken: tell the requester how long to wait so it
+            # defers this seeder instead of pricing the refusal as a failure.
+            self._send_error_response(
+                HTTP_SERVICE_UNAVAILABLE,
+                "Seeder read cap reached",
+                extra_headers={"Retry-After": str(SEEDER_RETRY_AFTER_S)},
+            )
+            return
+        try:
+            self._handle_download(query, expected_sha256=expected_sha)
+        finally:
+            slots.release()
+
+    def _dispatch_bucket_get(self, path: str, query: dict) -> bool:
+        """Route a bucket-scoped GET by suffix (most specific first); True if handled."""
+        # List directory permissions: /api/v1/buckets/{bucket}/dirs
+        if path.endswith(ENDPOINT_DIRS_SUFFIX):
+            self._handle_list_dirs()
+            return True
+        # List files: /api/v1/buckets/{bucket}/files
+        if path.endswith(ENDPOINT_FILES_SUFFIX):
+            self._handle_list_files(query)
+            return True
+        # Download file: /api/v1/buckets/{bucket}/files/download
+        if path.endswith(ENDPOINT_FILES_DOWNLOAD_SUFFIX):
+            self._handle_download(query)
+            return True
+        # Upload status: /api/v1/buckets/{bucket}/files/upload-status
+        if path.endswith(ENDPOINT_FILES_UPLOAD_STATUS_SUFFIX):
+            self._handle_upload_status(query)
+            return True
+        # Delta signatures: /api/v1/buckets/{bucket}/files/delta/signatures
+        if path.endswith(ENDPOINT_DELTA_SIGNATURES_SUFFIX):
+            from hsync_client.p2p_delta import handle_delta_signatures_get
+
+            handle_delta_signatures_get(self, query)
+            return True
+        # Delta literal payload: /api/v1/buckets/{bucket}/files/delta/data/{token}
+        if ENDPOINT_DELTA_DATA_MARKER in path:
+            from hsync_client.p2p_delta import handle_delta_data
+
+            bucket = path.split(f"{ENDPOINT_BUCKETS_PREFIX}/", 1)[-1].split("/", 1)[0]
+            token = path.rsplit(ENDPOINT_DELTA_DATA_MARKER, 1)[-1]
+            handle_delta_data(self, bucket, token)
+            return True
+        # Tombstones: /api/v1/buckets/{bucket}/tombstones
+        if path.endswith(ENDPOINT_TOMBSTONES_SUFFIX):
+            self._handle_tombstones()
+            return True
+        return False
 
     def do_POST(self) -> None:
         """Handle POST requests."""
@@ -1189,6 +1192,60 @@ class P2PEndpointMixin(_HTTPTransportBase):
             return None
         return full_path, local_bucket
 
+    def _parse_patch_mtimes(self, query: dict) -> tuple[int, int] | None:
+        """Parse the optional corrected/raw mtime params; None when already answered."""
+        mtime = 0
+        mtime_raw = _first(query, "mtime")
+        if mtime_raw is not None:
+            try:
+                mtime = int(mtime_raw)
+            except (TypeError, ValueError, OverflowError):
+                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'mtime' parameter")
+                return None
+            if mtime < 0:
+                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'mtime' parameter")
+                return None
+            # ADR-0023 receiver-side guard: a far-future peer value must not win
+            # every tie-break.
+            mtime = int(clamp_incoming_corrected_mtime(mtime))
+        # A clock-free peer (no reference measured its clock) cannot express a
+        # *corrected* mtime, so it sends the raw on-disk value instead. It is
+        # applied verbatim (clamped), never through the corrected conversion.
+        raw_mtime = 0
+        raw_mtime_raw = _first(query, "raw_mtime")
+        if raw_mtime_raw is not None:
+            try:
+                raw_mtime = int(raw_mtime_raw)
+            except (TypeError, ValueError, OverflowError):
+                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'raw_mtime' parameter")
+                return None
+            if raw_mtime <= 0:
+                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'raw_mtime' parameter")
+                return None
+            raw_mtime = int(clamp_incoming_raw_mtime(raw_mtime))
+        return mtime, raw_mtime
+
+    def _check_expected_sha(self, query: dict, full_path: str) -> bool:
+        """Enforce the optional expected-SHA guard; False when a check already answered."""
+        expected_sha256 = _first(query, "expected_sha256") or ""
+        if not expected_sha256:
+            return True
+        # The slave only reached this branch because its content matched the
+        # listing; a path that no longer holds that content was written
+        # concurrently, so the metadata must not be applied.
+        if not is_sha256_hex(expected_sha256):
+            self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'expected_sha256' parameter")
+            return False
+        current = File.get(full_path)
+        if (
+            current is None
+            or not current.sha256sum
+            or not hmac.compare_digest(expected_sha256, current.sha256sum)
+        ):
+            self._send_error_response(HTTP_CONFLICT, "File content changed; metadata not applied")
+            return False
+        return True
+
     def _handle_patch_permissions(self, query: dict) -> None:
         """Apply a content-unchanged metadata change (chmod / touch) from a slave.
 
@@ -1209,36 +1266,10 @@ class P2PEndpointMixin(_HTTPTransportBase):
 
         rel_path = _first(query, "filename")
         permissions = _first(query, "permissions")
-        mtime_raw = _first(query, "mtime")
-        mtime = 0
-        if mtime_raw is not None:
-            try:
-                mtime = int(mtime_raw)
-            except (TypeError, ValueError, OverflowError):
-                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'mtime' parameter")
-                return
-            if mtime < 0:
-                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'mtime' parameter")
-                return
-            # ADR-0023 receiver-side guard: a far-future peer value must not win
-            # every tie-break.
-            mtime = int(clamp_incoming_corrected_mtime(mtime))
-
-        # A clock-free peer (no reference measured its clock) cannot express a
-        # *corrected* mtime, so it sends the raw on-disk value instead. It is
-        # applied verbatim (clamped), never through the corrected conversion.
-        raw_mtime_raw = _first(query, "raw_mtime")
-        raw_mtime = 0
-        if raw_mtime_raw is not None:
-            try:
-                raw_mtime = int(raw_mtime_raw)
-            except (TypeError, ValueError, OverflowError):
-                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'raw_mtime' parameter")
-                return
-            if raw_mtime <= 0:
-                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'raw_mtime' parameter")
-                return
-            raw_mtime = int(clamp_incoming_raw_mtime(raw_mtime))
+        parsed_mtimes = self._parse_patch_mtimes(query)
+        if parsed_mtimes is None:
+            return
+        mtime, raw_mtime = parsed_mtimes
 
         if not rel_path or (not permissions and mtime <= 0 and raw_mtime <= 0):
             self._send_error_response(HTTP_BAD_REQUEST, "Missing 'filename' or metadata to apply")
@@ -1262,25 +1293,8 @@ class P2PEndpointMixin(_HTTPTransportBase):
             self._send_error_response(HTTP_NOT_FOUND, "File not found")
             return
 
-        expected_sha256 = _first(query, "expected_sha256") or ""
-        if expected_sha256:
-            # The slave only reached this branch because its content matched the
-            # listing; a path that no longer holds that content was written
-            # concurrently, so the metadata must not be applied and the slave
-            # falls back to the ordinary upload path (same guard as the server).
-            if not is_sha256_hex(expected_sha256):
-                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'expected_sha256' parameter")
-                return
-            current = File.get(full_path)
-            if (
-                current is None
-                or not current.sha256sum
-                or not hmac.compare_digest(expected_sha256, current.sha256sum)
-            ):
-                self._send_error_response(
-                    HTTP_CONFLICT, "File content changed; metadata not applied"
-                )
-                return
+        if not self._check_expected_sha(query, full_path):
+            return
 
         origin_cid = self._valid_origin(query)
         try:
@@ -1318,6 +1332,77 @@ class P2PEndpointMixin(_HTTPTransportBase):
         )
         self._send_json_response(HTTP_OK, {"info": "Metadata updated"})
 
+    def _resolve_rename_paths(
+        self, local_bucket: str, src_rel: str, dst_rel: str
+    ) -> tuple[str, str] | None:
+        """Confine and sanity-check both rename endpoints; None if already answered.
+
+        Paths are peer-supplied and untrusted: ``resolve_final=False`` on BOTH
+        endpoints keeps a link as the LINK entry (the default full resolve would
+        dereference it and rename the target instead).
+        """
+        src_path = resolve_within(local_bucket, src_rel, resolve_final=False)
+        dst_path = resolve_within(local_bucket, dst_rel, resolve_final=False)
+        if not src_path or not dst_path:
+            self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
+            return None
+        if self._reject_inside_tree_delete(dst_path):
+            return None
+        # Dangling links are real entries: Path.exists() follows the link and would
+        # report a dangling rename source as missing. Recognize both.
+        src = Path(src_path)
+        if not (src.is_symlink() or src.exists()):
+            self._send_error_response(HTTP_NOT_FOUND, "Source not found")
+            return None
+        if Path(dst_path).is_symlink() or Path(dst_path).exists():
+            # A concurrently created destination is a conflict, never an
+            # overwrite: the slave falls back to the ordinary upload path.
+            self._send_error_response(HTTP_CONFLICT, "Destination already exists")
+            return None
+        return src_path, dst_path
+
+    def _parse_rename_params(
+        self, query: dict, src_path: str, src: Path
+    ) -> tuple[str, str, int] | None:
+        """Validate the optional rename parameters; None when a check already answered."""
+        expected_sha256 = _first(query, "expected_sha256") or ""
+        if expected_sha256:
+            if not is_sha256_hex(expected_sha256):
+                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'expected_sha256' parameter")
+                return None
+            if not src.is_symlink() and not src.is_dir():
+                current = File.get(src_path)
+                if (
+                    current is None
+                    or not current.sha256sum
+                    or not hmac.compare_digest(expected_sha256, current.sha256sum)
+                ):
+                    # The listing the slave planned against is stale: never move
+                    # bytes nobody verified — let it fall back to an upload.
+                    self._send_error_response(
+                        HTTP_CONFLICT, "Source content no longer matches the expected checksum"
+                    )
+                    return None
+        permissions = _first(query, "permissions") or ""
+        if permissions:
+            from hsync_common.permissions import is_valid_octal_permissions
+
+            if not is_valid_octal_permissions(permissions):
+                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'permissions' parameter")
+                return None
+        mtime = 0
+        mtime_raw = _first(query, "mtime")
+        if mtime_raw is not None:
+            try:
+                mtime = int(mtime_raw)
+            except (TypeError, ValueError, OverflowError):
+                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'mtime' parameter")
+                return None
+            if mtime < 0:
+                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'mtime' parameter")
+                return None
+        return expected_sha256, permissions, mtime
+
     def _handle_rename(self, query: dict) -> None:
         """Handle a file/directory move without transferring bytes.
 
@@ -1349,72 +1434,16 @@ class P2PEndpointMixin(_HTTPTransportBase):
         if not local_bucket:
             return
 
-        # Peer-supplied paths are untrusted: validate the relative form and
-        # confine both endpoints to the bucket (rejects traversal, absolute
-        # paths, backslashes, sibling-prefix confusion and engine artifacts).
-        # resolve_final=False on BOTH endpoints: renaming a link must move the
-        # LINK entry — the default full resolve dereferences it and would
-        # rename the target file instead.
-        src_path = resolve_within(local_bucket, src_rel, resolve_final=False)
-        dst_path = resolve_within(local_bucket, dst_rel, resolve_final=False)
-        if not src_path or not dst_path:
-            self._send_error_response(HTTP_BAD_REQUEST, "Invalid path")
+        resolved = self._resolve_rename_paths(local_bucket, src_rel, dst_rel)
+        if resolved is None:
             return
-
-        if self._reject_inside_tree_delete(dst_path):
-            return
-
-        # Dangling links are real entries: Path.exists() follows the link and
-        # would report a dangling rename source as missing. Recognize both.
+        src_path, dst_path = resolved
         src = Path(src_path)
-        if not (src.is_symlink() or src.exists()):
-            self._send_error_response(HTTP_NOT_FOUND, "Source not found")
+
+        params = self._parse_rename_params(query, src_path, src)
+        if params is None:
             return
-
-        if Path(dst_path).is_symlink() or Path(dst_path).exists():
-            # A concurrently created destination is a conflict, never an
-            # overwrite: the slave falls back to the ordinary upload path.
-            self._send_error_response(HTTP_CONFLICT, "Destination already exists")
-            return
-
-        expected_sha256 = _first(query, "expected_sha256") or ""
-        if expected_sha256:
-            if not is_sha256_hex(expected_sha256):
-                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'expected_sha256' parameter")
-                return
-            if not src.is_symlink() and not src.is_dir():
-                current = File.get(src_path)
-                if (
-                    current is None
-                    or not current.sha256sum
-                    or not hmac.compare_digest(expected_sha256, current.sha256sum)
-                ):
-                    # The listing the slave planned against is stale: never move
-                    # bytes nobody verified — let it fall back to an upload.
-                    self._send_error_response(
-                        HTTP_CONFLICT, "Source content no longer matches the expected checksum"
-                    )
-                    return
-
-        permissions = _first(query, "permissions") or ""
-        if permissions:
-            from hsync_common.permissions import is_valid_octal_permissions
-
-            if not is_valid_octal_permissions(permissions):
-                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'permissions' parameter")
-                return
-
-        mtime = 0
-        mtime_raw = _first(query, "mtime")
-        if mtime_raw is not None:
-            try:
-                mtime = int(mtime_raw)
-            except (TypeError, ValueError, OverflowError):
-                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'mtime' parameter")
-                return
-            if mtime < 0:
-                self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'mtime' parameter")
-                return
+        _expected_sha256, permissions, mtime = params
 
         try:
             # Create parent directory if needed
@@ -2658,6 +2687,115 @@ class P2PEndpointMixin(_HTTPTransportBase):
         # Keep the .part (or the absence of one) for the peer's next attempt.
         ctx.tmp_path = None
 
+    def _check_upload_integrity(
+        self, form_fields: dict[str, str], tmp_path: str, ctx: _UploadContext
+    ) -> str | None:
+        """Verify the declared SHA-256 of the received bytes; None when refused.
+
+        Integrity is mandatory: the bytes must hash to the declared digest before
+        they are committed over the destination (a hostile or corrupt peer must
+        not propagate content to slaves). The declared digest must be well-formed
+        (``compare_digest`` raises on non-ASCII input).
+        """
+        expected_sha = form_fields.get("sha256sum", "")
+        if not expected_sha:
+            self._send_error_response(HTTP_BAD_REQUEST, "Missing 'sha256sum' field")
+            ctx.fail_reason = "missing 'sha256sum' field"
+            return None
+        if not is_sha256_hex(expected_sha):
+            self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'sha256sum' format")
+            ctx.fail_reason = "invalid 'sha256sum' format"
+            return None
+        actual_sha = compute_sha256(tmp_path)
+        if not hmac.compare_digest(actual_sha, expected_sha):
+            log.warning(
+                f'Rejected upload "{ctx.dest_path}": checksum mismatch '
+                f"(declared {expected_sha}, computed {actual_sha})"
+            )
+            self._send_error_response(HTTP_BAD_REQUEST, "Checksum mismatch")
+            ctx.fail_reason = "checksum mismatch"
+            return None
+        return expected_sha
+
+    def _arbitrate_incoming_upload(
+        self, *, dest_path: str, expected_sha: str, cid: str, form_fields: dict[str, str]
+    ) -> tuple[Any, str | None, str]:
+        """Compare the incoming version against the stored one (ADR-0022/0023).
+
+        Returns ``(arbitration, disk_hash, incoming_version_id)``.
+        """
+        incoming_version_id = form_fields.get("version_id", "")
+        incoming_vclock_raw = form_fields.get("vclock", "")
+        try:
+            parsed_vclock = json.loads(incoming_vclock_raw) if incoming_vclock_raw else None
+        except (ValueError, TypeError):
+            parsed_vclock = None
+        # ADR-0023: the uploader's corrected mtime (0 ⇒ unknown ⇒ hash fallback).
+        # Receiver-side guard: a far-future peer value is clamped against the
+        # master's corrected clock so no device can win every tie-break.
+        try:
+            incoming_corrected = max(int(form_fields.get("corrected_mtime", "0")), 0)
+        except (ValueError, TypeError):
+            incoming_corrected = 0
+        if incoming_corrected > 0:
+            incoming_corrected = int(clamp_incoming_corrected_mtime(float(incoming_corrected)))
+        disk_hash = compute_sha256(dest_path) if Path(dest_path).exists() else None
+        from hsync_client.arbitration import arbitrate_upload
+
+        arb = arbitrate_upload(
+            abs_path=dest_path,
+            incoming_hash=expected_sha,
+            incoming_vclock_raw=parsed_vclock,
+            incoming_version_id=incoming_version_id,
+            incoming_origin_cid=cid if is_valid_cid(cid) else None,
+            disk_hash=disk_hash,
+            incoming_corrected_mtime=incoming_corrected,
+        )
+        return arb, disk_hash, incoming_version_id
+
+    def _reject_upload_arbitration(
+        self, arb: Any, ctx: _UploadContext, tmp_path: str, dest_path: str
+    ) -> bool:
+        """Answer the arbitration rejections; True when the upload was refused."""
+        from hsync_client.arbitration import ArbitrationOutcome
+
+        if arb.outcome is ArbitrationOutcome.superseded:
+            # Incoming is causally dominated (stale): reject, no copy.
+            log.info(
+                f'{ActionLabel.CONFLICT} Upload of "{dest_path}" superseded '
+                f"by a newer local version"
+            )
+            self._send_error_response(HTTP_CONFLICT, "superseded")
+            ctx.response_sent = True
+            ctx.fail_reason = "superseded by a newer local version"
+            return True
+        if arb.outcome is ArbitrationOutcome.conflict_lost:
+            # Concurrent: incoming loses the tie-break. Preserve the incoming
+            # bytes as a conflicted copy, keep the local winner.
+            if preserve_conflict_copy(tmp_path, dest_path, arb.loser_cid, side="incoming"):
+                ctx.tmp_path = None
+            self._send_error_response(HTTP_CONFLICT, "conflict_lost")
+            ctx.response_sent = True
+            ctx.fail_reason = "conflict: the incoming version lost the tie-break"
+            return True
+        # The destination must still be the entry the upload set out to write: a
+        # deletion/rename that happened while the body streamed must neither be
+        # undone by the commit nor hidden by the conflict dance.
+        from hsync_client.tombstones import destination_mutation_since
+
+        if destination_mutation_since(
+            dest_path, ctx.dest_existed_at_start, ctx.dest_marker_snapshot
+        ):
+            log.info(
+                f'Upload of "{dest_path}" rejected: the destination was '
+                "deleted or renamed while uploading"
+            )
+            self._send_error_response(HTTP_CONFLICT, "destination_changed")
+            ctx.response_sent = True
+            ctx.fail_reason = "destination deleted or renamed while uploading"
+            return True
+        return False
+
     def _finalize_upload(self, ctx: _UploadContext, form_fields: dict[str, str]) -> None:
         """Arbitrate, commit and answer a completed (non-partial) upload."""
         cid = form_fields.get("cid", "")
@@ -2672,29 +2810,15 @@ class P2PEndpointMixin(_HTTPTransportBase):
         tmp_path = ctx.tmp_path
         assert dest_path is not None
         assert tmp_path is not None
+        from hsync_client.arbitration import ArbitrationOutcome
 
         # Integrity is mandatory: the received bytes must hash to the
         # declared SHA-256 before they are committed over the destination
         # (a hostile or corrupt peer must not propagate content to slaves).
         # The declared digest must be well-formed: compare_digest raises
         # TypeError on non-ASCII input.
-        expected_sha = form_fields.get("sha256sum", "")
-        if not expected_sha:
-            self._send_error_response(HTTP_BAD_REQUEST, "Missing 'sha256sum' field")
-            ctx.fail_reason = "missing 'sha256sum' field"
-            return
-        if not is_sha256_hex(expected_sha):
-            self._send_error_response(HTTP_BAD_REQUEST, "Invalid 'sha256sum' format")
-            ctx.fail_reason = "invalid 'sha256sum' format"
-            return
-        actual_sha = compute_sha256(tmp_path)
-        if not hmac.compare_digest(actual_sha, expected_sha):
-            log.warning(
-                f'Rejected upload "{dest_path}": checksum mismatch '
-                f"(declared {expected_sha}, computed {actual_sha})"
-            )
-            self._send_error_response(HTTP_BAD_REQUEST, "Checksum mismatch")
-            ctx.fail_reason = "checksum mismatch"
+        expected_sha = self._check_upload_integrity(form_fields, tmp_path, ctx)
+        if expected_sha is None:
             return
 
         # Record the CID for accurate logging.  Only authenticated CIDs
@@ -2708,76 +2832,11 @@ class P2PEndpointMixin(_HTTPTransportBase):
         # Causal arbitration (ADR-0022): the master is a transport hub,
         # not an authority. Compare the incoming version against the stored
         # version for this path and decide accept / supersede / conflict.
-        incoming_vclock_raw = form_fields.get("vclock", "")
-        incoming_version_id = form_fields.get("version_id", "")
-        try:
-            parsed_vclock = json.loads(incoming_vclock_raw) if incoming_vclock_raw else None
-        except (ValueError, TypeError):
-            parsed_vclock = None
-        # ADR-0023: the uploader's corrected mtime (0 ⇒ unknown ⇒ hash
-        # fallback). Receiver-side guard: a far-future peer value is
-        # clamped against the master's corrected clock so no device can
-        # win every tie-break (conflict engineering).
-        raw_corrected = form_fields.get("corrected_mtime", "0")
-        try:
-            incoming_corrected = int(raw_corrected)
-            incoming_corrected = max(incoming_corrected, 0)
-        except (ValueError, TypeError):
-            incoming_corrected = 0
-        if incoming_corrected > 0:
-            incoming_corrected = int(clamp_incoming_corrected_mtime(float(incoming_corrected)))
-
-        disk_hash = compute_sha256(dest_path) if Path(dest_path).exists() else None
-
-        from hsync_client.arbitration import ArbitrationOutcome, arbitrate_upload
-
-        arb = arbitrate_upload(
-            abs_path=dest_path,
-            incoming_hash=expected_sha,
-            incoming_vclock_raw=parsed_vclock,
-            incoming_version_id=incoming_version_id,
-            incoming_origin_cid=cid if is_valid_cid(cid) else None,
-            disk_hash=disk_hash,
-            incoming_corrected_mtime=incoming_corrected,
+        arb, disk_hash, incoming_version_id = self._arbitrate_incoming_upload(
+            dest_path=dest_path, expected_sha=expected_sha, cid=cid, form_fields=form_fields
         )
 
-        if arb.outcome is ArbitrationOutcome.superseded:
-            # Incoming is causally dominated (stale): reject, no copy.
-            log.info(
-                f'{ActionLabel.CONFLICT} Upload of "{dest_path}" superseded '
-                f"by a newer local version"
-            )
-            self._send_error_response(HTTP_CONFLICT, "superseded")
-            ctx.response_sent = True
-            ctx.fail_reason = "superseded by a newer local version"
-            return
-
-        if arb.outcome is ArbitrationOutcome.conflict_lost:
-            # Concurrent: incoming loses the tie-break. Preserve the
-            # incoming bytes as a conflicted copy, keep the local winner.
-            if preserve_conflict_copy(tmp_path, dest_path, arb.loser_cid, side="incoming"):
-                ctx.tmp_path = None
-            self._send_error_response(HTTP_CONFLICT, "conflict_lost")
-            ctx.response_sent = True
-            ctx.fail_reason = "conflict: the incoming version lost the tie-break"
-            return
-
-        # The destination must still be the entry the upload set out to
-        # write: a deletion/rename that happened while the body streamed
-        # must neither be undone by the commit nor hidden by the conflict
-        # dance (checked before the accepted_conflict_won move below).
-        from hsync_client.tombstones import destination_mutation_since
-
-        if destination_mutation_since(
-            dest_path, ctx.dest_existed_at_start, ctx.dest_marker_snapshot
-        ):
-            log.info(
-                f'Upload of "{dest_path}" rejected: the destination was '
-                "deleted or renamed while uploading"
-            )
-            self._send_error_response(HTTP_CONFLICT, "destination_changed")
-            ctx.response_sent = True
-            ctx.fail_reason = "destination deleted or renamed while uploading"
+        if self._reject_upload_arbitration(arb, ctx, tmp_path, dest_path):
             return
 
         # accepted / accepted_conflict_won: commit the incoming bytes.
