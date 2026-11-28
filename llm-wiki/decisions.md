@@ -503,10 +503,15 @@ in [`p2p-protocol.md`](https://github.com/albertsdk/hsync-common/blob/main/docs/
   chronological tie-break (ADR-0023/0055) is measured against the current
   authority's `/api/v1/time`: the sync server in server mode, the elected
   **master** in p2p (a slave adopts it only when the reply says `trusted: true`,
-  i.e. the master is itself anchored; `p2p_server.py::_handle_time` emits it). A
-  slave never overrides a trusted master with its own NTP: an operator who needs
-  a specific source configures it on the serving node/anchor. `HSYNC_NTP_HOSTS`
-  is an **opt-in** deployment override (`timesync.py::ntp_configured`), not a
+  i.e. the master is itself anchored; `p2p_server.py::_handle_time` emits it). The
+  probe carries the client's `REQUEST_HEADERS` (the p2p key in Direct mode, the
+  API key in server mode): the central server's endpoint is public, but a p2p
+  master authenticates **every** GET (`p2p_server.py::do_GET` → `_check_auth`), so
+  an unauthenticated probe was answered 401 and the coarse rendezvous echo was
+  never refined. A slave never overrides a trusted master with its own NTP: an
+  operator who needs a specific source configures it on the serving
+  node/anchor. `HSYNC_NTP_HOSTS` is an **opt-in** deployment override
+  (`timesync.py::ntp_configured`), not a
   silent public-pool default; the rendezvous `ack.server_time` is the coarse
   fallback. An expired offset is re-probed for every role (`sync()` for the
   server and a slave, the maintenance tick for the serving master), so a

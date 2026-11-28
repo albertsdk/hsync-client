@@ -253,6 +253,27 @@ class TestAuthorityClockOffset:
         assert timesync.probe_authority_clock_offset(server_url="https://srv") is False
         assert offset_store.is_trusted() is False
 
+    def test_the_probe_sends_the_configured_credential(self, monkeypatch):
+        """Regression: a p2p master's ``/api/v1/time`` is an authenticated GET, so
+        the probe must carry the bearer it already holds (an empty header set was
+        answered 401, so the coarse rendezvous offset was never refined)."""
+        from hsync_client.config import CONFIG
+
+        offset_store.clear()
+        monkeypatch.setitem(CONFIG, "MASTER_CERT_FINGERPRINT", "f" * 64)
+        monkeypatch.setitem(CONFIG, "REQUEST_HEADERS", {"Authorization": "Bearer secret"})
+        monkeypatch.setattr(timesync, "get_ssl_verify", lambda: True)
+        seen: dict = {}
+
+        def _capture(url, **kwargs):
+            seen.update(kwargs)
+            return _FakeResponse(200, {"timestamp": time.time(), "trusted": True})
+
+        monkeypatch.setattr("hsync_client.utils.http_get", _capture)
+
+        assert timesync.probe_authority_clock_offset(server_url="https://master") is True
+        assert seen["headers"]["Authorization"] == "Bearer secret"
+
 
 class TestNtpOptIn:
     def test_ntp_is_off_without_the_env(self, monkeypatch):

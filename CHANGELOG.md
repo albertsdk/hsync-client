@@ -72,6 +72,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by content.
 ### Fixed
 
+- The clock-authority probe now sends the credential it already holds
+  (`REQUEST_HEADERS`), so a p2p master's authenticated `/api/v1/time` answers
+  200 instead of 401: the coarse rendezvous offset is refined by the master's
+  exact measurement rather than logging `[CLOCK DEGRADED] … (HTTP 401)`.
 - A read-only file is made writable before it is moved into the trash and back,
   so Windows (which refuses to rename such a file) can restore it too.
 - A folder emptied by a peer's deletion no longer comes back: the emptied

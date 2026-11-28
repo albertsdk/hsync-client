@@ -223,7 +223,17 @@ def probe_authority_clock_offset(
 
     try:
         t1 = time.time()
-        response = http_get(time_url, headers={}, verify=get_ssl_verify(), timeout=10)
+        # Send the credential this client already holds: the sync server's
+        # ``/api/v1/time`` is public, but a p2p master's is an authenticated GET
+        # (``REQUEST_HEADERS`` carries the p2p key in Direct mode, the API key in
+        # server mode). Without it the master answers 401 and the coarse
+        # rendezvous echo is never refined by the master's exact measurement.
+        response = http_get(
+            time_url,
+            headers=CONFIG.get("REQUEST_HEADERS") or {},
+            verify=get_ssl_verify(),
+            timeout=10,
+        )
         t3 = time.time()
     except Exception as exc:
         logger.warning(f"{ActionLabel.CLOCK_DEGRADED} clock probe failed: {exc}")
